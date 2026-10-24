@@ -17,7 +17,10 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts.acquisition_policies import ACQUISITION_POLICY_PIN_ROLE
+from cruxible_client.contracts.acquisition_policies import (
+    ACQUISITION_POLICY_PIN_ROLE,
+    SourceAcquisitionPolicyAny,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -328,6 +331,7 @@ def evaluate_line_spec_law(
     path: str,
     procedure: AcceptedProcedure,
     predecessor: AcceptedLineSpec | None,
+    default_acquisition_policy: SourceAcquisitionPolicyAny | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
     provider_interfaces: Mapping[
         str,
@@ -399,10 +403,20 @@ def evaluate_line_spec_law(
                 path=path,
             )
     needs_acquisition = any(isinstance(node, SourceNode) for node in definition.nodes)
-    if needs_acquisition and line.acquisition_policy is None:
+    if (
+        needs_acquisition
+        and line.acquisition_policy is None
+        and (
+            default_acquisition_policy is None
+            or default_acquisition_policy.lifecycle.state != "live"
+            or default_acquisition_policy.identity.name != "default"
+        )
+    ):
         return _refusal(
             "cruxible.line.acquisition_policy_missing",
-            "Source paths require an exact SourceAcquisitionPolicy pin.",
+            "Source paths require SourceAcquisitionPolicy:default or an explicitly named "
+            "live policy; "
+            "accept the default or name one.",
             path=path,
         )
     if predecessor is None:

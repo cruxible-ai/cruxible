@@ -2892,21 +2892,14 @@ def _lower_procedure(
     declared_pins = {
         binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
     }
-    # The acquisition policy binds the PROCEDURE, not any one node, so it rides
-    # on the envelope and never in the definition -- which is exactly why
-    # adopting it leaves the definition digest, and every historical artifact,
-    # byte-identical. The envelope law requires only that definition-referenced
-    # pins be declared, so an extra declared pin is legal today; the closure
-    # evaluator then holds it to the same standard as any other non-deferred
-    # pin, because SourceAcquisitionPolicy is not a deferred target kind.
-    policy_pin = _acquisition_policy_pin(
+    # Validate an explicit name at authoring, but runs resolve its accepted
+    # value at admission; the Procedure never pins the policy's bytes.
+    _acquisition_policy_pin(
         payload,
         accepted=accepted,
         candidates=candidate_artifacts,
         candidate_identities=candidate_identities,
     )
-    if policy_pin is not None:
-        declared_pins.add(policy_pin)
     pins = tuple(
         sorted(
             declared_pins,
@@ -3008,6 +3001,8 @@ def _lower_procedure(
                 "Repair the Procedure definition or its owned Contract declarations."
             ),
         )
+    if isinstance(procedure, ProcedureArtifact):
+        procedure = procedure.model_copy(update={"acquisition_policy": payload.acquisition_policy})
     return _procedure_lowered(
         instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
     )
@@ -3166,7 +3161,7 @@ def _lower_blueprint_instance(
         providers[slot] = AcceptedProvider(
             path=target, provider=provider, artifact_digest=provider_digest(provider).tagged
         )
-    policy_pin = _acquisition_policy_pin(
+    _acquisition_policy_pin(
         payload,
         accepted=accepted,
         candidates=candidate_artifacts,
@@ -3179,7 +3174,7 @@ def _lower_blueprint_instance(
             name=instantiation.name,
             providers=providers,
             activation_policy=payload.activation_policy,
-            extra_pins=() if policy_pin is None else (policy_pin,),
+            extra_pins=(),
             lifecycle=ArtifactLifecycle(
                 predecessor_digest=(
                     None if predecessor is None else procedure_artifact_digest(predecessor).tagged
@@ -3205,6 +3200,7 @@ def _lower_blueprint_instance(
             repair_kind="replace_binding",
             repair_description="Bind Providers whose operation contracts fit the Blueprint.",
         )
+    procedure = procedure.model_copy(update={"acquisition_policy": payload.acquisition_policy})
     return _procedure_lowered(
         instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
     )
@@ -3380,21 +3376,8 @@ def _render_line_member(
     procedure = parse_procedure(procedure_content, path=procedure_target)
     policy_pin: ArtifactPin | None = None
     if payload.acquisition_policy_name is None:
-        acquiring = sorted(
-            node.node_id for node in procedure.definition.nodes if isinstance(node, SourceNode)
-        )
-        if acquiring:
-            _refuse(
-                "cruxible.authoring.line_acquisition_policy_required",
-                "acquisition_policy_name",
-                f"Procedure {payload.procedure_name!r} acquires through Source nodes "
-                f"{acquiring}, so its Line must name a SourceAcquisitionPolicy.",
-                repair_kind="set_acquisition_policy_name",
-                repair_description=(
-                    "Name an accepted or same-ChangeSet SourceAcquisitionPolicy "
-                    "(cruxible authoring example acquisition-policy)."
-                ),
-            )
+        # Line law resolves the reserved default at the candidate coordinate.
+        pass
     else:
         policy_target = acquisition_policy_path(payload.acquisition_policy_name)
         policy_content = tree.get(policy_target)

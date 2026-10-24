@@ -1581,7 +1581,7 @@ def parse_projection_tree(
                         target_digest=pin.artifact_digest,
                         role=pin.role,
                     )
-                    for pin in acquisition_policy.pins
+                    for pin in getattr(acquisition_policy, "pins", ())
                 )
                 semantic_facts.append(
                     ProjectionFact(

@@ -7,7 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
+)
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract

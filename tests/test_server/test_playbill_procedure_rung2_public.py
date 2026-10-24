@@ -22,8 +22,6 @@ from cruxible_client import Cruxible
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -171,19 +169,7 @@ def _claim_type(contract_digest: str) -> ClaimType:
 def _policy() -> SourceAcquisitionPolicy:
     return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY_NAME),
-        inputs=(
-            InputAcquisitionRule(
-                input_name="advisory",
-                requirement="required",
-                permitted_replayability=("attested_only", "exact"),
-                max_age=CanonicalDuration(microseconds=3_600_000_000),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="preserve",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+        max_age=CanonicalDuration(microseconds=3600000000),
     )
 
 

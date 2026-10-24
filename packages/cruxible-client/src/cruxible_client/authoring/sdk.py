@@ -1260,8 +1260,8 @@ class ChangeSetDraft:
 
         Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
         admits one, so the Line could never run.
-        ``acquisition_policy`` is required only when the Procedure has Source
-        nodes. ``parameters`` is the Procedure's input record; lowering checks it
+        ``acquisition_policy`` overrides the instance default when supplied.
+        ``parameters`` is the Procedure's input record; lowering checks it
         against the Procedure's input contract. ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
         and defaults to it. A Line that proposes or settles also needs a live

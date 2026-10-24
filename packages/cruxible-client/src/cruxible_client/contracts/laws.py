@@ -633,6 +633,15 @@ PROVIDER_INTERFACE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider-interface",
     artifact_tag="playbill-provider-interface-v1",
 )
+LIGHT_ACQUISITION_POLICY_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.source-acquisition-policy.v2",
+        "playbill-source-acquisition-policy-v2",
+        semantic_revision=1,
+    ),
+    artifact_kind="source-acquisition-policy",
+    artifact_tag="playbill-source-acquisition-policy-v2",
+)
 SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=SOURCE_ACQUISITION_POLICY_LAW,
     artifact_kind="source-acquisition-policy",
@@ -935,6 +944,7 @@ LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         LIGHT_CAPTURE_CONTRACT_LAW,
+        LIGHT_ACQUISITION_POLICY_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,

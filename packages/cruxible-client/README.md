@@ -1608,8 +1608,7 @@ Trigger aimed at it must fire on it.
 Authoring refuses `exhaust_tap` with `cruxible.procedure.node_not_served`; no run path
 admits it yet. Retained artifacts still parse and verify. A Procedure always
 pins exact providers (only a Blueprint leaves slots open), so the Line pins exactly what the Procedure names.
-``acquisition_policy`` is required only when the Procedure has Source
-nodes. ``parameters`` is the Procedure's input record; lowering checks it
+``acquisition_policy`` overrides the instance default when supplied. ``parameters`` is the Procedure's input record; lowering checks it
 against the Procedure's input contract. ``max_authority`` (observe,
 propose or settle) caps this Line below its Procedure's own capability
 and defaults to it. A Line that proposes or settles also needs a live
@@ -1621,7 +1620,7 @@ mandate).
 |---|---|---|
 | `name` | Required | Definition identity name, not an arbitrary file path. |
 | `procedure` | Required | Procedure name: accepted, or defined earlier in the same changeset. |
-| `acquisition_policy` | `None` | Accepted or same-set SourceAcquisitionPolicy name; required only when the Procedure has Source nodes. |
+| `acquisition_policy` | `None` | Accepted or same-set SourceAcquisitionPolicy name; omitted uses SourceAcquisitionPolicy:default. |
 | `max_authority` | `None` | Most this Line may do: `observe`, `propose` or `settle`. Defaults to its Procedure's capability; effective authority is checked at admission. |
 | `trigger_input` | `None` | Source alias receiving the exact triggering Capture; the Line accepts only that Source's CaptureContract event, and Triggers aimed at it must fire on it. |
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
@@ -4982,7 +4981,7 @@ ProcedureMandate covering its Procedure; an observe-only Line needs none.
 | `kind` | `Literal['line']` | `Required` |
 | `name` | `str` | `Required` |
 | `procedure_name` | `str` | `Required` |
-| `acquisition_policy_name` | `str \| None` | `None`; required only when the Procedure has Source nodes |
+| `acquisition_policy_name` | `str \| None` | `None`; omitted uses SourceAcquisitionPolicy:default |
 | `max_authority` | `Literal['observe', 'propose', 'settle'] \| None` | `None` (the Procedure's capability) |
 | `trigger_input` | `str \| None` | `None` |
 | `parameters` | `dict[str, object]` | `{}`; checked against the Procedure's input contract |
@@ -7428,10 +7427,10 @@ before the Trigger is accepted.
 acquisition_policy_example() -> 'AcquisitionPolicyInput'
 ```
 
-A SourceAcquisitionPolicy with one required input, for a Line with Source nodes.
+An instance default age bound with optional Source alias overrides.
 
-Each rule's `input_name` is one Source node's output alias (`as`); a Line
-names this policy in `acquisition_policy_name`.
+Name it `default` for Lines and Procedures that omit a policy name. Unavailable,
+stale and oversized inputs refuse.
 
 #### `query_claims_by_type_example`
 

@@ -5004,31 +5004,6 @@
             "title": "BlueprintInstanceInput",
             "type": "object"
           },
-          "BoundedWindowCoherence": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "bounded_window",
-                "default": "bounded_window",
-                "title": "Kind",
-                "type": "string"
-              },
-              "max_cross_source_skew": {
-                "$ref": "#/$defs/CanonicalDuration"
-              },
-              "tag": {
-                "const": "playbill-bounded-window-coherence-v1",
-                "default": "playbill-bounded-window-coherence-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "max_cross_source_skew"
-            ],
-            "title": "BoundedWindowCoherence",
-            "type": "object"
-          },
           "CadenceSchedule": {
             "additionalProperties": false,
             "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
@@ -6860,37 +6835,6 @@
             "title": "CronSchedule",
             "type": "object"
           },
-          "DeclaredSnapshotGroupCoherence": {
-            "additionalProperties": false,
-            "properties": {
-              "coordinate_grammar_digest": {
-                "title": "Coordinate Grammar Digest",
-                "type": "string"
-              },
-              "kind": {
-                "const": "declared_snapshot_group",
-                "default": "declared_snapshot_group",
-                "title": "Kind",
-                "type": "string"
-              },
-              "proof_adapter_digest": {
-                "title": "Proof Adapter Digest",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-declared-snapshot-group-coherence-v1",
-                "default": "playbill-declared-snapshot-group-coherence-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "coordinate_grammar_digest",
-              "proof_adapter_digest"
-            ],
-            "title": "DeclaredSnapshotGroupCoherence",
-            "type": "object"
-          },
           "ExactContentObjectInput": {
             "additionalProperties": false,
             "description": "The exact bytes a Claim's object IS, spelled as text or as base64.\n\n`text` is the ordinary spelling and stays the ordinary spelling: rulings and\nmethod laws are prose, and prose typed into JSON should not have to be\nencoded first. `content_base64` is for the bytes text cannot carry -- a body\nthat is not valid UTF-8, or one whose exact bytes matter more than its\nreading -- and is the same spelling the SDK's own `ExactContent` lowers to,\nso the two doors put identical bytes in the ledger.\n\nExactly one of them, because two spellings of one body are two bodies the\nmoment they disagree, and the digest is over the bytes.",
@@ -7041,147 +6985,6 @@
             "title": "GenerationAcceptedSchedule",
             "type": "object"
           },
-          "IndependentCoherence": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "independent",
-                "default": "independent",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-independent-coherence-v1",
-                "default": "playbill-independent-coherence-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "IndependentCoherence",
-            "type": "object"
-          },
-          "InputAcquisitionRule": {
-            "additionalProperties": false,
-            "properties": {
-              "conservative_default": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Conservative Default"
-              },
-              "correlation_keys": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Correlation Keys",
-                "type": "array"
-              },
-              "input_name": {
-                "title": "Input Name",
-                "type": "string"
-              },
-              "join_semantics_digest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Join Semantics Digest"
-              },
-              "max_age": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDuration"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "on_conflict": {
-                "enum": [
-                  "preserve",
-                  "refuse"
-                ],
-                "title": "On Conflict",
-                "type": "string"
-              },
-              "on_oversized": {
-                "enum": [
-                  "refuse",
-                  "omit_optional",
-                  "declared_conservative_default"
-                ],
-                "title": "On Oversized",
-                "type": "string"
-              },
-              "on_stale": {
-                "enum": [
-                  "refuse",
-                  "omit_optional",
-                  "declared_conservative_default"
-                ],
-                "title": "On Stale",
-                "type": "string"
-              },
-              "on_unavailable": {
-                "enum": [
-                  "refuse",
-                  "omit_optional",
-                  "declared_conservative_default"
-                ],
-                "title": "On Unavailable",
-                "type": "string"
-              },
-              "permitted_replayability": {
-                "items": {
-                  "enum": [
-                    "exact",
-                    "attested_only"
-                  ],
-                  "type": "string"
-                },
-                "title": "Permitted Replayability",
-                "type": "array"
-              },
-              "requirement": {
-                "enum": [
-                  "required",
-                  "optional",
-                  "conservative_default"
-                ],
-                "title": "Requirement",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-input-acquisition-rule-v1",
-                "default": "playbill-input-acquisition-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "input_name",
-              "requirement",
-              "permitted_replayability",
-              "on_unavailable",
-              "on_stale",
-              "on_oversized",
-              "on_conflict"
-            ],
-            "title": "InputAcquisitionRule",
-            "type": "object"
-          },
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate covering its Procedure before it\ncan run or be enabled; an observe-only Line needs none.",
@@ -7196,7 +6999,7 @@
                   }
                 ],
                 "default": null,
-                "description": "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes.",
+                "description": "SourceAcquisitionPolicy name; omitted uses the instance default.",
                 "title": "Acquisition Policy Name"
               },
               "budgets": {
@@ -9548,44 +9351,16 @@
           },
           "SourceAcquisitionPolicy": {
             "additionalProperties": false,
+            "description": "One instance-wide age bound and only the aliases that differ.",
             "properties": {
               "artifact_format": {
-                "const": "playbill-source-acquisition-policy-v1",
-                "default": "playbill-source-acquisition-policy-v1",
+                "const": "playbill-source-acquisition-policy-v2",
+                "default": "playbill-source-acquisition-policy-v2",
                 "title": "Artifact Format",
                 "type": "string"
               },
-              "coherence": {
-                "discriminator": {
-                  "mapping": {
-                    "bounded_window": "#/$defs/BoundedWindowCoherence",
-                    "declared_snapshot_group": "#/$defs/DeclaredSnapshotGroupCoherence",
-                    "independent": "#/$defs/IndependentCoherence"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/IndependentCoherence"
-                  },
-                  {
-                    "$ref": "#/$defs/BoundedWindowCoherence"
-                  },
-                  {
-                    "$ref": "#/$defs/DeclaredSnapshotGroupCoherence"
-                  }
-                ],
-                "title": "Coherence"
-              },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "inputs": {
-                "items": {
-                  "$ref": "#/$defs/InputAcquisitionRule"
-                },
-                "title": "Inputs",
-                "type": "array"
               },
               "lifecycle": {
                 "$ref": "#/$defs/ArtifactLifecycle",
@@ -9594,19 +9369,40 @@
                   "state": "live"
                 }
               },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
+              "max_age": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDuration"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "overrides": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CanonicalDuration"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                "title": "Pins",
-                "type": "array"
+                "title": "Overrides",
+                "type": "object"
               }
             },
             "required": [
-              "identity",
-              "inputs",
-              "coherence"
+              "identity"
             ],
             "title": "SourceAcquisitionPolicy",
             "type": "object"
@@ -48834,6 +48630,18 @@
             "additionalProperties": false,
             "description": "Procedure envelope whose Contract closure rides with its owner.\n\n``blueprint`` records the Blueprint it was instantiated from and the exact\nProvider bound to each slot; it is provenance, not a dependency.",
             "properties": {
+              "acquisition_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acquisition Policy"
+              },
               "activation_policy": {
                 "enum": [
                   "drain",
@@ -87426,6 +87234,18 @@
             "additionalProperties": false,
             "description": "Procedure envelope whose Contract closure rides with its owner.\n\n``blueprint`` records the Blueprint it was instantiated from and the exact\nProvider bound to each slot; it is provenance, not a dependency.",
             "properties": {
+              "acquisition_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acquisition Policy"
+              },
               "activation_policy": {
                 "enum": [
                   "drain",
@@ -97230,6 +97050,18 @@
             "additionalProperties": false,
             "description": "Procedure envelope whose Contract closure rides with its owner.\n\n``blueprint`` records the Blueprint it was instantiated from and the exact\nProvider bound to each slot; it is provenance, not a dependency.",
             "properties": {
+              "acquisition_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acquisition Policy"
+              },
               "activation_policy": {
                 "enum": [
                   "drain",

@@ -10,8 +10,6 @@ import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
@@ -1833,21 +1831,7 @@ def _line_run_against_a_degraded_lane(
     # Since 0cb4cc0c5 the pinned acquisition policy is resolved before the
     # Provider lane is planned (a trigger Capture binds against it), so the
     # pinned policy must be accepted for the degraded lane to be what refuses.
-    accepted_policy = SourceAcquisitionPolicy(
-        identity=acquisition_pin.target,
-        inputs=(
-            InputAcquisitionRule(
-                input_name="line-source",
-                requirement="required",
-                permitted_replayability=("exact",),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="refuse",
-            ),
-        ),
-        coherence=IndependentCoherence(),
-    )
+    accepted_policy = SourceAcquisitionPolicy(identity=acquisition_pin.target)
     monkeypatch.setattr(
         procedure_run_service,
         "_accepted_acquisition_policies",

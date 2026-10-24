@@ -550,12 +550,16 @@ class GetAcquisitionInput(_StrictGetModel):
 
 
 class GetSourceAcquisitionPolicyCard(_StrictGetModel):
-    """One source acquisition policy: how each input is acquired and kept coherent."""
+    """One source policy: age defaults and alias overrides, or frozen v1 details."""
 
     policy: str
     lifecycle: str
-    coherence: Literal["independent", "bounded_window", "declared_snapshot_group"]
-    inputs: tuple[GetAcquisitionInput, ...] = ()
+    max_age: str | None = Field(default=None, exclude_if=_omit_none)
+    overrides: dict[str, str | None] = Field(default_factory=dict)
+    coherence: Literal["independent", "bounded_window", "declared_snapshot_group"] | None = Field(
+        default=None, exclude_if=_omit_none
+    )
+    inputs: tuple[GetAcquisitionInput, ...] = Field(default=(), exclude_if=lambda value: not value)
     next: tuple[str, ...] = ()
 
 

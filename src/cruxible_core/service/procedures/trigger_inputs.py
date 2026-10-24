@@ -9,7 +9,11 @@ from datetime import datetime
 
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
-    SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyV1,
+    acquisition_rule,
+)
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
@@ -61,8 +65,11 @@ def bind_trigger_capture(
             "trigger_capture_input: an exact retained event is required "
             "(a manual run passes it as the event input)",
         )
-    rule = next((r for r in policy.inputs if r.input_name == node.as_), None)
-    if rule is None or not isinstance(policy.coherence, IndependentCoherence):
+    rule = acquisition_rule(policy, node.as_)
+    if rule is None or (
+        isinstance(policy, SourceAcquisitionPolicyV1)
+        and not isinstance(policy.coherence, IndependentCoherence)
+    ):
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
             "trigger_capture_input: named independent acquisition rule required",
@@ -136,7 +143,9 @@ def bind_trigger_capture(
             "trigger_capture_stale"
             if failure == ACQUISITION_STALE
             else "trigger_capture_forbidden",
-            "The exact triggering Capture exceeds max_age at admission time."
+            f"Source alias {node.as_!r} has Capture age "
+            f"{(evaluation_time - envelope.observed_at).total_seconds()}s, exceeding max_age; "
+            f"repair: supply a fresh Capture for {node.as_!r}."
             if failure == ACQUISITION_STALE
             else "The acquisition policy forbids this Capture replayability.",
         )

@@ -121,7 +121,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:aa991aa6470f189cd82f07de8fb2f950e57db197d51690f809292c404d376e85"
+    "sha256:a2542281ae93a8ae0d0ea8e99f16ec0e3e1c8b0b23f70a89d6125288c4290412"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1158,16 +1158,11 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure envelope input, plus the acquisition policy that envelope pins.
+    """A Procedure input with an optional acquisition policy name.
 
-    `acquisition_policy` is the SEMANTIC NAME of an accepted (or same-change-set
-    candidate) `SourceAcquisitionPolicy`, never a digest: lowering resolves it
-    the way every other Procedure reference resolves, and declares the resolved
-    exact pin under role `acquisition-policy` on the artifact envelope. The
-    definition never mentions it, so the definition digest is untouched -- this
-    is a Procedure-level binding the way a Line's policy pin is a Line-level
-    one, and the closure evaluator holds it to the same standard as any other
-    non-deferred pin.
+    Omitted names inherit SourceAcquisitionPolicy:default. An explicit name is
+    checked at authoring and resolved at run admission; the envelope does not
+    pin policy bytes. The admission records the resolved digest for replay.
     """
 
     tag: Literal["playbill-procedure-authoring-payload-v2"] = (

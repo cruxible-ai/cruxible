@@ -19,9 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecision,
+    AcquisitionRuleAny,
     InputAcquisitionRule,
-    SourceAcquisitionPolicy,
     acquisition_policy_digest,
+    acquisition_rule,
+)
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -4061,12 +4065,16 @@ class ProcedureExecutor:
                 occurrence=occurrence,
             )
         except _ProviderNodeRefusal as exc:
-            absorbable = provider_refusal_is_absorbable(exc.outcome) and (
-                (rule.requirement == "optional" and rule.on_unavailable == "omit_optional")
-                or (
-                    rule.requirement == "conservative_default"
-                    and rule.on_unavailable == "declared_conservative_default"
-                    and rule.input_name in self.default_authorizations
+            absorbable = (
+                isinstance(rule, InputAcquisitionRule)
+                and provider_refusal_is_absorbable(exc.outcome)
+                and (
+                    (rule.requirement == "optional" and rule.on_unavailable == "omit_optional")
+                    or (
+                        rule.requirement == "conservative_default"
+                        and rule.on_unavailable == "declared_conservative_default"
+                        and rule.input_name in self.default_authorizations
+                    )
                 )
             )
             if not absorbable:
@@ -4249,13 +4257,10 @@ class ProcedureExecutor:
             )
         reserved_store.release()
 
-    def _acquisition_rule(self, input_name: str) -> InputAcquisitionRule | None:
+    def _acquisition_rule(self, input_name: str) -> AcquisitionRuleAny | None:
         if self.acquisition_policy is None:
             return None
-        for rule in self.acquisition_policy.inputs:
-            if rule.input_name == input_name:
-                return rule
-        return None
+        return acquisition_rule(self.acquisition_policy, input_name)
 
     def _bind_acquisition(
         self,
@@ -4264,7 +4269,7 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-        rule: InputAcquisitionRule,
+        rule: AcquisitionRuleAny,
         result: ProcedureSourceAcquisitionResultV1,
         decision: AcquisitionInputDecision,
         occurrence_path: str | None = None,
@@ -4285,6 +4290,32 @@ class ProcedureExecutor:
                 input_name=rule.input_name,
                 disposition="refused",
             )
+            details: dict[str, object] = {"input_name": rule.input_name}
+            message = f"Source alias {rule.input_name!r} refuses this result. "
+            if (
+                result.acquisition is not None
+                and rule.max_age is not None
+                and "cruxible.acquisition.stale" in decision.reason_codes
+            ):
+                evaluation_time = (
+                    admission.occurrence_evaluation_time
+                    if isinstance(admission, ProcedureRunAdmissionV3)
+                    else admission.admitted_at
+                )
+                age = (evaluation_time - result.acquisition.envelope.observed_at).total_seconds()
+                delta = evaluation_time - result.acquisition.envelope.observed_at
+                details.update(
+                    age_microseconds=(delta.days * 86_400 + delta.seconds) * 1_000_000
+                    + delta.microseconds,
+                    max_age_microseconds=rule.max_age.microseconds,
+                )
+                message += (
+                    f"Capture age is {age}s; max_age is {rule.max_age.microseconds / 1_000_000}s. "
+                )
+            message += (
+                f"Repair: fetch a fresh available Capture for alias {rule.input_name!r} "
+                "within its contract and age bounds."
+            )
             raise _RunRefusal(
                 cast(
                     ProcedureNodeRefusalCode,
@@ -4292,8 +4323,9 @@ class ProcedureExecutor:
                     if decision.reason_codes
                     else "cruxible.acquisition.refused",
                 ),
-                "The declared acquisition rule refuses this typed source result.",
+                message,
                 node_id=node.node_id,
+                details=details,
             )
         if decision.disposition == "omitted":
             marker = _decision_digest(admission.run_id, decision)

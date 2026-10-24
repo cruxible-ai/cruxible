@@ -10,8 +10,6 @@ from fastapi.testclient import TestClient
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
     acquisition_policy_path,
@@ -59,19 +57,7 @@ from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
 def _acquisition_policy(name: str) -> SourceAcquisitionPolicy:
     return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
-        inputs=(
-            InputAcquisitionRule(
-                input_name="status",
-                requirement="optional",
-                permitted_replayability=("exact",),
-                on_unavailable="omit_optional",
-                on_stale="omit_optional",
-                on_oversized="omit_optional",
-                on_conflict="refuse",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
     )
 
 
@@ -435,19 +421,7 @@ def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicy:
     """The served-Line policy again, this time declaring the input REQUIRED."""
 
     return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
-        inputs=(
-            InputAcquisitionRule(
-                input_name="status",
-                requirement="required",
-                permitted_replayability=("exact",),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="refuse",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
     )
 
 

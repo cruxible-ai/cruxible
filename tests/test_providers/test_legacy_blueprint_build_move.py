@@ -332,3 +332,15 @@ def test_instantiating_a_historical_blueprint_writes_pure_for_a_none_slot():
     )
     assert historical.definition.source.bindings["lookup"].effect_class == "none"
     assert render_blueprint(historical) == before
+
+
+@pytest.mark.parametrize("source", [False, True])
+def test_blueprint_build_move_preserves_a_named_acquisition_override(source):
+    old, _new, _bp, procedure, path, tree, move = legacy_blueprint_move(source)
+    procedure = procedure.model_copy(update={"acquisition_policy": "custom-ages"})
+    tree[path] = render_procedure(procedure)
+    moved = parse_procedure(
+        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+    )
+    assert moved.acquisition_policy == "custom-ages"
+    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in moved.pins)

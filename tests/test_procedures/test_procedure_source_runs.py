@@ -26,8 +26,6 @@ import pytest
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
     acquisition_policy_path,
@@ -381,29 +379,12 @@ def _procedure(  # noqa: PLR0913
 
 
 def _policy(
-    *,
-    input_name: str = SOURCE_ALIAS,
-    name: str = "advisory-reads",
-    requirement: str = "required",
-    on_failure: str = "refuse",
-    extra_inputs: tuple[str, ...] = (),
+    *, name: str = "default", overrides: dict[str, CanonicalDuration | None] | None = None
 ) -> SourceAcquisitionPolicy:
     return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
-        inputs=tuple(
-            InputAcquisitionRule(
-                input_name=declared,
-                requirement=cast(Any, requirement),
-                permitted_replayability=("attested_only", "exact"),
-                max_age=CanonicalDuration(microseconds=3_600_000_000),
-                on_unavailable=cast(Any, on_failure),
-                on_stale=cast(Any, on_failure),
-                on_oversized=cast(Any, on_failure),
-                on_conflict="preserve",
-            )
-            for declared in sorted({input_name, *extra_inputs}, key=lambda n: n.encode("utf-8"))
-        ),
-        coherence=IndependentCoherence(),
+        max_age=CanonicalDuration(microseconds=3_600_000_000),
+        overrides=overrides or {},
     )
 
 
@@ -1060,22 +1041,6 @@ def test_a_missing_accepted_policy_refuses_before_any_journal(tmp_path: Path) ->
     assert not journal_root.exists()
 
 
-def test_a_policy_that_declares_another_input_refuses_before_any_journal(
-    tmp_path: Path,
-) -> None:
-    instance, _owner, _procedure, root, _policy_artifact = _world(
-        tmp_path, policy=_policy(input_name="other-input")
-    )
-
-    state, invoker = _run(instance, root)
-
-    assert state.status == "admission_refused"
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "source_acquisition_policy_required"
-    assert state.terminal.details["matching_policy_digests"] == []
-    assert invoker.spawn_calls == 0
-
-
 class _DecliningInvoker(_WorkspaceInvoker):
     """The governed read happens; the Provider then declines the material."""
 
@@ -1099,43 +1064,6 @@ class _DecliningInvoker(_WorkspaceInvoker):
             ),
             verified_binding=bound.binding,
         )
-
-
-def test_a_planned_occurrence_that_fails_acquisition_applies_on_unavailable(
-    tmp_path: Path,
-) -> None:
-    """The declared failure behaviour fires from a real read, at execution time.
-
-    The planner never scores an absent occurrence, so this is where
-    `on_unavailable` belongs: the occurrence WAS planned, the read WAS attempted,
-    and the Provider declined it. An optional input whose rule says
-    `omit_optional` is then omitted rather than refused -- the same rule, applied
-    to a fact rather than to a plan.
-    """
-
-    instance, _owner, _procedure, root, _policy_artifact = _world(
-        tmp_path,
-        policy=_policy(requirement="optional", on_failure="omit_optional"),
-    )
-
-    state, invoker = _run(instance, root, invoker=_DecliningInvoker())
-
-    assert invoker.spawn_calls == 1
-    assert _acquisition_decisions(instance) == [(SOURCE_ALIAS, "omitted")]
-    # The Source node did not refuse: the omission carried past it, and the
-    # graph then failed where an omitted input actually shows -- at the
-    # projection that names it.
-    assert state.status == "node_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureNodeRefusal)
-    assert (state.terminal.node_id, state.terminal.code) == (
-        "shape",
-        "runtime_reference_unresolved",
-    )
-    # The read still happened and is still retained; only the material was
-    # declined, so the occurrence carries a receipt and no Capture.
-    observation = state.source_observations[0]
-    assert observation.source_read_receipt is not None
-    assert observation.capture_digest is None
 
 
 def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
@@ -1360,7 +1288,7 @@ def test_accepting_an_unrelated_policy_cannot_change_a_pinned_procedures_run(
 
     instance, owner, _procedure, root, policy_artifact = _world(tmp_path, pin_policy=True)
     twin = _twin_policy()
-    assert [rule.input_name for rule in twin.inputs] == [SOURCE_ALIAS]
+    assert twin.max_age == policy_artifact.max_age
     _accept_more(
         instance,
         owner,
@@ -1378,10 +1306,8 @@ def test_accepting_an_unrelated_policy_cannot_change_a_pinned_procedures_run(
     )
 
 
-def test_the_same_second_acceptance_refuses_an_unpinned_procedure(tmp_path: Path) -> None:
-    """The fallback's own behaviour, unchanged and still the reason to pin."""
-
-    instance, owner, _procedure, root, _policy_artifact = _world(tmp_path)
+def test_an_unrelated_policy_cannot_change_default_resolution(tmp_path: Path) -> None:
+    instance, owner, _procedure, root, default = _world(tmp_path)
     twin = _twin_policy()
     _accept_more(
         instance,
@@ -1389,37 +1315,13 @@ def test_the_same_second_acceptance_refuses_an_unpinned_procedure(tmp_path: Path
         {acquisition_policy_path(twin.identity.name): render_acquisition_policy(twin)},
         name="twin-policy",
     )
-
     state, invoker = _run(instance, root, evaluation_time=NOW + timedelta(minutes=5))
-
-    assert state.status == "admission_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "source_acquisition_policy_required"
-    assert len(state.terminal.details["matching_policy_digests"]) == 2
-    assert invoker.spawn_calls == 0
-
-
-def test_a_pinned_policy_declaring_other_inputs_refuses_at_admission(tmp_path: Path) -> None:
-    """A pin binds an exact artifact; it does not excuse it from governing these inputs."""
-
-    instance, _owner, _procedure, root, _policy_artifact = _world(
-        tmp_path,
-        policy=_policy(input_name="other-input"),
-        pin_policy=True,
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+    assert (
+        _admission(instance, state).acquisition_policy_digest
+        == acquisition_policy_digest(default).tagged
     )
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-
-    state, invoker = _run(instance, root)
-
-    assert state.status == "admission_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "source_acquisition_policy_required"
-    assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
-    assert state.terminal.details["declared_input_names"] == ["other-input"]
-    assert state.terminal.details["uncovered_input_names"] == [SOURCE_ALIAS]
-    assert state.terminal.repair is not None
-    assert invoker.spawn_calls == 0
-    assert not journal_root.exists()
 
 
 def test_a_pinned_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
@@ -1427,10 +1329,10 @@ def test_a_pinned_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -
 
     instance, _owner, _procedure, root, policy_artifact = _world(
         tmp_path,
-        policy=_policy(extra_inputs=("other-input",)),
+        policy=_policy(overrides={"other-input": CanonicalDuration(microseconds=1)}),
         pin_policy=True,
     )
-    assert [rule.input_name for rule in policy_artifact.inputs] == [SOURCE_ALIAS, "other-input"]
+    assert set(policy_artifact.overrides) == {"other-input"}
 
     state, invoker = _run(instance, root)
 
@@ -1447,36 +1349,14 @@ def test_a_pinned_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -
 def test_a_line_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
     """The Line lane applies the direct lane's law: a covering policy runs."""
 
-    instance, root, line = _line_world(tmp_path, policy=_policy(extra_inputs=("other-input",)))
+    instance, root, line = _line_world(
+        tmp_path, policy=_policy(overrides={"other-input": CanonicalDuration(microseconds=1)})
+    )
 
     state, invoker = _run_line(instance, root, line)
 
     assert state.status == "succeeded", state.terminal
     assert invoker.spawn_calls == 1
-
-
-def test_a_line_policy_without_a_rule_for_a_source_alias_refuses_at_admission(
-    tmp_path: Path,
-) -> None:
-    """The same typed refusal as the direct lane, naming the uncovered alias, before any read."""
-
-    instance, root, line = _line_world(tmp_path, policy=_policy(input_name="other-input"))
-
-    state, invoker = _run_line(instance, root, line)
-
-    assert state.status == "admission_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "source_acquisition_policy_required"
-    assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
-    assert state.terminal.details["declared_input_names"] == ["other-input"]
-    assert state.terminal.details["uncovered_input_names"] == [SOURCE_ALIAS]
-    assert state.terminal.details["pinned_policy_identity"] == (
-        "SourceAcquisitionPolicy:advisory-reads"
-    )
-    assert state.terminal.repair is not None
-    assert state.run_id is None
-    assert invoker.spawn_calls == 0
-    assert _admitted_run_ids(instance) == []
 
 
 def test_a_procedure_pinning_an_absent_policy_is_refused_at_acceptance(tmp_path: Path) -> None:
@@ -1548,7 +1428,7 @@ def test_the_policy_pin_leaves_the_definition_digest_byte_identical(tmp_path: Pa
     assert procedure_artifact_digest(pinned).tagged != procedure_artifact_digest(unpinned).tagged
 
 
-def test_the_authoring_path_lowers_the_named_policy_into_the_envelope_pin(
+def test_the_authoring_path_stores_a_policy_name_without_an_envelope_pin(
     tmp_path: Path,
 ) -> None:
     """How an author names it: the policy's semantic name, and lowering owns the digest."""
@@ -1580,12 +1460,17 @@ def test_the_authoring_path_lowers_the_named_policy_into_the_envelope_pin(
     intent = coordinator.list_pending(actor=actor).intents[0]
     lowered = compute_preflight(instance, intent=intent, actor=actor).lowered
     assert lowered is not None
-    assert lowered.resolved_authoring["artifact_digest"] == (
-        procedure_artifact_digest(procedure).tagged
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+
+    authored = parse_procedure(
+        lowered.proposed_tree[procedure_path(PROCEDURE_NAME)], path=procedure_path(PROCEDURE_NAME)
     )
-    assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
+    assert authored.definition_digest == procedure.definition_digest
+    assert authored.acquisition_policy == policy_artifact.identity.name
+    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in authored.pins)
     assert (
-        _policy_pin(policy_artifact).model_dump(mode="json") in (lowered.resolved_authoring["pins"])
+        _policy_pin(policy_artifact).model_dump(mode="json")
+        not in lowered.resolved_authoring["pins"]
     )
 
 
@@ -1846,7 +1731,7 @@ def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
     )
 
 
-def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
+def test_a_line_over_a_source_procedure_inherits_the_default_policy(
     tmp_path: Path,
 ) -> None:
     """Only an acquiring Procedure needs a policy pin; its Line is refused without one."""
@@ -1867,10 +1752,14 @@ def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
         ),
         canonical_timestamp="2026-08-21T12:02:00.000000Z",
     ).intent
-    with pytest.raises(lowering.AuthoringLoweringError) as refused:
-        lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    assert refused.value.code == "cruxible.authoring.line_acquisition_policy_required"
-    assert refused.value.offending_element == "acquisition_policy_name"
+    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+
+    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    line = parse_line_spec(
+        lowered.proposed_tree[line_spec_path("source-line")], path=line_spec_path("source-line")
+    )
+    assert line.acquisition_policy is None
+    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in line.pins)
 
 
 def test_a_direct_run_without_an_instant_evaluates_when_it_is_admitted(tmp_path: Path) -> None:

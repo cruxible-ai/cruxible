@@ -25,7 +25,12 @@ from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
+)
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicyV1,
+)
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
@@ -1577,7 +1582,20 @@ def _acquisition_policy_card(
     return GetSourceAcquisitionPolicyCard(
         policy=resolved.display,
         lifecycle=policy.lifecycle.state,
-        coherence=policy.coherence.kind,
+        max_age=(
+            None
+            if isinstance(policy, SourceAcquisitionPolicyV1) or policy.max_age is None
+            else _duration_text(policy.max_age.microseconds)
+        ),
+        overrides=(
+            {}
+            if isinstance(policy, SourceAcquisitionPolicyV1)
+            else {
+                alias: None if age is None else _duration_text(age.microseconds)
+                for alias, age in policy.overrides.items()
+            }
+        ),
+        coherence=policy.coherence.kind if isinstance(policy, SourceAcquisitionPolicyV1) else None,
         inputs=tuple(
             GetAcquisitionInput(
                 input=rule.input_name,
@@ -1585,7 +1603,9 @@ def _acquisition_policy_card(
                 max_age=None if rule.max_age is None else _duration_text(rule.max_age.microseconds),
             )
             for rule in policy.inputs
-        ),
+        )
+        if isinstance(policy, SourceAcquisitionPolicyV1)
+        else (),
         next=(
             _render_get(surface, resolved.display, "history"),
             _render_get(surface, resolved.display, "proof"),

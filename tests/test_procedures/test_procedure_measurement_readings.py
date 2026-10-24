@@ -17,8 +17,6 @@ import pytest
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
     acquisition_policy_path,
@@ -1333,19 +1331,7 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
     policy = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="measured-reads"),
-        inputs=(
-            InputAcquisitionRule(
-                input_name="query",
-                requirement="required",
-                permitted_replayability=("attested_only", "exact"),
-                max_age=_duration(3600),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="preserve",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+        max_age=_duration(3600),
     )
     policy_pin = ArtifactPin(
         role=ACQUISITION_POLICY_PIN_ROLE,

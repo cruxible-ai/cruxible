@@ -1,253 +1,174 @@
-from __future__ import annotations
+"""Light source policies and exact frozen v1 reads."""
 
-from datetime import timedelta
+import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionCandidate,
-    BoundedWindowCoherence,
-    DeclaredSnapshotGroupCoherence,
-    IndependentCoherence,
-    InputAcquisitionRule,
+    AcceptedSourceAcquisitionPolicy,
     SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyV1,
+    acquisition_policy_digest,
     acquisition_policy_path,
+    acquisition_rule,
     evaluate_acquisition_policy_law,
-    select_sources,
+    parse_acquisition_policy,
+    render_acquisition_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.capture_journal import (
-    InMemoryCaptureLandingJournal,
-    capture_landing_idempotency_key,
-)
-from cruxible_client.contracts.captures import (
-    CanonicalDuration,
-    build_cas_capture,
-    capture_component_pin,
-)
-from tests.core_support._pc_c_support import (
-    NOW,
-    body_store,
-    capture_contract,
-    digest,
-    provider,
-    provider_run,
-)
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.captures import CanonicalDuration
 
 
-def _rule(
-    name: str,
-    *,
-    requirement: str = "required",
-    unavailable: str = "refuse",
-) -> InputAcquisitionRule:
-    return InputAcquisitionRule(
-        input_name=name,
-        requirement=requirement,  # type: ignore[arg-type]
-        permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDuration(microseconds=60_000_000),
-        on_unavailable=unavailable,  # type: ignore[arg-type]
-        on_stale=unavailable,  # type: ignore[arg-type]
-        on_oversized=unavailable,  # type: ignore[arg-type]
-        on_conflict="preserve",
-        conservative_default=(False if requirement == "conservative_default" else None),
-    )
-
-
-def _policy(*rules: InputAcquisitionRule, bounded_seconds: int | None = None):
-    coherence = (
-        IndependentCoherence()
-        if bounded_seconds is None
-        else BoundedWindowCoherence(
-            max_cross_source_skew=CanonicalDuration(microseconds=bounded_seconds * 1_000_000)
-        )
-    )
-    return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="order-release"),
-        inputs=tuple(sorted(rules, key=lambda item: item.input_name)),
-        coherence=coherence,
-    )
-
-
-def _candidate(
-    tmp_path: Path,
-    *,
-    name: str,
-    observed_offset: int = 0,
-    current_replay_available: bool = True,
-) -> AcquisitionCandidate:
-    contract = capture_contract(name=f"test.{name}-v1")
-    provider_artifact = provider(contract, name=f"provider.{name}")
-    result = build_cas_capture(
-        store=body_store(tmp_path / name),
-        contract=contract,
-        source_body=(f'{{"input":"{name}"}}').encode(),
-        run_coordinate=provider_run(provider_artifact, run_id=f"run-{name}"),
-        run_receipt_digest=digest("receipt", name),
-        producer=provider_artifact.identity,
-        producer_binding_digest=digest("binding", name),
-        observed_at=NOW + timedelta(seconds=observed_offset),
-    )
-    journal = InMemoryCaptureLandingJournal()
-    key = capture_landing_idempotency_key(
-        instance_id="inst-acquisition",
-        envelope=result.envelope,
-    )
-    event = journal.append(
-        instance_id="inst-acquisition",
-        envelope=result.envelope,
-        landed_at=NOW + timedelta(seconds=observed_offset + 1),
-        idempotency_key=key,
-    )
-    return AcquisitionCandidate(
-        input_name=name,
-        envelope=result.envelope,
-        capture_digest=result.capture_digest,
-        landing_event=event,
-        current_replay_available=current_replay_available,
-        selection_budget=contract.selection_budget,
-        selected_bytes=16,
-        selected_rows=1,
-        selected_items=1,
-    )
-
-
-def test_required_optional_and_guarded_default_decisions_are_explicit(tmp_path: Path) -> None:
-    orders = _candidate(tmp_path, name="orders")
-    policy = _policy(
-        _rule("orders"),
-        _rule("risk", requirement="optional", unavailable="omit_optional"),
-        _rule(
-            "sanctions",
-            requirement="conservative_default",
-            unavailable="declared_conservative_default",
-        ),
-    )
-    without_guard = select_sources(
-        policy,
-        (orders,),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=2),
-    )
-    assert without_guard.verdict == "refused"
-    assert {item.input_name: item.disposition for item in without_guard.decisions} == {
-        "orders": "selected",
-        "risk": "omitted",
-        "sanctions": "refused",
-    }
-    guarded = select_sources(
-        policy,
-        (orders,),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=2),
-        default_authorizations=("sanctions",),
-    )
-    assert guarded.verdict == "selected"
-    assert {item.input_name: item.disposition for item in guarded.decisions}[
-        "sanctions"
-    ] == "defaulted"
-
-
-def test_bounded_window_and_current_replay_are_reverified(tmp_path: Path) -> None:
-    orders = _candidate(tmp_path, name="orders")
-    risk = _candidate(
-        tmp_path,
-        name="risk",
-        observed_offset=30,
-        current_replay_available=False,
-    )
-    policy = _policy(_rule("orders"), _rule("risk"), bounded_seconds=5)
-    replay_refusal = select_sources(
-        policy,
-        (orders, risk),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=31),
-    )
-    assert replay_refusal.verdict == "refused"
-    assert "cruxible.acquisition.replay_unavailable" in {
-        reason for item in replay_refusal.decisions for reason in item.reason_codes
-    }
-    replayable_risk = risk.model_copy(update={"current_replay_available": True})
-    skew_refusal = select_sources(
-        policy,
-        (orders, replayable_risk),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=31),
-    )
-    assert skew_refusal.verdict == "refused"
-    assert "cruxible.acquisition.cross_source_skew" in {
-        reason for item in skew_refusal.decisions for reason in item.reason_codes
-    }
-
-
-def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_path: Path) -> None:
-    grammar = capture_component_pin(
-        "coordinate-grammar", "playbill.database-snapshot-coordinate-v1"
-    )
-    proof = capture_component_pin("proof-adapter", "playbill.database-snapshot-proof-v1")
-    policy = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="snapshot-release"),
-        inputs=(_rule("orders"), _rule("risk")),
-        coherence=DeclaredSnapshotGroupCoherence(
-            coordinate_grammar_digest=grammar.artifact_digest,
-            proof_adapter_digest=proof.artifact_digest,
-        ),
-        pins=tuple(sorted((grammar, proof), key=lambda item: (item.role, item.target.qualified))),
-    )
-    accepted = evaluate_acquisition_policy_law(
-        policy,
-        path=acquisition_policy_path(policy.identity.name),
-        predecessor=None,
-    )
-    assert accepted.verdict == "accepted"
-
-    unregistered = policy.model_copy(
-        update={
-            "pins": tuple(
-                sorted(
-                    (
-                        grammar,
-                        ArtifactPin(
-                            role="proof-adapter",
-                            target=ArtifactIdentity(kind="Contract", name="unknown-proof-v1"),
-                            artifact_digest=proof.artifact_digest,
-                        ),
-                    ),
-                    key=lambda item: (item.role, item.target.qualified),
-                )
-            )
+def _policy(**kwargs: object) -> SourceAcquisitionPolicy:
+    return SourceAcquisitionPolicy.model_validate(
+        {
+            "identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name="default"),
+            **kwargs,
         }
     )
-    refused = evaluate_acquisition_policy_law(
-        unregistered,
-        path=acquisition_policy_path(unregistered.identity.name),
-        predecessor=None,
-    )
-    assert refused.diagnostics[0].code == (
-        "cruxible.acquisition_policy.snapshot_registry_unresolved"
-    )
 
-    orders = _candidate(tmp_path, name="orders").model_copy(
-        update={"snapshot_group": "snapshot-42", "snapshot_proof_digest": digest("proof", "o")}
-    )
-    risk = _candidate(tmp_path, name="risk").model_copy(
-        update={"snapshot_group": "snapshot-42", "snapshot_proof_digest": digest("proof", "r")}
-    )
-    selected = select_sources(
-        policy,
-        (orders, risk),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=2),
-    )
-    assert selected.verdict == "selected"
-    assert selected.coherence_proof_digest is not None
 
-    mismatched = select_sources(
-        policy,
-        (orders, risk.model_copy(update={"snapshot_group": "snapshot-43"})),
-        anchor=orders.landing_event,
-        evaluation_time=NOW + timedelta(seconds=2),
-    )
-    assert mismatched.verdict == "refused"
-    assert "cruxible.acquisition.snapshot_group_unproved" in {
-        reason for item in mismatched.decisions for reason in item.reason_codes
+def test_default_and_override_change_only_one_alias_age() -> None:
+    policy = _policy(max_age="P1D", overrides={"catalog": "PT1H", "archive": None})
+    for alias, age in [("record", 86_400_000_000), ("catalog", 3_600_000_000), ("archive", None)]:
+        rule = acquisition_rule(policy, alias)
+        assert rule is not None
+        assert rule.model_dump().keys() == {"input_name", "max_age"}
+        assert (rule.max_age.microseconds if rule.max_age else None) == age
+    wire = render_acquisition_policy(policy)
+    assert parse_acquisition_policy(wire, path=acquisition_policy_path("default")) == policy
+    assert set(json.loads(wire)) == {
+        "artifact_format",
+        "identity",
+        "max_age",
+        "overrides",
+        "lifecycle",
     }
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "inputs",
+        "coherence",
+        "pins",
+        "requirement",
+        "permitted_replayability",
+        "on_unavailable",
+        "conservative_default",
+    ],
+)
+def test_current_policy_rejects_removed_choices(field: str) -> None:
+    with pytest.raises(ValidationError):
+        _policy(**{field: None})
+
+
+@pytest.mark.parametrize("size", [10, 100])
+def test_resolving_one_alias_does_not_walk_overrides(size: int) -> None:
+    class LookupOnly(dict[str, CanonicalDuration | None]):
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            raise AssertionError("an event must not scan the policy")
+
+        def items(self):  # type: ignore[no-untyped-def]
+            raise AssertionError("an event must not scan the policy")
+
+    age = CanonicalDuration(microseconds=1)
+    policy = _policy(max_age="P1D").model_copy(
+        update={"overrides": LookupOnly({f"source{i}": age for i in range(size)})}
+    )
+    assert acquisition_rule(policy, "source0").max_age == age
+    assert acquisition_rule(policy, "other").max_age.microseconds == 86_400_000_000
+
+
+def test_frozen_v1_policy_bytes_digest_and_successor() -> None:
+    golden = json.loads(
+        (Path(__file__).parents[1] / "goldens/playbill/p2-b0-artifact-codec-v1.json").read_text()
+    )
+
+    # The codec corpus is authoritative historical bytes, never regenerated here.
+    def find(value: object) -> dict:
+        if isinstance(value, dict):
+            if (
+                isinstance(value.get("compact_wire"), str)
+                and "playbill-source-acquisition-policy-v1" in value["compact_wire"]
+            ):
+                return value
+            for child in value.values():
+                found = find(child)
+                if found:
+                    return found
+        if isinstance(value, list):
+            for child in value:
+                found = find(child)
+                if found:
+                    return found
+        return {}
+
+    entry = find(golden)
+    payload = json.loads(entry["compact_wire"])
+    old = SourceAcquisitionPolicyV1.model_validate(payload)
+    wire = render_acquisition_policy(old)
+    parsed = parse_acquisition_policy(wire, path=acquisition_policy_path(old.identity.name))
+    assert isinstance(parsed, SourceAcquisitionPolicyV1)
+    assert parsed.model_dump(mode="json") == payload
+    assert acquisition_policy_digest(parsed) == acquisition_policy_digest(old)
+    successor = SourceAcquisitionPolicy(
+        identity=old.identity,
+        max_age=old.inputs[0].max_age,
+        lifecycle=ArtifactLifecycle(predecessor_digest=acquisition_policy_digest(old).tagged),
+    )
+    assert (
+        evaluate_acquisition_policy_law(
+            successor,
+            path=acquisition_policy_path(old.identity.name),
+            predecessor=AcceptedSourceAcquisitionPolicy(
+                path=acquisition_policy_path(old.identity.name),
+                policy=old,
+                artifact_digest=acquisition_policy_digest(old).tagged,
+            ),
+        ).verdict
+        == "accepted"
+    )
+
+
+def test_new_v1_policy_proposal_refuses_with_a_typed_format_diagnostic(tmp_path: Path) -> None:
+    from cruxible_client.contracts.acquisition_policies import (
+        IndependentCoherence,
+        InputAcquisitionRule,
+    )
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support._support import initialize_local
+
+    instance, _ = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    legacy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="legacy"),
+        inputs=(
+            InputAcquisitionRule(
+                input_name="source",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="preserve",
+            ),
+        ),
+        coherence=IndependentCoherence(),
+    )
+    tree = instance.tree_at(base.git_oid)
+    tree[acquisition_policy_path("legacy")] = render_acquisition_policy(legacy)
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/legacy-policy", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-10-24T12:00:00.000000Z",
+    )
+    assert result.candidate is None
+    assert result.evaluation.diagnostics[0].code == "cruxible.proposal.member_format_invalid"
+    assert "author max_age and overrides" in result.evaluation.diagnostics[0].message
+    assert instance.accepted_coordinate() == base

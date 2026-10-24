@@ -2260,22 +2260,19 @@ the result is an ordinary Procedure that records its Blueprint and bindings.
 The Line lane serves `propose_change_set`, and `settle_change_set` under a live
 settle ProcedureMandate; see `cruxible line`.
 
-A Source run needs accepted state to authorize it: a live
-SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
-Provider closure it names. A Procedure names its policy on its own envelope,
-under the pin role `acquisition-policy` -- authored by naming the policy, the
-way a Line names its own -- and a pinned Procedure reads only that policy, so
-what anyone accepts afterwards cannot change what it does. A pinned policy
-must cover the Procedure: a rule for every Source alias, extra rules allowed,
-so one policy can serve several Procedures. A Procedure with no such pin falls
-back to accepted state: exactly one live SourceAcquisitionPolicy whose declared
-inputs are exactly the Procedure's Source aliases. Both lanes refuse
-`source_acquisition_policy_required` when the pinned policy (the Procedure's
-on a direct run, the Line's on a Line run) has no rule for a Source alias,
-naming it in `uncovered_input_names`; the direct lane also refuses it when no
-single policy applies to an unpinned Procedure. `source_acquisition_refused`
-is the refusal when the policy's own rule denies a declared input; none of these
-leaves run history behind. A read outside an
+A Source run needs a live SourceAcquisitionPolicy, the CaptureContract each
+Source node pins, and its Provider closure. Lines and Procedures use the
+instance's governed `SourceAcquisitionPolicy:default` unless they name another
+policy. New Procedure envelopes carry that name without pinning policy bytes;
+the admission records the resolved policy digest. Missing or retired defaults
+refuse `source_acquisition_policy_required` before a read or run journal.
+
+A v2 policy states `max_age` once (an ISO-8601 duration such as `P1D`, or no
+age bound), and `overrides` maps Source aliases to differing age bounds. Every
+Source is required: unavailable, stale and oversized inputs refuse. Stale
+refusals name the alias, observed age and repair. Replayability comes from the
+CaptureContract. Existing v1 policies and exact Procedure policy pins remain
+readable with their historical meaning; edits author v2. A read outside an
 authorized workspace root, over the CaptureContract's selection budget, or with
 no daemon-local reader refuses `workspace_file_read_refused` and names its path
 class.
@@ -2443,8 +2440,7 @@ A Line is authored like any other definition: a `line` input (alone or as a
 change-set member) names its Procedure and `parameters` -- the Procedure's
 input record, which lowering checks against the Procedure's input contract,
 refusing `cruxible.authoring.line_parameters_refused` with the expected
-fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
-when the Procedure has Source nodes. A Procedure with an `exhaust_tap` node
+fields. It may name an `acquisition_policy` to override the instance default. A Procedure with an `exhaust_tap` node
 cannot be a Line's (`cruxible.authoring.line_exhaust_tap_unsupported`): no run
 path admits one. `authoring example line` prints a Line over the `authoring
 example procedure` Procedure, and `authoring example acquisition-policy` a

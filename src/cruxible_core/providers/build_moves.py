@@ -308,6 +308,7 @@ def _reinstantiated(
         )
     except (BlueprintInstantiationError, ValueError) as exc:
         raise ProviderBuildMoveRefused(str(exc), reason="contract_changed") from exc
+    moved = moved.model_copy(update={"acquisition_policy": procedure.acquisition_policy})
     return render_procedure(moved)
 
 
