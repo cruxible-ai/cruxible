@@ -63,7 +63,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import core_assigned
 from tests.test_procedures import test_procedure_source_runs as fixtures
 
@@ -2210,12 +2210,8 @@ def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
 
     return ClaimType.model_validate(
@@ -2239,7 +2235,6 @@ def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
                                 target=capture_contract().identity,
                             ),
                         ),
-                        evidence_kinds=("database_record",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
