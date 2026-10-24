@@ -284,6 +284,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
     ActionTarget,
+    CaptureEventInput,
     CaptureLandingSchedule,
     LineTarget,
     Trigger,
@@ -293,6 +294,7 @@ from cruxible_client.contracts.triggers import (
     parse_trigger,
     render_trigger,
     schedule_capture_selector,
+    schedule_satisfies_input,
     trigger_digest,
     trigger_path,
     trigger_schedule_pins,
@@ -3534,10 +3536,12 @@ def _resolve_trigger_authoring_schedule(
 
     if isinstance(schedule, CaptureLandingByNameSchedule):
         name = schedule.capture_contract
+        logical_sources = schedule.logical_sources
     elif isinstance(schedule, WindowCloseAuthoringSchedule):
         if isinstance(schedule.window, FixedWindow):
             return WindowCloseSchedule(window=schedule.window)
         name = schedule.window.capture_contract
+        logical_sources = schedule.window.logical_sources
     else:
         return schedule
     capture_path = capture_contract_path(name)
@@ -3560,6 +3564,7 @@ def _resolve_trigger_authoring_schedule(
     event = CaptureEventSelector(
         capture_contract_identity=contract.identity,
         capture_contract_digest=capture_contract_digest(contract).tagged,
+        logical_sources=logical_sources,
     )
     if isinstance(schedule, CaptureLandingByNameSchedule):
         return CaptureLandingSchedule(event=event)
@@ -3636,14 +3641,18 @@ def _render_trigger_member(
     if selector is not None and payload.line_name:
         line_path = line_spec_path(payload.line_name)
         line = parse_line_spec(tree[line_path], path=line_path)
-        if line.trigger_event is not None and line.trigger_event != selector:
+        if line.trigger_event is not None and not schedule_satisfies_input(
+            schedule, CaptureEventInput(event=line.trigger_event)
+        ):
             _refuse(
                 "cruxible.trigger.event_not_accepted",
                 "schedule",
                 f"Resolved contract {selector.capture_contract_identity.qualified} digest "
                 f"{selector.capture_contract_digest} differs from Line Source contract "
                 f"{line.trigger_event.capture_contract_identity.qualified} digest "
-                f"{line.trigger_event.capture_contract_digest}.",
+                f"{line.trigger_event.capture_contract_digest}, or sources "
+                f"{selector.logical_sources!r} exceed the Line's accepted sources "
+                f"{line.trigger_event.logical_sources!r}.",
                 repair_kind="replace_schedule",
                 repair_description=(
                     "Name the live CaptureContract matching the Line Source, or re-author "

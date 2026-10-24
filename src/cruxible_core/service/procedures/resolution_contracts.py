@@ -44,6 +44,7 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_path,
 )
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
+from cruxible_core.exhaust.capture_selectors import landing_logical_source
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload_bytes
 from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -205,6 +206,17 @@ def read_capture_event(
         raise TriggerCaptureRefused(
             "trigger_capture_invalid", "trigger event does not match its CaptureContract selector"
         )
+    if selector.logical_sources:
+        source = landing_logical_source(bodies, payload, access=access)
+        if isinstance(source, UnavailablePayload):
+            raise TriggerCaptureRefused(
+                "trigger_capture_unavailable", "The exact trigger Capture envelope is unavailable."
+            )
+        if source not in selector.logical_sources:
+            raise TriggerCaptureRefused(
+                "trigger_capture_invalid",
+                "trigger event does not match its logical_sources selector",
+            )
     if record.recorded_at > now:
         raise TriggerCaptureRefused(
             "trigger_capture_not_yet_observed",

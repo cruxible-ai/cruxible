@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -74,8 +74,10 @@ from tests.test_server.test_playbill_line_run_refusals import (
 )
 
 SELECTOR = CaptureEventSelector(
-    capture_contract_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-    capture_contract_digest=capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
+    capture_contract_identity=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
+    capture_contract_digest=capture_contract_digest(
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    ).tagged,
 )
 
 
@@ -315,8 +317,8 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(
         {
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
             ),
             accepted.path: render_procedure(accepted.procedure),
             acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),

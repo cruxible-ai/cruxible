@@ -372,6 +372,7 @@ def service_check_line_trigger(
                     _stream(instance),
                     bodies=instance.body_store(),
                     contract_digest=selector.capture_contract_digest,
+                    logical_sources=selector.logical_sources,
                     since=request.since - delay if request.since else None,
                     until=until if include_future_windows else until - delay,
                     limit=remaining,

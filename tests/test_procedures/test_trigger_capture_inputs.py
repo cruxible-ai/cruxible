@@ -52,12 +52,13 @@ LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-ope
 TRIGGER = "trigger-source-trigger"
 
 
-def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwargs):
+def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources=(), **kwargs):
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
     contract = kwargs.get("contract", capture_contract())
     selector = CaptureEventSelector(
         capture_contract_identity=contract.identity,
         capture_contract_digest=capture_contract_digest(contract).tagged,
+        logical_sources=sources,
     )
     original = _served_line(procedure, policy)
     schedule = CaptureLandingSchedule(event=selector)
@@ -714,3 +715,18 @@ def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_eve
         "again",
     )
     assert second.candidate is not None, second.evaluation.diagnostics
+
+
+@pytest.mark.parametrize(
+    "source, allowed", [("commerce.production.orders", True), ("other.source", False)]
+)
+def test_trigger_capture_input_enforces_the_recorded_source(tmp_path, source, allowed):
+    instance, root, line = world(tmp_path, sources=(source,))
+    produced, _ = _run(instance, root)
+    consumed = run_line(instance, line, event_from(produced))
+    if allowed:
+        assert consumed.status == "succeeded", consumed
+        assert consumed.result == {"severity": "high"}
+    else:
+        assert consumed.status == "admission_refused", consumed
+        assert consumed.terminal.code == "trigger_capture_invalid"

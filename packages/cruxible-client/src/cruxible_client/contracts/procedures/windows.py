@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -23,11 +25,24 @@ class _WindowModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
+def _logical_sources(value: tuple[str, ...]) -> tuple[str, ...]:
+    if value != tuple(sorted(set(value))):
+        raise ValueError("logical_sources must be sorted and unique")
+    if any(not re.fullmatch(r"[a-z][a-z0-9_.-]{0,255}", item) for item in value):
+        raise ValueError("logical_sources must be canonical identifiers")
+    return value
+
+
+LogicalSources = Annotated[tuple[str, ...], AfterValidator(_logical_sources)]
+
+
 class CaptureEventSelector(_WindowModel):
     """Match a durable produced-capture event, never an accepted-head change."""
 
     capture_contract_identity: ArtifactIdentity
     capture_contract_digest: str
+    # Omit the unrestricted default so historical artifacts retain exact bytes/digests.
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _kind(self) -> CaptureEventSelector:

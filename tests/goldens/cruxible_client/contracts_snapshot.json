@@ -5119,6 +5119,14 @@
                 "default": "capture_event",
                 "title": "Kind",
                 "type": "string"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -5141,6 +5149,14 @@
                 "default": "capture_landing",
                 "title": "Kind",
                 "type": "string"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -10709,6 +10725,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -12047,6 +12071,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -16419,6 +16451,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -42092,6 +42132,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -102381,6 +102429,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -102949,6 +103005,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -103699,6 +103763,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -104303,6 +104375,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -109435,6 +109515,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [
@@ -110482,6 +110570,14 @@
               },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
               }
             },
             "required": [

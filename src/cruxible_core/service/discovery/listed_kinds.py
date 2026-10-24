@@ -162,6 +162,12 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
             default=False,
             detail=True,
         ),
+        ListedField(
+            QueryColumn(name="logical_sources", type="string", cardinality="many"),
+            filterable=False,
+            default=False,
+            detail=True,
+        ),
     ),
     "Line": (
         ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
@@ -557,16 +563,20 @@ def _matcher(checks: Sequence[_Check], contains: str | None) -> Callable[[Mappin
 def _trigger_detail(trigger: Trigger) -> dict[str, Any]:
     schedule = trigger.schedule
     contract: str | None = None
+    sources: tuple[str, ...] = ()
     if isinstance(schedule, CaptureLandingSchedule):
         contract = schedule.event.capture_contract_identity.qualified
+        sources = schedule.event.logical_sources
     elif isinstance(schedule, WindowCloseSchedule) and isinstance(
         schedule.window, CaptureEventWindow
     ):
         contract = schedule.window.event.capture_contract_identity.qualified
+        sources = schedule.window.event.logical_sources
     return {
         "cron": schedule.expression if isinstance(schedule, CronSchedule) else None,
         "cadence": schedule.interval_seconds if isinstance(schedule, CadenceSchedule) else None,
         "capture_contract": contract,
+        "logical_sources": list(sources),
     }
 
 

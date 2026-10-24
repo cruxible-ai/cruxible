@@ -63,7 +63,11 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector, FixedWindow
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelector,
+    FixedWindow,
+    LogicalSources,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -117,7 +121,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:9579a357e72e8385b237ac29206f4e26b9dcd8808526725252c95aed390b9121"
+    "sha256:aa991aa6470f189cd82f07de8fb2f950e57db197d51690f809292c404d376e85"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1046,6 +1050,7 @@ class CaptureLandingByNameSchedule(_StrictAuthoringModel):
 
     kind: Literal["capture_landing"] = "capture_landing"
     capture_contract: str
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("capture_contract")
     @classmethod
@@ -1059,6 +1064,7 @@ class CaptureEventByNameWindow(_StrictAuthoringModel):
 
     kind: Literal["capture_event"] = "capture_event"
     capture_contract: str
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
     @field_validator("capture_contract")

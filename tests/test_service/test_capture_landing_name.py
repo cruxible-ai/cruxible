@@ -11,7 +11,7 @@ from cruxible_client.contracts.authoring.models import (
     TriggerAuthoringPayload,
 )
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT as CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT as CONTRACT,
 )
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
@@ -31,10 +31,12 @@ from tests.test_procedures.test_procedure_run_surface import READ_TIME
 
 
 @pytest.mark.parametrize("window_close", [False, True])
+@pytest.mark.parametrize("sources", [(), ("sarif.log",)])
 def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(
     tmp_path,
     monkeypatch,
     window_close,
+    sources,
 ):
     instance, line, _procedure = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), triggers=()
@@ -60,6 +62,8 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(
         if window_close
         else {"kind": "capture_landing", "capture_contract": CONTRACT.identity.name}
     )
+    if sources:
+        (schedule["window"] if window_close else schedule)["logical_sources"] = list(sources)
     result = coordinator.compile_input(
         actor=OWNER,
         input=TriggerInput.model_validate(
@@ -75,7 +79,9 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(
     assert result.verdict == "passed", result.frontier
     assert calls and all(item.model_dump(mode="json") == schedule for item in calls)
     assert result.resolved_trigger_contracts[0].trigger_name == "on-feed"
-    assert result.resolved_trigger_contracts[0].event == SELECTOR
+    assert result.resolved_trigger_contracts[0].event == SELECTOR.model_copy(
+        update={"logical_sources": sources}
+    )
     from cruxible_client.contracts import AuthoringPreflightResult
 
     served = AuthoringPreflightResult.model_validate(result.model_dump(mode="json"))
@@ -108,7 +114,9 @@ def test_contract_succession_requires_closure_and_cannot_retarget_a_stored_trigg
     successor = contract.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(predecessor_digest=old_digest),
-            "evidence_kinds": ("revised-evidence", "self_asserted"),
+            "selection_budget": contract.selection_budget.model_copy(
+                update={"max_bytes": contract.selection_budget.max_bytes * 2}
+            ),
         }
     )
     new_digest = capture_contract_digest(successor).tagged
