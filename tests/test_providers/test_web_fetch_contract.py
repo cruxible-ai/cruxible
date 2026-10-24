@@ -1,8 +1,8 @@
 """Core owns the web.fetch contract: one frozen registration per definition.
 
 Any package implementing web.fetch installs onto core's registration of the
-definition it ships. The registrations are checked-in bytes; the bucket
-vocabulary and proofs they still carry are inert, and nothing classifies runs.
+definition it ships. New registrations store typed v4 definitions by name and
+version. Historical registration bytes, including inert bucket data, stay exact.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ REGISTRATION_ARTIFACT_DIGESTS = {
 
 
 def test_core_owns_one_registration_per_web_fetch_definition() -> None:
-    """v2 and v3 share the (inert) vocabulary, the four proofs and the classifier id."""
+    """V4 wraps both definition revisions; legacy registrations keep their exact bytes."""
 
     v2 = web_fetch_interface_registration(WEB_FETCH_INTERFACE_V2_DIGEST)
     v3 = web_fetch_interface_registration()
@@ -61,9 +61,23 @@ def test_core_owns_one_registration_per_web_fetch_definition() -> None:
     assert v3.interface_digest == provider_external_interface_definition_digest(
         canonical_bytes(WEB_FETCH_INTERFACE_DEFINITION).hex(), domain="cruxible.interface.stub.v1"
     )
-    assert v2.model_dump(
-        exclude={"identity", "interface_bytes_hex", "interface_digest"}
-    ) == v3.model_dump(exclude={"identity", "interface_bytes_hex", "interface_digest"})
+    assert v2.model_dump(exclude={"identity", "interface"}) == v3.model_dump(
+        exclude={"identity", "interface"}
+    )
+
+    def metadata(interface):
+        return {
+            key: value
+            for key, value in interface.model_dump(mode="json").items()
+            if key not in {"contracts", "version"}
+        }
+
+    assert metadata(v2.interface) == metadata(v3.interface)
+    assert (v2.identity.name, v3.identity.name) == ("web.fetch/v2", "web.fetch/v3")
+    assert (v2.artifact_format, v3.artifact_format) == (
+        "cruxible-provider-interface-v4",
+        "cruxible-provider-interface-v4",
+    )
     assert not hasattr(v3, "classifier_code")
     assert not hasattr(v3, "conformance_proofs")
     for name, registration in (("v2", v2), ("v3", v3)):
