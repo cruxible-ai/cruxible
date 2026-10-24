@@ -130,7 +130,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 
@@ -1288,7 +1288,7 @@ def test_accepting_an_unrelated_policy_cannot_change_a_pinned_procedures_run(
 
     instance, owner, _procedure, root, policy_artifact = _world(tmp_path, pin_policy=True)
     twin = _twin_policy()
-    assert [rule.input_name for rule in twin.inputs] == [SOURCE_ALIAS]
+    assert twin.max_age == policy_artifact.max_age
     _accept_more(
         instance,
         owner,

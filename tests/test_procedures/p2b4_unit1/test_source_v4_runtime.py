@@ -169,8 +169,7 @@ def _source_fixture(
     AcceptedProcedure,
     PreparedProcedureRunV9,
     object,
-    SourceAcquisitionPolicy,
-    SourceAcquisitionPolicyV1,
+    SourceAcquisitionPolicy | SourceAcquisitionPolicyV1,
     object,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.

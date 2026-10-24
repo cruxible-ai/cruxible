@@ -22,8 +22,8 @@ from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._p2b1_support import accepted_interface
-from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import client_material, initialize_local
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import _claim_type
@@ -39,7 +39,29 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     contract = capture_contract()
     provider_artifact = capture_provider_build(contract)
     policy = _policy()
-    claim_type = _claim_type()
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
+    )
+
+    claim_type = _claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_requirement": "captured",
+            "revision_evidence": "replace",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="source",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(contract.identity.name,),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            ),
+        }
+    )
     candidate_tree = {
         **instance.tree_at(base.git_oid),
         capture_contract_path(contract.identity.name): render_capture_contract(contract),

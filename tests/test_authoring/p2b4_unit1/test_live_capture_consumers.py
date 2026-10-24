@@ -123,6 +123,23 @@ def _acquisition_registration() -> ProviderInterfaceRegistrationV1:
 
 @pytest.fixture
 def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This world intentionally exercises the frozen all-source v1 contract,
+    # including historical v1 citation and omission attacks. Keep its actual
+    # accepted compiler and coordinator key-Capture builder on revision 35.
+    from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.instance.current_compiler_coordinate", lambda: CLAIM_REBIND_COMPILER
+    )
+    monkeypatch.setattr(
+        "cruxible_core.authoring.lowering.COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.authoring.lowering.builtin_contract_for_write",
+        lambda current, previous: previous if previous is not None else current,
+    )
     monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
 
     # All producers and prepared runs pin the same current package build.
