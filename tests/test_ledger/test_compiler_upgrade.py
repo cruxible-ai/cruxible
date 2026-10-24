@@ -562,27 +562,27 @@ def test_an_upgrade_with_no_target_targets_the_running_compiler_and_says_it_is_o
     """The bare upgrade pins the running compiler's full digest, named by its revision."""
 
     from cruxible_client.contracts.compiler_upgrade import parse_compiler_upgrade
-    from cruxible_core.compiler.compiler import current_compiler_coordinate
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, current_compiler_coordinate
     from cruxible_core.service.proposals.review import (
         render_playbill_approval_summary,
         service_review_playbill_proposal,
     )
     from cruxible_core.storage.cas import BodyAccessContext
 
-    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
     running = current_compiler_coordinate()
     inspection = service_propose_compiler_upgrade(instance, actor_id="owner", timestamp=TIMESTAMP)
     proposal = inspection.proposal
     assert proposal.candidate is not None, proposal.evaluation.diagnostics
-    assert proposal.admission.target_ref == "refs/proposals/owner/upgrade-to-claim-rebind-v1"
+    assert proposal.admission.target_ref == "refs/proposals/owner/upgrade-to-light-artifacts-v1"
     tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
     assert parse_compiler_upgrade(tree[COMPILER_UPGRADE_PATH]).target == running
     notice = inspection.compiler_upgrade
     assert notice is not None and notice.one_way is True
-    assert notice.source_compiler_digest == TRIGGER_CAPTURE_COMPILER.rule_digest
-    assert notice.source_revision == "line-trigger-capture-input-v1"
+    assert notice.source_compiler_digest == CLAIM_REBIND_COMPILER.rule_digest
+    assert notice.source_revision == "claim-rebind-v1"
     assert notice.target_compiler_digest == running.rule_digest
-    assert notice.target_revision == "claim-rebind-v1"
+    assert notice.target_revision == "light-artifacts-v1"
     assert "can no longer serve this instance" in notice.message
 
     review = service_review_playbill_proposal(

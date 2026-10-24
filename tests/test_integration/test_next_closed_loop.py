@@ -2560,13 +2560,13 @@ def test_a_compiler_upgrade_offers_signing_before_activation(
     """
 
     from cruxible_core.compiler.compiler import (
-        RESOURCE_BUDGET_COMPILER,
+        CLAIM_REBIND_COMPILER,
         current_compiler_coordinate,
     )
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import old_instance, propose
 
-    instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, RESOURCE_BUDGET_COMPILER)
+    instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
     proposal = propose(instance, current_compiler_coordinate())
     assert proposal.candidate is not None
     assert proposal.candidate.approval_requirements == ()
