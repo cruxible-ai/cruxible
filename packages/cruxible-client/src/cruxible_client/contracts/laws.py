@@ -873,6 +873,13 @@ PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider-interface",
     artifact_tag="cruxible-provider-interface-v3",
 )
+PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.provider-interface.v4", "cruxible-provider-interface-v4", semantic_revision=1
+    ),
+    artifact_kind="provider-interface",
+    artifact_tag="cruxible-provider-interface-v4",
+)
 PROVIDER_PACKAGE_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=3
@@ -897,6 +904,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         PROVIDER_BUILD_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
+        PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW,
         CLAIM_REBIND_UPGRADE_LAW,
         PROVIDER_BUILDS_UPGRADE_LAW,
         PROVIDER_PACKAGE_UPGRADE_LAW,

@@ -39365,7 +39365,7 @@
               },
               "effect": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
                   "external_mutation"
                 ],
@@ -47416,8 +47416,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -47427,8 +47431,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -47507,8 +47515,6 @@
               "provider",
               "interface",
               "interface_digest",
-              "contract_in",
-              "contract_out",
               "input",
               "as"
             ],
@@ -51004,8 +51010,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -51015,8 +51025,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -51159,8 +51173,6 @@
             "required": [
               "node_id",
               "operation",
-              "contract_in",
-              "contract_out",
               "spec",
               "as"
             ],
@@ -51597,9 +51609,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -51686,9 +51699,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -56608,9 +56622,10 @@
               },
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -63931,9 +63946,10 @@
               },
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -66509,9 +66525,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -69375,9 +69392,10 @@
               },
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -69486,9 +69504,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -80718,7 +80737,7 @@
           "required": true,
           "schema": {
             "enum": [
-              "none",
+              "pure",
               "external_read",
               "external_mutation"
             ],
@@ -81068,7 +81087,7 @@
           },
           "effect_class": {
             "enum": [
-              "none",
+              "pure",
               "external_read",
               "external_mutation"
             ],
@@ -84627,8 +84646,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -84638,8 +84661,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -84718,8 +84745,6 @@
               "provider",
               "interface",
               "interface_digest",
-              "contract_in",
-              "contract_out",
               "input",
               "as"
             ],
@@ -90213,8 +90238,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -90224,8 +90253,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -90368,8 +90401,6 @@
             "required": [
               "node_id",
               "operation",
-              "contract_in",
-              "contract_out",
               "spec",
               "as"
             ],
@@ -90806,9 +90837,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -90895,9 +90927,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -94257,8 +94290,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -94268,8 +94305,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -94348,8 +94389,6 @@
               "provider",
               "interface",
               "interface_digest",
-              "contract_in",
-              "contract_out",
               "input",
               "as"
             ],
@@ -100156,8 +100195,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract In"
               },
               "contract_out": {
@@ -100167,8 +100210,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
                   }
                 ],
+                "default": null,
                 "title": "Contract Out"
               },
               "effect_policy": {
@@ -100311,8 +100358,6 @@
             "required": [
               "node_id",
               "operation",
-              "contract_in",
-              "contract_out",
               "spec",
               "as"
             ],
@@ -100799,9 +100844,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"
@@ -100888,9 +100934,10 @@
             "properties": {
               "effect_class": {
                 "enum": [
-                  "none",
+                  "pure",
                   "external_read",
-                  "external_mutation"
+                  "external_mutation",
+                  "none"
                 ],
                 "title": "Effect Class",
                 "type": "string"

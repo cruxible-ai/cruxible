@@ -57,6 +57,12 @@ _ACCESS = BodyAccessContext(principal_id="test", can_read_body=True)
 
 def _concrete() -> ProcedureArtifact:
     definition, provider_pin, interface_pin = _definition()
+    # Fresh Blueprint/instance authoring takes Call I/O from the interface.
+    # The same contracts remain owned here as the Procedure's root I/O.
+    (call,) = definition.nodes
+    definition = definition.model_copy(
+        update={"nodes": (call.model_copy(update={"contract_in": None, "contract_out": None}),)}
+    )
     return procedure_artifact(
         definition, extra_pins=(provider_pin, interface_pin), activation_policy="drain"
     )

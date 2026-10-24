@@ -2149,7 +2149,7 @@ class ProviderInterfaceEntry(BaseModel):
     artifact_kind: Literal["ProviderInterface"]
     pin_role: Literal["provider-interface"]
     interface_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation"]
     interface_basis: Literal["accepted_registration"]
     providers: list[ProviderInterfaceImplementation] = Field(default_factory=list)
     operation_contract: _ProviderOperationContractV1 | None = None

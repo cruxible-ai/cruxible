@@ -158,6 +158,7 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
+    provider_effect_class,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
@@ -1462,7 +1463,7 @@ def _plan_external_occurrences(
             "interface_id": registration.interface_id,
             "interface_digest": registration.interface_digest,
             "implementation_digest": implementation_digest,
-            "effect_class": registration.effect_class,
+            "effect_class": provider_effect_class(registration),
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlan(),
             "budget_translation": translation,
@@ -1482,15 +1483,7 @@ def _plan_external_occurrences(
                 }
             )
         else:
-            contract_in = _exact_pin(node.contract_in)
-            contract_out = _exact_pin(node.contract_out)
-            occurrence = ProviderExternalOccurrencePlan.model_validate(
-                {
-                    **common,
-                    "contract_input_digest": contract_in.artifact_digest,
-                    "contract_output_digest": contract_out.artifact_digest,
-                }
-            )
+            occurrence = ProviderExternalOccurrencePlan.model_validate(common)
         occurrences.append(occurrence)
     return tuple(sorted(occurrences, key=lambda item: item.occurrence_path.encode("utf-8")))
 

@@ -10,7 +10,6 @@ from cruxible_client.contracts.procedures.blueprints import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    provider_interface_contract,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
@@ -23,7 +22,7 @@ from cruxible_client.contracts.providers import (
 )
 from cruxible_core.providers.build_moves import _reinstantiated, build_move
 from tests.core_support._p2b1_support import accepted_interface, accepted_provider
-from tests.support.provider_builds import as_build
+from tests.support.provider_builds import as_build, legacy_interface_contract
 from tests.test_integration.test_graph_v4_provider_closure import contracted_demo as contracted_demo
 from tests.test_procedures.test_blueprints import _blueprint
 
@@ -31,7 +30,7 @@ from tests.test_procedures.test_blueprints import _blueprint
 def legacy_blueprint_move(source=False):
     old = accepted_provider()
     registration = accepted_interface().registration
-    contract = provider_interface_contract(
+    contract = legacy_interface_contract(
         interface_id=registration.interface_id,
         interface_bytes_hex=registration.interface_bytes_hex,
         interface_digest_domain=registration.interface_digest_domain,
@@ -88,7 +87,7 @@ def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source, t
     from cruxible_core.providers.provider_local_runtime import LocalProviderExecutionDriver
 
     contract = new.pins[0]
-    registration = provider_interface_contract(
+    registration = legacy_interface_contract(
         interface_id=accepted_interface().registration.interface_id,
         interface_bytes_hex=accepted_interface().registration.interface_bytes_hex,
         interface_digest_domain=accepted_interface().registration.interface_digest_domain,
@@ -298,3 +297,38 @@ def test_unmoved_blueprint_slot_keeps_its_exact_registration():
     assert occurrence.provider.target == held.provider.identity
     assert occurrence.interface == proc.definition.nodes[1].interface
     assert moved.definition.nodes[0].interface != occurrence.interface
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_instantiating_a_historical_blueprint_writes_pure_for_a_none_slot():
+    from cruxible_client.contracts.procedures.blueprints import parse_blueprint
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+
+    blueprint = _source_blueprint()
+    source = blueprint.definition.source
+    slot = source.bindings["lookup"].model_copy(update={"effect_class": "none"})
+    source = source.model_copy(update={"bindings": {"lookup": slot}})
+    definition = blueprint.definition.model_copy(update={"source": source})
+    blueprint = blueprint.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    before = render_blueprint(blueprint)
+    historical = parse_blueprint(before, path=blueprint_path(blueprint.identity.name))
+    procedure = instantiate_blueprint(
+        historical,
+        blueprint_artifact_digest=blueprint_digest(historical).tagged,
+        name="historical-pure",
+        providers={"lookup": accepted_provider()},
+    )
+    assert procedure.definition.source.bindings["lookup"].effect_class == "pure"
+    assert (
+        procedure.model_dump(mode="json")["definition"]["source"]["bindings"]["lookup"][
+            "effect_class"
+        ]
+        == "pure"
+    )
+    assert historical.definition.source.bindings["lookup"].effect_class == "none"
+    assert render_blueprint(historical) == before

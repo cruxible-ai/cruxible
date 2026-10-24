@@ -320,8 +320,12 @@ class CallNode(_StrictProcedureModel):
     interface: ArtifactPin
     interface_digest: str
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
+    contract_in: ProcedurePinBinding | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    contract_out: ProcedurePinBinding | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     effect_policy: ProcedurePinBinding | None = None
     input: object
     as_: str = Field(alias="as")
@@ -504,8 +508,12 @@ class RepeatBodyNode(_StrictProcedureModel):
     interface: ArtifactPin | None = None
     interface_digest: str | None = None
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
+    contract_in: ProcedurePinBinding | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    contract_out: ProcedurePinBinding | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     effect_policy: ProcedurePinBinding | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -533,6 +541,8 @@ class RepeatBodyNode(_StrictProcedureModel):
                 raise ValueError("repeat provider operations cannot declare transform_kind")
             _validate_explicit_provider_binding(self.provider, self.implementation_digest)
             return self
+        if self.contract_in is None or self.contract_out is None:
+            raise ValueError("repeat transforms require input and output contracts")
         if any(
             value is not None
             for value in (

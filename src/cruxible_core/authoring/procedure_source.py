@@ -47,12 +47,14 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceQuerySelection,
     SourceSlotSelection,
 )
-from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
     PROVIDER_INTERFACE_REGISTRATION_TYPES,
     ProviderInterfaceContract,
+    ProviderInterfaceContractV3,
     ProviderInterfaceRegistrationV1,
+    provider_effect_class,
     provider_interface_digest,
+    provider_operation_contract,
 )
 from cruxible_client.contracts.providers import ProviderV2, provider_digest
 from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
@@ -185,10 +187,14 @@ def resolve_source(
         artifact: T = accepted(kind, name, (type_,))
         return artifact
 
-    def require_interface(name: str) -> ProviderInterfaceRegistrationV1 | ProviderInterfaceContract:
-        registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract = accepted(
-            "ProviderInterface", name, PROVIDER_INTERFACE_REGISTRATION_TYPES
-        )
+    def require_interface(
+        name: str,
+    ) -> ProviderInterfaceRegistrationV1 | ProviderInterfaceContractV3 | ProviderInterfaceContract:
+        registration: (
+            ProviderInterfaceRegistrationV1
+            | ProviderInterfaceContractV3
+            | ProviderInterfaceContract
+        ) = accepted("ProviderInterface", name, PROVIDER_INTERFACE_REGISTRATION_TYPES)
         return registration
 
     child_shapes: dict[str, tuple[bool, int]] = {}
@@ -252,8 +258,8 @@ def resolve_source(
                 interface_version=provider_interface_digest(interface).tagged,
                 interface_digest=interface.interface_digest,
                 implementation_digest=implementations[0].implementation_digest,
-                effect_class=interface.effect_class,
-                operation=read_provider_operation_contract(interface.interface_bytes_hex),
+                effect_class=provider_effect_class(interface),
+                operation=provider_operation_contract(interface),
             )
         elif isinstance(selected, SourceSlotSelection):
             interface = require_interface(selected.interface)
@@ -261,8 +267,8 @@ def resolve_source(
                 interface=interface.identity.name,
                 interface_version=provider_interface_digest(interface).tagged,
                 interface_digest=interface.interface_digest,
-                effect_class=interface.effect_class,
-                operation=read_provider_operation_contract(interface.interface_bytes_hex),
+                effect_class=provider_effect_class(interface),
+                operation=provider_operation_contract(interface),
             )
         elif isinstance(selected, SourceQuerySelection):
             query = require("QueryDefinition", selected.name, QueryDefinition)

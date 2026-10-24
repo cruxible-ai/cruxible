@@ -3,8 +3,8 @@
 Core owns the ``web.fetch`` contract: each definition revision it knows (v2, and
 v3 as ``cruxible-provider-web`` 0.2.x ships it) is a contract, and its
 registration is the contract alone (``ProviderInterfaceContract``), named by
-its contract key. Every package implementing one of these definitions binds that
-same registration, so any implementation of the contract binds the same
+its interface id and definition version. Every package implementing one of these
+definitions binds that same registration, so any implementation binds the same
 ProviderInterface artifact and a Blueprint slot typed by it takes any of them.
 
 This is not an installed Provider or a grant. A deployment still accepts its own
@@ -23,6 +23,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import WEB_FETCH_V3_INTERFACE_DIGEST
 from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceContract,
+    ProviderInterfaceDefinition,
     provider_external_interface_definition_digest,
     provider_interface_contract,
 )
@@ -107,9 +108,5 @@ def web_fetch_interface_registration(
 def _registration(interface_digest: str) -> ProviderInterfaceContract:
     definition = _DEFINITIONS[interface_digest]
     return provider_interface_contract(
-        interface_id="web.fetch",
-        interface_bytes_hex=canonical_bytes(dict(definition)).hex(),
-        interface_digest_domain=_INTERFACE_DOMAIN,
-        interface_digest=interface_digest,
-        effect_class="external_read",
+        interface=ProviderInterfaceDefinition.model_validate(dict(definition))
     )

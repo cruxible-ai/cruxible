@@ -7,6 +7,7 @@ contract; providers return material and Core constructs the Capture.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -61,8 +62,15 @@ def operation_schema_shape(schema: ContractSchema) -> dict[str, object]:
 
 
 def validate_provider_value(
-    contract: ProviderOperationContract, payload: object, *, direction: Literal["input", "output"]
+    contract: ProviderOperationContract,
+    payload: object,
+    *,
+    direction: Literal["input", "output"],
+    normalize_call: bool = False,
+    max_items: int | None = None,
+    observe_items: Callable[[int, str], None] | None = None,
 ) -> object:
+    """Validate exact Source bytes, or normalize a Call using its interface schema."""
     # Lazy imports keep the interface/Procedure/Capture contract graph acyclic.
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.captures import ProviderResultToExternalCapture
@@ -70,6 +78,8 @@ def validate_provider_value(
 
     schema = contract.input if direction == "input" else contract.output
     if isinstance(schema, str):
+        if normalize_call:
+            raise ValueError("Call requires an operation output schema")
         parsed = ProviderResultToExternalCapture.model_validate(payload)
         if canonical_bytes(parsed.model_dump(mode="json")) != canonical_bytes(payload):
             raise ValueError("Acquisition output must use the canonical Capture result encoding")
@@ -84,8 +94,30 @@ def validate_provider_value(
                 raise ValueError("Typed acquisition material must use canonical JSON")
             Record(contract.material, material)
     else:
-        validate_contract_schema(schema, payload)
-    # Interface checks cannot rewrite the exact request or returned bytes: those
-    # are already bound by derived-request and invocation commitments. Defaults
-    # remain the adapter's responsibility (or the caller's carried Contract).
+        if not normalize_call:
+            # Source validation preserves the exact request/result commitments.
+            validate_contract_schema(schema, payload)
+            return payload
+        from cruxible_client.contracts.procedures.contracts import (
+            validate_contract_schema_with_budget,
+        )
+        from cruxible_client.contracts.records import (
+            record_normalization_schema,
+            validate_record_constraints,
+        )
+
+        normalization = record_normalization_schema(schema, payload)
+        if max_items is None:
+            normalized = validate_contract_schema(normalization, payload)
+        else:
+            result = validate_contract_schema_with_budget(
+                normalization, payload, max_items=max_items
+            )
+            normalized = result.value
+            if observe_items is not None:
+                for observation in result.list_observations:
+                    observe_items(observation.observed, observation.field_path)
+        assert isinstance(normalized, dict)
+        validate_record_constraints(schema, normalized)
+        return normalized
     return payload

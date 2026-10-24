@@ -593,6 +593,26 @@ def refuse_unserved_procedure_nodes(
                 "supports it. A Line binding cannot enable it.",
             )
 
+        if not isinstance(node, dict):
+            continue
+        occurrences = [(node, f"{field_path}.nodes[{index}]")]
+        if node.get("kind") == "repeat":
+            occurrences.extend(
+                (body, f"{field_path}.nodes[{index}].body[{body_index}]")
+                for body_index, body in enumerate(node.get("body", ()))
+                if isinstance(body, dict)
+            )
+        for occurrence, location in occurrences:
+            if occurrence.get("kind", occurrence.get("operation")) != "call":
+                continue
+            if "contract_in" in occurrence or "contract_out" in occurrence:
+                raise AuthoringInputError(
+                    "cruxible.authoring.call_contract_from_interface",
+                    location,
+                    "Call input and output contracts come from its ProviderInterface.",
+                    "Remove the Call's contract_in/contract_out and any unused owned Contracts.",
+                )
+
 
 def _subject_address(shorthand: str | SubjectKeyReference, *, field_path: str) -> SemanticAddress:
     if isinstance(shorthand, SubjectKeyReference):

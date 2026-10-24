@@ -3561,8 +3561,11 @@ Sequence Contracts must be owner-carried Contract definitions; accepted referenc
 are refused by this frontend. Previous()
 denotes the preceding value-producing output, or invocation input when first.
 Output(alias, path) selects a particular earlier output. Source.request and
-Call.input default to Previous(); Project.fields is explicit. Whole-output Call
-auto-wiring compares carried schemas; field mappings/adapters are explicit.
+Call.input default to Previous(); Project.fields is explicit. Calls use the
+selected interface's input and output schemas. Whole-output Call auto-wiring
+compares the upstream schema with the discovered interface input schema; field
+mappings/adapters are explicit. Owned Contracts cover Procedure input/output
+and Project/Transform outputs.
 
 Preview is structural only. Its ready_for_prepare does not verify runtime
 values, installed deployment availability, effective authority, or all accepted
@@ -3684,8 +3687,6 @@ Import: `cruxible_client.authoring.procedures.Call`. [Source](src/cruxible_clien
 | `name` | `str` | `Required` |
 | `next` | `str \| None` | `None` |
 | `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `contract_in` | `Contract` | `Required` |
-| `contract_out` | `Contract` | `Required` |
 | `input` | `object` | `Previous()` |
 | `provider` | `ProviderBinding \| None` | `None` |
 | `effect_policy` | `str \| None` | `None` |

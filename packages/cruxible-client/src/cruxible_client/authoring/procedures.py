@@ -68,7 +68,10 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceSpan,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+from cruxible_client.contracts.provider_contracts import (
+    ProviderOperationContract,
+    validate_provider_value,
+)
 from cruxible_client.contracts.records import RecordConstructor
 from cruxible_client.contracts.subject_kinds import SubjectKeyReference
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
@@ -156,7 +159,7 @@ class ProviderBinding(BaseModel):
     interface: str
     interface_digest: str
     implementation_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"] | None = None
+    effect_class: Literal["pure", "external_read", "external_mutation"] | None = None
     operation_contract: ProviderOperationContract | None = None
     coordinate: AcceptedCoordinate | None = None
 
@@ -242,8 +245,6 @@ class Source(Step):
 
 @dataclass(frozen=True, kw_only=True)
 class Call(Step):
-    contract_in: Contract
-    contract_out: Contract
     input: object = Previous()
     provider: ProviderBinding | None = None
     effect_policy: str | None = None
@@ -511,7 +512,7 @@ class Sequence:
         errors: list[CompositionDiagnostic] = []
         nodes: list[dict[str, Any]] = []
         previous: str | None = None
-        output_contracts: dict[str, Contract | None] = {}
+        output_contracts: dict[str, ContractSchema | None] = {}
 
         def error(step: str | None, code: str, message: str) -> None:
             errors.append(CompositionDiagnostic(step=step, code=code, message=message))
@@ -595,27 +596,36 @@ class Sequence:
                     node["next"] = step.next
             if (
                 isinstance(step, Call)
-                and isinstance(step.input, (Previous, Output))
-                and not step.input.path
+                and step.provider is not None
+                and step.provider.operation_contract is not None
             ):
-                source_contract = (
-                    self.contract_in
-                    if previous is None and isinstance(step.input, Previous)
-                    else output_contracts.get(
-                        (previous or "") if isinstance(step.input, Previous) else step.input.step
+                operation = step.provider.operation_contract
+                if isinstance(operation.output, str):
+                    error(step.name, "binding_kind", "Use Source for an acquisition interface.")
+                if isinstance(step.input, (Previous, Output)) and not step.input.path:
+                    upstream = (
+                        _schema(self.contract_in)
+                        if previous is None and isinstance(step.input, Previous)
+                        else output_contracts.get(
+                            (previous or "")
+                            if isinstance(step.input, Previous)
+                            else step.input.step
+                        )
                     )
-                )
-                if (
-                    isinstance(source_contract, CarriedContractInput)
-                    and isinstance(step.contract_in, CarriedContractInput)
-                    and _schema(source_contract) != _schema(step.contract_in)
-                ):
-                    error(
-                        step.name,
-                        "contract_mismatch",
-                        "Automatic whole-output wiring requires matching carried schemas; "
-                        "use an explicit field mapping or adapter.",
-                    )
+                    if upstream is not None and upstream != operation.input:
+                        error(
+                            step.name,
+                            "contract_mismatch",
+                            "Automatic whole-output wiring requires matching interface schemas; "
+                            "use an explicit field mapping or adapter.",
+                        )
+                elif not _has_reference(node["input"]):
+                    try:
+                        validate_provider_value(
+                            operation, node["input"], direction="input", normalize_call=True
+                        )
+                    except ValueError as exc:
+                        error(step.name, "contract_value_invalid", str(exc))
             for field_name in ("input", "fields", "spec"):
                 if field_name not in node:
                     continue
@@ -639,14 +649,22 @@ class Sequence:
             nodes.append(node)
             if "as" in node:
                 previous = step.name
-                output_contracts[step.name] = getattr(step, "contract_out", None)
+                carried = getattr(step, "contract_out", None)
+                output_operation = (
+                    step.provider.operation_contract
+                    if isinstance(step, Call) and step.provider
+                    else None
+                )
+                output_contracts[step.name] = (
+                    output_operation.output
+                    if output_operation and isinstance(output_operation.output, ContractSchema)
+                    else _schema(carried)
+                    if isinstance(carried, CarriedContractInput)
+                    else None
+                )
         returns = self.returns or previous or "result"
         returned_contract = output_contracts.get(returns)
-        if (
-            isinstance(returned_contract, CarriedContractInput)
-            and isinstance(self.contract_out, CarriedContractInput)
-            and _schema(returned_contract) != _schema(self.contract_out)
-        ):
+        if returned_contract is not None and returned_contract != _schema(self.contract_out):
             error(
                 returns,
                 "return_contract_mismatch",

@@ -305,7 +305,7 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
         default=None, exclude_if=lambda value: value is None
     )
     implementation_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     capture_contract_digest: str | None = None
     contract_input_digest: str | None = None
     contract_output_digest: str | None = None
@@ -373,8 +373,10 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
             self.input_name is not None
             or self.capture_contract_digest is not None
             or self.source_runtime_plan_digest is not None
-            or self.contract_input_digest is None
-            or self.contract_output_digest is None
+            or (
+                self.operation_contract is None
+                and (self.contract_input_digest is None or self.contract_output_digest is None)
+            )
         ):
             raise ValueError("Provider occurrence requires only its contract fields")
         return self

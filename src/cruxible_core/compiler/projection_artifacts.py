@@ -236,12 +236,15 @@ SUBJECT_IDENTITY_ARTIFACT_KINDS = ArtifactKindRegistry(
 def _with_build_paths(entry: ArtifactPathKind) -> ArtifactPathKind:
     if entry.kind == "provider":
         return ArtifactPathKind(
-            "provider", re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
+            "provider",
+            re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"),
         )
     if entry.kind == "provider-interface":
         return ArtifactPathKind(
             "provider-interface",
-            re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"),
+            re.compile(
+                r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/(?:[0-9a-f]{64}|v[1-9][0-9]*))?\.json$"
+            ),
         )
     return entry
 
@@ -1427,6 +1430,7 @@ def parse_projection_tree(
             if kind == "provider-interface":
                 from cruxible_client.contracts.provider_interfaces import (
                     ProviderInterfaceContract,
+                    ProviderInterfaceContractV3,
                     ProviderInterfaceRegistration,
                     parse_provider_interface,
                     provider_interface_digest,
@@ -1499,7 +1503,9 @@ def parse_projection_tree(
                         "lifecycle": registration.lifecycle.model_dump(mode="json"),
                     },
                 )
-                if isinstance(registration, ProviderInterfaceContract):
+                if isinstance(
+                    registration, ProviderInterfaceContractV3 | ProviderInterfaceContract
+                ):
                     # A contract registration carries no bucket data.
                     semantic_facts.append(registration_fact)
                     continue
