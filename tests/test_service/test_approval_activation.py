@@ -99,7 +99,18 @@ def test_held_or_unpermitted_approval_signs_only(tmp_path: Path) -> None:
     assert other.accepted_coordinate() == head
 
 
-def test_stale_candidate_is_signed_but_reported_stale(tmp_path: Path) -> None:
+def test_a_stale_candidate_refuses_approval_naming_the_changed_path(tmp_path: Path) -> None:
+    """Both proposals write the one Document path: the first's acceptance overlaps the second.
+
+    A stale candidate is never approvable (readmit-by-change-set-overlap-1024):
+    the approval refuses, names what changed since its base, and records no
+    signature.
+    """
+
+    import pytest
+
+    from cruxible_client.contracts.errors import ProposalStale
+
     instance, _owner = initialize_local(tmp_path)
     reviewer = client_material(tmp_path, instance)
     first = _document_proposal(instance, name="first-of-two")
@@ -108,9 +119,12 @@ def test_stale_candidate_is_signed_but_reported_stale(tmp_path: Path) -> None:
         instance, first, reviewer, activate_when_complete=True, may_activate=True
     ).activation
 
-    receipt = _approve(instance, second, reviewer, activate_when_complete=True, may_activate=True)
+    with pytest.raises(ProposalStale) as refused:
+        _approve(instance, second, reviewer, activate_when_complete=True, may_activate=True)
 
-    assert receipt.activation is None and receipt.not_activated == "stale"
+    assert refused.value.reason == "changed_since_base"
+    assert DOCUMENT_PATH in str(refused.value)
+    assert instance.proposal_evidence().read_approvals(second.candidate.candidate_digest) == ()
 
 
 def test_a_corrupt_trigger_journal_never_fails_the_committed_activation(tmp_path: Path) -> None:

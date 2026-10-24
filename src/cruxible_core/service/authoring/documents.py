@@ -952,10 +952,15 @@ def _land_exact_bytes_for_review(
     """
     from cruxible_core.service.proposals.proposals import land_exact_bytes
     from cruxible_core.service.proposals.recompile import _changed_members
-    from cruxible_core.service.proposals.staleness import stale_paths_at_head
+    from cruxible_core.service.proposals.staleness import (
+        candidate_accepted,
+        stale_paths_at_head,
+    )
 
     if source.candidate is None or stale_paths_at_head(instance, source):
         return None
+    if candidate_accepted(instance, source.candidate.candidate_digest):
+        return None  # accepted itself: nothing is left to land
     successor = land_exact_bytes(instance, source)
     if successor.candidate is None:
         raise ProposalStale(

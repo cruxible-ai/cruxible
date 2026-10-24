@@ -185,12 +185,22 @@ def stale_paths_at_head(instance: PlaybillInstance, proposal: ProposalResult) ->
     parent = candidate.candidate.parent_semantic_root
     if parent == head.semantic_root:
         return ()
+    if candidate_accepted(instance, candidate.candidate_digest):
+        # Settled: its own acceptance changed its paths, and nothing is left to land.
+        return ()
     with overlap_check(instance, head) as check:
         return check(
             proposal_id=proposal.admission.proposal_id,
             candidate_digest=candidate.candidate_digest,
             parent_semantic_root=parent,
         )
+
+
+def candidate_accepted(instance: PlaybillInstance, candidate_digest: str) -> bool:
+    """Whether accepted history settled this candidate: one keyed read."""
+
+    with instance.accepted_history_reader() as history:
+        return history.generation_for_candidate(candidate_digest) is not None
 
 
 def render_stale_paths(paths: tuple[str, ...], *, limit: int = 5) -> str:
@@ -204,6 +214,7 @@ def render_stale_paths(paths: tuple[str, ...], *, limit: int = 5) -> str:
 __all__ = [
     "OverlapCheck",
     "ProposalChangeKeys",
+    "candidate_accepted",
     "overlap_check",
     "proposal_change_keys",
     "render_stale_paths",
