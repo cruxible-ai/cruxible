@@ -96,10 +96,16 @@ from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
 )
+from cruxible_client.contracts.capture_contract_inputs import (
+    CaptureContractInputRecord,
+    lower_capture_contract_input,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     AcceptedCaptureContract,
     CaptureBuildResult,
+    CaptureContractAny,
     CaptureEnvelopeAny,
     CaptureFormatError,
     CaptureObjectStoreProtocol,
@@ -109,10 +115,12 @@ from cruxible_client.contracts.captures import (
     VerifiedCaptureMemo,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
     observed_content,
     parse_capture_contract,
     parse_capture_envelope,
@@ -304,6 +312,7 @@ from cruxible_core.claims.claim_type_migrations import (
     resolve_claim_type_succession,
 )
 from cruxible_core.compiler.compiler import (
+    LIGHT_ARTIFACTS_COMPILER,
     artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
@@ -1719,16 +1728,39 @@ def _lower_claim(
     accepted_contract: AcceptedCaptureContract | None = None
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
+    contract: CaptureContractAny
+    light_contracts = base.compiler == LIGHT_ARTIFACTS_COMPILER
+    coordinator_contract = (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        if light_contracts
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    foreign_contract = (
+        foreign_source_capture_contract if light_contracts else foreign_source_capture_contract_v1
+    )
     if isinstance(payload.source, SelfSourceBody):
+        profile_path = capture_contract_path(coordinator_contract.identity.name)
+        previous_profile_bytes = candidate_base_tree.get(profile_path)
+        previous_profile = (
+            None
+            if previous_profile_bytes is None
+            else parse_capture_contract(previous_profile_bytes, path=profile_path)
+        )
+        contract = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile)
+            if light_contracts
+            else previous_profile or coordinator_contract
+        )
+        install_contract = previous_profile != contract
         built_capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
             actor_id=actor_id,
             claim_id=claim_id,
             body=payload.source.content,
+            accepted_contract=contract,
             observed_at=observed_at,
             accepted_coordinate=public_base,
         )
-        contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
         citation_role: CitationRole = "copy"
         citation_origin: CitationOrigin = "self_source"
     elif isinstance(payload.source, ExistingCaptureCitationSource):
@@ -1824,13 +1856,21 @@ def _lower_claim(
         # A source contract improved through a successor is captured under its
         # accepted head, which is then already installed; the first capture of a
         # source installs its deterministic contract.
-        head_path = capture_contract_path(
-            foreign_source_capture_contract(source.source_id).identity.name
-        )
+        head_path = capture_contract_path(foreign_contract(source.source_id).identity.name)
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
-        if head is not None and head.lifecycle.state == "live":
-            install_contract = False
+        if not light_contracts:
+            head = (
+                head
+                if head is not None and head.lifecycle.state == "live"
+                else foreign_contract(source.source_id)
+            )
+        elif head is not None and head.lifecycle.state == "live":
+            successor = builtin_contract_for_write(
+                foreign_source_capture_contract(source.source_id), head
+            )
+            install_contract = successor != head
+            head = successor
         try:
             built_selection = build_working_selection_capture(
                 accepted_contract=None if head is None or head.lifecycle.state != "live" else head,
@@ -1944,16 +1984,22 @@ def _lower_claim(
                 repair_kind="observe_section",
                 repair_description="Observe the authored section again.",
             )
-        located_path = capture_contract_path(
-            foreign_source_capture_contract(location.source_id).identity.name
-        )
+        located_path = capture_contract_path(foreign_contract(location.source_id).identity.name)
         previous_contract = candidate_base_tree.get(located_path)
         located_contract = (
             None
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
         )
-        located_install = located_contract is None or located_contract.lifecycle.state != "live"
+        located_successor = (
+            builtin_contract_for_write(
+                foreign_source_capture_contract(location.source_id), located_contract
+            )
+            if light_contracts
+            else located_contract or foreign_contract(location.source_id)
+        )
+        located_install = located_successor != located_contract
+        located_contract = located_successor
         try:
             located = build_working_selection_capture(
                 store=instance.body_store(),
@@ -1966,7 +2012,7 @@ def _lower_claim(
                 coordinate=location.coordinate.model_dump(mode="json"),
                 selector=location.selector.model_dump(mode="json"),
                 selected_content=location.selected_content,
-                accepted_contract=None if located_install else located_contract,
+                accepted_contract=located_contract,
             )
         except (CruxibleError, ValueError) as exc:
             _refuse(
@@ -3203,7 +3249,18 @@ def _render_non_procedure_member(
             attestation_artifact_digest(value).tagged,
         )
     if isinstance(payload, CaptureContractAuthoringPayload):
-        contract = payload.capture_contract
+        if isinstance(payload.capture_contract, CaptureContractInputRecord):
+            record = payload.capture_contract
+            path = capture_contract_path(record.name)
+            previous_bytes = None if tree is None else tree.get(path)
+            previous = (
+                None
+                if previous_bytes is None
+                else parse_capture_contract(previous_bytes, path=path)
+            )
+            contract = lower_capture_contract_input(record, predecessor=previous)
+        else:
+            contract = payload.capture_contract
         return (
             capture_contract_path(contract.identity.name),
             render_capture_contract(contract),

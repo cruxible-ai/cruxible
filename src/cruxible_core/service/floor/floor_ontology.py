@@ -44,7 +44,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
-from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.captures import CaptureContract as CaptureContractV2
+from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    contract_materialization_modes,
+    contract_source_kinds,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     ClaimTypeFormatError,
@@ -54,7 +60,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.kits import KitInstalledArtifact, KitReceipt, kit_content_digest
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
@@ -136,7 +142,7 @@ def admitted_contracts(claim_type: ClaimType, names: ContractNamer) -> tuple[str
 
     found: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
-        if isinstance(rule, ClaimEvidenceAdmissionRule):
+        if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
             found.update(item.target.name for item in rule.capture_contracts)
         else:
             for digest in rule.capture_contract_digests:
@@ -515,7 +521,9 @@ class _Owners:
         return f"kit={kit_id} edited" if self.edited(path, entry) else f"kit={kit_id}"
 
 
-def _live_values(state: OntologyState, paths: Iterable[str], kind: type) -> list[tuple[str, Any]]:
+def _live_values(
+    state: OntologyState, paths: Iterable[str], kind: type | tuple[type, ...]
+) -> list[tuple[str, Any]]:
     found = []
     for path in paths:
         value = state.value(path)
@@ -989,12 +997,8 @@ class _Renderer:
             f"owner={self.owners.label(path)}  {stamp_text(changed_at)}",
             f"contract: {yaml_scalar(public_name(contract_id))}",
             f"grade: {yaml_scalar(contract.epistemic_grade)}",
-            *_list_entry("source_kinds", contract.allowed_source_kinds, ""),
-            *_list_entry(
-                "logical_sources", map(public_name, contract.logical_source_identities), ""
-            ),
-            *_list_entry("materialization", contract.allowed_materialization_modes, ""),
-            *_list_entry("evidence_kinds", contract.evidence_kinds, ""),
+            *_list_entry("source_kinds", contract_source_kinds(contract), ""),
+            *_list_entry("materialization", contract_materialization_modes(contract), ""),
             *_list_entry("admitted_by", admitted, ""),
             *_list_entry("required_by", required, ""),
         ]
@@ -1009,7 +1013,7 @@ class _Renderer:
                 for item in self._sources(CONTRACTS_INDEX)
                 if item.startswith(CAPTURE_CONTRACTS_PREFIX)
             ),
-            CaptureContract,
+            (CaptureContractV1, CaptureContractV2),
         ):
             admitted, required = self._admitters(contract.identity.name)
             rows.append(
@@ -1017,9 +1021,7 @@ class _Renderer:
                     (
                         public_name(contract.identity.name),
                         contract.epistemic_grade,
-                        ",".join(contract.allowed_source_kinds) or "-",
-                        ",".join(map(public_name, contract.logical_source_identities)) or "-",
-                        ",".join(contract.evidence_kinds) or "-",
+                        ",".join(contract_source_kinds(contract)) or "-",
                         str(len(admitted)),
                         str(len(required)),
                         self.owners.label(path),
@@ -1033,8 +1035,7 @@ class _Renderer:
                     "contracts",
                     len(rows),
                     "contracts",
-                    "contract, grade, source kinds, logical sources, evidence kinds, "
-                    "admitted by, required by, owner",
+                    "contract, grade, source kinds, admitted by, required by, owner",
                     changed_at,
                 ),
                 *rows,

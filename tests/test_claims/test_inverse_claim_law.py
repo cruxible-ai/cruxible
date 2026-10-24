@@ -69,6 +69,7 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 
 OBSERVED_AT = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 CLAIM_ID = "CLM-0123456789abcdef0123456789abcdef"
@@ -92,7 +93,6 @@ def _rule(rule_id: str) -> ClaimEvidenceAdmissionRule:
                 role="capture-contract", target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
             ),
         ),
-        evidence_kinds=("self_asserted",),
         admission="direct",
         subject_binding="exact_claim_subject",
     )
@@ -703,7 +703,6 @@ def test_a_direct_self_source_whose_shared_body_was_erased_can_be_retired(
 ) -> None:
     from cruxible_client.contracts.captures import (
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        build_direct_claim_capture,
     )
     from tests.test_claims.test_claims import _claim
     from tests.test_claims.test_claims import _claim_type as _direct_type

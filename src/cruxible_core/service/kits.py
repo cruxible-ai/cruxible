@@ -68,7 +68,7 @@ from cruxible_client.contracts.kits import (
     kit_receipt_document_id,
     kit_version_key,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
@@ -878,7 +878,7 @@ def _evidence_rule_consumers(
         if claim_type.lifecycle.state != "live":
             continue
         for rule in claim_type.evidence_admission_policy.rules:
-            if isinstance(rule, ClaimEvidenceAdmissionRule):
+            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
                 names = any(ref.target == contract.identity for ref in rule.capture_contracts)
             else:
                 names = contract.artifact_digest in getattr(rule, "capture_contract_digests", ())

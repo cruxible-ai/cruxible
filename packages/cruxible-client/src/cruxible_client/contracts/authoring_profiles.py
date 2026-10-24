@@ -10,7 +10,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
-    ArtifactRef,
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -23,6 +22,7 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     AttestationRequirement,
+    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -31,11 +31,11 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.public_names import stored_contract_name
 
 ClaimTypeProfileId = Literal[
-    "ordinary-project-fact-v1",
-    "append-only-source-observation-v1",
-    "policy-owner-normative-claim-v1",
-    "replay-verifiable-derivation-v2",
-    "source-backed-scientific-result-v1",
+    "ordinary-project-fact-v2",
+    "append-only-source-observation-v2",
+    "policy-owner-normative-claim-v2",
+    "replay-verifiable-derivation-v3",
+    "source-backed-scientific-result-v2",
 ]
 
 
@@ -51,7 +51,7 @@ class ClaimTypeProfileDefinition(_StrictProfileModel):
     tag: Literal["playbill-claim-type-profile-definition-v1"] = (
         "playbill-claim-type-profile-definition-v1"
     )
-    profile_id: ClaimTypeProfileId | Literal["replay-verifiable-derivation-v1"]
+    profile_id: str
     required_parameters: tuple[str, ...]
     optional_parameters: tuple[str, ...] = ()
     allowed_overrides: tuple[Literal["conflict_result", "require_current"], ...] = (
@@ -118,20 +118,20 @@ def _profile(
 
 CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinition, ...] = (
     _profile(
-        "append-only-source-observation-v1",
-        required=("capture_contract", "evidence_kind"),
+        "append-only-source-observation-v2",
+        required=("capture_contract",),
         optional=("attestation_requirement",),
     ),
-    _profile("ordinary-project-fact-v1"),
-    _profile("policy-owner-normative-claim-v1"),
+    _profile("ordinary-project-fact-v2"),
+    _profile("policy-owner-normative-claim-v2"),
     _profile(
-        "replay-verifiable-derivation-v2",
-        required=("capture_contract", "evidence_kind"),
+        "replay-verifiable-derivation-v3",
+        required=("capture_contract",),
         optional=("attestation_requirement",),
     ),
     _profile(
-        "source-backed-scientific-result-v1",
-        required=("capture_contract", "evidence_kind"),
+        "source-backed-scientific-result-v2",
+        required=("capture_contract",),
         optional=("attestation_requirement",),
     ),
 )
@@ -221,7 +221,7 @@ def _definitions() -> dict[str, ClaimTypeProfileDefinition]:
     return {item.profile_id: item for item in CLAIM_TYPE_AUTHORING_PROFILES}
 
 
-def _contract_ref(parameters: dict[str, object], key: str) -> ArtifactRef:
+def _contract_ref(parameters: dict[str, object], key: str) -> CaptureContractAdmission:
     """The CaptureContract a profile rule names, by identity: any accepted version."""
 
     value = parameters[key]
@@ -236,7 +236,7 @@ def _contract_ref(parameters: dict[str, object], key: str) -> ArtifactRef:
         raise AuthoringProfileError(
             f"profile parameter {key!r} must name a CaptureContract"
         ) from exc
-    return ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=target)
+    return CaptureContractAdmission(role=CAPTURE_CONTRACT_REF_ROLE, target=target)
 
 
 def _attestation(parameters: dict[str, object]) -> AttestationRequirement:
@@ -255,8 +255,8 @@ def _profile_policies(
     evidence = ClaimEvidenceAdmissionPolicy()
     admission = ClaimAdmissionPolicy()
     if profile_id in {
-        "append-only-source-observation-v1",
-        "source-backed-scientific-result-v1",
+        "append-only-source-observation-v2",
+        "source-backed-scientific-result-v2",
     }:
         if structure.cardinality != "many":
             raise AuthoringProfileError("observation profiles require cardinality='many'")
@@ -266,21 +266,19 @@ def _profile_policies(
                     rule_id="source-observation",
                     claim_roles=("observation",),
                     capture_contracts=(_contract_ref(parameters, "capture_contract"),),
-                    evidence_kinds=(str(parameters["evidence_kind"]),),
                     admission="direct",
                     subject_binding="contract_source_mapping",
                     attestation_requirement=_attestation(parameters),
                 ),
             )
         )
-    elif profile_id == "replay-verifiable-derivation-v2":
+    elif profile_id == "replay-verifiable-derivation-v3":
         evidence = ClaimEvidenceAdmissionPolicy(
             rules=(
                 ClaimEvidenceAdmissionRule(
                     rule_id="replay-verifiable-derivation",
                     claim_roles=("derivation",),
                     capture_contracts=(_contract_ref(parameters, "capture_contract"),),
-                    evidence_kinds=(str(parameters["evidence_kind"]),),
                     admission="derivational",
                     subject_binding="contract_source_mapping",
                     attestation_requirement=_attestation(parameters),
@@ -377,6 +375,19 @@ def verify_claim_type_expansion_evidence(
     """Verify profile identity and every digest against the exact expanded bytes."""
 
     definition = _definitions().get(evidence.profile_id)
+    historical = {
+        "append-only-source-observation-v1": ("capture_contract", "evidence_kind"),
+        "ordinary-project-fact-v1": (),
+        "policy-owner-normative-claim-v1": (),
+        "replay-verifiable-derivation-v2": ("capture_contract", "evidence_kind"),
+        "source-backed-scientific-result-v1": ("capture_contract", "evidence_kind"),
+    }
+    if evidence.profile_id in historical:
+        definition = _profile(
+            cast(ClaimTypeProfileId, evidence.profile_id),
+            required=historical[evidence.profile_id],
+            optional=("attestation_requirement",) if historical[evidence.profile_id] else (),
+        )
     if evidence.profile_id == "replay-verifiable-derivation-v1":
         definition = _profile(
             cast(ClaimTypeProfileId, evidence.profile_id),

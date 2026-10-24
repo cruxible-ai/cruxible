@@ -49,6 +49,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation, Approval
 from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -822,6 +823,29 @@ def handle_playbill_propose_principal_change(
             at=at,
         ),
         operation_name="cruxible_principal_propose",
+    )
+
+
+def handle_playbill_propose_capture_contract(
+    instance_id: str,
+    input: dict[str, Any],
+    proposal_name: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ProposalInspection:
+    request = CaptureContractInputRecord.model_validate(input)
+    return _daemon_call(
+        lambda client: client.propose_capture_contract_input(
+            instance_id,
+            input=request.model_dump(mode="json", exclude_unset=True),
+            proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
+        ),
+        operation_name="cruxible_capture_contract_propose",
     )
 
 

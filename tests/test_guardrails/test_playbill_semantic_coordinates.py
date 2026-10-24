@@ -60,6 +60,8 @@ from cruxible_client.contracts.laws import (
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     GOVERNED_TRIGGERS_UPGRADE_LAW,
+    LIGHT_ARTIFACTS_UPGRADE_LAW,
+    LIGHT_CAPTURE_CONTRACT_LAW,
     LINE_V6_ACCEPTANCE_LAW,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
@@ -100,6 +102,7 @@ from cruxible_core.compiler.compiler import (
     CLAIM_EVIDENCE_COMPILER,
     CLAIM_REBIND_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
+    LIGHT_ARTIFACTS_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B0_COMPILER,
     P2_B1_COMPILER,
@@ -609,6 +612,26 @@ HISTORICAL_LAW_COORDINATES: tuple[
 )
 
 
+LAW_COORDINATES += (
+    (
+        LIGHT_CAPTURE_CONTRACT_LAW,
+        "cruxible.capture-contract.v2",
+        "cruxible-capture-contract-v2",
+        1,
+        "sha256:49b22140bec5b033c02b238e4be3c28fc665a93e5fc831aa6fb60febf2621830",
+    ),
+)
+HISTORICAL_LAW_COORDINATES += (
+    (
+        LIGHT_ARTIFACTS_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        14,
+        "sha256:41eb6a707ac97304b06e68329ed4f5badde5936a6213fbda6a524555b28c1be4",
+    ),
+)
+
+
 def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     assert CLAIM_LAW_V3_REVISION_8.digest == (
         "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9"
@@ -846,7 +869,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     assert CLAIM_REBIND_COMPILER.rule_digest == (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085"
     )
-    assert current_compiler_coordinate() == CLAIM_REBIND_COMPILER
+    assert (
+        LIGHT_ARTIFACTS_COMPILER.rule_digest
+        == "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924"
+    )
+    assert current_compiler_coordinate() == LIGHT_ARTIFACTS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -889,7 +916,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 35
+    current_revision = 36
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -989,8 +1016,9 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "subject-identity-v1",
         "provider-builds-v1",
         "claim-rebind-v1",
+        "light-artifacts-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "claim-rebind-v1"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "light-artifacts-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
@@ -1001,6 +1029,7 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
     The October 9 identity review ruling (E-b F-005/F-006) authorizes revision 33
     alone: SubjectKinds, and the candidate boundary holding every new Subject to
     its kind's rule. The October 15 multi-build ruling authorizes revision 34.
+    The October 24 light-artifacts ruling authorizes revision 36.
     The October 21 citation-rebind ruling authorizes revision 35: Claim law v2
     revision 10 lets a same-statement revision replace a drifted citation.
     Historical admission bytes and compiler rules remain unchanged.
@@ -1011,5 +1040,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 34
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "claim-rebind-v1"
+    assert len(COMPILER_REVISION_LABELS) == 35
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "light-artifacts-v1"

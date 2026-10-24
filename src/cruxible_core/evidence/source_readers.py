@@ -16,7 +16,10 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
     CaptureEnvelope,
     CaptureEnvelopeAny,
     CaptureEnvelopeV1,
@@ -26,6 +29,8 @@ from cruxible_client.contracts.captures import (
     SourceEffectiveTime,
     capture_contract_digest,
     capture_digest,
+    contract_materialization_modes,
+    contract_source_kinds,
     render_capture_envelope,
 )
 from cruxible_client.contracts.errors import FormatError
@@ -119,13 +124,16 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
         contract_digest = capture_contract_digest(self.contract).tagged
         if self.binding.provider != self.provider.identity:
             raise ValueError("producer binding names a different Provider")
-        if self.binding.logical_source_identity not in self.contract.logical_source_identities:
+        if (
+            isinstance(self.contract, CaptureContractV1)
+            and self.binding.logical_source_identity not in self.contract.logical_source_identities
+        ):
             raise ValueError("producer binding source is absent from its CaptureContract")
         if contract_digest not in self.provider.capture_contract_digests:
             raise ValueError("Provider does not declare the exact CaptureContract")
-        if self.materialization not in self.contract.allowed_materialization_modes:
+        if self.materialization not in contract_materialization_modes(self.contract):
             raise ValueError("requested materialization is absent from the CaptureContract")
-        if "external" not in self.contract.allowed_source_kinds:
+        if "external" not in contract_source_kinds(self.contract):
             raise ValueError("CaptureContract does not permit external sources")
         if self.run_coordinate.executable_identity != self.provider.identity:
             raise ValueError("external acquisition run must name its Provider")

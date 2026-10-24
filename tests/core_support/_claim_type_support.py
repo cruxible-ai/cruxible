@@ -48,7 +48,6 @@ def defaulted_claim_type_input_example() -> ClaimTypeInputRecord:
                         "rule_id": f"source-{source_id}",
                         "claim_roles": sorted(example.permitted_roles),
                         "capture_contracts": [contract],
-                        "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
                         "subject_binding": "exact_claim_subject",
                     }
@@ -84,6 +83,8 @@ def claim_type_input_from_artifact(claim_type, *, source_ids=()):
         capture_contract_digest(item).tagged: item.identity.qualified for item in contracts
     }
     for rule in value["evidence_admission_policy"]["rules"]:
+        rule.pop("evidence_kinds", None)
+        rule.pop("tag", None)
         if rule.pop("allowed_reducer_digests", ()):
             raise ValueError("legacy reducer allowances need an explicit current evidence policy")
         if "capture_contract_digests" in rule:

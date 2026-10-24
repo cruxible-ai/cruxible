@@ -538,6 +538,22 @@ CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="capture-contract",
     artifact_tag="playbill-capture-contract-v1",
 )
+LIGHT_CAPTURE_CONTRACT_LAW = InstalledAcceptanceLaw(
+    coordinate=AcceptanceLawCoordinate(
+        identifier="cruxible.capture-contract.v2",
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": "cruxible.capture-contract.v2",
+                "artifact_tag": "cruxible-capture-contract-v2",
+                "semantic_revision": 1,
+            },
+        ).tagged,
+    ),
+    artifact_kind="capture-contract",
+    artifact_tag="cruxible-capture-contract-v2",
+)
 CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_3,
     artifact_kind="capture-contract",
@@ -898,8 +914,28 @@ RESOURCE_BUDGET_UPGRADE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 
+LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=AcceptanceLawCoordinate(
+        identifier=COMPILER_UPGRADE_ACCEPTANCE_LAW.coordinate.identifier,
+        digest=typed_digest(
+            AcceptanceLawDigest,
+            "playbill-law-v1",
+            {
+                "identifier": COMPILER_UPGRADE_ACCEPTANCE_LAW.coordinate.identifier,
+                "artifact_tag": "playbill-compiler-upgrade-v1",
+                "semantic_revision": 14,
+            },
+        ).tagged,
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
+
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        LIGHT_CAPTURE_CONTRACT_LAW,
+        LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         PROVIDER_BUILD_ACCEPTANCE_LAW,

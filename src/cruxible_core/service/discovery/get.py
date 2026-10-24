@@ -31,7 +31,10 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    contract_source_kinds,
 )
 from cruxible_client.contracts.claim_reads import ClaimValueRecord, ClaimValuesRequest
 from cruxible_client.contracts.claim_types import (
@@ -123,7 +126,7 @@ from cruxible_client.contracts.get_reads import (
     RevisionChange,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -1424,7 +1427,7 @@ def _claim_type_card(
             roles=rule.claim_roles,
             contracts=(
                 tuple(item.target.qualified for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionRule)
+                if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
                 else tuple(
                     names.name(digest, qualified=True) for digest in rule.capture_contract_digests
                 )
@@ -1964,10 +1967,8 @@ def _capture_contract_card(
         version=names.version_number(resolved.identity, row.artifact_digest) if row else 1,
         lifecycle=contract.lifecycle.state,
         captures={
-            "sources": list(contract.logical_source_identities),
-            "evidence_kinds": list(contract.evidence_kinds),
             "grade": contract.epistemic_grade,
-            "source_kinds": list(contract.allowed_source_kinds),
+            "source_kinds": list(contract_source_kinds(contract)),
         },
         admitted_by=admitted_by,
         next=tuple(
@@ -2099,7 +2100,7 @@ def _claim_evidence(
         version = names.version_of(account.capture_contract_digest)
         source = getattr(envelope.source, "source_identity", None)
         if source is None and version is not None:
-            source = version.contract.logical_source_identities[0]
+            source = envelope.producer.qualified
         captures.append(
             GetCaptureEvidence(
                 capture=capture_handle(account.capture_digest),

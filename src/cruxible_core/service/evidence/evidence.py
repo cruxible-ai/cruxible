@@ -63,7 +63,7 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
 )
 from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_9, CLAIM_LAW_V2_REVISION_10
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
@@ -1212,7 +1212,7 @@ def _reproduced_claim_adjudication_rule(
                 },
                 "contracts": sorted(
                     {item.target.qualified for item in rule.capture_contracts}
-                    if isinstance(rule, ClaimEvidenceAdmissionRule)
+                    if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
                     else {
                         history.capture_contract_identity(digest) or digest
                         for digest in rule.capture_contract_digests

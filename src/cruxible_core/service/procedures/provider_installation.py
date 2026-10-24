@@ -53,7 +53,11 @@ from cruxible_client.contracts.repairs import (
     RepairOperation,
     served_repair_for_refusal,
 )
-from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, PROVIDER_BUILDS_COMPILER
+from cruxible_core.compiler.compiler import (
+    CLAIM_REBIND_COMPILER,
+    LIGHT_ARTIFACTS_COMPILER,
+    PROVIDER_BUILDS_COMPILER,
+)
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, ProviderLaneRefusedError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -671,6 +675,7 @@ def service_install_provider(
     if instance.accepted_coordinate().compiler not in {
         PROVIDER_BUILDS_COMPILER,
         CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
     }:
         raise ConfigError(
             "provider installation requires the provider-builds compiler; "

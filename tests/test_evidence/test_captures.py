@@ -19,6 +19,8 @@ from cruxible_client.contracts.captures import (
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
     classify_capture_reuse,
+    contract_materialization_modes,
+    contract_source_kinds,
     evaluate_capture_contract_law,
     verify_capture,
 )
@@ -212,9 +214,9 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
     )
 
     assert contract.identity.qualified == ("CaptureContract:playbill.coordinator-self-source-v1")
-    assert contract.logical_source_identities == ("playbill.coordinator-authoring",)
-    assert contract.allowed_source_kinds == ("cas",)
-    assert contract.allowed_materialization_modes == ("cas",)
+    assert "logical_source_identities" not in contract.model_dump()
+    assert contract_source_kinds(contract) == ("cas",)
+    assert contract_materialization_modes(contract) == ("cas",)
     assert contract.retention_erasure_policy.erasure == "prohibited"
     assert capture_contract_is_self_asserted(contract)
     assert result.source_body_materialized is True
@@ -247,10 +249,13 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         )
         == "claim_bound"
     )
+    direct_mapping = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
     mixed_family = contract.model_copy(
         update={
-            "source_subject_mapping_digest": (
-                DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
+            "components": contract.components.model_copy(
+                update={
+                    "source_subject_mapping_digest": direct_mapping,
+                }
             )
         }
     )
@@ -271,7 +276,7 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         ).verdict
         == "accepted"
     )
-    rewritten = contract.model_copy(update={"allowed_source_kinds": ("file",)})
+    rewritten = contract.model_copy(update={"shape": "http_response"})
     refused = evaluate_capture_contract_law(
         rewritten,
         path="capture-contracts/playbill.coordinator-self-source-v1.json",

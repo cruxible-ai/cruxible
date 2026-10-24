@@ -30,13 +30,16 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
-    CaptureContract,
     capture_contract_digest,
     capture_contract_path,
     capture_contract_successor_break,
     evaluate_capture_contract_law,
     foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
     render_capture_contract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1 as CaptureContract,
 )
 from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.claim_types import (
@@ -105,7 +108,6 @@ def _identity_rule(*identities: ArtifactIdentity) -> ClaimEvidenceAdmissionRule:
         capture_contracts=tuple(
             ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=identity) for identity in identities
         ),
-        evidence_kinds=("self_asserted",),
         admission="direct",
         subject_binding="exact_claim_subject",
     )
@@ -164,8 +166,13 @@ def test_an_identity_rule_admits_every_version_and_an_exact_rule_one() -> None:
 
 def test_a_successor_may_only_widen_what_it_accepts() -> None:
     assert capture_contract_successor_break(ORIGINAL, _successor(ORIGINAL)) is None
-    narrowed = _successor(ORIGINAL, evidence_kinds=())
-    assert capture_contract_successor_break(ORIGINAL, narrowed) == "evidence_kinds"
+    legacy = foreign_source_capture_contract_v1(SOURCE).model_copy(
+        update={"evidence_kinds": ("other", "self_asserted")}
+    )
+    narrowed_v1 = _successor(legacy, evidence_kinds=("self_asserted",))
+    assert capture_contract_successor_break(legacy, narrowed_v1) == "evidence_kinds"
+    narrowed = _successor(ORIGINAL, replay="exact")
+    assert capture_contract_successor_break(ORIGINAL, narrowed) == "shape/replay"
     regraded = _successor(ORIGINAL, epistemic_grade="predicted")
     assert capture_contract_successor_break(ORIGINAL, regraded) == "epistemic_grade"
     smaller = ORIGINAL.model_copy(
@@ -524,6 +531,7 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
 def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_too(
     tmp_path: Path,
 ) -> None:
+    from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     from cruxible_client.contracts.query.definitions import (
         query_definition_digest,
         query_definition_path,
@@ -538,7 +546,13 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
     world = _World(tmp_path)
     query = _query()
     claim_type = _corroborated_type(query_definition_digest(query).tagged)
-    _seed_vocabulary(world.instance, None, claim_types=(claim_type,), query=query)
+    _seed_vocabulary(
+        world.instance,
+        None,
+        claim_types=(claim_type,),
+        query=query,
+        capture_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    )
     world.instance.refresh()
     revised = query.model_copy(
         update={
@@ -838,20 +852,22 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
     )
     # The contract pins the ClaimType exactly while the ClaimType names the
     # contract by identity: exporting the type first and re-pinning is valid.
+    extra_pin = ArtifactPin(
+        role="claim-type",
+        target=identity_type.identity,
+        artifact_digest=claim_type_digest(identity_type).tagged,
+    )
     pinning = ORIGINAL.model_copy(
         update={
-            "pins": tuple(
-                sorted(
-                    (
-                        *ORIGINAL.pins,
-                        ArtifactPin(
-                            role="claim-type",
-                            target=identity_type.identity,
-                            artifact_digest=claim_type_digest(identity_type).tagged,
-                        ),
-                    ),
-                    key=lambda pin: (pin.role, pin.target.qualified),
-                )
+            "components": ORIGINAL.components.model_copy(
+                update={
+                    "pins": tuple(
+                        sorted(
+                            (*ORIGINAL.pins, extra_pin),
+                            key=lambda pin: (pin.role, pin.target.qualified),
+                        )
+                    )
+                }
             )
         }
     )
@@ -876,20 +892,22 @@ def test_a_release_diff_starting_at_the_contract_sees_no_cycle() -> None:
             "allowed_subject_kinds": ("acme.work_item",),
         }
     )
+    extra_pin = ArtifactPin(
+        role="claim-type",
+        target=identity_type.identity,
+        artifact_digest=claim_type_digest(identity_type).tagged,
+    )
     pinning = ORIGINAL.model_copy(
         update={
-            "pins": tuple(
-                sorted(
-                    (
-                        *ORIGINAL.pins,
-                        ArtifactPin(
-                            role="claim-type",
-                            target=identity_type.identity,
-                            artifact_digest=claim_type_digest(identity_type).tagged,
-                        ),
-                    ),
-                    key=lambda pin: (pin.role, pin.target.qualified),
-                )
+            "components": ORIGINAL.components.model_copy(
+                update={
+                    "pins": tuple(
+                        sorted(
+                            (*ORIGINAL.pins, extra_pin),
+                            key=lambda pin: (pin.role, pin.target.qualified),
+                        )
+                    )
+                }
             )
         }
     )

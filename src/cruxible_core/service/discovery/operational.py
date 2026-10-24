@@ -801,7 +801,7 @@ def capture_contract_rows(
 ) -> tuple[OrientCaptureContract, ...]:
     """Every accepted CaptureContract, with its version and how many ClaimTypes admit it."""
 
-    from cruxible_client.contracts.captures import CaptureContract
+    from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
     from cruxible_client.contracts.claim_types import ClaimType
 
     with instance.bind_accepted_projection(coordinate) as projection:

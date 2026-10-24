@@ -23,7 +23,9 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_contract_is_self_asserted,
     capture_digest,

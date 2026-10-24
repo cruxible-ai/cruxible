@@ -10,7 +10,9 @@ from cruxible_client.contracts.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT as DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+)
+from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,

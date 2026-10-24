@@ -29,9 +29,13 @@ from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.temporal import utc_now

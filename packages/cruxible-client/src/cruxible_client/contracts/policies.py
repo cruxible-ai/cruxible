@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -16,6 +17,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimCardinality, ClaimRole
+from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.governance import governance_identifier
 
 ClaimVerdict = Literal[
@@ -185,7 +187,6 @@ class ClaimResolutionPolicy(_StrictPolicyModel):
 class _EvidenceRuleBase(_StrictPolicyModel):
     rule_id: str
     claim_roles: tuple[ClaimRole, ...]
-    evidence_kinds: tuple[str, ...]
     admission: Literal["origin_only", "direct", "derivational"]
     subject_binding: Literal["exact_claim_subject", "contract_source_mapping"]
     attestation_requirement: AttestationRequirement = "none"
@@ -195,18 +196,27 @@ class _EvidenceRuleBase(_StrictPolicyModel):
     def _rule_id(cls, value: str) -> str:
         return governance_identifier(value, label="evidence-admission rule_id")
 
-    @field_validator("claim_roles", "evidence_kinds")
+    @field_validator("claim_roles")
     @classmethod
     def _rule_sets(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
         field_name = str(getattr(info, "field_name", "evidence-admission field"))
         _sorted_unique(value, label=field_name, nonempty=True)
-        if field_name == "evidence_kinds":
-            if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
-                raise ValueError("evidence kinds must be canonical identifiers")
         return value
 
 
-class _EvidenceRule(_EvidenceRuleBase):
+class _LegacyEvidenceRuleBase(_EvidenceRuleBase):
+    evidence_kinds: tuple[str, ...]
+
+    @field_validator("evidence_kinds")
+    @classmethod
+    def _kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="evidence_kinds", nonempty=True)
+        if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
+            raise ValueError("evidence kinds must be canonical identifiers")
+        return value
+
+
+class _EvidenceRule(_LegacyEvidenceRuleBase):
     capture_contract_digests: tuple[str, ...]
 
     @field_validator("capture_contract_digests")
@@ -259,7 +269,7 @@ class ClaimEvidenceAdmissionRuleV2(_EvidenceRule):
 CAPTURE_CONTRACT_REF_ROLE = "capture-contract"
 
 
-class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
+class ClaimEvidenceAdmissionRuleV3(_LegacyEvidenceRuleBase):
     """Evidence requirements naming CaptureContracts by identity.
 
     The rule admits evidence captured under any accepted version of a named
@@ -299,8 +309,80 @@ class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
         )
 
 
+class CaptureContractAdmission(ArtifactRef):
+    """One named contract, optionally restricted to provider-declared sources."""
+
+    logical_sources: tuple[str, ...] = ()
+
+    @field_validator("logical_sources")
+    @classmethod
+    def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="logical_sources")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_.-]{0,255}", item) for item in value):
+            raise ValueError("logical_sources must be canonical identifiers")
+        return value
+
+
+class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+    tag: Literal["cruxible-claim-evidence-admission-rule-v4"] = (
+        "cruxible-claim-evidence-admission-rule-v4"
+    )
+    capture_contracts: tuple[CaptureContractAdmission, ...]
+
+    @field_validator("capture_contracts", mode="before")
+    @classmethod
+    def _authored_contracts(cls, value: object) -> object:
+        if not isinstance(value, (list, tuple)):
+            return value
+        entries = []
+        for item in value:
+            if isinstance(item, str):
+                item = {"contract": item}
+            if isinstance(item, ArtifactRef):
+                item = item.model_dump(mode="python")
+            if isinstance(item, dict) and "contract" in item:
+                item = {
+                    **item,
+                    "role": CAPTURE_CONTRACT_REF_ROLE,
+                    "target": {"kind": "CaptureContract", "name": item["contract"]},
+                }
+                del item["contract"]
+            entries.append(item)
+        return entries
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _contracts(
+        cls, value: tuple[CaptureContractAdmission, ...]
+    ) -> tuple[CaptureContractAdmission, ...]:
+        ClaimEvidenceAdmissionRuleV3._contracts(value)
+        return value
+
+    def names_capture_contract(self, *, digest: str, identity: str | None) -> bool:
+        return any(item.target.qualified == identity for item in self.capture_contracts)
+
+    def admits_source(self, *, identity: str | None, logical_source: str | None) -> bool:
+        if identity is None:
+            return False
+        sources = _rule_source_sets(self).get(identity)
+        return sources is not None and (not sources or logical_source in sources)
+
+
+@sealed_memo
+def _rule_source_sets(rule: ClaimEvidenceAdmissionRule) -> Mapping[str, frozenset[str]]:
+    return MappingProxyType(
+        {item.target.qualified: frozenset(item.logical_sources) for item in rule.capture_contracts}
+    )
+
+
+ClaimEvidenceAdmissionIdentityRule = ClaimEvidenceAdmissionRuleV3 | ClaimEvidenceAdmissionRule
+
 ClaimEvidenceAdmissionRuleAny = (
-    ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2 | ClaimEvidenceAdmissionRule
+    ClaimEvidenceAdmissionRuleV1
+    | ClaimEvidenceAdmissionRuleV2
+    | ClaimEvidenceAdmissionRuleV3
+    | ClaimEvidenceAdmissionRule
 )
 
 
@@ -338,11 +420,39 @@ class ClaimEvidenceAdmissionPolicyV2(_StrictPolicyModel):
         return value
 
 
-class ClaimEvidenceAdmissionPolicy(_StrictPolicyModel):
+class ClaimEvidenceAdmissionPolicyV3(_StrictPolicyModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
     tag: Literal["playbill-claim-evidence-admission-policy-v3"] = (
         "playbill-claim-evidence-admission-policy-v3"
+    )
+    rules: tuple[ClaimEvidenceAdmissionRuleV3, ...] = ()
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(
+        cls, value: tuple[ClaimEvidenceAdmissionRuleV3, ...]
+    ) -> tuple[ClaimEvidenceAdmissionRuleV3, ...]:
+        ids = tuple(item.rule_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("evidence-admission rules must be sorted and unique by rule_id")
+        return value
+
+    @property
+    def capture_contract_identities(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {item.target.qualified for rule in self.rules for item in rule.capture_contracts},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+
+
+class ClaimEvidenceAdmissionPolicy(_StrictPolicyModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    tag: Literal["cruxible-claim-evidence-admission-policy-v4"] = (
+        "cruxible-claim-evidence-admission-policy-v4"
     )
     rules: tuple[ClaimEvidenceAdmissionRule, ...] = ()
 
@@ -367,7 +477,10 @@ class ClaimEvidenceAdmissionPolicy(_StrictPolicyModel):
 
 
 ClaimEvidenceAdmissionPolicyAny = (
-    ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2 | ClaimEvidenceAdmissionPolicy
+    ClaimEvidenceAdmissionPolicyV1
+    | ClaimEvidenceAdmissionPolicyV2
+    | ClaimEvidenceAdmissionPolicyV3
+    | ClaimEvidenceAdmissionPolicy
 )
 
 
@@ -539,7 +652,8 @@ class EvidenceAdmissionInput(_StrictPolicyModel):
     #: The accepted identity of the exact contract version the Capture names.
     #: Identity rules match it; exact-digest rules ignore it.
     capture_contract_identity: str | None = None
-    evidence_kind: str
+    evidence_kind: str | None = None
+    logical_source: str | None = None
     reducer_digest: str | None = None
     input_claim_artifact_digests: tuple[str, ...] = ()
     attestation_grade: VerifiedAttestationGrade = "none"
@@ -563,8 +677,8 @@ class EvidenceAdmissionInput(_StrictPolicyModel):
 
     @field_validator("evidence_kind")
     @classmethod
-    def _evidence_kind(cls, value: str) -> str:
-        if not _EVIDENCE_KIND_RE.fullmatch(value):
+    def _evidence_kind(cls, value: str | None) -> str | None:
+        if value is not None and not _EVIDENCE_KIND_RE.fullmatch(value):
             raise ValueError("evidence kind must be a canonical identifier")
         return value
 
@@ -614,6 +728,17 @@ def _derivation_satisfied(
     return evidence.reducer_digest is None and not evidence.input_claim_artifact_digests
 
 
+def evidence_rule_matches_source(
+    rule: ClaimEvidenceAdmissionRuleAny, evidence: EvidenceAdmissionInput
+) -> bool:
+    if isinstance(rule, ClaimEvidenceAdmissionRule):
+        return rule.admits_source(
+            identity=evidence.capture_contract_identity, logical_source=evidence.logical_source
+        )
+    # Historical kinds constrain admission only when both stored sides carry them.
+    return evidence.evidence_kind is None or evidence.evidence_kind in rule.evidence_kinds
+
+
 def evaluate_claim_evidence_admission_trace(
     policy: ClaimEvidenceAdmissionPolicyAny,
     evidence: EvidenceAdmissionInput,
@@ -638,7 +763,7 @@ def evaluate_claim_evidence_admission_trace(
             mismatches = sum(
                 (
                     evidence.claim_role not in rule.claim_roles,
-                    evidence.evidence_kind not in rule.evidence_kinds,
+                    not evidence_rule_matches_source(rule, evidence),
                     not binding.get(rule.rule_id, evidence.source_subject_bound),
                     not _attestation_satisfied(
                         rule.attestation_requirement, evidence.attestation_grade
@@ -664,7 +789,7 @@ def evaluate_claim_evidence_admission_trace(
             digest=evidence.capture_contract_digest,
             identity=evidence.capture_contract_identity,
         )
-        and evidence.evidence_kind in rule.evidence_kinds
+        and evidence_rule_matches_source(rule, evidence)
     ]
     if len(matches) != 1:
         result = ClaimEvidenceAdmissionResult(
@@ -801,6 +926,11 @@ __all__ = [
     "ClaimEvidenceAdmissionRuleV1",
     "ClaimEvidenceAdmissionRuleV2",
     "ClaimEvidenceAdmissionRuleAny",
+    "ClaimEvidenceAdmissionRuleV3",
+    "ClaimEvidenceAdmissionPolicyV3",
+    "ClaimEvidenceAdmissionIdentityRule",
+    "CaptureContractAdmission",
+    "evidence_rule_matches_source",
     "ClaimResolutionPolicy",
     "ClaimResolutionResult",
     "ClaimVerdict",

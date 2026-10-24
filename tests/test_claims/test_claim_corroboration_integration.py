@@ -10,7 +10,6 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    build_direct_claim_capture,
     capture_contract_path,
     render_capture_contract,
 )
@@ -47,6 +46,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
@@ -118,10 +118,11 @@ def _seed_vocabulary(
     query: QueryDefinition | None,
     proposal_name: str = "corroboration-vocabulary",
     timestamp: str = SEED_TIMESTAMP,
+    capture_contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
 ) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    tree[capture_contract_path(capture_contract.identity.name)] = render_capture_contract(
+        capture_contract
     )
     subject = _subject()
     from cruxible_client.contracts.subjects import render_subject, subject_path

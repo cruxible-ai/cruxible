@@ -131,7 +131,6 @@ evidence_admission_policy:
     - rule_id: supplier-quote
       claim_roles: [observation]
       capture_contracts: [CaptureContract:cruxible.foreign-source.quotes]
-      evidence_kinds: [self_asserted]
       admission: direct
       subject_binding: exact_claim_subject
 ~~~
@@ -147,6 +146,39 @@ landed: accepted at f91d19c76229
 admits the writer's own words. Durations are ISO 8601 (`P30D`, `PT12H`).
 [Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field) covers
 fields in general.
+
+## Define captured evidence
+
+A CaptureContract states what evidence is: its shape, grade, replay promise,
+retention, erasure policy and byte budget. Start with the authored form:
+
+~~~json
+{"name": "catalog.fetched", "shape": "http_response"}
+~~~
+
+`cruxible capture-contract propose --template` prints this form;
+`--template --expanded` includes its defaults. Propose it with `--input FILE`.
+The shapes are `http_response`, `procedure_output`, `foreign_span` and
+`database_snapshot`. Grade defaults to `observed` (`derived` requires
+`procedure_output`); replay defaults to `attested` for HTTP responses and
+`exact` otherwise. Retention defaults to `P30D`, `erasable` to `false`,
+`max_bytes` to 16777216, and `selector_privacy` to `direct_allowed`.
+The engine supplies the component definitions. An edit keeps omitted fields;
+raise `max_bytes` or retire it with `lifecycle: retired`. A change to what the
+evidence means needs a new name.
+
+A rule can restrict a shared contract to specific logical sources:
+
+~~~yaml
+capture_contracts:
+  - contract: catalog.fetched
+    logical_sources: [supplier.quotes]
+~~~
+
+The source is the provider's recorded label on the Capture. A bare contract
+name, or `logical_sources: []`, accepts any source. A CAS Capture has no logical
+source and therefore matches only an unrestricted entry. The Capture's exact
+contract version remains part of its provenance.
 
 ## Verdicts and flags
 

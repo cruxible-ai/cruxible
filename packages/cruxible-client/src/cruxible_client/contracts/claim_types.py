@@ -52,6 +52,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionPolicyV3,
     ClaimResolutionPolicy,
 )
 
@@ -338,6 +339,7 @@ class ClaimType(_StrictClaimTypeModel):
     evidence_admission_policy: (
         ClaimEvidenceAdmissionPolicyV1
         | ClaimEvidenceAdmissionPolicyV2
+        | ClaimEvidenceAdmissionPolicyV3
         | ClaimEvidenceAdmissionPolicy
     )
     admission_policy: ClaimAdmissionPolicy
@@ -555,7 +557,10 @@ class ClaimType(_StrictClaimTypeModel):
         self._validate_v9_fields()
         if self.artifact_format in _IDENTITY_RULE_FORMATS:
             version = claim_type_version_label(self.artifact_format)
-            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicy):
+            if not isinstance(
+                self.evidence_admission_policy,
+                (ClaimEvidenceAdmissionPolicy, ClaimEvidenceAdmissionPolicyV3),
+            ):
                 raise ValueError(
                     f"ClaimType {version} requires evidence policy v3 naming CaptureContracts "
                     "by identity"

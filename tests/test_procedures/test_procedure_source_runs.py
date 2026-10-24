@@ -289,6 +289,24 @@ def _procedure(  # noqa: PLR0913
         artifact_digest=capture_contract_digest(contract).tagged,
     )
     request = _source_request(instance, root).model_copy(update={"relative_path": relative_path})
+    if (
+        contract.artifact_format == "cruxible-capture-contract-v2"
+        and contract.coordinate_schema_pins
+        and contract.selector_schema_pins
+    ):
+        request = request.model_copy(
+            update={
+                "coordinate_type": contract.coordinate_schema_pins[0].target.name,
+                "selector_type": next(
+                    (
+                        pin.target.name
+                        for pin in contract.selector_schema_pins
+                        if pin.target.name == "relation-primary-key-v1"
+                    ),
+                    contract.selector_schema_pins[0].target.name,
+                ),
+            }
+        )
     definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",

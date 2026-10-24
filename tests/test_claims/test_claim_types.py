@@ -381,7 +381,7 @@ def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "ordinary-project-fact-v1"
+        if item.profile_id == "ordinary-project-fact-v2"
     )
     expanded = expand_claim_type_profile(
         ClaimTypeProfileInput(
@@ -405,7 +405,7 @@ def test_profile_expansion_refuses_unknown_retired_authority_and_open_overrides(
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "ordinary-project-fact-v1"
+        if item.profile_id == "ordinary-project-fact-v2"
     )
     values = {
         "profile_id": profile.profile_id,
@@ -434,7 +434,7 @@ def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "ordinary-project-fact-v1"
+        if item.profile_id == "ordinary-project-fact-v2"
     )
     expansion = expand_claim_type_profile(
         ClaimTypeProfileInput(
@@ -465,11 +465,11 @@ def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
 
 def test_profile_seed_list_is_exact_and_digest_pinned() -> None:
     assert tuple(item.profile_id for item in CLAIM_TYPE_AUTHORING_PROFILES) == (
-        "append-only-source-observation-v1",
-        "ordinary-project-fact-v1",
-        "policy-owner-normative-claim-v1",
-        "replay-verifiable-derivation-v2",
-        "source-backed-scientific-result-v1",
+        "append-only-source-observation-v2",
+        "ordinary-project-fact-v2",
+        "policy-owner-normative-claim-v2",
+        "replay-verifiable-derivation-v3",
+        "source-backed-scientific-result-v2",
     )
     assert all(item.profile_digest.startswith("sha256:") for item in CLAIM_TYPE_AUTHORING_PROFILES)
 
@@ -478,7 +478,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "replay-verifiable-derivation-v2"
+        if item.profile_id == "replay-verifiable-derivation-v3"
     )
     request = ClaimTypeProfileInput(
         profile_id=profile.profile_id,
@@ -490,7 +490,6 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         ),
         parameters={
             "capture_contract": "repo.replace-me",
-            "evidence_kind": "source.observation",
         },
     )
     expanded = expand_claim_type_profile(request)
@@ -517,6 +516,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
                     ClaimEvidenceAdmissionRuleV1(
                         **rule.model_dump(exclude={"tag", "capture_contracts"}),
                         capture_contract_digests=("sha256:" + "aa" * 32,),
+                        evidence_kinds=("source.observation",),
                         allowed_reducer_digests=("sha256:" + "bb" * 32,),
                     ),
                 )
@@ -558,7 +558,7 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "ordinary-project-fact-v1"
+        if item.profile_id == "ordinary-project-fact-v2"
     )
     expansion = expand_claim_type_profile(
         ClaimTypeProfileInput(

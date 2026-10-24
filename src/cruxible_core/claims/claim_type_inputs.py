@@ -30,7 +30,9 @@ from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    CaptureContractV1,
     capture_contract_digest,
+    capture_contract_path,
     foreign_source_capture_contract,
     parse_capture_contract,
 )
@@ -57,7 +59,9 @@ from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.repairs import RepairOperation
@@ -68,6 +72,7 @@ from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
     CLAIM_REBIND_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
+    LIGHT_ARTIFACTS_COMPILER,
     PROVIDER_BUILDS_COMPILER,
     SUBJECT_IDENTITY_COMPILER,
     current_compiler_coordinate,
@@ -373,7 +378,6 @@ def _default_evidence_policy(
                 "rule_id": "self",
                 "claim_roles": claim_roles,
                 "capture_contracts": [public_name(COORDINATOR_SELF_SOURCE_CONTRACT_ID)],
-                "evidence_kinds": ["self_asserted"],
                 "admission": "direct",
                 "subject_binding": "exact_claim_subject",
             }
@@ -386,7 +390,6 @@ def _default_evidence_policy(
                     "rule_id": f"source-{source_id}",
                     "claim_roles": claim_roles,
                     "capture_contracts": [public_name(contract.identity.name)],
-                    "evidence_kinds": ["self_asserted"],
                     "admission": "direct",
                     "subject_binding": "exact_claim_subject",
                 }
@@ -606,6 +609,7 @@ def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
     )
 
 
@@ -614,8 +618,10 @@ def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...])
 
     identities: dict[str, str] = {}
     for source_id in source_ids:
-        contract = foreign_source_capture_contract(source_id)
-        identities[capture_contract_digest(contract).tagged] = contract.identity.qualified
+        source_contract = foreign_source_capture_contract(source_id)
+        identities[capture_contract_digest(source_contract).tagged] = (
+            source_contract.identity.qualified
+        )
     for path in tree:
         if path.startswith("capture-contracts/") and path.endswith(".json"):
             contract = parse_capture_contract(tree[path], path=path)
@@ -660,7 +666,23 @@ def _identity_evidence_policy(
             rules.append(raw_rule)
             continue
         rule = dict(raw_rule)
-        refs = [_contract_ref(item) for item in rule.pop("capture_contracts", []) or []]
+        refs = []
+        for item in rule.pop("capture_contracts", []) or []:
+            if isinstance(item, dict) and "contract" in item:
+                ref = _contract_ref(item["contract"])
+                refs.append(
+                    CaptureContractAdmission(
+                        **ref.model_dump(mode="python"),
+                        logical_sources=tuple(item.get("logical_sources", ())),
+                    )
+                )
+            else:
+                ref = _contract_ref(item)
+                refs.append(
+                    CaptureContractAdmission.model_validate(
+                        ref.model_dump(mode="python") if not isinstance(item, dict) else item
+                    )
+                )
         for digest in rule.pop("capture_contract_digests", []) or []:
             identity = identities.get(digest) if isinstance(digest, str) else None
             if identity is None:
@@ -668,12 +690,22 @@ def _identity_evidence_policy(
                     f"capture contract digest {digest!r} is not an accepted CaptureContract; "
                     "name the contract in capture_contracts instead"
                 )
-            refs.append(_contract_ref(identity))
+            refs.append(
+                CaptureContractAdmission.model_validate(
+                    _contract_ref(identity).model_dump(mode="python")
+                )
+            )
         unique = {item.target.qualified: item for item in refs}
         rule["capture_contracts"] = [
             unique[key].model_dump(mode="json")
             for key in sorted(unique, key=lambda item: item.encode("utf-8"))
         ]
+        if raw.get("tag") in {
+            "playbill-claim-evidence-admission-policy-v1",
+            "playbill-claim-evidence-admission-policy-v2",
+            "playbill-claim-evidence-admission-policy-v3",
+        }:
+            rule.pop("evidence_kinds", None)
         rule.pop("tag", None)
         rules.append(rule)
     return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}
@@ -837,6 +869,25 @@ def lower_claim_type_input(
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
     _refuse_number_schema(value)
+    if (
+        predecessor is not None
+        and isinstance(predecessor.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3)
+        and not value.states("evidence_admission_policy")
+    ):
+        for rule in predecessor.evidence_admission_policy.rules:
+            for ref in rule.capture_contracts:
+                contract_path = capture_contract_path(ref.target.name)
+                content = tree.get(contract_path)
+                if content is None:
+                    continue
+                contract = parse_capture_contract(content, path=contract_path)
+                if isinstance(contract, CaptureContractV1) and not set(
+                    contract.evidence_kinds
+                ).issubset(rule.evidence_kinds):
+                    raise ClaimTypeInputReferenceError(
+                        f"rule {rule.rule_id!r} does not cover every legacy kind of "
+                        f"{ref.target.qualified}; state evidence_admission_policy explicitly"
+                    )
     value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)

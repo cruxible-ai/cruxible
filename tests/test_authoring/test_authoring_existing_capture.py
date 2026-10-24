@@ -17,18 +17,19 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     FOREIGN_SOURCE_PROVENANCE_RULE,
-    CaptureContract,
     CaptureRunCoordinateV1,
     DirectByteSpanSelection,
     InputReceiptSetManifest,
     build_cas_capture,
     build_derived_cas_capture,
-    build_direct_claim_selection_capture,
     build_working_selection_capture,
     capture_component_pin,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1 as CaptureContract,
 )
 from cruxible_client.contracts.claims import (
     build_claim_citation,
@@ -53,6 +54,7 @@ from cruxible_core.service.authoring.documents import (
 )
 from tests.core_support._pc_c_support import artifact_digest, capture_contract, digest
 from tests.core_support._support import client_material, initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_selection_capture
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _coordinator,

@@ -33,7 +33,9 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     CaptureFormatError,
     CaptureRetentionErasurePolicy,

@@ -37,6 +37,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
@@ -116,7 +117,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:5bbff903c8a641726990c32307abd54c5bbc61175ce0368c682e54ab39f2609f"
+    "sha256:9579a357e72e8385b237ac29206f4e26b9dcd8808526725252c95aed390b9121"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -987,7 +988,7 @@ class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
         "playbill-capture-contract-authoring-payload-v1"
     )
-    capture_contract: CaptureContract
+    capture_contract: CaptureContract | CaptureContractInputRecord
 
 
 class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
@@ -1531,7 +1532,12 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
     if isinstance(payload, ProcedureMandateAuthoringPayload):
         return f"ProcedureMandate:{payload.name}"
     if isinstance(payload, CaptureContractAuthoringPayload):
-        return f"CaptureContract:{payload.capture_contract.identity.name}"
+        name = (
+            payload.capture_contract.name
+            if isinstance(payload.capture_contract, CaptureContractInputRecord)
+            else payload.capture_contract.identity.name
+        )
+        return f"CaptureContract:{name}"
     if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
         return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
     if isinstance(payload, LineAuthoringPayload):

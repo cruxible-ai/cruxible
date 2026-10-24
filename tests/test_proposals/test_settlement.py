@@ -187,7 +187,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
     profile = next(
         item
         for item in CLAIM_TYPE_AUTHORING_PROFILES
-        if item.profile_id == "ordinary-project-fact-v1"
+        if item.profile_id == "ordinary-project-fact-v2"
     )
     expansion = expand_claim_type_profile(
         ClaimTypeProfileInput(

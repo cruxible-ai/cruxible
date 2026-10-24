@@ -15,7 +15,6 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -65,6 +64,10 @@ from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import (
+    build_direct_claim_capture,
+    initialize_legacy_local,
+)
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
@@ -329,7 +332,7 @@ def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
 def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate(
     tmp_path: Path,
 ) -> None:
-    instance, _owner = initialize_local(tmp_path)
+    instance, _owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
     claim_id = new_claim_id()
     capture = build_direct_claim_capture(
@@ -401,7 +404,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
 def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
     claim_id = "CLM-abcdefabcdefabcdefabcdefabcdefab"
     capture = build_direct_claim_capture(
@@ -469,7 +472,7 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
 def test_claim_history_returns_each_accepted_revision_located_by_the_index(
     tmp_path: Path, monkeypatch
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
     claim_id = "CLM-aabbccddaabbccddaabbccddaabbccdd"
     capture = build_direct_claim_capture(

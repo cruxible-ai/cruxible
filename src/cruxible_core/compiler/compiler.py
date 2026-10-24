@@ -230,6 +230,14 @@ CLAIM_REBIND_COMPILER = _coordinate(
     revision_name="claim-rebind-v1",
 )
 
+# One revision for the light-artifacts program; existing coordinates stay frozen.
+LIGHT_ARTIFACTS_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=36,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+    revision_name="light-artifacts-v1",
+)
+
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -253,13 +261,14 @@ _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     SUBJECT_IDENTITY_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     PROVIDER_BUILDS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     CLAIM_REBIND_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    LIGHT_ARTIFACTS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
 def admits_claim_rebind(compiler: CompilerCoordinate) -> bool:
     """Whether a compiler judges Claims under Claim law v2 revision 10 (re-bind)."""
 
-    return compiler == CLAIM_REBIND_COMPILER
+    return compiler in {CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER}
 
 
 def candidate_card_renderer_digest_for_compiler(
@@ -305,6 +314,7 @@ SUPPORTED_COMPILERS = (
     SUBJECT_IDENTITY_COMPILER,
     PROVIDER_BUILDS_COMPILER,
     CLAIM_REBIND_COMPILER,
+    LIGHT_ARTIFACTS_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -344,6 +354,7 @@ COMPILER_REVISION_LABELS = {
     SUBJECT_IDENTITY_COMPILER: "subject-identity-v1",
     PROVIDER_BUILDS_COMPILER: "provider-builds-v1",
     CLAIM_REBIND_COMPILER: "claim-rebind-v1",
+    LIGHT_ARTIFACTS_COMPILER: "light-artifacts-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -371,18 +382,19 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return CLAIM_REBIND_COMPILER
+    return LIGHT_ARTIFACTS_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
-    if compiler in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER}:
+    if compiler in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER}:
         return PROVIDER_BUILDS_ARTIFACT_KINDS
     if compiler == SUBJECT_IDENTITY_COMPILER:
         return SUBJECT_IDENTITY_ARTIFACT_KINDS
@@ -458,7 +470,12 @@ def projection_registry_for_compiler(
         AUTHORITY_VERBS_COMPILER,
     }:
         return p2c_extension_registry().with_artifact_kinds("attestation", "resolution-contract")
-    if compiler in {SUBJECT_IDENTITY_COMPILER, PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER}:
+    if compiler in {
+        SUBJECT_IDENTITY_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
+        CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
+    }:
         return p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract", "trigger", "blueprint", "subject-kind"
         )
@@ -520,6 +537,7 @@ __all__ = [
     "SUBJECT_IDENTITY_COMPILER",
     "PROVIDER_BUILDS_COMPILER",
     "CLAIM_REBIND_COMPILER",
+    "LIGHT_ARTIFACTS_COMPILER",
     "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",

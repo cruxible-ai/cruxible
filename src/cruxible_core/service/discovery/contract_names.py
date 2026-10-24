@@ -18,7 +18,7 @@ import sqlite3
 from cruxible_client.contracts.captures import AcceptedCaptureContract
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -103,7 +103,7 @@ class CaptureContractNames:
         for rule in claim_type.evidence_admission_policy.rules:
             if role is not None and role not in rule.claim_roles:
                 continue
-            if isinstance(rule, ClaimEvidenceAdmissionRule):
+            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
                 names.update(
                     item.target.qualified if qualified else item.target.name
                     for item in rule.capture_contracts
@@ -123,7 +123,7 @@ class CaptureContractNames:
         return any(
             bool(rule.capture_contract_digests)
             for rule in rules
-            if not isinstance(rule, ClaimEvidenceAdmissionRule)
+            if not isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
         )
 
     def lineage(self, identity: str) -> tuple[str, ...]:

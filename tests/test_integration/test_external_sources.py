@@ -22,10 +22,6 @@ from cruxible_client.contracts.claims import (
     claim_path,
     render_claim,
 )
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
-)
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -46,7 +42,6 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._subject_kind_support import core_assigned
-from tests.core_support._support import initialize_local
 from tests.support.capture_receipts import admit_legacy_v1_citations
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject
@@ -180,16 +175,29 @@ def test_external_coordinates_refuse_secrets_and_unpinned_schemas() -> None:
         ExternalSourceReadRequestV1.model_validate(payload)
 
 
+@pytest.mark.parametrize("light", [False, True], ids=["v1-unmaterialized", "v2-retained"])
 def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    light: bool,
 ) -> None:
     # The fixture reader builds v1 envelopes; this pins the mapping law that
     # judges such evidence once accepted, not whether a new citation is admitted.
     admit_legacy_v1_citations(monkeypatch)
-    instance, _owner = initialize_local(tmp_path)
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._support import initialize_local
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, _owner = (initialize_local if light else initialize_legacy_local)(tmp_path)
     base = instance.accepted_coordinate()
-    contract = capture_contract()
+    contract = record_contract() if light else capture_contract()
+    coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"
     provider_artifact = capture_provider_build(contract)
     shell = _subject()
     subject_address = SemanticAddress.whole_artifact(
@@ -203,7 +211,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     reader = FakeVersionedExternalSourceReader()
     reader.seed(
         source_identity="commerce.production.orders",
-        coordinate_type="postgres-lsn-v1",
+        coordinate_type=coordinate_type,
         coordinate="0/16B6C50",
         selector_type="relation-primary-key-v1",
         selector=selector,
@@ -219,11 +227,11 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
             contract=contract,
             provider=provider_artifact,
             binding=binding,
-            coordinate_type="postgres-lsn-v1",
+            coordinate_type=coordinate_type,
             coordinate="0/16B6C50",
             selector_type="relation-primary-key-v1",
             selector=selector,
-            materialization="external",
+            materialization="cas" if light else "external",
             run_coordinate=provider_run(provider_artifact),
             observed_at=NOW,
             resource_budget=contract.selection_budget,
@@ -233,20 +241,44 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     contract_digest = capture_contract_digest(contract).tagged
     claim_type = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_requirement": "captured",
+            "revision_evidence": "replace",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="external-order-record",
                         claim_roles=("observation",),
-                        capture_contract_digests=(contract_digest,),
-                        evidence_kinds=("database_record",),
+                        capture_contracts=(
+                            {
+                                "contract": contract.identity.name,
+                                "logical_sources": ["commerce.production.orders"],
+                            },
+                        ),
                         admission="direct",
                         subject_binding="contract_source_mapping",
                     ),
                 )
-            )
+            ),
         }
     )
+    if not light:
+        claim_type = _claim_type().model_copy(
+            update={
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                    rules=(
+                        ClaimEvidenceAdmissionRuleV1(
+                            rule_id="external-order-record",
+                            claim_roles=("observation",),
+                            capture_contract_digests=(contract_digest,),
+                            evidence_kinds=("database_record",),
+                            admission="direct",
+                            subject_binding="contract_source_mapping",
+                        ),
+                    )
+                )
+            }
+        )
     claim_type_digest_value = claim_type_digest(claim_type).tagged
     claim = _claim(
         claim_id="CLM-0123456789abcdef0123456789abcdef",
@@ -335,4 +367,66 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     )
     assert evidence.initial_verdict == "supported"
     assert evidence.evidence_basis == ("direct",)
-    assert acquired.canonical_material is None
+    assert claim.backing.source_mappings == ()
+    if not light:
+        assert acquired.envelope.commitment.materialization == "external"
+        assert acquired.canonical_material is None
+        assert not instance.body_store().verify(acquired.envelope.commitment.digest)
+        return
+    assert acquired.envelope.commitment.materialization == "cas"
+    assert acquired.canonical_material == {"order_id": "ord-482", "status": "ready"}
+    assert instance.body_store().verify(acquired.envelope.commitment.digest)
+
+    # Retention is not subject binding: without the declared record mapping,
+    # or with a different source label, these bytes cannot support this Claim.
+    (rule,) = claim_type.evidence_admission_policy.rules
+    alternatives = {
+        "byte-binding": rule.model_copy(update={"subject_binding": "exact_claim_subject"}),
+        "other-source": rule.model_copy(
+            update={
+                "capture_contracts": (
+                    rule.capture_contracts[0].model_copy(
+                        update={"logical_sources": ("commerce.other.orders",)}
+                    ),
+                )
+            }
+        ),
+    }
+    for name, incompatible_rule in alternatives.items():
+        incompatible_type = claim_type.model_copy(
+            update={
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                    rules=(incompatible_rule,)
+                )
+            }
+        )
+        incompatible_digest = claim_type_digest(incompatible_type).tagged
+        incompatible_claim = claim.model_copy(
+            update={
+                "statement": claim.statement.model_copy(
+                    update={"claim_type_digest": incompatible_digest}
+                ),
+                "pins": tuple(
+                    pin.model_copy(update={"artifact_digest": incompatible_digest})
+                    if pin.role == "claim-type"
+                    else pin
+                    for pin in claim.pins
+                ),
+            }
+        )
+        refused = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+            ),
+            candidate_tree={
+                **candidate_tree,
+                "claim-types/project.work_item/status.json": render_claim_type(incompatible_type),
+                claim_path(claim.identity.name): render_claim(incompatible_claim),
+            },
+            timestamp=TIMESTAMP,
+        )
+        assert refused.candidate is None
+        assert "cruxible.claim.captured_evidence_required" in {
+            diagnostic.code for diagnostic in refused.evaluation.diagnostics
+        }

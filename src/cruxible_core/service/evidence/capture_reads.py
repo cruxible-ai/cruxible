@@ -8,7 +8,9 @@ from typing import Literal
 
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     ProducerReceiptResolverProtocol,
     classify_capture_reuse,

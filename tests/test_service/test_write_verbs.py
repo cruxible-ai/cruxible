@@ -52,17 +52,9 @@ def instance(tmp_path: Path) -> PlaybillInstance:
 
 
 @pytest.fixture
-def legacy_record_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlaybillInstance:
-    # The fake record reader emits retained ProviderV1 provenance. Seed that
-    # Provider before the compiler that closes new single-path registrations.
-    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
-
-    with monkeypatch.context() as legacy:
-        legacy.setattr(
-            "cruxible_core.runtime.instance.current_compiler_coordinate",
-            lambda: SUBJECT_IDENTITY_COMPILER,
-        )
-        return seed_write_surface(tmp_path)[0]
+def record_instance(tmp_path: Path) -> PlaybillInstance:
+    """Current contract/rule/provider formats, with an external-record fixture reader."""
+    return seed_write_surface(tmp_path)[0]
 
 
 def _write(
@@ -616,7 +608,7 @@ def _move_to_v7(
 ) -> None:
     """Accept a ClaimType v7 successor of one write-vocabulary field."""
 
-    from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.captures import capture_contract_digest
     from cruxible_client.contracts.claim_types import (
         ClaimType,
@@ -625,7 +617,6 @@ def _move_to_v7(
         render_claim_type,
     )
     from cruxible_client.contracts.policies import (
-        CAPTURE_CONTRACT_REF_ROLE,
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionRule,
     )
@@ -648,10 +639,7 @@ def _move_to_v7(
                     ClaimEvidenceAdmissionRule(
                         rule_id=rule.rule_id,
                         claim_roles=rule.claim_roles,
-                        capture_contracts=(
-                            ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=contract.identity),
-                        ),
-                        evidence_kinds=rule.evidence_kinds,
+                        capture_contracts=({"contract": contract.identity.name},),
                         admission=rule.admission,
                         subject_binding=rule.subject_binding,
                     ),
@@ -876,37 +864,49 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.captures import (
-        capture_contract_digest,
         capture_contract_path,
         render_capture_contract,
     )
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
     from cruxible_client.contracts.providers import provider_path, render_provider
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-    from tests.core_support._pc_c_support import capture_contract, provider
+    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._p2b1_support import accepted_interface
+    from tests.support.provider_builds import capture_provider_build
 
-    contract = capture_contract() if contract is None else contract
-    provider_artifact = provider(contract)
+    contract = record_contract() if contract is None else contract
+    provider_artifact = capture_provider_build(contract)
+    interface = accepted_interface()
     # A field whose evidence is the record, bound to its Subject by the source.
     predicate = f"{KIND}.recorded_status"
     recorded = CLAIM_TYPES[2].model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
             "predicate": predicate,
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_requirement": "captured",
+            "revision_evidence": "replace",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="order-record",
                         claim_roles=("observation",),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=("database_record",),
+                        capture_contracts=(
+                            {
+                                "contract": contract.identity.name,
+                                "logical_sources": ["commerce.production.orders"],
+                            },
+                        ),
                         admission="direct",
-                        subject_binding="contract_source_mapping",
+                        subject_binding="exact_claim_subject"
+                        if contract.shape == "foreign_span"
+                        else "contract_source_mapping",
                     ),
                 )
             ),
@@ -922,6 +922,7 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
             **instance.tree_at(base.git_oid),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
+            interface.path: render_provider_interface(interface.registration),
             claim_type_path(predicate): render_claim_type(recorded),
         },
         timestamp="2026-09-30T11:00:00.000000Z",
@@ -968,11 +969,19 @@ def _record_capture(
     reader = FakeVersionedExternalSourceReader()
     reader.seed(
         source_identity="commerce.production.orders",
-        coordinate_type="postgres-lsn-v1",
+        coordinate_type=contract.coordinate_schema_pins[0].target.name,
         coordinate="0/16B6C50",
-        selector_type="relation-primary-key-v1",
+        selector_type=next(
+            (
+                pin.target.name
+                for pin in contract.selector_schema_pins
+                if pin.target.name == "relation-primary-key-v1"
+            ),
+            contract.selector_schema_pins[0].target.name,
+        ),
         selector=selector,
         value={"order_id": subject_id, "status": "ready"},
+        replayability="attested_only" if contract.replay == "attested" else "exact",
     )
     acquired = reader.acquire(
         ExternalSourceReadRequestV1(
@@ -983,9 +992,16 @@ def _record_capture(
                 logical_source_identity="commerce.production.orders",
                 adapter_digest=digest("test-adapter", "postgres-v1"),
             ),
-            coordinate_type="postgres-lsn-v1",
+            coordinate_type=contract.coordinate_schema_pins[0].target.name,
             coordinate="0/16B6C50",
-            selector_type="relation-primary-key-v1",
+            selector_type=next(
+                (
+                    pin.target.name
+                    for pin in contract.selector_schema_pins
+                    if pin.target.name == "relation-primary-key-v1"
+                ),
+                contract.selector_schema_pins[0].target.name,
+            ),
             selector=selector,
             materialization="cas",
             run_coordinate=provider_run(provider_artifact),
@@ -1015,9 +1031,9 @@ def _record_capture(
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
-    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    instance = legacy_record_instance
+    instance = record_instance
     from cruxible_client.contracts.write import capture_handle
 
     admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
@@ -1038,17 +1054,16 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
 
 
 def test_contract_evidence_finds_an_uncited_self_asserted_capture(
-    legacy_record_instance: PlaybillInstance,
+    record_instance: PlaybillInstance,
 ) -> None:
     """A proposer-asserted contract's Capture needs no run: it is found by contract too."""
 
-    instance = legacy_record_instance
+    instance = record_instance
     from cruxible_client.contracts.write import capture_handle
-    from tests.core_support._pc_c_support import capture_contract
-    from tests.test_authoring.test_authoring_existing_capture import _self_asserted
+    from tests.core_support._light_capture_support import record_contract
 
     contract, provider_artifact = _seed_record_source(
-        instance, contract=_self_asserted(capture_contract())
+        instance, contract=record_contract(self_asserted=True)
     )
     held = _record_capture(instance, contract, provider_artifact, WI1)
     assert held not in _accepted_capture_digests(instance)
@@ -1064,12 +1079,12 @@ def test_contract_evidence_finds_an_uncited_self_asserted_capture(
 
 
 def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
-    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
 
     admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
-    instance = legacy_record_instance
+    instance = record_instance
     from datetime import timedelta
 
     from cruxible_client.contracts.write import capture_handle
@@ -1111,11 +1126,11 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
 
 
 def test_contract_evidence_reads_indexes_not_the_body_store(
-    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A lookup by contract never walks the CAS: its size is not the lookup's limit."""
 
-    instance = legacy_record_instance
+    instance = record_instance
     from cruxible_client.contracts.write import capture_handle
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
@@ -2336,18 +2351,105 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
 
 
-def test_rebind_needs_the_claim_rebind_compiler(
-    legacy_record_instance: PlaybillInstance, tmp_path: Path
-) -> None:
-    claim = _write(legacy_record_instance, _set(WI1, "title", "Tidy")).changes[0].claim
-    refusal = _refusal(
-        _write(
-            legacy_record_instance,
-            {"op": "rebind", "target": claim, "evidence": report_evidence(tmp_path, "Tidy")},
-        )
+@pytest.mark.parametrize("revision", [33, 34, 35])
+def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path, revision: int) -> None:
+    from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+        capture_contract_digest,
+        capture_contract_path,
+        foreign_source_capture_contract_v1,
+        parse_capture_contract,
     )
-    assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
-    assert "cruxible compiler upgrade" in (refusal.repair or "")
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.subjects import render_subject
+    from cruxible_core.compiler.compiler import (
+        CLAIM_REBIND_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
+    )
+    from tests.core_support._subject_kind_support import core_assigned
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.test_claims.test_claims import TIMESTAMP, _claim_type, _subject
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    compiler = {
+        33: SUBJECT_IDENTITY_COMPILER,
+        34: PROVIDER_BUILDS_COMPILER,
+        35: CLAIM_REBIND_COMPILER,
+    }[revision]
+    instance, owner = initialize_legacy_local(tmp_path, compiler=compiler)
+    subject = _subject()
+    claim_type = _claim_type()
+    policy = claim_type.evidence_admission_policy
+    rule = policy.rules[0].model_copy(
+        update={
+            "capture_contract_digests": (
+                *sorted(
+                    (
+                        capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1).tagged,
+                        capture_contract_digest(
+                            foreign_source_capture_contract_v1("repo.reports")
+                        ).tagged,
+                    )
+                ),
+            )
+        }
+    )
+    claim_type = claim_type.model_copy(
+        update={"evidence_admission_policy": policy.model_copy(update={"rules": (rule,)})}
+    )
+    tree = core_assigned(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            subject_path(subject.subject_kind, subject.subject_id): render_subject(subject),
+            claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+        },
+    )
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="pre-light-vocabulary")
+    written = _write(
+        instance, _set("project.work_item/wi-42", "status", "ready", role="observation")
+    )
+    assert written.status == "accepted", written
+    claim = written.changes[0].claim
+    assert instance.accepted_coordinate().compiler == compiler
+    path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1.identity.name)
+    assert (
+        parse_capture_contract(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+        )
+        == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    observed = report_evidence(tmp_path, "ready")
+    foreign_write = _write(
+        instance,
+        _set(
+            "project.work_item/wi-42",
+            "status",
+            "done",
+            role="observation",
+            evidence=observed,
+        ),
+    )
+    assert foreign_write.status == "accepted", foreign_write
+    foreign = foreign_source_capture_contract_v1("repo.reports")
+    foreign_path = capture_contract_path(foreign.identity.name)
+    assert (
+        parse_capture_contract(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[foreign_path],
+            path=foreign_path,
+        )
+        == foreign
+    )
+    if revision == 33:
+        refusal = _refusal(
+            _write(
+                instance,
+                {"op": "rebind", "target": claim, "evidence": observed},
+            )
+        )
+        assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
+        assert "cruxible compiler upgrade" in (refusal.repair or "")
 
 
 _TWO_FILES_CATALOG = """\

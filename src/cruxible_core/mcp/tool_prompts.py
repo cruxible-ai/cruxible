@@ -142,6 +142,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_principal_propose": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
+    "cruxible_capture_contract_propose": (
+        "Use to define captured evidence: input names a contract and its shape "
+        "(http_response, procedure_output, foreign_span or database_snapshot). "
+        "Grade, replay, retention, erasure and byte budget have defaults. "
+        "Edits keep omitted fields; incompatible changes need a new name. "
+        "Lands when policy and your tier allow; accept=never proposes only."
+    ),
     "cruxible_claim_type_propose": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
         "pass a ClaimTypeInputRecord: a new one states its subject kinds, object and "

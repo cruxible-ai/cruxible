@@ -22,11 +22,12 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -49,12 +50,11 @@ def _self_evidence() -> ClaimEvidenceAdmissionPolicy:
                 rule_id="self",
                 claim_roles=("normative", "observation"),
                 capture_contracts=(
-                    ArtifactRef(
+                    CaptureContractAdmission(
                         role=CAPTURE_CONTRACT_REF_ROLE,
                         target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                     ),
                 ),
-                evidence_kinds=("self_asserted",),
                 admission="direct",
                 subject_binding="exact_claim_subject",
             ),

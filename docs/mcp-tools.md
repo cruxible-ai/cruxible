@@ -248,6 +248,7 @@ The principal registry is `orient(section="principals")`; one record is
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_claim_type_propose` | Propose a governed predicate interface, or adopt a builtin (`builtin: semantic.alias` or `semantic.distinct_from`) | `GOVERNED_WRITE` |
+| `cruxible_capture_contract_propose` | Propose authored evidence: `input: {name, shape}` with optional grade, replay, retention, erasable, max_bytes and selector_privacy; omitted edit fields keep accepted values; lands when allowed (`accept: never` keeps the proposal) | `GOVERNED_WRITE` |
 | `cruxible_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_claim_type_upgrade` | Propose moving older ClaimTypes to v7 (identity evidence rules included), stating their revision evidence | `GOVERNED_WRITE` |
 | `cruxible_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
@@ -382,7 +383,7 @@ over Claims or Captures): `ClaimType` (`predicate`, `subject_kinds`, `object`,
 `authority`, `lifecycle`, `enabled`, `triggers`, `triggers_total`),
 `SubjectKind` (`kind`, `rule`, `keys`, `uniqueness`, `description`, `subjects`
 -- its live Subjects -- `kit`, `lifecycle`), `CaptureContract` (`name`,
-`version`, `lifecycle`, `sources`, `source_kinds`, `evidence_kinds`, `grade`,
+`version`, `lifecycle`, `source_kinds`, `grade`,
 `admitted_by`, `required_by`: the live ClaimTypes admitting it, and those of
 them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
 `grant`, `state`, `scope`, `change_kinds`, `condition`, `suspended`,
@@ -495,3 +496,14 @@ value may be `null`, which binds an optional parameter explicitly; omitting it t
 parameter's default.
 
 Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.
+
+CaptureContract input uses the closed shapes `http_response`, `procedure_output`,
+`foreign_span`, `database_snapshot`. Defaults: `grade: observed`, `replay: attested`
+for HTTP and `exact` otherwise, `retention: P30D`, `erasable: false`,
+`max_bytes: 16777216`, `selector_privacy: direct_allowed`. Derived grade requires
+`procedure_output`. The engine supplies components; clients author this compact
+form. A rule's `capture_contracts` accepts names or
+`{contract: NAME, logical_sources: [SOURCE]}`. Empty sources means any; a
+restricted entry matches the external Capture's recorded source and cannot
+admit a CAS Capture. Each served Capture admission account carries one
+`decision`, with status, rule, admission mode and any refusal or repair hint.

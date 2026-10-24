@@ -100,7 +100,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
-    ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
     BlueprintInput,
@@ -153,6 +152,7 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
 )
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
@@ -218,6 +218,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -1134,7 +1135,9 @@ class ChangeSetDraft:
             coordinate=self._playbill.coordinate,
         )
 
-    def capture_contract(self, contract: CaptureContract) -> ChangeSetDraft:
+    def capture_contract(
+        self, contract: CaptureContract | CaptureContractInputRecord
+    ) -> ChangeSetDraft:
         """Define one CaptureContract inside this changeset.
 
         Next: more members, then ``.submit()``.
@@ -1145,7 +1148,12 @@ class ChangeSetDraft:
                 payload=CaptureContractAuthoringPayload(capture_contract=contract),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
-                decisions={"kind": "capture_contract", "name": contract.identity.name},
+                decisions={
+                    "kind": "capture_contract",
+                    "name": contract.name
+                    if isinstance(contract, CaptureContractInputRecord)
+                    else contract.identity.name,
+                },
             )
         )
         return self
@@ -3101,12 +3109,11 @@ class Cruxible:
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
                 capture_contracts=(
-                    ArtifactRef(
+                    CaptureContractAdmission(
                         role=CAPTURE_CONTRACT_REF_ROLE,
                         target=foreign_source_capture_contract(source_id).identity,
                     ),
                 ),
-                evidence_kinds=("self_asserted",),
                 admission=admission,
                 subject_binding="exact_claim_subject",
             )

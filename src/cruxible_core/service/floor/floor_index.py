@@ -46,7 +46,9 @@ from typing import Any
 from weakref import WeakKeyDictionary
 
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
 )

@@ -1195,6 +1195,29 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ClaimTypeInputProposalResult)
 
+    def propose_capture_contract_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
+    ) -> contracts.ProposalInspection:
+        """Propose a CaptureContract input or merge patch; lands when allowed."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/capture-contracts/proposals",
+            json={
+                "input": dict(input),
+                "accept": accept,
+                **self._proposal_payload(proposal_name=proposal_name, base=base),
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.ProposalInspection)
+
     def propose_claim_type_input(
         self,
         instance_id: str,

@@ -83,7 +83,6 @@ def identity_claim_type(
                                 target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                             ),
                         ),
-                        evidence_kinds=("self_asserted",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

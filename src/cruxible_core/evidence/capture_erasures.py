@@ -32,7 +32,7 @@ from cruxible_client.contracts.capture_erasure import (
     RecordedCaptureErasure,
 )
 from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
     capture_retained_body_digests,
@@ -378,7 +378,7 @@ OWN_WORDS_CONTRACT_DIGESTS = frozenset(
     capture_contract_digest(contract).tagged
     for contract in (
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+        *COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
     )
 )
 

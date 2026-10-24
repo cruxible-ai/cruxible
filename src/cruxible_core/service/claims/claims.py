@@ -102,11 +102,10 @@ class PlaybillClaimView(_StrictClaimServiceModel):
     facts: tuple[dict[str, object], ...]
 
 
-class CaptureEvidenceKindAdmissionV1(_StrictClaimServiceModel):
-    tag: Literal["playbill-capture-evidence-kind-admission-v1"] = (
-        "playbill-capture-evidence-kind-admission-v1"
+class CaptureEvidenceAdmissionV1(_StrictClaimServiceModel):
+    tag: Literal["cruxible-capture-evidence-admission-v2"] = (
+        "cruxible-capture-evidence-admission-v2"
     )
-    evidence_kind: str
     status: Literal["admitted", "not_admitted"]
     rule_id: str | None = None
     admission: Literal["origin_only", "direct", "derivational"] | None = None
@@ -115,7 +114,7 @@ class CaptureEvidenceKindAdmissionV1(_StrictClaimServiceModel):
 
 
 class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
-    tag: Literal["playbill-capture-admission-account-v1"] = "playbill-capture-admission-account-v1"
+    tag: Literal["cruxible-capture-admission-account-v2"] = "cruxible-capture-admission-account-v2"
     citation_id: str
     capture_digest: str
     citation_role: Literal["evidence", "copy", "legacy"]
@@ -123,7 +122,7 @@ class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
     capture_contract_identity: str
     capture_contract_digest: str
     status: Literal["admitted", "not_admitted", "not_evidence"]
-    decisions: tuple[CaptureEvidenceKindAdmissionV1, ...] = ()
+    decision: CaptureEvidenceAdmissionV1 | None = None
 
 
 class ClaimAttestationAccountV1(_StrictClaimServiceModel):
@@ -702,8 +701,7 @@ def _claim_admission_accounts(
             verified_attestations=law.verified_attestations,
         )
         decisions = tuple(
-            CaptureEvidenceKindAdmissionV1(
-                evidence_kind=item.evidence_kind,
+            CaptureEvidenceAdmissionV1(
                 status="admitted" if item.trace.result.verdict == "eligible" else "not_admitted",
                 rule_id=item.trace.result.rule_id,
                 admission=item.trace.result.admission,
@@ -727,7 +725,17 @@ def _claim_admission_accounts(
                     if eligible and any(item.status == "admitted" for item in decisions)
                     else "not_admitted"
                 ),
-                decisions=decisions,
+                decision=(
+                    max(
+                        decisions,
+                        key=lambda item: (
+                            item.status == "admitted",
+                            {"derivational": 2, "direct": 1}.get(item.admission or "", 0),
+                        ),
+                    )
+                    if decisions
+                    else None
+                ),
             )
         )
     return tuple(accounts)
@@ -1068,7 +1076,7 @@ def service_explain_playbill_claim(
             raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
         logical_source = getattr(envelope.source, "source_identity", None)
         if logical_source is None:
-            logical_source = contract.contract.logical_source_identities[0]
+            logical_source = envelope.producer.qualified
         capture_context[digest] = (
             tuple(
                 sorted(
@@ -1238,7 +1246,7 @@ def service_open_playbill_source(
 
 __all__ = [
     "CaptureAdmissionAccountV1",
-    "CaptureEvidenceKindAdmissionV1",
+    "CaptureEvidenceAdmissionV1",
     "ClaimAttestationAccountV1",
     "ClaimEvidenceFreshnessLineV1",
     "PlaybillClaimExplanationV2",
