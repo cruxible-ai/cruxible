@@ -22,7 +22,6 @@ from pydantic_core import CoreSchema
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactRef,
     parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -629,11 +628,11 @@ def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...])
     return identities
 
 
-def _contract_ref(value: object) -> ArtifactRef:
+def _contract_ref(value: object) -> CaptureContractAdmission:
     # A rule names a contract by its public name or its stored identity; both
     # map to the stored identity, which is what evidence is captured under.
     if isinstance(value, dict):
-        ref = ArtifactRef.model_validate(value)
+        ref = CaptureContractAdmission.model_validate(value)
         name = stored_contract_name(ref.target.name)
         if name == ref.target.name:
             return ref
@@ -646,7 +645,7 @@ def _contract_ref(value: object) -> ArtifactRef:
         if value.partition(":")[0] == "CaptureContract" and ":" in value
         else ArtifactIdentity(kind="CaptureContract", name=value)
     )
-    return ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=identity)
+    return CaptureContractAdmission(role=CAPTURE_CONTRACT_REF_ROLE, target=identity)
 
 
 def _identity_evidence_policy(
@@ -671,18 +670,16 @@ def _identity_evidence_policy(
             if isinstance(item, dict) and "contract" in item:
                 ref = _contract_ref(item["contract"])
                 refs.append(
-                    CaptureContractAdmission(
-                        **ref.model_dump(mode="python"),
-                        logical_sources=tuple(item.get("logical_sources", ())),
+                    CaptureContractAdmission.model_validate(
+                        {
+                            **ref.model_dump(mode="python"),
+                            "logical_sources": tuple(item.get("logical_sources", ())),
+                        }
                     )
                 )
             else:
                 ref = _contract_ref(item)
-                refs.append(
-                    CaptureContractAdmission.model_validate(
-                        ref.model_dump(mode="python") if not isinstance(item, dict) else item
-                    )
-                )
+                refs.append(ref)
         for digest in rule.pop("capture_contract_digests", []) or []:
             identity = identities.get(digest) if isinstance(digest, str) else None
             if identity is None:
