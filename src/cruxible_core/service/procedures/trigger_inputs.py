@@ -9,7 +9,7 @@ from datetime import datetime
 
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
-    SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest

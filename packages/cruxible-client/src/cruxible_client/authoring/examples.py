@@ -34,14 +34,13 @@ from cruxible_client.authoring.inputs import (
 )
 from cruxible_client.contracts import AuthoringExampleName as AuthoringExampleName
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
@@ -352,18 +351,7 @@ def acquisition_policy_example() -> AcquisitionPolicyInput:
         kind="acquisition_policy",
         acquisition_policy=SourceAcquisitionPolicy(
             identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="replace-me"),
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="replace-me",
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="refuse",
-                ),
-            ),
-            coherence=IndependentCoherence(),
+            max_age=CanonicalDuration(microseconds=86_400_000_000),
         ),
     )
 

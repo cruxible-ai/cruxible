@@ -314,7 +314,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=policy.artifact_format,
                 identity=policy.identity,
                 artifact_digest=acquisition_policy_digest(policy).tagged,
-                pins=policy.pins,
+                pins=getattr(policy, "pins", ()),
                 lifecycle=policy.lifecycle,
             )
         if path.startswith("claims/"):

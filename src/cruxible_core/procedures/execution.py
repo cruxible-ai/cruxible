@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecision,
     InputAcquisitionRule,
-    SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin

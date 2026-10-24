@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyAny as SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence

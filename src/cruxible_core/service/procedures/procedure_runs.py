@@ -21,7 +21,7 @@ from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecision,
     IndependentCoherence,
     InputAcquisitionRule,
-    SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
