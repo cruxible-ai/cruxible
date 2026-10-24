@@ -119,6 +119,7 @@ def core_assigned(
                     policy = slug.evidence_admission_policy.model_dump(mode="json")
                     policy["tag"] = "playbill-claim-evidence-admission-policy-v3"
                     for rule in policy["rules"]:
+                        rule["tag"] = "playbill-claim-evidence-admission-rule-v3"
                         rule["evidence_kinds"] = ["self_asserted"]
                         for ref in rule["capture_contracts"]:
                             ref.pop("logical_sources", None)
