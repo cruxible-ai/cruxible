@@ -1,7 +1,8 @@
 # Concepts
 
 This page explains the ideas Cruxible is built on: what each one is, and what
-it gives you. The [Quickstart](quickstart.md) shows them in use; the [CLI
+it gives you. The [Quickstart](quickstart.md) and the [Security
+walkthrough](security-walkthrough.md) show them in use; the [CLI
 reference](cli-reference.md) and [MCP tools](mcp-tools.md) list every
 operation.
 

@@ -112,14 +112,23 @@ Each instance has one approval policy, chosen at `cruxible init`:
 Independence is what lets a team rely on each other's findings: under it, an
 agent that found something can't also be the one who confirms it.
 
-Approval is attribution and role separation, not a security boundary. A
-signature records which principal approved a change, and independence keeps
-one principal from both finding and confirming it; neither stops an agent that
-can read every principal's private key on the machine from signing as each of
-them. Where a fact must not rest on anyone's say-so, the control is the field's
-evidence rule: admit only Captures a run fetched from the outside world, which
-the daemon's journal proves were fresh reads, not bytes someone wrote (see
-[Evidence and admission](evidence-and-admission.md#requiring-captured-evidence)).
+### What approval protects, and what it doesn't
+
+Approval is a record of who agreed to a change, and independence keeps whoever
+found something from also confirming it. That's attribution and a separation
+of roles, not a security boundary: an agent that can read every principal's
+private key on the machine can sign as any of them, and on a daemon without
+`--auth` any process can claim to be any principal. Treat approvals as an
+honest team's record, not a lock.
+
+Where a fact must not rest on anyone's say-so, the control is evidence. A field
+can require captured evidence and admit only contracts whose Captures a run
+fetched from the outside world, which the daemon's journal shows were fresh
+reads rather than bytes someone wrote ([Evidence and
+admission](evidence-and-admission.md#requiring-captured-evidence)). To keep
+agents from acting as each other, keep their keys where other agents can't
+read them, such as under another OS user or on another machine, and give each
+a credential scoped to its tier.
 
 ## Principals and credentials
 

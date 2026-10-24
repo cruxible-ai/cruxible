@@ -274,48 +274,83 @@ settle`.
 
 ## Erasing a Capture that holds a secret
 
-A Capture retains the exact bytes it observed, so a tool that printed a secret
-(a token in a scan, a key in a log read) leaves that secret in the instance's
-body store. When the Capture's contract allows it, erase the bytes:
+A Capture keeps the exact bytes a source returned; that is what makes it
+evidence. Sometimes those bytes include something that must not be kept: a
+token a tool printed, a password left in an exported file. If the Capture's
+contract allows it, erase them.
+
+Whether a Capture can be erased is decided by its CaptureContract, when the
+contract is defined: only a contract that declares `erasure:
+authorized_by_rule`, with Cruxible's built-in erasure rule pinned, allows it,
+and the declaration is fixed for that contract. Give a source that may capture
+secrets such a contract before it runs; anything captured under another
+contract keeps its bytes (`cruxible.capture.erasure_prohibited`).
+
+Erasing can't be undone, so it previews first and names the Claims it affects:
 
 ~~~text
-$ cruxible capture erase CAP-5f31df955084 --because "Scan output printed the deploy token; rotated."
-Would erase the retained body of CAP-5f31df955084 (1 object) under CaptureContract:security.scan-output
-Because: Scan output printed the deploy token; rotated.
-Cited by 1 live Claim: CLM-…
-Left with no retained evidence (next lists them as claim_evidence_erased): CLM-…
+$ cruxible capture erase CAP-539c9a14cf08 --because "The export included a portal token; rotated."
+Would erase the retained body of CAP-539c9a14cf08 (1 object) under CaptureContract:catalog.supplier-file-v1
+Because: The export included a portal token; rotated.
+Cited by 2 live Claims: CLM-15e54314…, CLM-49fa0894…
+Left with no retained evidence (next lists them as claim_evidence_erased): CLM-15e54314…, CLM-49fa0894…
 Verdicts will read it as no longer replayable; each field's rules decide the rest.
-Preview at 4be1…; nothing was written.
-Commit it: rerun the same command with --commit --at 4be1…
+Preview at 030a6ce5…; nothing was written.
+Commit it: rerun the same command with --commit --at 030a6ce5…
+
+$ cruxible capture erase CAP-539c9a14cf08 --because "…" --commit --at 030a6ce5…
+Erased the retained body of CAP-539c9a14cf08 (1 object) under CaptureContract:catalog.supplier-file-v1
+By: YOUR_ID at 2026-10-22T03:21:44.502579+00:00
+...
 ~~~
 
-Erasure is governed by the contract: only a CaptureContract that declares
-`erasure: authorized_by_rule` (with the `playbill.capture-erasure-authority-v1`
-erasure-rule pin) allows it, and that declaration is accepted and fixed like the
-rest of the contract. Give sources that may capture secrets such a contract
-before they run; a Capture under any other contract keeps its bytes. Erasing
-needs `graph_write`, and it cannot be undone, so it commits only with the
-preview's `--at`.
+It needs the `graph_write` tier. Never put the secret itself in `--because`:
+the reason is kept.
 
-What goes is the body: the bytes replay reads. Erasing deletes them and
-appends one erasure record: who erased it, when, why, under which contract,
-and which bodies; never put the secret in `--because`. The Capture's envelope
-(what was observed, when, by which run, under which contract) stays, and a
-Claim citing it keeps standing on its evidence digest and source pointer: its
-history and its accepted judgments are unchanged, and it can still be revised
-or retired. Erasing bytes that are present again (the same bytes observed
-anew, or an erase that was interrupted) appends another record.
+**What goes, and what stays.** The bytes go: erasing deletes the body and
+appends one erasure record of who erased it, when, why, under which contract,
+and which bodies. The Capture's record stays (what was observed, when, by
+which run, under which contract). The ledger and its Git mirror never held
+those bytes, so nothing there changes, and a value a Claim states is accepted
+state, not evidence, so it isn't erased. Erasing bytes that are present again
+(the same bytes observed anew, or an erase that was interrupted) appends
+another record. A missing body reads as erased only when an authorized
+erasure record names it; missing with no record, it is a defect.
 
-A missing body reads as erased when an authorized erasure record names it;
-missing with no record, it is a defect. `get --detail evidence` shows the
-Capture as erased, and verdicts read the body as no longer present, with each
-field's own rules deciding what that means: a field that requires current
-evidence (the default) reads such a Claim `stale (evidence erased)`. A live
-Claim left with no retained evidence appears in `next` as
-`claim_evidence_erased`; move it onto a fresh observation with
-`cruxible rebind CLAIM --capture CAP-...` (a new Capture under the same
-contract). The ledger and its Git mirror never held these bytes, so nothing
-there changes; a value a Claim states is accepted state and is not erased.
+**What happens to the Claims that cite it.** Each keeps standing on its
+evidence digest and source pointer: its history and its accepted judgments are
+unchanged, and it can still be revised or retired. Its evidence can no longer
+be checked, though, so a field that requires current evidence (the default)
+reads it `stale (evidence erased)`, its read status is `ineligible`, and
+`next` lists each live Claim left with no retained evidence:
+
+~~~text
+$ cruxible get CLM-49fa0894… --detail evidence
+value: true
+capture CAP-539c9a14cf08  CaptureContract:catalog.supplier-file-v1 v1  source=acme.discontinued  ...  body erased 2026-10-22T03:21:44.502579+00:00 by YOUR_ID: The export included a portal token; rotated.
+
+$ cruxible next
+warning  claim_evidence_erased  Claim:CLM-49fa0894…  next=cruxible.rebind
+  repair: cruxible rebind CLM-49fa0894… --citation af0b0fd761f3 --capture CAP --because TEXT
+  fill in: CAP (the fresh Capture's handle), TEXT (why, in your words)
+~~~
+
+If the fact still holds, read the source again (once the secret is gone from
+it) and re-bind the Claim onto the fresh Capture, under the same contract:
+
+~~~text
+$ cruxible line run catalog.acme-discontinued
+...
+$ cruxible rebind CLM-49fa0894… --capture CAP-afbdc9616895 \
+    --because "Re-read Acme's list after the token was rotated; af-208 is still listed."
+accepted (generation 24, 742b8eb57ed1)
+  rebind catalog.part/af-208 discontinued: true (value unchanged)  [CLM-49fa0894…; verdict supported]
+~~~
+
+`cruxible rebind --from-capture CAP-539c9a14cf08 --capture CAP-afbdc9616895
+--because "..."` re-binds every live Claim citing the erased Capture in one
+write. If the fact no longer holds, retire the Claim as usual; a new citation
+of the erased Capture is refused, since it has no bytes to check.
 
 ## Pitfalls
 
@@ -331,6 +366,8 @@ there changes; a value a Claim states is accepted state and is not erased.
   add "does not fit" beside "fits".
 - **A citation where a Document is needed.** If the Claim depends on the file
   saying nothing else, govern the file as a Document.
+- **A source that may print secrets, under a contract that can't erase.**
+  Decide erasure when you define the contract; it can't be added later.
 
 ## Where to go next
 
