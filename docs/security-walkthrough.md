@@ -15,7 +15,8 @@ rather than make them, and answers you can trust because you can see what they
 rest on.
 
 You'll need Python 3.11+, Git, a project to look at, a tool that writes a
-CycloneDX SBOM (step 4), and network access to `pypi.org`, `api.osv.dev`,
+CycloneDX SBOM (step 4; for JavaScript dependencies that means Node.js with
+`npm`), and network access to `pypi.org`, `api.osv.dev`,
 `www.cisa.gov` and `epss.empiricalsecurity.com`.
 
 ## Step 1: Install and start Cruxible
@@ -74,12 +75,14 @@ security 1.3.0: accepted (install)
 
 The kit brings definitions only. Its checks, which Cruxible calls **Lines**,
 come as an example you adopt deliberately, because what runs on your machine
-and when is your decision. Fetch the example for this release, fill in today's
-date and an expiry 90 days out, and submit it:
+and when is your decision. `kit pull` fetches the release's files (its
+README, examples and agent skills) without installing anything. Copy the
+example, fill in today's date and an expiry 90 days out, and submit it:
 
 <!-- publish: kit tag -->
 ~~~bash
-curl -O https://raw.githubusercontent.com/cruxible-ai/cruxible-kits/security-1.3.0/kits/security/examples/automation.json
+cruxible kit pull security:1.3.0 --out security-kit
+cp security-kit/examples/automation.json .
 sed -i.bak "s/\"NOW\"/\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"/g; s/\"EXPIRES\"/\"$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)\"/g" automation.json
 cruxible authoring submit automation.json --brief
 ~~~
@@ -132,7 +135,9 @@ cruxible procedure run security.sbom-acquire sbom.json
 ~~~
 
 Reading it starts the import check, which proposes your release and its
-components. Look at the proposal before you approve it:
+components. The read returns as soon as the SBOM is captured, before the
+import has proposed anything, so if `proposal list` is still empty, give it a
+moment and list again. Look at the proposal before you approve it:
 
 ~~~text
 $ cruxible proposal list --status open
@@ -154,6 +159,10 @@ $ cruxible proposal approve sha256:6165c5fa…
 Activated at c97194dc4e44…
 ~~~
 
+`proposal approve` shows what you're signing and asks before it signs;
+`--yes` skips the question, and an agent or a script, with no terminal to
+answer it, must pass it.
+
 Each line is a **Claim**: one fact about one thing, with an ID (`CLM-…`) and
 the evidence behind it, here the SBOM as it was read.
 
@@ -171,6 +180,10 @@ Proposal propose: sha256:95a12abe… candidate sha256:4a281e64…
 
 $ cruxible proposal approve sha256:95a12abe…
 ~~~
+
+OSV runs once a day on its own; run it again like this whenever you read in a
+new SBOM or host inventory, so the new releases are assessed now rather than
+tomorrow.
 
 Then KEV, for which of those are being exploited, and EPSS, for how likely
 exploitation is. Each fetch lands its catalog, and a triage check proposes the
@@ -336,10 +349,16 @@ nothing. Here, fetching a CVE record from a host that doesn't resolve:
 
 ~~~text
 $ cruxible procedure run security.cve-record-acquire cve.json
-RUN-8c616fc7…: operational_failed
+RUN-fb30fa54…: operational_failed
 Refused: provider_execution_error: Provider execution failed for an operational reason.
+Repair: hand edit refusal/provider_execution_error: Read the failure cause. A transport error (connect, DNS, timeout): rerun once the target is reachable. An HTTP status: revise the URL input, then rerun.
+Cause: record: ConnectError: could not resolve 'cve-records.invalid': ...
+Next: terminal
 ...
 ~~~
+
+The run exits 1, so a script's `&&` stops there, and `Cause` says what the
+provider hit.
 
 A daily check that can't reach OSV, KEV or EPSS fails the same way. Nothing
 about your components changes, so whatever that run would have answered is
@@ -374,4 +393,6 @@ asked questions whose answers carry their evidence. From here:
   and the kit's [security intake
   skill](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/skills/security-intake/SKILL.md)
   is these steps written for one, plus your hosts, services, credentials and
-  logs.
+  logs. Install it with its partner, the security analyst skill, from the
+  pulled kit: `cp -R security-kit/skills/security-intake
+  security-kit/skills/security-analyst .claude/skills/`.
