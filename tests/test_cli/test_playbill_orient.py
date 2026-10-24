@@ -234,20 +234,19 @@ def test_orient_capture_sections_print_contracts_by_their_public_names() -> None
     assert "CaptureContract:cruxible.foreign-source.repo.notes  1  live" in text
     assert "playbill." not in text
 
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        foreign_source_capture_contract,
+    )
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
     from cruxible_client.contracts.triggers import CaptureLandingSchedule
 
-    schedule = CaptureLandingSchedule.model_construct(
-        kind="capture_landed",
-        event=type(
-            "Event",
-            (),
-            {
-                "capture_contract_identity": ArtifactIdentity(
-                    kind="CaptureContract", name="playbill.foreign-source.repo.notes"
-                )
-            },
-        )(),
+    contract = foreign_source_capture_contract("repo.notes")
+    schedule = CaptureLandingSchedule(
+        event=CaptureEventSelector(
+            capture_contract_identity=contract.identity,
+            capture_contract_digest=capture_contract_digest(contract).tagged,
+        )
     )
     assert schedule_summary(schedule) == (
         "when CaptureContract:cruxible.foreign-source.repo.notes lands"

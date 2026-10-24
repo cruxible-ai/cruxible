@@ -198,7 +198,9 @@ def test_a_capture_contract_card_names_its_version_and_admitting_claim_types(
     fields = card.model_dump()
     assert fields["version"] == 1 and fields["lifecycle"] == "live"
     assert fields["admitted_by"] == (PREDICATE,)
-    assert fields["captures"]["sources"] == ["fixture.work-items"]
+    assert fields["captures"]["source_kinds"] == ["external"]
+    assert "sources" not in fields["captures"]
+    assert "evidence_kinds" not in fields["captures"]
 
 
 def test_evidence_names_each_capture_by_contract_identity_and_version(
