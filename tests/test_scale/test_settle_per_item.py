@@ -69,7 +69,7 @@ from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
-from tests.core_support import _pc_c_support
+from tests.core_support import _light_capture_support
 from tests.core_support._subject_kind_support import core_assigned
 from tests.test_procedures import test_procedure_proposal_delivery as proposal_support
 from tests.test_procedures import test_procedure_settlement_delivery as settle_support
@@ -439,14 +439,14 @@ def _forget_parsed_receipts() -> None:
 def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fixture contract selects at most 4 KB; a fan-out of 2N items needs more."""
 
-    original = _pc_c_support.capture_contract
+    original = _light_capture_support.record_contract
 
     def roomy(*args: Any, **kwargs: Any) -> Any:
         contract = original(*args, **kwargs)
         budget = contract.selection_budget.model_copy(update={"max_bytes": 1 << 20})
         return contract.model_copy(update={"selection_budget": budget})
 
-    for module in (_pc_c_support, fixtures, proposal_support, settle_support):
+    for module in (fixtures, proposal_support, settle_support):
         if hasattr(module, "capture_contract"):
             monkeypatch.setattr(module, "capture_contract", roomy)
 

@@ -783,7 +783,10 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
     )
 
 
+@sealed_memo
 def is_coordinator_self_source_contract(contract: CaptureContractAny) -> bool:
+    if contract.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID:
+        return False
     return (
         contract.model_copy(
             update={"lifecycle": contract.lifecycle.model_copy(update={"predecessor_digest": None})}

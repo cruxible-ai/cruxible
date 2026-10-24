@@ -731,12 +731,26 @@ def _derivation_satisfied(
 def evidence_rule_matches_source(
     rule: ClaimEvidenceAdmissionRuleAny, evidence: EvidenceAdmissionInput
 ) -> bool:
+    return evidence_rule_matches_capture_source(
+        rule,
+        identity=evidence.capture_contract_identity,
+        logical_source=evidence.logical_source,
+        evidence_kind=evidence.evidence_kind,
+    )
+
+
+def evidence_rule_matches_capture_source(
+    rule: ClaimEvidenceAdmissionRuleAny,
+    *,
+    identity: str | None,
+    logical_source: str | None,
+    evidence_kind: str | None,
+) -> bool:
+    """Match the already-typed source fields without rebuilding an admission input."""
     if isinstance(rule, ClaimEvidenceAdmissionRule):
-        return rule.admits_source(
-            identity=evidence.capture_contract_identity, logical_source=evidence.logical_source
-        )
+        return rule.admits_source(identity=identity, logical_source=logical_source)
     # Historical kinds constrain admission only when both stored sides carry them.
-    return evidence.evidence_kind is None or evidence.evidence_kind in rule.evidence_kinds
+    return evidence_kind is None or evidence_kind in rule.evidence_kinds
 
 
 def evaluate_claim_evidence_admission_trace(
