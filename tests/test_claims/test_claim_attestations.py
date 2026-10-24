@@ -41,7 +41,7 @@ from tests.test_claims.test_claims import OBSERVED_AT, _claim, _subject
 
 def _accepted_claim(instance, claim_id: str = "CLM-0123456789abcdef0123456789abcdef"):
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    from cruxible_client.contracts.captures import build_direct_claim_capture
+    from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 
     capture = build_direct_claim_capture(
         store=instance.body_store(),
