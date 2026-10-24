@@ -3652,12 +3652,20 @@ unit still live refuses `cruxible.claim.polarity_conflict`, so retire it in the
 same `write` file (`{"op": "retire", "target": CLAIM, "reason":
 "superseded"}`) beside the add. In a `write` file or over MCP, HTTP and the
 SDK, a none is the value `{"none": null}` (one-valued) or `{"none": VALUE}`
-(SDK: `NoneValue(none=...)`). Only evidence one of the inverse's
-`evidence_rules` admits establishes a none: `--because` alone refuses
-`cruxible.write.none_needs_evidence`, naming the contracts to cite. Reads list
-a field's live nones beside its values (`get`: `nones`, each with its verdict
-and flags; `query`: a row's `nones` by column), never as a value; a field with
-no value and no current none is unknown.
+(SDK: `NoneValue(none=...)`); the shape must fit the inverse's unit, or it
+refuses `cruxible.write.none_needs_key` (a many-valued field's none names the
+VALUE it does not hold) or `cruxible.write.none_key_not_admitted` (a
+one-valued field's none covers the whole field: `{"none": null}`). Only
+evidence one of the inverse's `evidence_rules` admits establishes a none:
+`--because` alone refuses `cruxible.write.none_needs_evidence`, naming the
+contracts to cite, unless such a rule admits own words. A Procedure that
+states a none again for the same unit revises the live one with the fresh
+evidence. A none goes stale on the
+inverse's own `stale_after` when it declares one, else on the type's. Reads
+list a field's live nones beside its values (`get`: `nones`, each with its
+verdict and flags; `query`: a row's `nones` by column), never as a value, and
+`--follow` never traverses a none in either direction; a field with no value
+and no current none is unknown.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
 there. A value already live in the same role restates that Claim: on evidence

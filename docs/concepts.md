@@ -251,6 +251,20 @@ ClaimType's consequence policy says so. When you have evidence against a
 Claim, attest to it or record what you observed instead, rather than minting
 an adjacent inverse concept ("does not fit").
 
+Some absences are facts worth stating: the supplier's fitment list says
+`bp-2210` doesn't fit the 2024 Civic, or a scan shows a host doesn't run some
+package. A ClaimType can declare an `inverse` for that, naming the evidence
+that can establish it, and a Claim stating the absence is a **none**:
+`cruxible set SUBJECT FIELD --none` says a one-valued field holds nothing, and
+`cruxible add SUBJECT FIELD VALUE --none` says a many-valued field doesn't hold
+VALUE (in a write file, `{"none": null}` or `{"none": VALUE}`). A none needs
+evidence one of its inverse's rules admits (your own words count only where a
+rule admits them), and it can go stale sooner than a value: on the inverse's
+own `stale_after` when it declares one. Reads list
+nones beside a field's values, never as one, and a query never follows one as
+a relationship. So a field has three answers: a value, a current none, or,
+with neither, unknown.
+
 [Building team knowledge](building-team-knowledge.md) covers deciding what to
 model and how to shape it.
 
