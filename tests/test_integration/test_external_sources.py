@@ -175,23 +175,29 @@ def test_external_coordinates_refuse_secrets_and_unpinned_schemas() -> None:
         ExternalSourceReadRequestV1.model_validate(payload)
 
 
+@pytest.mark.parametrize("light", [False, True], ids=["v1-unmaterialized", "v2-retained"])
 def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    light: bool,
 ) -> None:
     # The fixture reader builds v1 envelopes; this pins the mapping law that
     # judges such evidence once accepted, not whether a new citation is admitted.
     admit_legacy_v1_citations(monkeypatch)
     from cruxible_client.contracts.policies import (
         ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionPolicyV1,
         ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionRuleV1,
     )
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
 
-    instance, _owner = initialize_local(tmp_path)
+    instance, _owner = (initialize_local if light else initialize_legacy_local)(tmp_path)
     base = instance.accepted_coordinate()
-    contract = record_contract()
+    contract = record_contract() if light else capture_contract()
+    coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"
     provider_artifact = capture_provider_build(contract)
     shell = _subject()
     subject_address = SemanticAddress.whole_artifact(
@@ -205,7 +211,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     reader = FakeVersionedExternalSourceReader()
     reader.seed(
         source_identity="commerce.production.orders",
-        coordinate_type="database-snapshot-v1",
+        coordinate_type=coordinate_type,
         coordinate="0/16B6C50",
         selector_type="relation-primary-key-v1",
         selector=selector,
@@ -221,11 +227,11 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
             contract=contract,
             provider=provider_artifact,
             binding=binding,
-            coordinate_type="database-snapshot-v1",
+            coordinate_type=coordinate_type,
             coordinate="0/16B6C50",
             selector_type="relation-primary-key-v1",
             selector=selector,
-            materialization="cas",
+            materialization="cas" if light else "external",
             run_coordinate=provider_run(provider_artifact),
             observed_at=NOW,
             resource_budget=contract.selection_budget,
@@ -256,6 +262,23 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
             ),
         }
     )
+    if not light:
+        claim_type = _claim_type().model_copy(
+            update={
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                    rules=(
+                        ClaimEvidenceAdmissionRuleV1(
+                            rule_id="external-order-record",
+                            claim_roles=("observation",),
+                            capture_contract_digests=(contract_digest,),
+                            evidence_kinds=("database_record",),
+                            admission="direct",
+                            subject_binding="contract_source_mapping",
+                        ),
+                    )
+                )
+            }
+        )
     claim_type_digest_value = claim_type_digest(claim_type).tagged
     claim = _claim(
         claim_id="CLM-0123456789abcdef0123456789abcdef",
@@ -345,6 +368,11 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     assert evidence.initial_verdict == "supported"
     assert evidence.evidence_basis == ("direct",)
     assert claim.backing.source_mappings == ()
+    if not light:
+        assert acquired.envelope.commitment.materialization == "external"
+        assert acquired.canonical_material is None
+        assert not instance.body_store().verify(acquired.envelope.commitment.digest)
+        return
     assert acquired.envelope.commitment.materialization == "cas"
     assert acquired.canonical_material == {"order_id": "ord-482", "status": "ready"}
     assert instance.body_store().verify(acquired.envelope.commitment.digest)

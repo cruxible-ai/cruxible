@@ -35,6 +35,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_successor_break,
     evaluate_capture_contract_law,
     foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
     render_capture_contract,
 )
 from cruxible_client.contracts.captures import (
@@ -170,6 +171,11 @@ def test_an_identity_rule_admits_every_version_and_an_exact_rule_one() -> None:
 
 def test_a_successor_may_only_widen_what_it_accepts() -> None:
     assert capture_contract_successor_break(ORIGINAL, _successor(ORIGINAL)) is None
+    legacy = foreign_source_capture_contract_v1(SOURCE).model_copy(
+        update={"evidence_kinds": ("other", "self_asserted")}
+    )
+    narrowed_v1 = _successor(legacy, evidence_kinds=("self_asserted",))
+    assert capture_contract_successor_break(legacy, narrowed_v1) == "evidence_kinds"
     narrowed = _successor(ORIGINAL, replay="exact")
     assert capture_contract_successor_break(ORIGINAL, narrowed) == "shape/replay"
     regraded = _successor(ORIGINAL, epistemic_grade="predicted")
