@@ -234,8 +234,6 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
             "target": interface["identity"],
         },
         "interface_digest": interface["interface_digest"],
-        "contract_in": carried("request", "contract-in"),
-        "contract_out": carried("result", "contract-out"),
     }
     if provider is None:
         node["provider"] = {"kind": "slot", "slot_name": "increment"}
@@ -329,6 +327,16 @@ def _author(world: Any, *, procedure: bool = True) -> None:
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
     world.pb.refresh()
+    if procedure:
+        stored = parse_procedure(
+            _tree(world)[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
+        )
+        (call,) = stored.definition.nodes
+        assert call.contract_in is None and call.contract_out is None
+        assert {contract.identity.name for contract in stored.owned_contracts} == {
+            "request",
+            "result",
+        }
 
 
 def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
