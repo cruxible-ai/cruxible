@@ -1,4 +1,4 @@
-"""ClaimType authoring writes v7 with identity rules, or refuses toward a compiler upgrade.
+"""ClaimType authoring writes v7 or later with identity rules, or refuses toward a compiler upgrade.
 
 A compiler before revision 31 admits neither ClaimType v7 nor identity evidence
 rules. Authoring there used to fall back to a v5 exact-digest ClaimType; it now
@@ -99,12 +99,13 @@ def test_a_tagless_succession_on_an_older_compiler_refuses_instead_of_writing_v5
     _assert_upgrade_refusal(refused.value)
 
 
-def test_lowering_writes_v7_with_identity_rules_where_supported() -> None:
+def test_lowering_writes_v8_with_identity_rules_where_supported() -> None:
     lowered = lower_claim_type_input(
         defaulted_claim_type_input_example(), tree={}, identity_rules=True
     )
 
-    assert lowered.artifact_format == "playbill-claim-type-v7"
+    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert lowered.canonical_form == ("nfc", "trim")
     assert all(rule.capture_contracts for rule in lowered.evidence_admission_policy.rules)
     with pytest.raises(ClaimTypeRequiresCompilerUpgrade):
         lower_claim_type_input(defaulted_claim_type_input_example(), tree={})

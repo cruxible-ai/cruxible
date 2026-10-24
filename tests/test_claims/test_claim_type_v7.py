@@ -343,7 +343,6 @@ def _input(**update: object) -> object:
     return ClaimTypeInputRecord.model_validate(
         {
             **defaulted_claim_type_input_example().model_dump(mode="json"),
-            "canonical_form": None,
             **update,
         }
     )
@@ -364,12 +363,13 @@ def _as_v6(claim_type: ClaimType) -> ClaimType:
         default_role=None,
         evidence_requirement=None,
         revision_evidence=None,
+        canonical_form=None,
     )
     return ClaimType.model_validate(payload)
 
 
-def test_a_new_claim_type_lowers_to_v7_replace_and_self() -> None:
-    lowered = _lower(_input(), {})
+def test_a_new_claim_type_can_explicitly_keep_v7_replace_and_self() -> None:
+    lowered = _lower(_input(canonical_form=None), {})
     assert lowered.artifact_format == "playbill-claim-type-v7"
     assert (lowered.evidence_requirement, lowered.revision_evidence) == ("self", "replace")
     # The template's own bytes do not name any v7 field.
@@ -453,6 +453,7 @@ def test_lowering_never_falls_back_to_v5() -> None:
 def _described_v7() -> ClaimType:
     return _lower(
         _input(
+            canonical_form=None,
             literal_schema={"enum": ["done", "ready"], "type": "string"},
             description="Where the work stands.",
             member_descriptions=[

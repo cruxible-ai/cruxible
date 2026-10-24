@@ -155,7 +155,7 @@ def test_the_claim_type_law_accepts_v8_under_the_v7_rules() -> None:
 def test_stating_a_form_lowers_to_v8_and_an_edit_keeps_it_unless_named() -> None:
     from tests.test_claims.test_claim_type_v7 import _input, _lower
 
-    plain = _lower(_input(), {})
+    plain = _lower(_input(canonical_form=None), {})
     assert plain.artifact_format == "playbill-claim-type-v7"
     formed = _lower(_input(canonical_form=["nfc", "trim"]), {})
     assert formed.artifact_format == "playbill-claim-type-v8"

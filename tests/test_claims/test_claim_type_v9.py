@@ -214,7 +214,7 @@ def test_stating_an_inverse_lowers_to_v9_and_an_edit_keeps_it_unless_named() -> 
         {},
     )
     assert stated.artifact_format == "cruxible-claim-type-v9"
-    assert stated.canonical_form == ()
+    assert stated.canonical_form == ("nfc", "trim")
     assert stated.inverse == ClaimInverse(
         key=ClaimInverseSlotKey(kind="slot"),
         evidence_rules=(rule,),
@@ -223,6 +223,7 @@ def test_stating_an_inverse_lowers_to_v9_and_an_edit_keeps_it_unless_named() -> 
     tree = {claim_type_path(stated.predicate): render_claim_type(stated)}
     kept = _lower(_input(description="Where it stands."), tree)
     assert (kept.artifact_format, kept.inverse) == ("cruxible-claim-type-v9", stated.inverse)
+    assert kept.canonical_form == stated.canonical_form
     cleared = _lower(_input(inverse=None), tree)
     assert (cleared.artifact_format, cleared.inverse) == ("cruxible-claim-type-v9", None)
     assert cleared.lifecycle.predecessor_digest == claim_type_digest(stated).tagged
@@ -247,6 +248,7 @@ def test_lint_warns_when_an_enum_member_already_states_the_negative(tmp_path: Pa
     instance, _owner = initialize_local(tmp_path)
     record = {
         "predicate": "project.work_item.phase",
+        "description": "The work item's phase.",
         "allowed_subject_kinds": ["project.work_item"],
         "object_kind": "literal",
         "literal_schema": {"enum": ["done", "not_done"], "type": "string"},
@@ -374,6 +376,7 @@ def test_lint_warns_when_stale_is_eligible_but_current_is_required(tmp_path: Pat
     }
     record = {
         "predicate": "project.work_item.phase",
+        "description": "The work item's phase.",
         "allowed_subject_kinds": ["project.work_item"],
         "object_kind": "literal",
         "literal_schema": {"type": "string"},
