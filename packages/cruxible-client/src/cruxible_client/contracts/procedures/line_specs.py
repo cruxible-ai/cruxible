@@ -409,8 +409,7 @@ def evaluate_line_spec_law(
         and (
             default_acquisition_policy is None
             or default_acquisition_policy.lifecycle.state != "live"
-            or default_acquisition_policy.identity.name
-            != (procedure.procedure.acquisition_policy or "default")
+            or default_acquisition_policy.identity.name != "default"
         )
     ):
         return _refusal(

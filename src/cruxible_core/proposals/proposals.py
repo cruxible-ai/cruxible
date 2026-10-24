@@ -2349,7 +2349,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             line=previous,
             artifact_digest=line_spec_digest(previous).tagged,
         )
-    default_policy_name = accepted_procedure.procedure.acquisition_policy or "default"
+    default_policy_name = "default"
     default_policy_path = acquisition_policy_path(default_policy_name)
     default_policy_content = context.candidate_tree.get(default_policy_path)
     default_policy = (

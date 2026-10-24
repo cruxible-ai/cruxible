@@ -214,3 +214,47 @@ def test_line_without_named_policy_runs_with_the_instance_default(tmp_path: Path
         source._admission(instance, state).acquisition_policy_digest
         == source.acquisition_policy_digest(policy).tagged
     )
+
+
+def test_line_default_is_independent_of_a_procedures_direct_run_override(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+
+    instance, owner, procedure, root, default = source._world(tmp_path, accept_procedure=False)
+    custom = source._policy(name="direct-override")
+    procedure = procedure.model_copy(update={"acquisition_policy": custom.identity.name})
+    source._accept_more(
+        instance,
+        owner,
+        {
+            source.acquisition_policy_path(custom.identity.name): source.render_acquisition_policy(
+                custom
+            ),
+            procedure_path(procedure.identity.name): render_procedure(procedure),
+        },
+        name="direct-override",
+    )
+    line = source._served_line(procedure, default)
+    line = line.model_copy(
+        update={
+            "acquisition_policy": None,
+            "pins": tuple(pin for pin in line.pins if pin.target.kind != "SourceAcquisitionPolicy"),
+        }
+    )
+    source._accept_more(
+        instance,
+        owner,
+        {line_spec_path(line.identity.name): render_line_spec(line)},
+        name="default-line",
+    )
+    direct, _ = source._run(instance, root)
+    inherited, _ = source._run_line(instance, root, line)
+    assert direct.status == inherited.status == "succeeded"
+    assert (
+        source._admission(instance, direct).acquisition_policy_digest
+        == source.acquisition_policy_digest(custom).tagged
+    )
+    assert (
+        source._admission(instance, inherited).acquisition_policy_digest
+        == source.acquisition_policy_digest(default).tagged
+    )

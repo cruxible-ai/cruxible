@@ -4098,18 +4098,12 @@ def _run_playbill_line(
         policy_format: str = runtime_policy.tag
     else:
         try:
-            if line_policy_pin is None:
-                policy_digest, line_policy = _direct_acquisition_policy(
-                    instance,
-                    coordinate=coordinate,
-                    procedure=accepted.procedure,
-                    input_names=_source_input_names(accepted),
+            policies = _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
+            if not policies:
+                raise SourceAcquisitionPolicyRequired(
+                    "The Line's named policy or SourceAcquisitionPolicy:default is not live."
                 )
-            else:
-                policies = _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
-                if not policies:
-                    raise PinnedAcquisitionPolicyUnresolved("The Line's named policy is not live.")
-                policy_digest, line_policy = policies[0]
+            policy_digest, line_policy = policies[0]
             policy_format = line_policy.artifact_format
         except (SourceAcquisitionPolicyRequired, PinnedAcquisitionPolicyUnresolved) as exc:
             return _line_refusal_state(
