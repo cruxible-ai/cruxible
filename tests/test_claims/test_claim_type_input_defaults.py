@@ -13,6 +13,7 @@ from cruxible_client.authoring.inputs import (
     lower_authoring_input,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayload,
     ClaimTypeSuccessionDependent,
@@ -102,14 +103,14 @@ def test_defaults_follow_the_stated_role_cardinality_and_sources() -> None:
 
     assert lowered.permitted_roles == ("observation",)
     assert lowered.resolution_policy.selector == "all"
+    assert lowered.evidence_requirement == "captured"
     assert [rule.rule_id for rule in lowered.evidence_admission_policy.rules] == [
-        "self",
         "source-repo.parts",
     ]
 
 
 def test_a_new_claim_type_states_what_no_default_can_fill() -> None:
-    with pytest.raises(ClaimTypeInputIncomplete, match="allowed_subject_kinds, cardinality"):
+    with pytest.raises(ClaimTypeInputIncomplete, match="states cardinality"):
         _lower({"predicate": "catalog.part.price", "object_kind": "literal"})
     with pytest.raises(ClaimTypeEvidenceRulesRequired, match="anticipated_source_ids"):
         _lower({**_MINIMAL, "evidence_requirement": "captured"})
@@ -190,7 +191,7 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
     template = claim_type_input_template()
     dumped = template.model_dump(mode="json")
 
-    assert dumped["canonical_form"] == []
+    assert dumped == {"predicate": "project.work_item.status", "cardinality": "one"}
     assert "evidence_admission_policy" not in dumped
     assert "playbill." not in str(claim_type_input_template(expanded=True).model_dump())
     lowered = lower_claim_type_input(template, tree={}, identity_rules=True)
@@ -346,3 +347,104 @@ def test_unsorted_succession_dependents_are_sorted_and_a_shape_error_is_typed() 
     assert refused.value.code == "cruxible.authoring.input_invalid"
     assert refused.value.field_path == "input.members[0]"
     assert "names the predecessor it succeeds" in refused.value.message
+
+
+def test_only_predicate_and_cardinality_are_required() -> None:
+    minimal = {"predicate": "catalog.part.name", "cardinality": "one"}
+    lowered = _lower(minimal)
+    assert lowered.allowed_subject_kinds == ("catalog.part",)
+    assert lowered.object_kind == "literal"
+    assert lowered.literal_schema == {"type": "string"}
+    assert lowered.canonical_form == ("nfc", "trim")
+    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert claim_type_digest(lowered) == claim_type_digest(
+        _lower(
+            {
+                **minimal,
+                "allowed_subject_kinds": ["catalog.part"],
+                "object_kind": "literal",
+                "literal_schema": {"type": "string"},
+                "canonical_form": ["nfc", "trim"],
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        {"default_role": "observation"},
+        {"permitted_roles": ["observation"]},
+    ],
+)
+def test_observation_only_requires_a_source(roles: dict[str, object]) -> None:
+    with pytest.raises(ClaimTypeEvidenceRulesRequired):
+        _lower({**_MINIMAL, **roles})
+    assert (
+        _lower({**_MINIMAL, **roles, "evidence_requirement": "self"}).evidence_requirement == "self"
+    )
+    explicit = _lower({**_MINIMAL, **roles, "evidence_admission_policy": {"rules": []}})
+    assert explicit.evidence_requirement == "captured"
+
+
+def test_mixed_roles_keep_self_and_explicit_requirement_wins() -> None:
+    assert (
+        _lower({**_MINIMAL, "permitted_roles": ["normative", "observation"]}).evidence_requirement
+        == "self"
+    )
+    assert _lower({**_MINIMAL, "evidence_requirement": "none"}).evidence_requirement == "none"
+
+
+@pytest.mark.parametrize("schema", [{"type": "string"}, {"type": "string", "enum": ["yes", "no"]}])
+def test_string_canonical_form_defaults_and_explicit_overrides(schema: dict[str, object]) -> None:
+    record = {"predicate": "catalog.part.name", "cardinality": "one", "literal_schema": schema}
+    assert _lower(record).canonical_form == ("nfc", "trim")
+    assert _lower({**record, "canonical_form": []}).canonical_form == ()
+    assert _lower({**record, "canonical_form": ["casefold"]}).canonical_form == ("casefold",)
+    assert _lower({**record, "canonical_form": None}).artifact_format == "playbill-claim-type-v7"
+    prior = _lower({**record, "canonical_form": ["casefold"]})
+    tree = {claim_type_path(prior.predicate): render_claim_type(prior)}
+    assert _lower(
+        {"predicate": prior.predicate, "description": "A name."}, tree
+    ).canonical_form == ("casefold",)
+
+
+def test_object_kind_inference_preserves_non_strings_and_explicit_kinds() -> None:
+    minimal = {"predicate": "catalog.part.price", "cardinality": "one"}
+    integer = _lower({**minimal, "literal_schema": {"type": "integer"}})
+    assert integer.object_kind == "literal"
+    assert integer.canonical_form is None
+    assert integer.artifact_format == "playbill-claim-type-v7"
+    subject = _lower({**minimal, "allowed_object_subject_kinds": ["catalog.vendor"]})
+    assert subject.object_kind == "subject"
+    assert subject.literal_schema is None and subject.canonical_form is None
+    exact = _lower({**minimal, "object_kind": "exact_content"})
+    assert exact.object_kind == "exact_content"
+    assert exact.literal_schema is None and exact.canonical_form is None
+    with pytest.raises(FormatError, match="not both"):
+        _lower(
+            {
+                **minimal,
+                "literal_schema": {"type": "string"},
+                "allowed_object_subject_kinds": ["catalog.vendor"],
+            }
+        )
+    assert _lower(
+        {**minimal, "allowed_subject_kinds": ["catalog.part", "catalog.other"]}
+    ).allowed_subject_kinds == ("catalog.part", "catalog.other")
+
+
+def test_security_kit_full_claim_type_keeps_identical_bytes() -> None:
+    # Unmodified security kit 1.3.1 artifact: explicit [trim] must beat [nfc, trim].
+    path = Path(__file__).with_name("fixtures") / "security-release-version.json"
+    original = path.read_bytes()
+    artifact = parse_claim_type(original)
+    record = ClaimTypeInputRecord.model_validate(
+        artifact.model_dump(
+            mode="json",
+            exclude={"artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"},
+        )
+    )
+    assert (
+        render_claim_type(lower_claim_type_input(record, tree={}, identity_rules=True)) == original
+    )

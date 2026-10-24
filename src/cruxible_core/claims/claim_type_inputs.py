@@ -124,8 +124,8 @@ _STRUCTURAL_INPUT_FIELDS = (
     "unsure_hold_for",
 )
 
-#: What a new ClaimType must state: no default says what it is about or holds.
-_REQUIRED_NEW_FIELDS = ("allowed_subject_kinds", "object_kind", "cardinality")
+#: The predicate is required by the model; cardinality has no inferred default.
+_REQUIRED_NEW_FIELDS = ("cardinality",)
 
 #: Fields that always have a value: named or left out, never ``null``.
 _NEVER_NULL_FIELDS = (
@@ -204,10 +204,12 @@ class ClaimInverseInput(_StrictClaimTypeInputModel):
 class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     """One ClaimType, as authored: state what differs from the defaults.
 
-    A new ClaimType states ``predicate``, ``allowed_subject_kinds``,
-    ``object_kind`` and ``cardinality`` (and ``literal_schema`` or
-    ``allowed_object_subject_kinds`` for its object); every other field takes
-    its default, written out in full in the stored ClaimType
+    A new ClaimType states ``predicate`` and ``cardinality``. The predicate's
+    prefix before its last dot supplies ``allowed_subject_kinds``; state it for
+    a multi-kind field. ``literal_schema`` infers a literal object,
+    ``allowed_object_subject_kinds`` a Subject object; state only one. Neither
+    means a string literal. State ``object_kind: exact_content`` explicitly.
+    Every other field takes its default, written out in full in the stored ClaimType
     (``cruxible claim-type propose --template --expanded`` prints them):
 
     - ``permitted_roles``: ``[default_role]`` when one is stated, else
@@ -220,7 +222,11 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     - ``admission_policy``: no corroboration or freeze requirements.
     - ``resolution_policy``: supported, current Claims; ``only_contender``
       (one) or ``all`` (many); a conflict leaves the field unresolved.
-    - ``evidence_requirement`` ``self``, ``revision_evidence`` ``replace``.
+    - ``evidence_requirement``: ``captured`` for exactly ``[observation]``
+      (which requires a source or explicit evidence policy), otherwise ``self``.
+      ``revision_evidence``: ``replace``.
+    - ``canonical_form``: ``[nfc, trim]`` for string literals, enum included;
+      state ``[]`` for no transforms. Other object types have no default form.
 
     An edit (a predicate this instance already holds) follows JSON merge-patch
     (RFC 7396) against the accepted predecessor for every field but
@@ -450,9 +456,30 @@ def claim_type_input_defaults(
             f"{', '.join(missing)}; every other field has a default "
             "(`cruxible claim-type propose --template --expanded` shows them)"
         )
+    if "allowed_subject_kinds" not in stated:
+        data["allowed_subject_kinds"] = [value.predicate.rpartition(".")[0]]
+    if "object_kind" not in stated:
+        if value.literal_schema is not None and value.allowed_object_subject_kinds:
+            raise FormatError(
+                "cruxible.claim_type.input_invalid: state literal_schema or "
+                "allowed_object_subject_kinds, not both; they infer different object kinds"
+            )
+        data["object_kind"] = "subject" if value.allowed_object_subject_kinds else "literal"
+    if data["object_kind"] == "literal" and "literal_schema" not in stated:
+        data["literal_schema"] = {"type": "string"}
+    schema = data.get("literal_schema")
+    if (
+        "canonical_form" not in stated
+        and data["object_kind"] == "literal"
+        and isinstance(schema, dict)
+        and schema.get("type") == "string"
+    ):
+        data["canonical_form"] = ["nfc", "trim"]
     if "permitted_roles" not in stated:
         data["permitted_roles"] = [value.default_role or "normative"]
-    requirement = value.evidence_requirement or "self"
+    requirement = value.evidence_requirement or (
+        "captured" if set(data["permitted_roles"]) == {"observation"} else "self"
+    )
     if "evidence_requirement" not in stated:
         data["evidence_requirement"] = requirement
     if "revision_evidence" not in stated:
@@ -550,19 +577,14 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
 def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord:
     """The ClaimType input the CLI template surface prints.
 
-    The minimal form states only what no default can fill, plus
-    ``canonical_form: []`` so the literal one-valued field can key a SubjectKind
-    (a key needs ClaimType v8). ``expanded`` states every default the minimal
-    form takes, from the same function lowering applies.
+    The minimal form states only predicate and cardinality. Its string literal
+    takes ``[nfc, trim]`` and can key a SubjectKind (a key needs ClaimType v8).
+    ``expanded`` states every default from the same function lowering applies.
     """
 
     minimal = ClaimTypeInputRecord(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
         cardinality="one",
-        canonical_form=(),
     )
     return claim_type_input_defaults(minimal, None) if expanded else minimal
 

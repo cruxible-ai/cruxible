@@ -215,7 +215,7 @@ def test_a_subject_kind_input_states_keys_or_minted_exactly_once() -> None:
     for fields in (
         {},
         {"keys": (SLUG,), "uniqueness": "unique", "minted": True},
-        {"keys": (SLUG,)},
+        {"minted": True, "uniqueness": "unique"},
     ):
         with pytest.raises(AuthoringInputError) as refused:
             lower_authoring_input(declare(**fields))

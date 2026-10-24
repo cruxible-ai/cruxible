@@ -1342,7 +1342,7 @@ class ChangeSetDraft:
         Every new Subject is of a kind with an accepted SubjectKind. Give ``keys``
         (key ClaimTypes by predicate, in key order: each a ClaimType v8 about this
         kind only, literal and one-valued, accepted or defined in this set) with
-        ``uniqueness`` -- ``unique`` refuses a second Subject with the same key,
+        optional ``uniqueness`` -- the default ``unique`` refuses a second Subject with the same key,
         ``hint`` only surfaces it in the duplicates audit -- or ``minted=True`` to
         have core mint opaque ids. Core then names every new Subject of the kind:
         its id is the readable rendering of its key, or a minted id.

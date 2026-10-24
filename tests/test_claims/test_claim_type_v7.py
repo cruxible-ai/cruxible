@@ -341,7 +341,11 @@ def _input(**update: object) -> object:
 
     # A complete v7 record (every structural field stated, no v7/v8 field).
     return ClaimTypeInputRecord.model_validate(
-        {**defaulted_claim_type_input_example().model_dump(mode="json"), **update}
+        {
+            **defaulted_claim_type_input_example().model_dump(mode="json"),
+            "canonical_form": None,
+            **update,
+        }
     )
 
 

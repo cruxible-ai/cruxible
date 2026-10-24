@@ -706,3 +706,39 @@ def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -
     )
     assert warning.replacement_rule_fragment == {"minimum_independent_control_components": 1}
     assert warning.contract_identity is None and warning.contract_digest is None
+
+
+def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> None:
+    from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
+    from cruxible_client.contracts.subject_kinds import SubjectKindKeys, parse_subject_kind
+
+    instance, _owner = initialize_local(tmp_path)
+    key = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        tree={},
+        identity_rules=True,
+    )
+    payload = lower_authoring_input(
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ClaimTypeInput(kind="claim_type", claim_type=key),
+                SubjectKindInput(kind="subject_kind", name="catalog.part", keys=(key.predicate,)),
+            ),
+        )
+    )
+    coordinator = _coordinator(instance)
+    intent = coordinator.create(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    lowered = lower_authoring(instance, intent=intent, actor_id="owner")
+    path, content = next(
+        (path, content)
+        for path, content in lowered.changed_members
+        if path.startswith("subject-kinds/")
+    )
+    assert parse_subject_kind(content, path=path).identity_rule == SubjectKindKeys(
+        keys=(key.predicate,), uniqueness="unique"
+    )
