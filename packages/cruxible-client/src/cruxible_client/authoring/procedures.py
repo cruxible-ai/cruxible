@@ -621,7 +621,9 @@ class Sequence:
                         )
                 elif not _has_reference(node["input"]):
                     try:
-                        validate_provider_value(operation, node["input"], direction="input")
+                        validate_provider_value(
+                            operation, node["input"], direction="input", normalize_call=True
+                        )
                     except ValueError as exc:
                         error(step.name, "contract_value_invalid", str(exc))
             for field_name in ("input", "fields", "spec"):

@@ -5156,10 +5156,19 @@ class ProcedureExecutor:
                         occurrence.operation_contract,
                         payload,
                         direction="input",
-                        max_items=_effective_max_items(admission),
-                        observe_items=lambda count, path: state.observe_items(
-                            count, f"interface-in:{occurrence.interface_id}", path
+                        normalize_call=occurrence.occurrence_kind == "call",
+                        max_items=(
+                            _effective_max_items(admission)
+                            if occurrence.occurrence_kind == "call"
+                            else None
                         ),
+                        observe_items=(
+                            lambda count, path: state.observe_items(
+                                count, f"interface-in:{occurrence.interface_id}", path
+                            )
+                        )
+                        if occurrence.occurrence_kind == "call"
+                        else None,
                     )
                 )
             except ProcedureContractItemBudgetExceeded as exc:
@@ -5503,10 +5512,19 @@ class ProcedureExecutor:
                         occurrence.operation_contract,
                         output,
                         direction="output",
-                        max_items=_effective_max_items(admission),
-                        observe_items=lambda count, path: state.observe_items(
-                            count, f"interface-out:{occurrence.interface_id}", path
+                        normalize_call=occurrence.occurrence_kind == "call",
+                        max_items=(
+                            _effective_max_items(admission)
+                            if occurrence.occurrence_kind == "call"
+                            else None
                         ),
+                        observe_items=(
+                            lambda count, path: state.observe_items(
+                                count, f"interface-out:{occurrence.interface_id}", path
+                            )
+                        )
+                        if occurrence.occurrence_kind == "call"
+                        else None,
                     )
                 )
             except ProcedureContractItemBudgetExceeded as exc:

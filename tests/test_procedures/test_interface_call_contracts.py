@@ -158,14 +158,17 @@ def test_interface_schema_preserves_list_budget_observations_and_refusals():
             contract,
             payload,
             direction="input",
+            normalize_call=True,
             max_items=2,
             observe_items=lambda n, path: observations.append((n, path)),
         )
-        is payload
+        == payload
     )
     assert observations == [(2, "rows")]
     with pytest.raises(ProcedureContractItemBudgetExceeded) as refusal:
-        validate_provider_value(contract, payload, direction="output", max_items=1)
+        validate_provider_value(
+            contract, payload, direction="output", normalize_call=True, max_items=1
+        )
     assert (refusal.value.limit, refusal.value.observed, refusal.value.field_path) == (1, 2, "rows")
 
 
@@ -175,5 +178,8 @@ def test_interface_schema_checks_json_constraints():
     )
     with pytest.raises(ValueError):
         validate_provider_value(
-            ProviderOperationContract(input=schema, output=schema), {"n": 0}, direction="input"
+            ProviderOperationContract(input=schema, output=schema),
+            {"n": 0},
+            direction="input",
+            normalize_call=True,
         )

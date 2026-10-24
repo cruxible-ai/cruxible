@@ -114,9 +114,11 @@ def acquisition_result():
 
 
 class AcquisitionInvoker(source._WorkspaceInvoker):
-    def __init__(self, output):
+    def __init__(self, output, expected_input=None):
         super().__init__()
         self.output = output
+        self.expected_input = expected_input
+        self.inputs = []
 
     def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
         from cruxible_client.contracts.provider_execution import ProviderEgressObservation
@@ -126,6 +128,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         )
 
         self.spawn_calls += 1
+        self.inputs.append(context.input)
         if occurrence.occurrence_kind == "source":
             assert context.input["url"] == URL
             assert (
@@ -134,7 +137,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
             )
         else:
             assert occurrence.occurrence_kind == "call"
-            assert context.input == {"size": 1}
+            assert context.input == (self.expected_input or {"size": 1})
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelopeV1(
                 protocol_version="1.0", run_id=context.run_id, status="ok", output=self.output
@@ -148,8 +151,11 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         )
 
 
+@pytest.mark.parametrize("over_limit", [False, True], ids=["ordinary", "source-over-max-items"])
 @pytest.mark.parametrize("adapter", [False, True], ids=["protocol", "web-adapter"])
-def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monkeypatch, adapter):
+def test_sdk_source_retains_and_reads_acquisition(
+    playbill_http, tmp_path, monkeypatch, adapter, over_limit
+):
     output = acquisition_result()
     if adapter:
         web = pytest.importorskip(
@@ -192,6 +198,25 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
         if adapter
         else web_fetch_interface_registration(WEB_FETCH_INTERFACE_V2_DIGEST)
     )
+    request = {"url": URL}
+    if over_limit:
+        from cruxible_client.contracts.provider_interfaces import (
+            ProviderInterfaceDefinition,
+            provider_interface_contract,
+        )
+
+        definition = registration.interface.model_dump(mode="json")
+        definition["contracts"]["input"]["fields"].update(
+            {
+                "rows": {"type": "list", "item_fields": {"n": {"type": "int"}}},
+                "limit": {"type": "int", "default": 10},
+                "unchecked": {"type": "json", "json_schema": {"type": "integer", "minimum": 1}},
+            }
+        )
+        registration = provider_interface_contract(
+            interface=ProviderInterfaceDefinition.model_validate(definition)
+        )
+        request.update(rows=[{"n": 1}, {"n": 2}], unchecked=0)
     provider = web_provider(registration)
     contract = capture_contract().model_copy(
         update={
@@ -243,10 +268,13 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
         {
             "interface_digest": registration.interface_digest,
             "implementation_digest": provider.implementations[0].implementation_digest,
-            "request": {"url": URL},
+            "request": request,
         }
     )
     raw["nodes"][1]["fields"] = {"severity": f"$steps.{source.SOURCE_ALIAS}.derived.text"}
+    if over_limit:
+        raw["budget"]["max_items"] = 1
+        raw["hard_caps"]["max_items"] = 1
     definition = ProcedureDefinition.model_validate(raw)
     procedure = procedure.model_copy(
         update={
@@ -275,6 +303,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     assert run.status == "succeeded", transport.get_procedure_run(instance_id, run.run_id)
     assert run.result["severity"]
     assert invoker.spawn_calls == 1
+    assert invoker.inputs == [request]  # Source keeps raw bytes, including absent defaults.
     state = transport.get_procedure_run(instance_id, run.run_id)
     assert state.receipt_digest is not None
     assert state.source_observations[0].capture_digest
@@ -291,8 +320,9 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     assert material == base64.b64decode(output["content_base64"])
 
 
+@pytest.mark.parametrize("defaulted", [False, True], ids=["ordinary", "interface-defaults"])
 def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
-    playbill_http, tmp_path, monkeypatch
+    playbill_http, tmp_path, monkeypatch, defaulted
 ):
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
@@ -306,8 +336,14 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     manager = get_playbill_manager()
     instance = manager.get(instance_id)
     schema = {"fields": {"size": {"type": "int"}}, "allow_extra": False}
+    output_schema = schema
+    if defaulted:
+        schema = {"fields": {**schema["fields"], "limit": {"type": "int", "default": 10}}}
+        output_schema = {
+            "fields": {"size": {"type": "int"}, "limit": {"type": "int", "default": 20}}
+        }
     preimage = canonical_bytes(
-        {"effect_class": "external_read", "contracts": {"input": schema, "output": schema}}
+        {"effect_class": "external_read", "contracts": {"input": schema, "output": output_schema}}
     ).hex()
     registration = interface_registration().model_copy(
         update={
@@ -331,7 +367,8 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     ).proposal
     assert proposal.candidate is not None, proposal.evaluation.diagnostics
     _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
-    invoker = AcquisitionInvoker({"size": 1})
+    expected_input = {"size": 1, **({"limit": 10} if defaulted else {})}
+    invoker = AcquisitionInvoker({"size": 1}, expected_input=expected_input)
     operator = source._Operator(invoker)
     real = manager.provider_runtime_operator()
 
@@ -386,7 +423,17 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
             "definition": raw,
             "contracts": (
                 next(item for item in example.contracts if item.name == "empty-input"),
-                CarriedContractInput(name="size", fields={"size": PropertySchema(type="int")}),
+                CarriedContractInput(
+                    name="size",
+                    fields={
+                        "size": PropertySchema(type="int"),
+                        **(
+                            {"limit": PropertySchema(type="int", optional=True)}
+                            if defaulted
+                            else {}
+                        ),
+                    },
+                ),
             ),
         }
     )
@@ -398,5 +445,8 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     state = transport.get_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", str(state.terminal)
     assert run.result.size == 1
+    if defaulted:
+        assert invoker.inputs == [{"limit": 10, "size": 1}]
+        assert run.result.limit == 20
     assert state.source_observations == []
     assert invoker.spawn_calls == 1

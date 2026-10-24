@@ -66,9 +66,11 @@ def validate_provider_value(
     payload: object,
     *,
     direction: Literal["input", "output"],
+    normalize_call: bool = False,
     max_items: int | None = None,
     observe_items: Callable[[int, str], None] | None = None,
 ) -> object:
+    """Validate exact Source bytes, or normalize a Call using its interface schema."""
     # Lazy imports keep the interface/Procedure/Capture contract graph acyclic.
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.captures import ProviderResultToExternalCapture
@@ -76,6 +78,8 @@ def validate_provider_value(
 
     schema = contract.input if direction == "input" else contract.output
     if isinstance(schema, str):
+        if normalize_call:
+            raise ValueError("Call requires an operation output schema")
         parsed = ProviderResultToExternalCapture.model_validate(payload)
         if canonical_bytes(parsed.model_dump(mode="json")) != canonical_bytes(payload):
             raise ValueError("Acquisition output must use the canonical Capture result encoding")
@@ -90,6 +94,10 @@ def validate_provider_value(
                 raise ValueError("Typed acquisition material must use canonical JSON")
             Record(contract.material, material)
     else:
+        if not normalize_call:
+            # Source validation preserves the exact request/result commitments.
+            validate_contract_schema(schema, payload)
+            return payload
         from cruxible_client.contracts.procedures.contracts import (
             validate_contract_schema_with_budget,
         )
@@ -111,7 +119,5 @@ def validate_provider_value(
                     observe_items(observation.observed, observation.field_path)
         assert isinstance(normalized, dict)
         validate_record_constraints(schema, normalized)
-    # Interface checks cannot rewrite the exact request or returned bytes: those
-    # are already bound by derived-request and invocation commitments. Defaults
-    # remain the adapter's responsibility (or the caller's carried Contract).
+        return normalized
     return payload
