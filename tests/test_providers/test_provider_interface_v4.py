@@ -133,12 +133,12 @@ def test_v4_install_verifies_declared_digest_of_the_stored_definition():
             "interfaces": (exported.model_copy(update={"interface_digest": "sha256:" + "0" * 64}),)
         }
     )
-    with pytest.raises(ValueError, match="disagree"):
+    with pytest.raises(RequestRefusedError, match="disagree"):
         changed.interface_registrations()
     # A constructor alias that cannot be stored exactly must not acquire a new digest.
     value = definition()
     value["contracts"]["input"]["fields"]["value"]["required"] = True
-    with pytest.raises(ValueError, match="stored interface JSON"):
+    with pytest.raises(RequestRefusedError, match="stored interface JSON"):
         package_document(value).interface_registrations()
 
 
@@ -228,3 +228,21 @@ def test_install_name_version_lookup_does_not_grow_with_instance():
         assert _interface_bindings(tree, document) == ((current, True),)
         observed.append(tree.reads)
     assert observed == [[path], [path]]
+
+
+@pytest.mark.parametrize("invalid", ["unrepresentable", "digest_roundtrip"])
+def test_non_reproducible_install_definition_refuses_with_a_rebuild_repair(invalid):
+    value = definition()
+    if invalid == "unrepresentable":
+        value["unknown_v4_field"] = "unsupported"
+    else:
+        value["contracts"]["input"]["fields"]["value"]["required"] = True
+    with pytest.raises(RequestRefusedError) as refusal:
+        package_document(value).interface_registrations()
+    assert refusal.value.error_code == "cruxible.provider_interface.definition_invalid"
+    repair = refusal.value.repair.hand_edit
+    assert "demo.interface" in repair.target
+    assert repair.required_change == (
+        "Declare only the v4 definition fields and rebuild the wheel "
+        "so its interface_digest covers them."
+    )

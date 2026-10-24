@@ -32,6 +32,8 @@ from cruxible_client.contracts.providers import (
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
+from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+from cruxible_core.errors import RequestRefusedError
 
 
 class _Strict(BaseModel):
@@ -101,16 +103,35 @@ class PackageRegistrationDocumentV1(_Strict):
 
         result: list[ProviderInterfaceContract] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
-            definition = ProviderInterfaceDefinition.model_validate(exported.definition)
-            self._check_definition(exported)
-            registration = provider_interface_contract(interface=definition)
-            if (
-                provider_external_interface_definition_digest(
-                    registration.interface_bytes_hex, domain="cruxible.interface.stub.v1"
-                )
-                != exported.interface_digest
-            ):
-                raise ValueError("stored interface JSON differs from the wheel's declared digest")
+            try:
+                definition = ProviderInterfaceDefinition.model_validate(exported.definition)
+                self._check_definition(exported)
+                registration = provider_interface_contract(interface=definition)
+                if (
+                    provider_external_interface_definition_digest(
+                        registration.interface_bytes_hex, domain="cruxible.interface.stub.v1"
+                    )
+                    != exported.interface_digest
+                ):
+                    raise ValueError(
+                        "stored interface JSON differs from the wheel's declared digest"
+                    )
+            except ValueError as exc:
+                raise RequestRefusedError(
+                    "cruxible.provider_interface.definition_invalid",
+                    f"Provider interface {exported.interface_id!r} cannot register as v4: {exc}",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=(
+                                f"the {exported.interface_id!r} definition and wheel registration"
+                            ),
+                            required_change=(
+                                "Declare only the v4 definition fields and rebuild the wheel "
+                                "so its interface_digest covers them."
+                            ),
+                        )
+                    ),
+                ) from exc
             result.append(registration)
         return tuple(result)
 
