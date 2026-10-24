@@ -65,8 +65,8 @@ def _claim_type(index):  # type: ignore[no-untyped-def]
     return _legacy_claim_type(index).model_copy(
         update={
             "artifact_format": "playbill-claim-type-v7",
-            "evidence_requirement": "captured",
-            "revision_evidence": "replace",
+            "evidence_requirement": "self",
+            "revision_evidence": "accumulate",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
                     ClaimEvidenceAdmissionRule(
