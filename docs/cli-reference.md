@@ -2463,6 +2463,13 @@ For Capture landings, author by contract name:
  "schedule":{"kind":"capture_landing","capture_contract":"security.advisory"}}
 ```
 
+Add `"logical_sources":["osv.dev.query"]` to the landing schedule, or to the
+`capture_event` window below, to route only Captures whose recorded external
+source is in that sorted, unique list. Omitted or empty lists match every source
+under the contract, including Captures without an external source. `get` and
+CLI schedule text show the restriction; `query kind=Trigger` can select
+`logical_sources` explicitly.
+
 Prepare resolves the live contract at the pinned base or from the same ChangeSet
 (in either declaration order), shows its identity and digest in
 `resolved_trigger_contracts`, and stores the existing exact selector and pins.

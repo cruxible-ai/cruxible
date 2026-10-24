@@ -25,6 +25,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_core.exhaust.capture_selectors import landing_logical_source
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     JournalPartitionHeadV1,
@@ -49,9 +50,9 @@ _LOCK = threading.RLock()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
-#: another version is dropped and rebuilt from the retained journal, which is
+#: another version is migrated or rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 _TABLES = (
     "capture_selectors",
     "capture_progress",
@@ -86,8 +87,10 @@ CREATE INDEX IF NOT EXISTS records_occurrence
  ON records(stream, partition_id, occurrence_id, event_kind, sequence);
 CREATE TABLE IF NOT EXISTS capture_selectors (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
- contract_digest TEXT NOT NULL);
+ contract_digest TEXT NOT NULL, logical_source TEXT);
 CREATE INDEX IF NOT EXISTS capture_contract ON capture_selectors(contract_digest, record_id);
+CREATE INDEX IF NOT EXISTS capture_contract_source
+ ON capture_selectors(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL;
 CREATE INDEX IF NOT EXISTS records_kind_position ON records(stream,event_kind,id);
 CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
 CREATE INDEX IF NOT EXISTS records_partition_position
@@ -166,17 +169,26 @@ def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 def _rebuild_schema(conn: sqlite3.Connection) -> None:
-    """Create the index, dropping one written under another schema version.
+    """Add source metadata without backfilling; rebuild unsupported older schemas.
 
-    The retained journal refills it. One immediate transaction re-checks the
-    version, so concurrent openers drop it once. The new identity invalidates
-    every run page key and live position minted against the old rows, exactly
-    as deleting the file would.
+    Version 6 keeps its identity, rows and progress cursors. Source-filtered
+    Triggers start after their acceptance, so old NULL rows are never eligible.
+    The retained journal refills unsupported older schemas. One immediate
+    transaction re-checks the version, so concurrent openers migrate or rebuild
+    once. Only a rebuild changes identity and invalidates existing page keys.
     """
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version == 6:
+            conn.execute("ALTER TABLE capture_selectors ADD COLUMN logical_source TEXT")
+            conn.execute(
+                "CREATE INDEX capture_contract_source ON capture_selectors"
+                "(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL"
+            )
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        elif version != _SCHEMA_VERSION:
             for table in _TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
             statement = ""
@@ -955,6 +967,7 @@ class JournalIndex:
         *,
         bodies: Any,
         contract_digest: str,
+        logical_sources: tuple[str, ...] = (),
         since: datetime | None,
         until: datetime,
         limit: int,
@@ -990,9 +1003,15 @@ class JournalIndex:
                     or not isinstance(payload.get("capture_contract_digest"), str)
                 ):
                     raise JournalIntegrityError("produced Capture payload lacks its typed contract")
+                source = landing_logical_source(bodies, payload, access=access)
+                if isinstance(source, UnavailablePayload):
+                    # Preserve unrestricted event discovery when its envelope
+                    # is lost; a sourced selector cannot establish a match.
+                    source = None
                 conn.execute(
-                    "INSERT INTO capture_selectors VALUES (?,?)",
-                    (row["id"], payload["capture_contract_digest"]),
+                    "INSERT INTO capture_selectors(record_id,contract_digest,logical_source) "
+                    "VALUES (?,?,?)",
+                    (row["id"], payload["capture_contract_digest"], source),
                 )
             if fresh:
                 conn.execute(
@@ -1006,6 +1025,9 @@ class JournalIndex:
                 ["r.stream=?", "c.contract_digest=?"],
                 [_key(stream), contract_digest],
             )
+            if logical_sources:
+                where.append("c.logical_source IN (" + ",".join("?" for _ in logical_sources) + ")")
+                args.extend(logical_sources)
             if through is not None:
                 generation = conn.execute(
                     "SELECT identity FROM index_identity WHERE singleton=1"

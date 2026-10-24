@@ -362,3 +362,108 @@ def test_retiring_an_absent_trigger_refuses_without_resolving_its_schedule():
         _render_trigger_member(payload(retire=True), tree={})
     assert caught.value.code == "cruxible.authoring.trigger_missing"
     assert caught.value.repairs
+
+
+@pytest.mark.parametrize("window_close", [False, True])
+def test_named_sources_lower_into_the_stored_selector_and_render(window_close):
+    from cruxible_core.service.discovery.listed_kinds import _trigger_detail
+    from cruxible_core.service.discovery.operational import schedule_summary
+
+    sources = ("github.repo.snapshot", "sarif.log")
+    schedule = (
+        WindowCloseAuthoringSchedule(
+            window=CaptureEventByNameWindow(
+                capture_contract=NAME, logical_sources=sources, duration_seconds=60
+            )
+        )
+        if window_close
+        else CaptureLandingByNameSchedule(capture_contract=NAME, logical_sources=sources)
+    )
+    path, content, _ = _render_trigger_member(payload(schedule=schedule), tree=tree())
+    trigger = parse_trigger(content, path=path)
+    selector = trigger.schedule.window.event if window_close else trigger.schedule.event
+    assert selector == SELECTOR.model_copy(update={"logical_sources": sources})
+    assert selector.model_dump(mode="json")["logical_sources"] == list(sources)
+    assert all(source in schedule_summary(trigger.schedule) for source in sources)
+    assert _trigger_detail(trigger)["logical_sources"] == list(sources)
+    assert _trigger_detail(trigger)["capture_contract"] == CONTRACT.identity.qualified
+
+
+@pytest.mark.parametrize(
+    "sources", [("b", "a"), ("a", "a"), ("",), ("https://example.com",), ("UPPER",)]
+)
+def test_selector_and_authored_sources_must_be_sorted_unique_logical_names(sources):
+    for model, fields in (
+        (CaptureEventSelector, SELECTOR.model_dump()),
+        (CaptureLandingByNameSchedule, {"capture_contract": NAME}),
+        (CaptureEventByNameWindow, {"capture_contract": NAME, "duration_seconds": 60}),
+    ):
+        with pytest.raises(ValidationError, match="logical_sources"):
+            model.model_validate({**fields, "logical_sources": sources})
+
+
+def test_unrestricted_selector_keeps_its_historical_serialization():
+    assert SELECTOR.model_dump(mode="json") == {
+        "capture_contract_identity": CONTRACT.identity.model_dump(mode="json"),
+        "capture_contract_digest": capture_contract_digest(CONTRACT).tagged,
+    }
+    assert (
+        CaptureEventSelector.model_validate({**SELECTOR.model_dump(), "logical_sources": []})
+        == SELECTOR
+    )
+
+
+@pytest.mark.parametrize(
+    "required, offered, allowed",
+    [
+        ((), ("sarif.log",), True),
+        (("sarif.log",), (), False),
+        (("sarif.log",), ("sarif.log",), True),
+        (("github.repo.snapshot", "sarif.log"), ("sarif.log",), True),
+        (("sarif.log",), ("github.repo.snapshot", "sarif.log"), False),
+        (("sarif.log",), ("github.repo.snapshot",), False),
+    ],
+)
+def test_trigger_input_accepts_only_sources_covered_by_its_line(required, offered, allowed):
+    from cruxible_client.contracts.triggers import CaptureEventInput, schedule_satisfies_input
+
+    selector = SELECTOR.model_copy(update={"logical_sources": offered})
+    need = CaptureEventInput(event=SELECTOR.model_copy(update={"logical_sources": required}))
+    assert schedule_satisfies_input(CaptureLandingSchedule(event=selector), need) is allowed
+    assert (
+        schedule_satisfies_input(
+            WindowCloseSchedule(window=CaptureEventWindow(event=selector, duration_seconds=60)),
+            need,
+        )
+        is allowed
+    )
+
+
+def test_named_sourced_trigger_can_target_an_unrestricted_source_input():
+    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+
+    staged = tree()
+    path = line_spec_path("triage")
+    line = parse_line_spec(staged[path], path=path)
+    staged[path] = render_line_spec(
+        line.model_copy(
+            update={
+                "trigger_input": "feed",
+                "trigger_event": SELECTOR,
+                "pins": tuple(
+                    sorted(
+                        (
+                            *line.pins,
+                            *trigger_schedule_pins(CaptureLandingSchedule(event=SELECTOR)),
+                        ),
+                        key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
+                    )
+                ),
+            }
+        )
+    )
+    decision = payload(
+        schedule=CaptureLandingByNameSchedule(capture_contract=NAME, logical_sources=("sarif.log",))
+    )
+    path, content, _ = _render_trigger_member(decision, tree=staged)
+    assert parse_trigger(content, path=path).schedule.event.logical_sources == ("sarif.log",)

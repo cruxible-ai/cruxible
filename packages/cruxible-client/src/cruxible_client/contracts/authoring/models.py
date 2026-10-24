@@ -63,7 +63,11 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector, FixedWindow
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelector,
+    FixedWindow,
+    LogicalSources,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -1046,6 +1050,7 @@ class CaptureLandingByNameSchedule(_StrictAuthoringModel):
 
     kind: Literal["capture_landing"] = "capture_landing"
     capture_contract: str
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("capture_contract")
     @classmethod
@@ -1059,6 +1064,7 @@ class CaptureEventByNameWindow(_StrictAuthoringModel):
 
     kind: Literal["capture_event"] = "capture_event"
     capture_contract: str
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
     @field_validator("capture_contract")

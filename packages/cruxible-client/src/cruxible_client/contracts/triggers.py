@@ -301,7 +301,18 @@ def schedule_satisfies_input(schedule: TriggerSchedule, required: TriggerInputRe
     if isinstance(required, NoTriggerInput):
         return True
     selector = schedule_capture_selector(schedule)
-    return selector is not None and (required.event is None or selector == required.event)
+    if selector is None or required.event is None:
+        return selector is not None
+    event = required.event
+    return (
+        selector.capture_contract_identity == event.capture_contract_identity
+        and selector.capture_contract_digest == event.capture_contract_digest
+        and (
+            not event.logical_sources
+            or bool(selector.logical_sources)
+            and set(selector.logical_sources) <= set(event.logical_sources)
+        )
+    )
 
 
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
@@ -526,7 +537,7 @@ def evaluate_trigger_law(
         if not schedule_satisfies_input(trigger.schedule, required):
             assert isinstance(required, CaptureEventInput)
             needed = (
-                "its declared trigger_event exactly"
+                "its declared trigger_event contract and source restriction"
                 if required.event is not None
                 else "a Capture event"
             )

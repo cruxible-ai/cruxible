@@ -1313,6 +1313,8 @@ class ChangeSetDraft:
         digest. For a Capture-anchored window, use ``WindowCloseAuthoringSchedule(
         window=CaptureEventByNameWindow(capture_contract="security.advisory",
         duration_seconds=60))`` from the same module; fixed windows remain supported.
+        Both named forms accept ``logical_sources=("osv.dev.query",)`` to select
+        the Capture's recorded external source; omitted or empty means any source.
         Exact event selectors are stored data and are refused as authoring input.
         With ``retire=True``, core preserves the existing Trigger's schedule and
         target without resolving a contract; the supplied schedule is ignored.

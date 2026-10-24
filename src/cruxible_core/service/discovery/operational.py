@@ -302,7 +302,14 @@ def schedule_summary(schedule: TriggerSchedule) -> str:
     if isinstance(schedule, CronSchedule):
         return f"on cron {schedule.expression} (UTC)"
     if isinstance(schedule, CaptureLandingSchedule):
-        return f"when {public_name(schedule.event.capture_contract_identity.qualified)} lands"
+        sources = (
+            " from " + ", ".join(schedule.event.logical_sources)
+            if schedule.event.logical_sources
+            else ""
+        )
+        return (
+            f"when {public_name(schedule.event.capture_contract_identity.qualified)}{sources} lands"
+        )
     if isinstance(schedule, WindowCloseSchedule):
         return "when " + window_summary(schedule.window) + " closes"
     if isinstance(schedule, GenerationAcceptedSchedule):
@@ -317,9 +324,14 @@ def window_summary(window: object) -> str:
             f"({window.duration_seconds}s)"
         )
     if isinstance(window, CaptureEventWindow):
+        sources = (
+            " from " + ", ".join(window.event.logical_sources)
+            if window.event.logical_sources
+            else ""
+        )
         return (
             f"the {window.duration_seconds}s window after each "
-            f"{public_name(window.event.capture_contract_identity.qualified)} Capture"
+            f"{public_name(window.event.capture_contract_identity.qualified)} Capture{sources}"
         )
     return "its window"
 
