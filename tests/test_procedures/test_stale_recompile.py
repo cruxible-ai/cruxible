@@ -338,9 +338,14 @@ def test_a_line_proposal_wholly_live_at_the_head_closes_as_answered(tmp_path: Pa
     ]
     admissions = len(instance.proposal_evidence().list_admissions())
     # Index the head before the read-only preview fence, as a status read does.
-    assert service_playbill_proposal_status(instance, proposal_id=stale).status == (
-        "awaiting_readmit"
-    )
+    # Stale by overlap: the first import's Claim landed in its slot.
+    entry = service_playbill_proposal_status(instance, proposal_id=stale)
+    assert entry.status == "awaiting_readmit"
+    assert {
+        member.path
+        for member in _proposal_result(instance, first).candidate.members  # type: ignore[union-attr]
+        if member.path.startswith("claims/")
+    } <= set(entry.stale_paths)
 
     preview = _readmit(instance, stale, dry_run=True)
     assert (preview.status, preview.proposal) == ("already_live", None)
@@ -371,7 +376,9 @@ def test_a_refused_line_recompile_names_the_lines_next_run_not_readmit(
     from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
     from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
     from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+    from tests.core_support._support import every_moved_base_overlaps
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner, root, line, _procedure = proposal_world(tmp_path)
     stale = _delivered(run_line(instance, root, line))
     fixtures._accept_more(instance, owner, _level_kind_members(rules=False), name="move-head")

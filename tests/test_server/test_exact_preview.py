@@ -356,10 +356,15 @@ def test_a_document_proposal_previews_and_writes_nothing(
 
 
 def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
-    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F-006: withdrawal and readmission change proposal state, so they preview too."""
 
+    from tests.core_support._support import every_moved_base_overlaps
+
+    # The head moves with an unrelated document; this is about previews of a
+    # stale proposal's readmission, so any moved base counts as stale here.
+    every_moved_base_overlaps(monkeypatch)
     client, instance_id, reviewer_key = playbill_http
     proposed = _ok(
         client.post(

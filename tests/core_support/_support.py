@@ -206,3 +206,30 @@ def restamp_state_root(state_root: Path) -> None:
             continue
         trust_root = TrustRoot.model_validate_json(trust_path.read_bytes())
         restamp_proposal_index(PlaybillInstance.open(managed, trust_root=trust_root))
+
+
+def every_moved_base_overlaps(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Treat every proposal whose base moved as stale, whatever the head changed.
+
+    For tests of the readmission machinery (links, supersession, refusals), whose
+    worlds move the head with unrelated changes: they exercise what happens to a
+    stale proposal, not which proposals are stale. The overlap rule itself is
+    tested in ``tests/test_service/test_stale_overlap.py``.
+    """
+
+    from contextlib import contextmanager
+
+    import cruxible_core.service.proposals.staleness as staleness
+
+    real = staleness.overlap_check
+
+    @contextmanager
+    def overlapping(instance, coordinate):  # type: ignore[no-untyped-def]
+        with real(instance, coordinate) as check:
+
+            def moved(**values):  # type: ignore[no-untyped-def]
+                return check(**values) or ("<moved base>",)
+
+            yield moved
+
+    monkeypatch.setattr(staleness, "overlap_check", overlapping)

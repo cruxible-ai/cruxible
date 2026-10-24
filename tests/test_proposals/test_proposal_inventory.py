@@ -48,7 +48,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.core_support._support import client_material
+from tests.core_support._support import client_material, every_moved_base_overlaps
 from tests.test_ledger.test_activation import _sign
 
 
@@ -99,8 +99,11 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
     result = service_list_playbill_proposals(instance)
     by_id = {item.proposal_id: item for item in result.entries}
     stale_entry = by_id[stale.proposal.admission.proposal_id]
-    # A moved base settles nothing: the proposal awaits its author's readmit.
-    assert (stale_entry.status, stale_entry.terminal_reason) == ("awaiting_readmit", None)
+    # A moved base settles nothing, and the accepted Claim touched nothing this
+    # query definition touches or is judged under: it is open, and approval or
+    # activation lands it at the head (readmit-by-change-set-overlap-1024).
+    assert (stale_entry.status, stale_entry.terminal_reason) == ("open", None)
+    assert stale_entry.stale_paths == ()
     assert by_id[accepted.proposal.proposal.admission.proposal_id].terminal_reason == "accepted"
     assert by_id[refused.proposal.admission.proposal_id].terminal_reason == "refused"
     assert by_id[opened.proposal.admission.proposal_id].status == "open"
@@ -111,11 +114,12 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
             key=lambda item: (item.admitted_at.encode("utf-8"), item.proposal_id.encode()),
         )
     )
-    assert service_list_playbill_proposals(instance, status="open").entries == (
+    assert set(service_list_playbill_proposals(instance, status="open").entries) == {
+        stale_entry,
         by_id[opened.proposal.admission.proposal_id],
-    )
+    }
     # The locator reads answer exactly as the listing does, without listing.
-    assert open_proposal_count(instance) == 1
+    assert open_proposal_count(instance) == 2
     for entry in result.entries:
         found = open_proposal_at_target(instance, entry.target_ref)
         assert found == (entry if entry.status == "open" else None)
@@ -411,9 +415,12 @@ def test_an_accepted_proposal_cannot_be_withdrawn(tmp_path: Path) -> None:
     assert entry.terminal_reason == "accepted"
 
 
-def test_a_stale_proposal_may_be_withdrawn_instead_of_readmitted(tmp_path: Path) -> None:
+def test_a_stale_proposal_may_be_withdrawn_instead_of_readmitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Staleness is not an ending, so it is the other state withdrawal answers."""
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner = seed_claims(tmp_path)
     stale = submit_query_definition_candidate(
         instance,
@@ -1002,11 +1009,14 @@ def test_a_withdrawal_record_without_a_kind_keeps_its_canonical_bytes(tmp_path: 
     assert b'"kind":"rejected"' in canonical_bytes(rejected.model_dump(mode="json"))
 
 
-def test_activating_a_stale_proposal_names_readmit(tmp_path: Path) -> None:
+def test_activating_a_stale_proposal_names_readmit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A stale proposal refuses with the readmit repair, not a settlement integrity fault."""
 
     from cruxible_client.contracts.errors import ProposalStale
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner = seed_claims(tmp_path)
     stale = submit_query_definition_candidate(
         instance,

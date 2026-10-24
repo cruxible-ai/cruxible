@@ -2412,7 +2412,8 @@ def proposal_group() -> None:
     "--status",
     type=click.Choice(["open", "awaiting_readmit", "settled", "incomplete"]),
     default=None,
-    help="awaiting_readmit: its base moved; it waits for its author's readmit.",
+    help="awaiting_readmit: the head changed what it touches since its base (named "
+    "under the row); it waits for its author's readmit.",
 )
 @click.option(
     "--limit",
@@ -2444,6 +2445,12 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
             f"{entry.status}  {terminal}  {entry.proposal_id}  "
             f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
         )
+        if entry.stale_paths:
+            shown = ", ".join(entry.stale_paths[:5])
+            more = len(entry.stale_paths) - 5
+            click.echo(
+                f"  changed since its base: {shown}" + (f" and {more} more" if more > 0 else "")
+            )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
     _echo_list_continuation(result.next_cursor)
 
@@ -2743,6 +2750,30 @@ def approve_proposal(
         ),
         command_name="cruxible proposal approve",
     )
+    landed = _landed_same_change_set(result)
+    if landed is not None:
+        # Nothing it touches changed since its base: the daemon landed the same
+        # change set at the head under its author. That candidate is what
+        # settles, so the approval confirmed above signs it.
+        if not output_json:
+            click.echo(
+                f"Landed at the head as {landed}: the same change set "
+                f"(proposed as {resolved_id}); signing it"
+            )
+
+        def _approve_landed(
+            client: CruxibleClient, instance_id: str
+        ) -> contracts.ProposalApprovalResult:
+            challenge = client.prepare_approval(instance_id, landed, signer_id=resolved_signer)
+            statement = ApprovalStatement.model_validate(challenge.statement)
+            return client.submit_approval(
+                instance_id,
+                landed,
+                attestation=signer.sign(statement).model_dump(mode="json"),
+                hold=hold,
+            )
+
+        result = _server_call(_approve_landed, command_name="cruxible proposal approve")
     result = _with_git_workspace_note(result)
     if output_json:
         _emit_json(_json_receipt(result))
@@ -2756,6 +2787,24 @@ def approve_proposal(
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
     for line in _approval_outcome_lines(result):
         click.echo(line)
+
+
+def _landed_same_change_set(result: contracts.ProposalApprovalResult) -> str | None:
+    """The proposal an approval landed at the head with the same change set, awaiting review.
+
+    An approval of a proposal whose base moved, with nothing it touches changed
+    since, lands the change set at the head as a new candidate; an approval
+    signs exactly one candidate, so the landed one is signed next.
+    """
+
+    if (
+        isinstance(result, contracts.ProposalRecompiled)
+        and result.status == "pending_review"
+        and result.members_identical
+        and result.proposal_id is not None
+    ):
+        return result.proposal_id
+    return None
 
 
 def _approval_counts_lines(review: ProposalReview) -> list[str]:

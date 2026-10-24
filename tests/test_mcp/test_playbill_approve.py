@@ -134,3 +134,48 @@ def test_approve_refuses_a_key_directory_inside_the_workspace(tmp_path, monkeypa
     with pytest.raises(SigningKeyError, match="outside workspaces"):
         handlers.handle_playbill_approve("inst_1", "PROP-1", signer_id=None, candidate_digest=None)
     assert world["calls"]["submitted"] == []
+
+
+def test_approve_signs_the_landed_candidate_next(tmp_path, monkeypatch) -> None:
+    """Nothing it touches changed since its base: the daemon landed it at the head.
+
+    An approval signs one candidate, so the landed one (identical members) is
+    challenged and signed in the same call; its receipt is the answer.
+    """
+
+    from cruxible_client import contracts
+
+    world = _world(tmp_path, monkeypatch, "reviewer")
+    landed = contracts.ProposalRecompiled(
+        status="pending_review",
+        source_proposal_id="PROP-1",
+        proposal_id="PROP-2",
+        candidate_digest="sha256:" + "4" * 64,
+        members_identical=True,
+        accepted_coordinate=contracts.AcceptedCoordinate(
+            git_oid="1" * 40,
+            semantic_root="sha256:" + "5" * 64,
+            generation_root="sha256:" + "6" * 64,
+            compiler_digest="sha256:" + "7" * 64,
+        ),
+    )
+    answers = iter([landed, "receipt"])
+
+    def submit(
+        instance_id: str, proposal_id: str, attestation: dict[str, Any], *, hold: bool = False
+    ) -> Any:
+        world["calls"]["submitted"].append((proposal_id, attestation))
+        return next(answers)
+
+    monkeypatch.setattr(handlers, "handle_playbill_submit_approval", submit)
+
+    receipt = handlers.handle_playbill_approve(
+        "inst_1", "PROP-1", signer_id=None, candidate_digest=CANDIDATE
+    )
+
+    assert receipt == "receipt"
+    assert world["calls"]["prepared"] == [
+        ("inst_1", "PROP-1", "reviewer"),
+        ("inst_1", "PROP-2", "reviewer"),
+    ]
+    assert [proposal_id for proposal_id, _ in world["calls"]["submitted"]] == ["PROP-1", "PROP-2"]

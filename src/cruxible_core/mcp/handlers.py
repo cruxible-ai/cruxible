@@ -515,9 +515,29 @@ def handle_playbill_approve(
         forbidden_roots=mcp_custody_forbidden_roots(),
     )
     attestation = key_signer.sign(statement)
-    return handle_playbill_submit_approval(
+    result = handle_playbill_submit_approval(
         instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
+    if (
+        isinstance(result, contracts.ProposalRecompiled)
+        and result.status == "pending_review"
+        and result.members_identical
+        and result.proposal_id is not None
+    ):
+        # Nothing it touches changed since its base: the same change set landed
+        # at the head under its author, and that candidate is the one to sign.
+        landed = handle_playbill_prepare_approval(
+            instance_id, result.proposal_id, signer_id=signer, include_body=False
+        )
+        result = handle_playbill_submit_approval(
+            instance_id,
+            result.proposal_id,
+            key_signer.sign(ApprovalStatement.model_validate(landed.statement)).model_dump(
+                mode="json"
+            ),
+            hold=hold,
+        )
+    return result
 
 
 def _sole_approval_signer(key_dir: Path) -> str:

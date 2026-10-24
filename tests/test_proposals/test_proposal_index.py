@@ -707,7 +707,9 @@ def test_open_candidate_enumeration_does_not_grow_with_accepted_history(
 ):
     import cruxible_core.service.proposals.proposals as proposals_module
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from tests.core_support._support import every_moved_base_overlaps
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner = initialize_local(tmp_path)
     steps: list[int] = []
     enumerate_open = proposals_module._open_candidates

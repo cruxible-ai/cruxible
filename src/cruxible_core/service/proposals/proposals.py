@@ -49,10 +49,13 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 
-#: ``awaiting_readmit``: a candidate evaluated against a state accepted head has
-#: since moved past. Nothing settled it: it waits for its author to readmit it
-#: (recompile at the head) or withdraw it, and no approval can settle it as it
-#: stands. ``open`` candidates sit on the head and wait for review or activation.
+#: ``awaiting_readmit``: a candidate whose base accepted history moved past AND
+#: changed a path its change set touches or is judged under (``stale_paths``,
+#: ``staleness.overlap_check``). Nothing settled it: it waits for its author to
+#: readmit it (recompile at the head) or withdraw it, and no approval can settle
+#: it as it stands. ``open`` candidates wait for review or activation: on the
+#: head, or behind it with nothing they touch changed since their base, which
+#: approval or activation lands at the head as the same change set.
 ProposalInventoryStatus = Literal["open", "awaiting_readmit", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
 ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected"]
@@ -85,9 +88,14 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
     terminal_reason: ProposalTerminalReason | None = None
     incomplete_reasons: tuple[ProposalIncompleteReason, ...] = ()
     withdrawal_present: bool = False
+    #: ``awaiting_readmit`` only: the paths changed since its base that its change
+    #: set touches or is judged under, sorted.
+    stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _status_shape(self) -> "PlaybillProposalListEntryV1":
+        if bool(self.stale_paths) != (self.status == "awaiting_readmit"):
+            raise ValueError("exactly a proposal awaiting readmit names its stale paths")
         if self.status == "incomplete":
             if not self.incomplete_reasons or self.terminal_reason is not None:
                 raise ValueError(
@@ -324,19 +332,7 @@ def open_proposal_count(instance: PlaybillInstance) -> int:
     """
 
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    with _bound_inventory(instance, coordinate) as bound:
-        if bound is None:
-            return 0
-        connection, sequence = bound
-        return len(
-            _open_candidates(
-                connection,
-                sequence,
-                columns="proposal_id,admitted_at_us",
-                where="candidate_parent_semantic_root=?",
-                parameters=(coordinate.semantic_root,),
-            )
-        )
+    return len(_open_rows(instance, coordinate, columns="proposal_id,admitted_at_us"))
 
 
 def open_proposal_at_target(
@@ -404,6 +400,27 @@ def _proposal_entries(
                 else ()
             ),
         ).fetchall()
+    moved = [
+        row
+        for row in rows
+        if row["reason"] == "stale"
+        and row["admission_path"] is not None
+        and row["evaluation_status"] == "candidate"
+        and row["candidate_parent_semantic_root"] is not None
+    ]
+    overlaps: dict[str, tuple[str, ...]] = {}
+    if moved:
+        from cruxible_core.service.proposals.staleness import overlap_check
+
+        with overlap_check(instance, coordinate) as check:
+            overlaps = {
+                row["proposal_id"]: check(
+                    proposal_id=row["proposal_id"],
+                    candidate_digest=row["candidate_digest"],
+                    parent_semantic_root=row["candidate_parent_semantic_root"],
+                )
+                for row in moved
+            }
     entries = []
     for row in rows:
         missing: list[ProposalIncompleteReason] = []
@@ -417,9 +434,12 @@ def _proposal_entries(
         ):
             missing.append("missing_candidate")
         reason = row["reason"]
-        # A moved base settles nothing: the candidate awaits its author's readmit.
-        awaiting_readmit = reason == "stale"
-        if awaiting_readmit:
+        # A moved base settles nothing. The candidate awaits its author's readmit
+        # only when history changed what it touches since its base; otherwise it
+        # is open, and approval or activation lands it at the head.
+        stale_paths = overlaps.get(row["proposal_id"], ()) if reason == "stale" else ()
+        awaiting_readmit = bool(stale_paths) and not missing
+        if reason == "stale":
             reason = None
         if reason == "withdrawn":
             # One closing record carries both endings; its kind tells them apart.
@@ -448,6 +468,7 @@ def _proposal_entries(
                 terminal_reason=None if missing else reason,
                 incomplete_reasons=tuple(missing),
                 withdrawal_present=row["withdrawal_path"] is not None,
+                stale_paths=stale_paths if awaiting_readmit else (),
             )
         )
     return tuple(entries)
@@ -484,6 +505,69 @@ def _bound_inventory(
             ):
                 raise ProposalIntegrityError("proposal inventory history binding differs")
             yield connection, history.sequence
+
+
+_OVERLAP_COLUMNS = (
+    "proposal_id",
+    "admitted_at_us",
+    "candidate_digest",
+    "candidate_parent_semantic_root",
+)
+
+
+def _open_rows(
+    instance: PlaybillInstance,
+    coordinate: AcceptedCoordinate,
+    *,
+    columns: str,
+    where: str = "",
+    parameters: tuple[str, ...] = (),
+) -> list[sqlite3.Row]:
+    """Open candidates at `coordinate`: on its semantic root, or behind it with nothing
+    they touch changed since their base (``staleness.overlap_check``).
+
+    The second locator reads only unsettled candidates whose parent is not the
+    coordinate's, each checked by its own keys; ``where`` narrows both.
+    """
+
+    selected = ",".join(
+        dict.fromkeys((*(item.strip() for item in columns.split(",")), *_OVERLAP_COLUMNS))
+    )
+    extra = f" AND {where}" if where else ""
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return []
+        connection, sequence = bound
+        here = _open_candidates(
+            connection,
+            sequence,
+            columns=selected,
+            where="candidate_parent_semantic_root=?" + extra,
+            parameters=(coordinate.semantic_root, *parameters),
+        )
+        moved = _open_candidates(
+            connection,
+            sequence,
+            columns=selected,
+            where="candidate_parent_semantic_root IS NOT NULL "
+            "AND candidate_parent_semantic_root!=?" + extra,
+            parameters=(coordinate.semantic_root, *parameters),
+        )
+    if not moved:
+        return here
+    from cruxible_core.service.proposals.staleness import overlap_check
+
+    with overlap_check(instance, coordinate) as check:
+        landable = [
+            row
+            for row in moved
+            if not check(
+                proposal_id=row["proposal_id"],
+                candidate_digest=row["candidate_digest"],
+                parent_semantic_root=row["candidate_parent_semantic_root"],
+            )
+        ]
+    return sorted([*here, *landable], key=lambda row: (row["admitted_at_us"], row["proposal_id"]))
 
 
 def _open_candidates(
@@ -526,6 +610,9 @@ class StaleProposal:
     admitted_at: str
     candidate_parent_semantic_root: str
     candidate_digest: str
+    #: The paths changed since its base that its change set touches or is
+    #: judged under: why it is stale. Never empty.
+    stale_paths: tuple[str, ...] = ()
 
 
 def readmission_operation_digest(proposal_id: str, coordinate: AcceptedCoordinate) -> str:
@@ -650,9 +737,11 @@ def stale_unreadmitted_proposals(
 
     Exactly `proposal list`'s `awaiting_readmit` status -- a candidate neither
     refused, accepted nor withdrawn whose parent semantic root is not the
-    coordinate's -- read through the open-parent locator rather than the whole
-    inventory; ``actor_id`` keeps only that author's. A proposal readmitted at
-    this coordinate is answered. So is one whose readmission still carries its
+    coordinate's, and which history changed a path of since its base
+    (``StaleProposal.stale_paths``, ``staleness.overlap_check``) -- read
+    through the open-parent locator rather than the whole inventory;
+    ``actor_id`` keeps only that author's. A proposal readmitted at this
+    coordinate is answered. So is one whose readmission still carries its
     change: that readmission was accepted -- the change landed, under another
     proposal id -- or is a live proposal that answers for itself. Every link
     is the ``readmits`` record on the readmission's own admission
@@ -703,7 +792,27 @@ def stale_unreadmitted_proposals(
                     candidate_digest=row["candidate_digest"],
                 )
             )
-    return tuple(stale)
+    if not stale:
+        return ()
+    from dataclasses import replace
+
+    from cruxible_core.service.proposals.staleness import overlap_check
+
+    # A moved base alone is not stale: only a change since it to something the
+    # proposal touches or is judged under is (one keyed seek per key).
+    with overlap_check(instance, coordinate) as check:
+        named = [
+            replace(
+                proposal,
+                stale_paths=check(
+                    proposal_id=proposal.proposal_id,
+                    candidate_digest=proposal.candidate_digest,
+                    parent_semantic_root=proposal.candidate_parent_semantic_root,
+                ),
+            )
+            for proposal in stale
+        ]
+    return tuple(proposal for proposal in named if proposal.stale_paths)
 
 
 @dataclass(frozen=True)
@@ -760,17 +869,11 @@ def proposals_awaiting_approval(
     if principal_id not in ordinary_principal_ids:
         return ()
     evidence = instance.proposal_evidence()
-    with _bound_inventory(instance, coordinate) as bound:
-        if bound is None:
-            return ()
-        connection, sequence = bound
-        rows = _open_candidates(
-            connection,
-            sequence,
-            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
-            where="candidate_parent_semantic_root=?",
-            parameters=(coordinate.semantic_root,),
-        )
+    rows = _open_rows(
+        instance,
+        coordinate,
+        columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+    )
     awaiting = []
     for row in rows:
         counts = _approval_awaited(
@@ -895,17 +998,13 @@ def proposals_awaiting_activation(
     """
 
     evidence = instance.proposal_evidence()
-    with _bound_inventory(instance, coordinate) as bound:
-        if bound is None:
-            return ()
-        connection, sequence = bound
-        rows = _open_candidates(
-            connection,
-            sequence,
-            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
-            where="candidate_parent_semantic_root=? AND actor_id=?",
-            parameters=(coordinate.semantic_root, principal_id),
-        )
+    rows = _open_rows(
+        instance,
+        coordinate,
+        columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+        where="actor_id=?",
+        parameters=(principal_id,),
+    )
     ready = []
     for row in rows:
         candidate = evidence.read_candidate(row["candidate_digest"])
@@ -1055,7 +1154,15 @@ def _readmit(
         raise ProposalNotFoundError(proposal_id)
     if source_status.terminal_reason == "accepted":
         raise ProposalReadmitAlreadyAccepted(proposal_id)
-    if source_status.status != "awaiting_readmit":
+    # An open proposal behind the head (nothing it touches changed since its
+    # base) may be readmitted too: that lands the same change set at the head,
+    # as its approval or activation would. One on the head is not stale.
+    landing = source_status.status == "open" and (
+        source.candidate is not None
+        and source.candidate.candidate.parent_semantic_root
+        != instance.accepted_coordinate().semantic_root
+    )
+    if source_status.status != "awaiting_readmit" and not landing:
         raise ProposalReadmitNotStale(
             proposal_id, status=source_status.terminal_reason or source_status.status
         )
@@ -1106,6 +1213,28 @@ def _readmit(
         and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
     ):
         raise ProposalReadmitRequiresResubmission()
+    if landing and not mode.previewing:
+        landed = land_exact_bytes(instance, source, mode=mode)
+        link = landed.admission.readmits
+        assert link is not None
+        return PlaybillProposalReadmitResultV1(
+            source_proposal_id=proposal_id,
+            operation_digest=link.operation_digest,
+            proposal=ProposalInspection(proposal=landed, accepted_coordinate=link.coordinate),
+        )
+    return _readmit_exact_bytes(instance, mode, source, proposal_id=proposal_id, actor_id=actor_id)
+
+
+def _readmit_exact_bytes(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    source: ProposalResult,
+    *,
+    proposal_id: str,
+    actor_id: str,
+) -> PlaybillProposalReadmitResultV1:
+    """Readmit an origin that does not lower by its own exact bytes, rebased at the head."""
+
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
     operation_digest = link.operation_digest
@@ -1179,6 +1308,113 @@ def _readmit(
             workspace_advertisement=result.workspace_advertisement,
             accepted_coordinate=coordinate,
         ),
+    )
+
+
+LANDED_REASON = (
+    "Landed at the head as {successor}: nothing it touches or is judged under changed "
+    "since its base, so the same change set was readmitted there."
+)
+
+
+def land_exact_bytes(
+    instance: PlaybillInstance, source: ProposalResult, *, mode: ChangeMode | None = None
+) -> ProposalResult:
+    """Land a moved proposal whose origin does not lower at the head, by its own bytes.
+
+    Only for a proposal nothing it touches changed since its base
+    (``staleness.overlap_check``), when an approval or an activation meets it:
+    the same change set is readmitted at the head under its author (the
+    admission's ``readmits`` link names the source, proposed at its base, and
+    the head it lands at), and the source closes as superseded by it. The
+    author is not asked. Serialized with withdrawal and rejection of the source.
+    A readmission the head refuses is returned as it is, and closes nothing.
+    """
+
+    from cruxible_core.service.proposals.recompile import recompiled_successor
+
+    source_id = source.admission.proposal_id
+    with instance.refusal_index().closing(source_id):
+        carried = recompiled_successor(instance, source)
+        if carried.admission.proposal_id != source_id:
+            return carried
+        instance.proposal_evidence().refuse_closed(source_id)
+        if (
+            source.candidate is not None
+            and len(source.candidate.members) > 1
+            and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
+        ):
+            raise ProposalReadmitRequiresResubmission()
+        readmitted = _readmit_exact_bytes(
+            instance,
+            ChangeMode(instance, previewing=False) if mode is None else mode,
+            source,
+            proposal_id=source_id,
+            actor_id=source.admission.actor_id,
+        )
+        assert readmitted.proposal is not None
+        successor = readmitted.proposal.proposal
+        assert isinstance(successor, ProposalResult)
+        if successor.candidate is None:
+            # Refused at the head (a boundary the keys do not name, such as a
+            # Subject id an alias now holds): the source stays as it is.
+            return successor
+        from datetime import datetime, timezone
+
+        from cruxible_client.contracts.temporal import format_datetime
+
+        _carry_authoring_intent(instance, source, successor)
+        _close_once(
+            instance,
+            ChangeMode(instance, previewing=False),
+            ProposalWithdrawalRecord(
+                proposal_id=source_id,
+                actor_id=source.admission.actor_id,
+                reason=LANDED_REASON.format(successor=successor.admission.proposal_id),
+                withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
+                superseded_by=successor.admission.proposal_id,
+            ),
+        )
+        return successor
+
+
+def _carry_authoring_intent(
+    instance: PlaybillInstance, source: ProposalResult, successor: ProposalResult
+) -> None:
+    """Point the authoring intent a landed proposal came from at the landed candidate.
+
+    As a recompilation does: the intent then reads its candidate's status, and
+    finishes when that candidate is accepted. A proposal no authoring intent
+    submitted has nothing to carry.
+    """
+
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.preflight import authoring_intent_id_for_proposal_ref
+    from cruxible_core.service.proposals.recompile import lowering_origin
+
+    try:
+        origin = lowering_origin(instance, source)
+    except ProposalStale:
+        return
+    if origin is None or origin.admission.procedure_operation is not None:
+        return
+    intent_id = authoring_intent_id_for_proposal_ref(
+        origin.admission.target_ref, actor_id=origin.admission.actor_id
+    )
+    link = successor.admission.readmits
+    if intent_id is None or link is None or successor.candidate is None:
+        return
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    status = coordinator._candidate_status(
+        proposal_id=successor.admission.proposal_id,
+        candidate_digest=successor.candidate.candidate_digest,
+    )
+    coordinator.store.transition(
+        intent_id,
+        actor_id=origin.admission.actor_id,
+        operation_key=link.operation_digest,
+        recover_creates=False,
+        transform=lambda intent: intent.model_copy(update={"candidate_status": status}),
     )
 
 
@@ -1634,5 +1870,6 @@ __all__ = [
     "service_supersede_line_proposal",
     "service_withdraw_playbill_proposal",
     "service_playbill_whoami",
+    "land_exact_bytes",
     "stale_unreadmitted_proposals",
 ]

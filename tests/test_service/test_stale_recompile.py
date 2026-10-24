@@ -24,7 +24,7 @@ from cruxible_core.service.proposals.proposals import (
     _proposal_result,
     service_readmit_playbill_proposal,
 )
-from tests.core_support._support import client_material
+from tests.core_support._support import client_material, every_moved_base_overlaps
 from tests.core_support._write_support import KIND, seed_write_surface
 from tests.test_ledger.test_activation import _sign
 from tests.test_ledger.test_activation_handoff import _arguments, _proposal
@@ -35,6 +35,9 @@ from tests.test_service.test_write_verbs import _set, _write
 def test_stale_write_is_fresh_lowering_at_head_and_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
+    # The head moves with another Subject's title; this is about a stale write,
+    # so any moved base counts as stale here (a merely moved one lands by bytes).
+    every_moved_base_overlaps(monkeypatch)
     instance, _ = seed_write_surface(tmp_path)
     pending = _write(instance, _set(f"{KIND}/wi-1", "title", "parallel"), accept="never")
     assert pending.proposal is not None
@@ -84,9 +87,14 @@ def test_stale_write_is_fresh_lowering_at_head_and_replays(
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
 
 
-def test_stale_approve_returns_new_pending_id_without_recording_old_signature(
+def test_approving_behind_the_head_lands_a_new_pending_id_without_recording_old_signature(
     tmp_path: Path,
 ) -> None:
+    """Another Subject's title moved the head: nothing this write touches changed.
+
+    The approval lands the same change set at the head (identical members) as a
+    new candidate, which the approver signs; the stale signature is not kept.
+    """
     instance, _ = seed_write_surface(tmp_path, self_approval=False)
     reviewer = client_material(tmp_path, instance)
     pending = _write(instance, _set(f"{KIND}/wi-1", "title", "review this"))
@@ -121,19 +129,13 @@ def test_stale_approve_returns_new_pending_id_without_recording_old_signature(
         may_activate=True,
     )
     assert isinstance(result, ProposalRecompiled) and result.status == "pending_review"
-    assert not result.members_identical  # self-source Capture now binds the new head
+    # Landed by its own bytes: the self-source Capture still binds its base.
+    assert result.members_identical and result.changed_members == ()
     successor = _proposal_result(instance, result.proposal_id)
     assert successor.candidate is not None
-    before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
-    after = {
-        member.path: member.candidate_artifact_digest for member in successor.candidate.members
-    }
-    expected = sorted(
-        (path, "added" if path not in before else "replaced")
-        for path, digest in after.items()
-        if path not in before or before[path] != digest
-    ) + sorted((path, "removed") for path in before if path not in after)
-    assert [(item.path, item.change) for item in result.changed_members] == sorted(expected)
+    assert {
+        member.path: member.candidate_artifact_digest for member in source.candidate.members
+    } == {member.path: member.candidate_artifact_digest for member in successor.candidate.members}
     assert not result.changed_members_truncated
     assert instance.proposal_evidence().read_approvals(result.candidate_digest) == ()
     assert instance.proposal_evidence().read_approvals(source.candidate.candidate_digest) == ()

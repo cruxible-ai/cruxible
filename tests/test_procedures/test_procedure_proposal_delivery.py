@@ -1634,9 +1634,9 @@ def test_readmission_chain_accepts_and_each_link_keeps_the_original_item_reason(
         )
         # Populate the proposal inventory at the new head before entering
         # the read-only preview fence, as a normal status/review read does.
-        assert (
-            service_playbill_proposal_status(instance, proposal_id=pid).status == "awaiting_readmit"
-        )
+        # An unrelated ClaimType touches nothing it does: it is open behind
+        # the head, and readmit lands the same change set there.
+        assert service_playbill_proposal_status(instance, proposal_id=pid).status == "open"
         preview = service_readmit_playbill_proposal(
             instance, proposal_id=pid, actor_id="owner", dry_run=True
         )
