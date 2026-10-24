@@ -230,7 +230,9 @@ def _decision_only_input(current: ClaimType) -> ClaimTypeInputRecord:
     # Input rules name contracts by digest or by identity; lowering accepts both.
     values["evidence_admission_policy"] = {
         "rules": [
-            rule.model_dump(mode="json", exclude={"tag", "allowed_reducer_digests", "evidence_kinds"})
+            rule.model_dump(
+                mode="json", exclude={"tag", "allowed_reducer_digests", "evidence_kinds"}
+            )
             for rule in current.evidence_admission_policy.rules
         ]
     }

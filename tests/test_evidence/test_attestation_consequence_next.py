@@ -125,7 +125,9 @@ def threshold_world(
     else:
         instance, owner = initialize_local(root)
     contract = (
-        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT if frozen else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+        if frozen
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     )
     base_type = _claim_type(contract=contract)
     claim_type = base_type.model_copy(
@@ -147,9 +149,7 @@ def threshold_world(
         {
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
             claim_type_path(claim_type.predicate): render_claim_type(claim_type),
-            capture_contract_path(contract.identity.name): (
-                render_capture_contract(contract)
-            ),
+            capture_contract_path(contract.identity.name): (render_capture_contract(contract)),
         },
         phase="attestation-consequence-dependencies",
     )
