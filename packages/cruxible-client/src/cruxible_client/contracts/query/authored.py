@@ -454,10 +454,17 @@ class _LowerQuery:
         self.bindings[binding] = (kind,)
         subject_id = None
         if parameter is not None:
-            if self.spec.params.get(parameter) not in {"string", "subject", "subject_reference"}:
+            declared = self.spec.params.get(parameter)
+            if declared is None:
                 raise QuerySpecError(
                     "cruxible.query.parameter_undeclared",
-                    "entry requires a declared subject/string parameter",
+                    "declare the entry parameter in params",
+                    path="$.from",
+                )
+            if declared not in {"string", "subject", "subject_reference"}:
+                raise QuerySpecError(
+                    "cruxible.query.value_type_mismatch",
+                    "entry parameter must be string or subject",
                     path="$.from",
                 )
             subject_id = QueryParameterRef(parameter=parameter)

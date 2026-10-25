@@ -521,3 +521,45 @@ def test_get_does_not_render_an_unlowerable_or_different_filter_tree(resolver):
     )
     with pytest.raises(ValueError, match="typed definition"):
         query_spec_from_definition(query.model_copy(update={"where": role_filter}))
+
+
+def test_ambiguous_field_and_reverse_typo_keep_compact_refusals(resolver):
+    from dataclasses import replace
+
+    from cruxible_core.service.discovery.query_vocabulary import QueryVocabulary
+
+    info = resolver.vocabulary.predicates["security.incident.name"]
+    left = replace(info, predicate="test.left.name", subject_kinds=("test.left",))
+    right = replace(info, predicate="test.right.name", subject_kinds=("test.right",))
+    ambiguous = AuthoredQueryResolver(
+        QueryVocabulary(
+            predicates={left.predicate: left, right.predicate: right},
+            kinds=("test.left", "test.right"),
+        )
+    )
+    with pytest.raises(ReadRefusalError) as caught:
+        ambiguous.field(("test.left", "test.right"), "name", path="$.fields[0]")
+    assert caught.value.error_code == "cruxible.query.ambiguous_field"
+    assert set(caught.value.candidates) == {left.predicate, right.predicate}
+    spec = simple(
+        hops=[
+            {"vulnerability": "incident.vulnerability!"},
+            {"assessment": "<assessment.vulnerabilty!"},
+        ]
+    )
+    with pytest.raises(ReadRefusalError) as caught:
+        lower_query_spec(spec, resolver)
+    assert caught.value.error_code == "cruxible.query.unknown_field"
+    assert caught.value.field_path == "$.hops[1]"
+    assert "security.assessment.vulnerability" in caught.value.candidates
+
+
+@pytest.mark.parametrize(
+    "params,code", [({}, "parameter_undeclared"), ({"id": "integer"}, "value_type_mismatch")]
+)
+def test_entry_parameter_refusals_distinguish_missing_from_wrong_type(params, code, resolver):
+    spec = simple(**{"from": {"incident": "security.incident=$id"}}, params=params)
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(spec, resolver)
+    assert caught.value.error_code == "cruxible.query." + code
+    assert caught.value.field_path == "$.from"
