@@ -289,8 +289,11 @@ class ProcedureSpec(_Model):
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
     annotations: JsonValue = Field(default_factory=dict)
 
+    # No return-schema annotation: this wrap only omits defaults from the
+    # model's own shape. A dict return schema would erase the typed served
+    # schema and split request/response components in OpenAPI.
     @model_serializer(mode="wrap")
-    def _wire(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _wire(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
         return cast(dict[str, Any], _authored_defaults(self, handler(self)))
 
     @field_validator("input", "params", "output", mode="before")

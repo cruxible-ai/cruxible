@@ -18,6 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -267,7 +268,7 @@ class ProcedureInput(_StrictInputModel):
     @model_validator(mode="after")
     def _one_form(self) -> "ProcedureInput":
         if self.spec is None and not self.definition:
-            raise ValueError("a Procedure input requires spec or definition")
+            raise PydanticCustomError("missing", "a Procedure input requires spec or definition")
         if self.spec is not None and (self.definition or self.contracts):
             raise ValueError("use either spec or definition/contracts")
         return self
