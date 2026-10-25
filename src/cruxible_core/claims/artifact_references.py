@@ -427,7 +427,7 @@ def _move_graph(
         if isinstance(moved, NamedProcedureArtifact):
             from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-            return compact_procedure(moved)
+            return dict(compact_procedure(moved))
         return moved.model_dump(mode="json", by_alias=True)
     moved_pins = [_moved(pin, remap) for pin in graph.pins]
     if builds and definition is not graph.definition:
