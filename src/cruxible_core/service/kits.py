@@ -860,8 +860,8 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
         assert isinstance(procedure, ProcedureArtifact)
         return render_procedure(procedure)
     if path.startswith("blueprints/"):
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
         from cruxible_client.contracts.procedures.blueprints import (
-            BlueprintArtifact,
             parse_blueprint,
             render_blueprint,
         )
