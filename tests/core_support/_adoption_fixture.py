@@ -53,6 +53,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DirectClaimSource,
     build_coordinator_self_source_capture,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -123,6 +124,8 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import history_before_identity
 from tests.core_support._support import client_material
+
+SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 
 SUBJECT_KIND = "project.work_item"
 EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -247,7 +250,7 @@ def _subject(index: int) -> SubjectShell:
 
 
 def _claim_type(index: int) -> ClaimType:
-    contract_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
+    contract_digest = capture_contract_digest(SELF_SOURCE).tagged
     predicate = _predicate(index)
     return ClaimType(
         artifact_format="playbill-claim-type-v1",
@@ -384,10 +387,8 @@ def _claim(
                 (
                     ArtifactPin(
                         role="capture-contract",
-                        target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
-                        artifact_digest=capture_contract_digest(
-                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-                        ).tagged,
+                        target=SELF_SOURCE.identity,
+                        artifact_digest=capture_contract_digest(SELF_SOURCE).tagged,
                     ),
                     ArtifactPin(
                         role="claim-type",
@@ -653,6 +654,7 @@ def build_fixture(
         value = CLAIM_VALUES[index % len(CLAIM_VALUES)]
         capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
+            accepted_contract=SELF_SOURCE,
             actor_id="owner",
             claim_id=claim_id,
             body=canonical_bytes(
@@ -684,9 +686,7 @@ def build_fixture(
     if accepted_claims == 0:
         started = time.monotonic()
         vocabulary: dict[str, bytes] = {
-            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
-            )
+            capture_contract_path(SELF_SOURCE.identity.name): (render_capture_contract(SELF_SOURCE))
         }
         for claim_type in claim_types:
             vocabulary[_claim_type_path(claim_type)] = render_claim_type(claim_type)
