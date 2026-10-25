@@ -672,7 +672,16 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 kind="propose_change_set" if isinstance(step, ProposeStep) else "settle_change_set",
                 candidate_templates=template(candidates, path + ".candidates"),
                 result=template(
-                    step.result if step.result is not None else "$" + (previous or "input"),
+                    step.result
+                    if step.result is not None
+                    else "$"
+                    + (
+                        spec.returns.id
+                        if isinstance(spec.returns, (ReturnFrom, ReturnFields))
+                        else spec.returns
+                        if isinstance(spec.returns, str)
+                        else previous or "input"
+                    ),
                     path + ".result",
                 ),
             )
@@ -755,9 +764,10 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     "$.returns",
                     "Return projection requires the interface output schema at prepare",
                 )
-            for name in returns.omit:
-                if name not in (schemas.get(returns.from_) or {}):
-                    _unknown("$.returns.omit", name, schemas.get(returns.from_) or {})
+            if schemas.get(returns.from_) is not None:
+                for name in returns.omit:
+                    if name not in (schemas.get(returns.from_) or {}):
+                        _unknown("$.returns.omit", name, schemas.get(returns.from_) or {})
         output = (
             _fields(spec.output)
             if spec.output is not None
@@ -950,7 +960,11 @@ def _json_field(schema: dict[str, Any]) -> PropertySchema:
     type_ = schema.get("type", "json")
     if type_ == "boolean":
         type_ = "bool"
-    if isinstance(type_, list) or type_ in {"object", "array"}:
+    if (
+        isinstance(type_, list)
+        or type_ in {"object", "array", "null", "json"}
+        or set(schema) - {"type", "enum"}
+    ):
         return PropertySchema(type="json", json_schema=schema)
     return PropertySchema(type=type_, enum=schema.get("enum"))
 
@@ -1070,14 +1084,17 @@ def _check_call_input(
             if declared is None:
                 continue
         actual = _template_type(value[name], path + "." + name, lookup)
-        normalize = {"int": "integer"}
-        if field.type != "json" and normalize.get(actual.type, actual.type) != normalize.get(
-            field.type, field.type
-        ):
+        from cruxible_client.contracts.procedures.source_views import schema_json_type
+
+        actual_type = schema_json_type(actual).get("type", actual.type)
+        expected_type = schema_json_type(field).get("type", field.type)
+        actual_types = set(actual_type) if isinstance(actual_type, list) else {actual_type}
+        expected_types = set(expected_type) if isinstance(expected_type, list) else {expected_type}
+        if field.type != "json" and not actual_types <= expected_types:
             raise ProcedureSpecError(
                 "procedure_operand_type_mismatch",
                 path + "." + name,
-                f"Interface input expects {field.type}, got {actual.type}",
+                f"Interface input expects {expected_type}, got {actual_type}",
             )
 
 

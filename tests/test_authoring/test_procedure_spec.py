@@ -288,6 +288,8 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
             "input": None,
         }
 
+    payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
+    assert payload.definition["procedure_spec"]["procedure"] == "security.inventory-import"
     lowered = lower_procedure_spec(authored, resolve=resolve)
     assert len(lowered.definition["nodes"]) == 11
     assert [node["kind"] for node in lowered.definition["nodes"]] == [
@@ -309,6 +311,7 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
         "truncated": "$steps.held.truncated",
     }
     assert "items" not in lowered.definition["nodes"][5]["fields"]
+    assert lowered.definition["nodes"][8]["result"] == "$steps.summary"
     assert lowered.definition["nodes"][6].get("refusal_code") is None
     assert lowered.definition["budget"]["max_capture_bytes"] == 1048576
 
