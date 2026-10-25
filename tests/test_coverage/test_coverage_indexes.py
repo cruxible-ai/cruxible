@@ -13,8 +13,11 @@ Three laws are under test here and nowhere else:
 
 from __future__ import annotations
 
+import cProfile
+
 import pytest
 
+from cruxible_client.contracts.canonical import Sha256Value, canonical_digest, typed_digest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
@@ -24,12 +27,16 @@ from cruxible_client.contracts.claims import (
     claim_path,
     claim_statement_digest,
 )
+from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_core.coverage.contracts import (
+    OCCURRENCE_IDENTITY_DIGEST_DOMAIN,
     CoverageError,
+    LogicalSourceIdentity,
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.indexes import (
     CoverageScanBudget,
+    WorkingOccurrenceOverlayV2,
     accepted_logical_source,
     build_working_occurrence_overlay,
     evidence_citation_index_digest,
@@ -167,6 +174,68 @@ def test_v2_index_keeps_two_claim_roles_on_one_capture_as_distinct_associations(
 
 
 # -- the working-source occurrence overlay ---------------------------------
+
+
+def test_occurrence_memo_preserves_the_frozen_scalar_preimage() -> None:
+    source = LogicalSourceIdentity(plane="external", identity="memo-scalar-types")
+    digest = sha256(CITED)
+    for ordinal in (True, 1):
+        expected = typed_digest(
+            Sha256Value,
+            OCCURRENCE_IDENTITY_DIGEST_DOMAIN,
+            {
+                "observed_commitment_digest": digest,
+                "ordinal": ordinal,
+                "source": source.model_dump(mode="json"),
+            },
+        ).tagged
+        assert (
+            occurrence_identity_digest(
+                source=source, observed_commitment_digest=digest, ordinal=ordinal
+            )
+            == expected
+        )
+    with pytest.raises(CanonicalEncodingError, match="floating-point values are forbidden"):
+        occurrence_identity_digest(
+            source=source,
+            observed_commitment_digest=digest,
+            ordinal=1.0,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("selections", (1, 20))
+def test_occurrence_validation_reuses_each_frozen_identity_digest(selections: int) -> None:
+    source = LogicalSourceIdentity(plane="external", identity=f"memo-source-{selections}")
+    needles = tuple(f"Unique selection {n:03d}.\n".encode() for n in range(selections))
+    content = PREAMBLE + b"".join(needles)
+    wanted = tuple((sha256(needle), len(needle), needle) for needle in needles)
+
+    def digest_calls(profile: cProfile.Profile) -> int:
+        return sum(
+            entry.callcount
+            for entry in profile.getstats()
+            if entry.code is canonical_digest.__code__
+        )
+
+    with cProfile.Profile() as first_work:
+        first = build_working_occurrence_overlay((working(source, content),), wanted=wanted)
+    assert len(first.occurrences) == selections + 1  # Selections and the whole source.
+    assert digest_calls(first_work) == len(first.occurrences)
+
+    # A new request and wire-decoded sources keep the same preimage. Neither
+    # the repeated scan nor either nested validation may rehash those identities.
+    with cProfile.Profile() as repeated_work:
+        repeated = build_working_occurrence_overlay(
+            (working(source.model_copy(), content),), wanted=wanted
+        )
+        decoded = WorkingOccurrenceOverlayV2.model_validate(first.model_dump(mode="json"))
+    assert decoded == repeated == first
+    assert digest_calls(repeated_work) == 0
+
+    forged = first.model_dump(mode="json")
+    forged["occurrences"][0]["identity_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(ValueError, match="identity does not reproduce"):
+        WorkingOccurrenceOverlayV2.model_validate(forged)
 
 
 def test_an_occurrence_identity_survives_relocation_within_its_source() -> None:
