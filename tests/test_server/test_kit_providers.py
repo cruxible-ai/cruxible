@@ -63,6 +63,10 @@ def _installer(
 
 
 def _client(http: TestClient) -> CruxibleClient:
+    from tests.support.core_provider_world import CoreProviderClient
+
+    if isinstance(http, CoreProviderClient):
+        return http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http  # type: ignore[assignment]
     return client
@@ -139,7 +143,9 @@ _RUN_WALL_CLOCK = {"microseconds": 30_000_000}
 _MAX_WALL_CLOCK = {"microseconds": 60_000_000}
 
 
-def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, Any]]:
+def _worlds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, historical=False
+) -> Iterator[tuple[Any, Any]]:
     """A publisher and a fresh consumer on one daemon whose operator resolves registry
     wheels from PyPI (a plain transferred wheel needs it; a kit's bundled one does not)."""
 
@@ -152,7 +158,17 @@ def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[A
             {"provider_index_urls": ["https://pypi.org/simple", "https://files.pythonhosted.org/"]}
         )
     )
-    yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=False)
+    if historical:
+        from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+        from tests.support.core_provider_world import CoreProviderWorld
+
+        operator = ProviderRuntimeOperator(tmp_path / "server-state")
+        yield (
+            CoreProviderWorld(tmp_path / "publisher", "inst_core_publisher", operator),
+            CoreProviderWorld(tmp_path / "consumer", "inst_core_consumer", operator),
+        )
+    else:
+        yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=False)
 
 
 def _package(
@@ -340,33 +356,55 @@ def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
     from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
 
     client = _client(world.http)
-    return playbill_api.playbill_kit_build(
-        world.instance_id,
-        KitBuildRequest(
-            kit_id="acme",
-            version=version,
-            owns=("acme.",),
-            providers=tuple(
-                stage_kit_provider_directory(client, world.instance_id, project)
-                for project in projects
-            ),
+    request = KitBuildRequest(
+        kit_id="acme",
+        version=version,
+        owns=("acme.",),
+        providers=tuple(
+            stage_kit_provider_directory(client, world.instance_id, project) for project in projects
         ),
-    ).bundle
+    )
+    if hasattr(world, "instance"):
+        from cruxible_core.service.kits import service_build_kit
+
+        return service_build_kit(world.instance, request).bundle
+    return playbill_api.playbill_kit_build(world.instance_id, request).bundle
 
 
 def _add(world: Any, bundle: KitBundle, **options: Any) -> KitChangeResult:
     staged = stage_kit_providers(_client(world.http), world.instance_id, bundle)
-    return playbill_api.playbill_kit_add(
-        world.instance_id, KitAddRequest(bundle=staged, source="test", **options)
-    )
+    request = KitAddRequest(bundle=staged, source="test", **options)
+    if hasattr(world, "instance"):
+        from cruxible_core.service.kits import service_add_kit
+        from cruxible_core.service.procedures.provider_installation import service_install_provider
+
+        return service_add_kit(
+            world.instance,
+            request,
+            actor_id="owner",
+            timestamp="2026-10-24T12:00:00.000000Z",
+            install_provider=lambda request, **kwargs: service_install_provider(
+                world.instance,
+                operator=world.operator,
+                request=request,
+                actor_id="owner",
+                timestamp="2026-10-24T12:00:00.000000Z",
+                **kwargs,
+            ),
+        )
+    return playbill_api.playbill_kit_add(world.instance_id, request)
 
 
 def _tree(world: Any) -> dict[str, bytes]:
+    if hasattr(world, "instance"):
+        return world.tree()
     instance = get_playbill_manager().get(world.instance_id)
     return dict(instance.immutable_tree_at(instance.accepted_coordinate().git_oid))
 
 
 def _run(world: Any, name: str, n: int) -> Any:
+    if hasattr(world, "instance"):
+        return world.run(name, n)
     procedure = world.pb.accepted_procedure(name)
     run = procedure.run(input=procedure.input(n=n))
     assert run.status == "succeeded", run

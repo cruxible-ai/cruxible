@@ -379,6 +379,7 @@ def service_build_kit(
             lock=lock,
             dependencies=dependencies,
             delivery=item.delivery,
+            named=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         if item.delivery == "index":
             # A default provider installs by name: the kit carries none of its
@@ -1732,7 +1733,7 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest
+    instance: PlaybillInstance, manifest: KitManifest, *, named: bool
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
@@ -1753,6 +1754,7 @@ def _inspect_staged(
             dependencies=tuple(
                 (item.filename, read(item.filename)) for item in provider.dependencies
             ),
+            named=named,
         )
         for provider in manifest.providers
         if provider.delivery == "bundled"
@@ -1978,7 +1980,11 @@ def _add_kit(
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
     inspected = (
-        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
+        None
+        if mode.previewing or not manifest.providers
+        else _inspect_staged(
+            instance, manifest, named=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.

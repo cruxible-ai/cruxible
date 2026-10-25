@@ -1864,7 +1864,6 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
     from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
     from cruxible_client.contracts.provider_installation import ProviderMoveRequest
     from cruxible_client.contracts.triggers import CadenceSchedule
-    from cruxible_core.runtime.playbill_manager import get_playbill_manager
     from tests.test_server.test_kit_providers import (
         PROCEDURE,
         _author,
@@ -1875,7 +1874,7 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         _worlds,
     )
 
-    opened = _worlds(root, monkeypatch)
+    opened = _worlds(root, monkeypatch, historical=True)
     world, _consumer = next(opened)
     try:
         checkout = _PROVIDER_CHECKOUT.get()
@@ -1903,7 +1902,7 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         client = _client(world.http)
         original = client.enable_line(world.instance_id, "user.upgrade")
         assert original.state == "enabled"
-        instance = get_playbill_manager().get(world.instance_id)
+        instance = world.instance
         _assert_gone(instance, "line_disabled_by_upgrade", _request(instance))
 
         second = _package(root / "after", checkout, name="kit-call", increment=2)

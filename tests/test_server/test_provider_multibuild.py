@@ -36,7 +36,22 @@ from tests.test_server.test_kit_providers import (
     _tree,
     _worlds,
 )
-from tests.test_server.test_playbill_line_run_refusals import _accept_members, _line_mandate
+from tests.test_server.test_playbill_line_run_refusals import (
+    _accept_members as _served_accept_members,
+)
+from tests.test_server.test_playbill_line_run_refusals import _line_mandate
+
+
+def _accept_members(world, members, *, timestamp):
+    if hasattr(world, "instance"):
+        world.accept_members(members, timestamp=timestamp)
+    else:
+        _served_accept_members(
+            get_playbill_manager().get(world.instance_id),
+            world.reviewer_key,
+            members,
+            timestamp=timestamp,
+        )
 
 
 def _instantiate(world, name):
@@ -85,7 +100,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
     concurrent: bool,
     definition_change: bool,
 ) -> None:
-    opened = _worlds(tmp_path, monkeypatch)
+    opened = _worlds(tmp_path, monkeypatch, historical=True)
     publisher, consumer = next(opened)
     try:
         first = _package(tmp_path / "v101", provider_checkout, name="kit-call", increment=1)
@@ -128,8 +143,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
             update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="kit-mandate")}
         )
         _accept_members(
-            get_playbill_manager().get(consumer.instance_id),
-            consumer.reviewer_key,
+            consumer,
             {
                 procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
                 procedure_mandate_path(kit_mandate.identity.name): render_procedure_mandate(
@@ -160,8 +174,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
                 }
             )
             _accept_members(
-                get_playbill_manager().get(publisher.instance_id),
-                publisher.reviewer_key,
+                publisher,
                 {kit_path: render_procedure(changed)},
                 timestamp="2026-10-15T10:00:00.000000Z",
             )
