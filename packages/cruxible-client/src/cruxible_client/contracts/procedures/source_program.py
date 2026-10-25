@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -10,7 +10,7 @@ from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.query.definitions import NamedQueryDefinition, QueryDefinition
 
 
 class _Closed(BaseModel):
@@ -44,7 +44,11 @@ class SourceProviderBinding(_Closed):
     operation: ProviderOperationContract
 
     _versions = field_validator(
-        "provider_version", "interface_version", "interface_digest", "implementation_digest"
+        "provider_version",
+        "interface_version",
+        "interface_digest",
+        "implementation_digest",
+        check_fields=False,
     )(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
 
@@ -62,7 +66,7 @@ class SourceSlotBinding(_Closed):
     effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     operation: ProviderOperationContract
 
-    _versions = field_validator("interface_version", "interface_digest")(
+    _versions = field_validator("interface_version", "interface_digest", check_fields=False)(
         lambda value: ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -73,7 +77,9 @@ class SourceQueryBinding(_Closed):
     version: str
     definition: QueryDefinition
 
-    _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
+    _versions = field_validator("version", check_fields=False)(
+        lambda value: ArtifactDigest.from_tagged(value).tagged
+    )
 
 
 class SourceProcedureBinding(_Closed):
@@ -85,7 +91,9 @@ class SourceProcedureBinding(_Closed):
     capture_terminal: bool = False
     required_terminal_rung: int = Field(default=0, ge=0, le=3)
 
-    _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
+    _versions = field_validator("version", check_fields=False)(
+        lambda value: ArtifactDigest.from_tagged(value).tagged
+    )
 
 
 SourceBinding = Annotated[
@@ -98,7 +106,9 @@ class SourceClaimType(_Closed):
     version: str
     structure: ClaimTypeStructure
 
-    _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
+    _versions = field_validator("version", check_fields=False)(
+        lambda value: ArtifactDigest.from_tagged(value).tagged
+    )
 
 
 class ProcedureSourceProgram(_Closed):
@@ -129,3 +139,47 @@ class SourceDiagnostic(_Closed):
     span: SourceSpan
     hint: str | None = None
     related_spans: tuple[SourceSpan, ...] = ()
+
+
+class NamedSourceProviderBinding(SourceProviderBinding):
+    provider_version: ClassVar[None] = None  # type: ignore[misc, assignment]
+    interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
+    interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
+    implementation_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
+
+
+class NamedSourceSlotBinding(SourceSlotBinding):
+    interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
+    interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
+
+
+class NamedSourceQueryBinding(SourceQueryBinding):
+    definition: NamedQueryDefinition
+    version: ClassVar[None] = None  # type: ignore[misc, assignment]
+
+
+class NamedSourceProcedureBinding(SourceProcedureBinding):
+    version: ClassVar[None] = None  # type: ignore[misc, assignment]
+
+
+class NamedSourceClaimType(SourceClaimType):
+    version: ClassVar[None] = None  # type: ignore[misc, assignment]
+
+
+class NamedProcedureSourceProgram(ProcedureSourceProgram):
+    syntax_rules: Literal["cruxible.procedure-source.v1", "cruxible.procedure-source.v2"] = (
+        "cruxible.procedure-source.v2"
+    )
+    rules: Literal["cruxible.procedure-source.v3"] = "cruxible.procedure-source.v3"  # type: ignore[assignment]
+    bindings: dict[
+        str,
+        Annotated[
+            NamedSourceProviderBinding
+            | NamedSourceSlotBinding
+            | NamedSourceQueryBinding
+            | NamedSourceProcedureBinding,
+            Field(discriminator="kind"),
+        ],
+    ] = Field(default_factory=dict)  # type: ignore[assignment]
+    claim_types: dict[str, NamedSourceClaimType] = Field(default_factory=dict)  # type: ignore[assignment]
+    capture_contracts: tuple[str, ...] = ()  # type: ignore[assignment]

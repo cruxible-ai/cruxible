@@ -342,8 +342,6 @@ def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
         raise ValueError("every owned Contract must be referenced by name exactly within its owner")
 
 
-
-
 class NamedProcedureArtifact(ProcedureArtifact):
     """Revision-36 writer: dependencies resolve at the accepted coordinate."""
 

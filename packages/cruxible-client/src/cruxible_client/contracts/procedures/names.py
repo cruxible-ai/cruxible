@@ -24,8 +24,16 @@ def named_graph(value: Mapping[str, Any]) -> dict[str, Any]:
 
     def walk(item: Any) -> Any:
         if isinstance(item, dict):
-            if "target" in item and "artifact_digest" in item:
+            if "target" in item and ("artifact_digest" in item or "role" in item):
                 return {"target": item["target"]}
+            if item.get("artifact_format") in {
+                "playbill-query-definition-v1",
+                "playbill-query-definition-v2",
+            }:
+                return {
+                    **{key: walk(member) for key, member in item.items() if key != "pins"},
+                    "artifact_format": "cruxible-query-definition-v3",
+                }
             return {
                 key: walk(member)
                 for key, member in item.items()
@@ -37,6 +45,16 @@ def named_graph(value: Mapping[str, Any]) -> dict[str, Any]:
 
     result = walk(dict(value))
     result["graph_format"] = 7
+    if result.get("source") is not None:
+        source = result["source"]
+        source.setdefault("syntax_rules", source["rules"])
+        source["rules"] = "cruxible.procedure-source.v3"
+        for binding in source["bindings"].values():
+            for field in ("provider_version", "interface_version", "version"):
+                binding.pop(field, None)
+        for claim_type in source["claim_types"].values():
+            claim_type.pop("version", None)
+        source["capture_contracts"] = sorted(source["capture_contracts"])
     for slot in result.get("pin_slots", ()):
         slot["tag"] = "cruxible-procedure-slot-v2"
         slot.pop("pin_role", None)
@@ -58,6 +76,7 @@ def named_graph(value: Mapping[str, Any]) -> dict[str, Any]:
         if node["kind"] == "call":
             node.pop("contract_in", None)
             node.pop("contract_out", None)
+    assert isinstance(result, dict)
     return result
 
 

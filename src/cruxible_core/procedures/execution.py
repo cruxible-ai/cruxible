@@ -27,7 +27,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
@@ -2105,11 +2105,15 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+def _exact_pin(
+    binding: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef, *, label: str
+) -> ArtifactPin:
     """An accepted Procedure pins every dependency exactly; only a Blueprint has slots."""
 
     if isinstance(binding, ProcedurePinSlotRef):
         raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
+    if isinstance(binding, ArtifactNameRef):
+        raise ExecutionError(f"{label} has not been resolved at admission")
     return binding
 
 

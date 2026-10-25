@@ -157,7 +157,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 slot = slots[node.provider.slot_name]
                 if (
                     getattr(slot, "interface", None) != node.interface
-                    if definition.graph_format == 7
+                    if getattr(definition, "graph_format") == 7
                     else slot.interface_digest != node.interface_digest
                 ):
                     raise ValueError(
@@ -183,7 +183,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 slot = slots[node.provider.slot_name]
                 if (
                     getattr(slot, "interface", None) != node.interface
-                    if definition.graph_format == 7
+                    if getattr(definition, "graph_format") == 7
                     else slot.interface_digest != node.interface_digest
                 ):
                     raise ValueError(
@@ -215,7 +215,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                     slot = slots[body.provider.slot_name]
                     if (
                         getattr(slot, "interface", None) != body.interface
-                        if definition.graph_format == 7
+                        if getattr(definition, "graph_format") == 7
                         else slot.interface_digest != body.interface_digest
                     ):
                         raise ValueError(

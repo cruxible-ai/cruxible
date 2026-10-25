@@ -580,3 +580,23 @@ def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp
         type(compiled.definition).model_validate(
             {**compiled.definition.model_dump(), "returns": "invented"}
         )
+
+
+def test_named_retained_source_reproduces_without_digest_selections():
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    compiled = compile("""
+        def example(request):
+            return Output.value(value='named')
+    """)
+    historical = accepted(compiled).procedure
+    named = name_procedure(historical)
+    verify_source_graph(historical)
+    verify_source_graph(named)
+    source = named.definition.source.model_dump(mode="json")
+    assert source["rules"] == "cruxible.procedure-source.v3"
+    assert source["syntax_rules"] == "cruxible.procedure-source.v1"
+    assert "artifact_digest" not in str(source)
+    assert "interface_digest" not in str(source)
+    assert "implementation_digest" not in str(source)
