@@ -195,7 +195,12 @@ def _upgrade(
         )
     roots = tuple(parse_claim_type(tree[path], path=path).identity for path in sorted(changed))
     try:
-        inventory = dependent_closure_inventory(tree, roots=roots, fixed_paths=frozenset(changed))
+        inventory = dependent_closure_inventory(
+            tree,
+            roots=roots,
+            fixed_paths=frozenset(changed),
+            by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+        )
         settled, _normalized = build_dependent_closure_candidate(
             tree=tree,
             changed=changed,
