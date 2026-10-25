@@ -80,7 +80,7 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
     )
 
 
-def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
+def _artifacts(*, named=False) -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     contract_in = _pin("contract-in", "Contract", "run-input")
     contract_out = _pin("contract-out", "Contract", "run-output")
     query = _pin("query", "QueryDefinition", "open-orders")
@@ -108,7 +108,11 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         ),
         terminal_capability=1,
     )
-    accepted_procedure = carried_procedure(definition, activation_policy="drain")
+    accepted_procedure = carried_procedure(
+        definition,
+        activation_policy="drain",
+        artifact_format="cruxible-procedure-v3" if named else "playbill-procedure-v2",
+    )
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
@@ -127,6 +131,10 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),
     )
+    if named:
+        from cruxible_client.contracts.named_references import name_line
+
+        line = name_line(line)
     return accepted_procedure, AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
         line=line,
@@ -265,14 +273,17 @@ def test_a_malformed_declared_track_record_refuses() -> None:
 
 
 def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(tmp_path) -> None:
+    from tests.support.queries import subject_query_members
+
     instance, owner = initialize_local(tmp_path)
-    procedure, line = _artifacts()
+    procedure, line = _artifacts(named=True)
     _accept_tree(
         instance,
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             procedure.path: render_procedure(procedure.procedure),
+            **subject_query_members("open-orders"),
             line.path: render_line_spec(line.line),
         },
         timestamp="2026-08-18T15:00:00.000000Z",

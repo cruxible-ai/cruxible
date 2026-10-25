@@ -138,7 +138,7 @@ def _measurement(
     )
 
 
-def _accepted() -> AcceptedProcedure:
+def _accepted(*, named=False) -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinition(
@@ -207,7 +207,11 @@ def _accepted() -> AcceptedProcedure:
         ),
         terminal_capability=1,
     )
-    return accepted_procedure(definition, activation_policy="snapshot")
+    return accepted_procedure(
+        definition,
+        activation_policy="snapshot",
+        artifact_format="cruxible-procedure-v3" if named else "playbill-procedure-v2",
+    )
 
 
 def test_accepted_measurements_derive_exact_semantic_grains_and_windows() -> None:
@@ -435,7 +439,9 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
         candidate_tree=tree,
         timestamp=timestamp,
     )
-    assert proposed.candidate is not None, proposed.evaluation.diagnostics
+    assert proposed.candidate is not None, [
+        (d.code, d.message, d.subject) for d in proposed.evaluation.diagnostics
+    ]
     assert proposed.evaluation.evaluated_tree_oid is not None
     bundle = instance.prepare_generation(
         base=base,
@@ -459,13 +465,18 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
 
 
 def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) -> None:
+    from tests.support.queries import subject_query_members
+
     instance, owner = initialize_local(tmp_path)
-    accepted = _accepted()
+    accepted = _accepted(named=True)
     procedure = accepted.procedure.model_copy(update={})
     procedure_path_value = procedure_path(procedure.identity.name)
     first_tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
         procedure_path_value: render_procedure(procedure),
+        **subject_query_members(
+            "state", "measure-arm-health", "measure-node-health", "measure-unit-health"
+        ),
     }
     _accept_tree(
         instance,

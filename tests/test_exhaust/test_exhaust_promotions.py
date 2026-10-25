@@ -220,8 +220,10 @@ def test_only_accepted_promotion_produces_canonical_track_record_fact(tmp_path) 
 def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     tmp_path, monkeypatch
 ) -> None:
+    from tests.support.queries import subject_query_members
+
     instance, owner = initialize_local(tmp_path)
-    base_procedure = _accepted().procedure.model_copy(update={})
+    base_procedure = _accepted(named=True).procedure.model_copy(update={})
     accepted_procedure = AcceptedProcedure(
         path="procedures/measured-procedure.json",
         procedure=base_procedure,
@@ -233,6 +235,9 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             accepted_procedure.path: render_procedure(base_procedure),
+            **subject_query_members(
+                "state", "measure-arm-health", "measure-node-health", "measure-unit-health"
+            ),
         },
         timestamp="2026-08-17T15:00:00.000000Z",
         proposal_name="promotion-procedure",
