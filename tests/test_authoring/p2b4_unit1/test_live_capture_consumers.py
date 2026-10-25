@@ -10,7 +10,11 @@ from typing import Any
 import pytest
 
 import tests.core_support._p2b1_support as p2b1_support
-from cruxible_client.contracts.acquisition_policies import InputAcquisitionRule
+from cruxible_client.contracts.acquisition_policies import (
+    InputAcquisitionRule,
+    acquisition_policy_path,
+    render_acquisition_policy,
+)
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
@@ -59,7 +63,9 @@ from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
 )
+from tests.core_support._pc_c_support import capture_contract as legacy_capture_contract
 from tests.core_support._support import generate_client
+from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.support.procedures import PERMISSIVE_CONTRACT
 from tests.support.provider_builds import accepted_build
 from tests.test_authoring.test_authoring_existing_capture import _activate
@@ -75,7 +81,9 @@ from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import (
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 
 
-def _instance(root: Path) -> tuple[PlaybillInstance, object]:
+def _instance(root: Path, *, historical: bool = False) -> tuple[PlaybillInstance, object]:
+    if historical:
+        return initialize_legacy_local(root, instance_id="instance-a")
     managed = root / "managed"
     owner = generate_client(
         root,
@@ -124,23 +132,6 @@ def _acquisition_registration() -> ProviderInterfaceContract:
 
 @pytest.fixture
 def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
-    # This world intentionally exercises the frozen all-source v1 contract,
-    # including historical v1 citation and omission attacks. Keep its actual
-    # accepted compiler and coordinator key-Capture builder on revision 35.
-    from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER
-
-    monkeypatch.setattr(
-        "cruxible_core.runtime.instance.current_compiler_coordinate", lambda: CLAIM_REBIND_COMPILER
-    )
-    monkeypatch.setattr(
-        "cruxible_core.authoring.lowering.COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
-    )
-    monkeypatch.setattr(
-        "cruxible_core.authoring.lowering.builtin_contract_for_write",
-        lambda current, previous: previous if previous is not None else current,
-    )
     monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
 
     # All producers and prepared runs pin the same current package build.
@@ -192,12 +183,16 @@ def run_capture_producers(
     Procedure Capture of the same result.
     """
 
-    instance, owner = _instance(tmp_path)
-    contract = capture_contract()
-    terminal_contract = lower_capture_contract_input(
-        CaptureContractInputRecord(
-            name="test.procedure-output", shape="procedure_output", max_bytes=4096
+    instance, owner = _instance(tmp_path, historical=rule is not None)
+    contract = capture_contract() if rule is None else legacy_capture_contract()
+    terminal_contract = (
+        lower_capture_contract_input(
+            CaptureContractInputRecord(
+                name="test.procedure-output", shape="procedure_output", max_bytes=4096
+            )
         )
+        if rule is None
+        else legacy_capture_contract(name="test.procedure-output")
     )
     contract_digest = capture_contract_digest(contract).tagged
     shell = _subject()
@@ -251,6 +246,7 @@ def run_capture_producers(
     tree[interface.path] = render_provider_interface(interface.registration)
     tree[provider_path(provider.provider.identity.name)] = render_provider(provider.provider)
     tree[accepted.path] = render_procedure(accepted.procedure)
+    tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
     _accept_tree(
         instance,
         owner,

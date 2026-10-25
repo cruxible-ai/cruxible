@@ -261,6 +261,32 @@ def _source_fixture(
             max_age=CanonicalDuration(microseconds=60_000_000),
         )
     )
+    # Fresh Procedures name the policy; the explicit legacy omission fixture
+    # retains the exact pin its historical world consumed.
+    if rule is None:
+        procedure = procedure.model_copy(update={"acquisition_policy": policy.identity.name})
+    else:
+        policy_pin = ArtifactPin(
+            role="acquisition-policy",
+            target=policy.identity,
+            artifact_digest=acquisition_policy_digest(policy).tagged,
+        )
+        procedure = procedure.model_copy(
+            update={
+                "pins": tuple(
+                    sorted(
+                        (*procedure.pins, policy_pin),
+                        key=lambda pin: (pin.role, pin.target.qualified),
+                    )
+                )
+            }
+        )
+    accepted = accepted.model_copy(
+        update={
+            "procedure": procedure,
+            "artifact_digest": procedure_artifact_digest(procedure).tagged,
+        }
+    )
     policy_digest = acquisition_policy_digest(policy).tagged
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]

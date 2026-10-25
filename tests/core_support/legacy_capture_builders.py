@@ -232,15 +232,17 @@ def build_direct_claim_selection_capture(
     )
 
 
-def initialize_legacy_local(tmp_path, *, object_format="sha256", compiler=None):
+def initialize_legacy_local(tmp_path, *, object_format="sha256", compiler=None, instance_id=None):
     """A revision-35 world for tests constructing old stored contract/Claim pairs."""
     from unittest.mock import patch
 
     from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER
-    from tests.core_support._support import initialize_local
+    from tests.core_support._support import initialize_fresh, initialize_local
 
     with patch(
         "cruxible_core.runtime.instance.current_compiler_coordinate",
         return_value=compiler or CLAIM_REBIND_COMPILER,
     ):
+        if instance_id is not None:
+            return initialize_fresh(tmp_path, object_format=object_format, instance_id=instance_id)
         return initialize_local(tmp_path, object_format=object_format)

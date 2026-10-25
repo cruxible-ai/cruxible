@@ -80,6 +80,7 @@ def initialize_fresh(
     tmp_path: Path,
     *,
     object_format: GitObjectFormat = "sha256",
+    instance_id: str = "inst_playbill_test",
 ) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
     """Build a genesis instance from nothing: new keys, a new signed ledger."""
 
@@ -98,7 +99,7 @@ def initialize_fresh(
     )
     instance = PlaybillInstance.initialize(
         managed_root,
-        instance_id="inst_playbill_test",
+        instance_id=instance_id,
         client_principals=(owner.principal, reviewer.principal),
         workspace_roots=(tmp_path / "workspace",),
         git_object_format=object_format,
