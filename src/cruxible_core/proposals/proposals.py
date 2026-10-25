@@ -2345,10 +2345,18 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
     identity = line.identity.qualified
     stranded: set[str] = set()
-    for edge in context.candidate_dependencies.edges_by_target.get(context.path, ()):
-        accepted = context.resolved.triggers.get(
-            context.candidate_states[edge.source_path].identity.qualified
+    if context.current.compiler == LIGHT_ARTIFACTS_COMPILER:
+        triggers = (
+            context.resolved.triggers.get(
+                context.candidate_states[edge.source_path].identity.qualified
+            )
+            for edge in context.candidate_dependencies.edges_by_target.get(context.path, ())
         )
+    else:
+        # Frozen Trigger-v1 pins omit the target Line. Preserve the original
+        # pre-36 law's scan; only the current index has that identity edge.
+        triggers = iter(context.resolved.triggers.values())
+    for accepted in triggers:
         if accepted is None:
             continue
         trigger = accepted.trigger
