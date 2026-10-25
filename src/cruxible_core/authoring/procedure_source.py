@@ -464,5 +464,11 @@ def verify_source_bindings(
             )
         }
     )
-    if compiled.definition != expected:
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        matches = compact_procedure(compiled.definition) == compact_procedure(expected)
+    else:
+        matches = compiled.definition == expected
+    if not matches:
         raise ValueError("Procedure source bindings differ from their accepted definitions")

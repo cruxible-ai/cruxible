@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Iterator
 
 from pydantic import BaseModel
@@ -387,6 +389,23 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
         reachable_aliases=reachable_aliases,
         produced_alias=produced,
     )
+
+
+@sealed_memo
+def _procedure_edge_targets(definition: ProcedureDefinition) -> Mapping[tuple[str, str], str]:
+    graph = analyze_procedure(definition)
+    return MappingProxyType(
+        {
+            (node, label): target
+            for node, edges in graph.edges.items()
+            for label, target in edges.items()
+        }
+    )
+
+
+def procedure_edge_target(definition: ProcedureDefinition, node_id: str, label: str) -> str | None:
+    """One effective edge; immutable accepted definitions build the index once."""
+    return _procedure_edge_targets(definition).get((node_id, label))
 
 
 def _node_local_payload(node: ProcedureNode) -> dict[str, object]:

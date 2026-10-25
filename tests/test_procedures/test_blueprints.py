@@ -277,11 +277,13 @@ def test_blueprint_is_accepted_previewed_and_instantiated_through_authoring(
         blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
         name="lookup-b",
         providers={"lookup": provider},
+        artifact_format="playbill-procedure-v2",
     )
     tampered = ProcedureDefinition.model_validate(
         {**legit.definition.model_dump(mode="json", by_alias=True), "description": "tampered"}
     )
     forged = ProcedureArtifact(
+        artifact_format=legit.artifact_format,
         identity=legit.identity,
         definition=tampered,
         definition_digest=compute_procedure_definition_digest(tampered).tagged,
@@ -649,6 +651,7 @@ def test_admission_refuses_a_new_instance_of_a_retired_blueprint(tmp_path, monke
         retired,
         blueprint_artifact_digest=blueprint_digest(retired).tagged,
         name="lookup-b",
+        artifact_format="playbill-procedure-v2",
         providers={
             "lookup": AcceptedProvider(
                 path=provider_path("demo-provider"),

@@ -198,6 +198,7 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
     rendered = render_procedure(actual)
     parsed = parse_procedure(rendered, path="procedures/" + original.identity.name + ".json")
     assert render_procedure(parsed) == rendered
+    assert ProcedureArtifact.model_validate(json.loads(rendered)) == parsed
     assert procedure_artifact_digest(parsed) == procedure_artifact_digest(actual)
 
 
@@ -653,3 +654,32 @@ def test_parameter_name_can_match_a_collection_step_alias():
     )
     assert lowered.definition["nodes"][1]["predicate"]["left"]["parameter_name"] == "limit"
     assert lowered.definition["nodes"][0]["cardinality"] == "all"
+
+
+def test_measurement_node_coordinates_are_not_graph_node_ids():
+    from cruxible_client.contracts.captures import CanonicalDuration
+    from cruxible_client.contracts.procedures.measurements import (
+        AcceptedQueryProcedureMeasurement,
+        ProcedureMeasurementDeclaration,
+        ProcedureMeasurementExpectation,
+    )
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    definition = _definition()
+    read = next(node for node in definition.nodes if node.kind == "state_tap")
+    measurement = ProcedureMeasurementDeclaration(
+        name="credit",
+        subject_grain="node",
+        node_id=read.node_id,
+        measurement=AcceptedQueryProcedureMeasurement(
+            query=read.query, expect=ProcedureMeasurementExpectation(min_count=0)
+        ),
+        check_after=CanonicalDuration(microseconds=1),
+        expires_after=CanonicalDuration(microseconds=2),
+    )
+    artifact = _artifact(definition.model_copy(update={"measurements": (measurement,)}))
+    content = render_procedure(artifact)
+    assert json.loads(content)["definition"]["measurements"][0]["node_id"] == read.node_id
+    assert (
+        parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact
+    )

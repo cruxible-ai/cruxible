@@ -6,13 +6,20 @@ are opaque data: nulls, defaults, ids and tags inside them retain their meaning.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import PredicateOperand, ProcedureDefinition
+from cruxible_client.contracts.procedures.models import (
+    PredicateOperand,
+    ProcedureDefinition,
+    ProcedureNode,
+    RepeatBodyNode,
+)
+
+_NODE_MODELS = (*get_args(get_args(ProcedureNode)[0]), RepeatBodyNode)
 
 
 def compact_procedure(value: Any) -> Any:
@@ -49,7 +56,7 @@ def compact_procedure(value: Any) -> Any:
                 isinstance(item, BaseModel) for item in member.values()
             ):
                 result[key] = {k: compact_procedure(v) for k, v in member.items()}
-        if "node_id" in result:
+        if isinstance(value, _NODE_MODELS) and "node_id" in result:
             result["id"] = result.pop("node_id")
             if result.get("as") == result["id"]:
                 result.pop("as")
