@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
     ProcedureSpecError,
@@ -267,8 +268,9 @@ def resolve_procedure_spec(
                 "ProviderInterface:workspace.file"
             ):
                 assert capture is not None
-                coordinates = capture.coordinate_schema_pins
-                selectors = capture.selector_schema_pins
+                components = capture_components(capture)
+                coordinates = components.coordinate_schema_pins
+                selectors = components.selector_schema_pins
                 if len(coordinates) == len(selectors) == 1:
                     coordinate_type, selector_type = (
                         coordinates[0].target.name,

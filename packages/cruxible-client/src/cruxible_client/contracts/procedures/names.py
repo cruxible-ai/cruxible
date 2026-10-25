@@ -62,6 +62,8 @@ def named_graph(value: Mapping[str, Any]) -> dict[str, Any]:
         if node["kind"] in {"propose_change_set", "settle_change_set"}:
             node["claim_types"] = [reference(item) for item in node.get("claim_types", ())]
         for body in node.get("body", ()):
+            body.pop("interface_digest", None)
+            body.pop("implementation_digest", None)
             fields(body, ("provider", "interface", "contract_in", "contract_out", "effect_policy"))
             if body["operation"] == "call":
                 body.pop("contract_in", None)

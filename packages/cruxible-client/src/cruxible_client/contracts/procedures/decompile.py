@@ -88,6 +88,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     resulting lowering can reproduce its output and branching exactly.
     """
     definition = procedure.definition
+    if int(definition.graph_format) != 7:
+        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+        from cruxible_client.contracts.procedures.names import named_graph
+
+        definition = NamedProcedureDefinition.model_validate(
+            named_graph(definition.model_dump(mode="json", by_alias=True))
+        )
     contracts = {c.identity.name: c.contract_schema for c in procedure.owned_contracts}
 
     def schema(pin: Any) -> ContractSchema:

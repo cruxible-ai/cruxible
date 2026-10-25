@@ -474,7 +474,7 @@ def verify_source_bindings(
             )
         }
     )
-    if by_name or definition.graph_format == 7:
+    if by_name or int(definition.graph_format) == 7:
         from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
         from cruxible_client.contracts.procedures.names import named_graph
         from cruxible_client.contracts.procedures.wire_v3 import compact_procedure

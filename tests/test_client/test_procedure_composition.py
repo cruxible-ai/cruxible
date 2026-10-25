@@ -83,11 +83,17 @@ def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
     draft = Cruxible.procedure(object(), definition=bound)
     assert draft.payload == lower_authoring_input(bound.build())
     assert (
-        lower_authoring_input(lower_procedure_spec(bound.build().spec)).definition["nodes"][1][
-            "provider"
-        ]["resolution"]
+        lower_authoring_input(lower_procedure_spec(bound.build().spec, named=False)).definition[
+            "nodes"
+        ][1]["provider"]["resolution"]
         == "accepted_at_intent_base"
     )
+
+    current = lower_authoring_input(lower_procedure_spec(bound.build().spec))
+    assert current.definition["nodes"][1]["provider"] == {
+        "target": {"kind": "Provider", "name": "example"},
+    }
+    assert current.definition["graph_format"] == 7
 
 
 def test_source_project_emit_matches_security_dogfood_shape():

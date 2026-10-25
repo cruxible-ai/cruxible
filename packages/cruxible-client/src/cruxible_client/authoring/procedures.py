@@ -764,7 +764,9 @@ def _authored_input(input_: ProcedureInput) -> ProcedureInput:
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
 
     # Preview-only symbolic pins never enter the recognized authored steps.
-    definition = ProcedureDefinition.model_validate(_symbolic_pins(input_.definition))
+    definition = NamedProcedureDefinition.model_validate(
+        named_graph(_symbolic_pins(input_.definition))
+    )
     owner = ProcedureArtifact.model_construct(
         definition=definition,
         owned_contracts=tuple(

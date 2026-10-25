@@ -303,7 +303,7 @@ class ProcedureArtifact(_GraphEnvelope):
     @model_validator(mode="after")
     def _correspondence(self) -> "ProcedureArtifact":
         self._check_envelope("Procedure")
-        if self.artifact_format == "cruxible-procedure-v3":
+        if getattr(self, "artifact_format") == "cruxible-procedure-v3":
             guard_halts = procedure_guard_halt_targets(self.definition)
             nodes = []
             for index, node in enumerate(self.definition.nodes):
@@ -513,7 +513,7 @@ def procedure_path(name: str) -> str:
 
 
 def render_procedure(procedure: ProcedureArtifact) -> bytes:
-    if procedure.artifact_format == "cruxible-procedure-v3":
+    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":
         from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
         return pretty_canonical_bytes(compact_procedure(procedure))
@@ -561,7 +561,7 @@ def _parse_procedure(
 
 @sealed_memo
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
-    if procedure.artifact_format == "cruxible-procedure-v3":
+    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":
         from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
         return typed_digest(ArtifactDigest, "cruxible-procedure-v3", compact_procedure(procedure))

@@ -436,7 +436,7 @@ def _procedure_node_digests(
     definition: ProcedureDefinition,
 ) -> tuple[tuple[str, ProcedureNodeDigests], ...]:
     graph = analyze_procedure(definition)
-    named = definition.graph_format == 7
+    named = int(definition.graph_format) == 7
     nodes = {node.node_id: node for node in definition.nodes}
     result: dict[str, ProcedureNodeDigests] = {}
     for node_id in reversed(graph.node_ids):
@@ -467,7 +467,7 @@ def _procedure_node_digests(
 @sealed_memo
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
     node_digests = dict(_procedure_node_digests(definition))
-    named = definition.graph_format == 7
+    named = int(definition.graph_format) == 7
     if named:
         from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 

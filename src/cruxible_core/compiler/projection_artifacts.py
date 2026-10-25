@@ -1793,9 +1793,9 @@ def parse_projection_tree(
                         ),
                     )
                 ]
-                wire_nodes = (
+                wire_nodes: dict[str, dict[str, Any]] = (
                     _procedure_wire_nodes(content)
-                    if procedure.artifact_format == "cruxible-procedure-v3"
+                    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3"
                     else {}
                 )
                 for node in procedure.definition.nodes:

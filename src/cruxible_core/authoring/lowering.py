@@ -3146,21 +3146,23 @@ def _lower_named_procedure(
             policy = parse_acquisition_policy(base_tree[policy_path], path=policy_path)
             if policy.lifecycle.state != "live":
                 raise ValueError("The named acquisition policy must be live")
-        procedure = NamedProcedureArtifact(
-            identity=ArtifactIdentity(kind="Procedure", name=definition.name),
-            definition=definition,
-            definition_digest=compute_procedure_definition_digest(definition).tagged,
-            owned_contracts=payload.owned_contracts,
-            activation_policy=payload.activation_policy,
-            acquisition_policy=payload.acquisition_policy,
-            lifecycle=ArtifactLifecycle(
-                state="retired" if payload.retire else "live",
-                predecessor_digest=None
-                if predecessor is None
-                else procedure_artifact_digest(predecessor).tagged,
-            ),
+        procedure = NamedProcedureArtifact.model_validate(
+            dict(
+                identity=ArtifactIdentity(kind="Procedure", name=definition.name),
+                definition=definition,
+                definition_digest=compute_procedure_definition_digest(definition).tagged,
+                owned_contracts=payload.owned_contracts,
+                activation_policy=payload.activation_policy,
+                acquisition_policy=payload.acquisition_policy,
+                lifecycle=ArtifactLifecycle(
+                    state="retired" if payload.retire else "live",
+                    predecessor_digest=None
+                    if predecessor is None
+                    else procedure_artifact_digest(predecessor).tagged,
+                ),
+            )
         )
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, ProcedureGraphFormatError) as exc:
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
             "definition",
@@ -3193,7 +3195,7 @@ def _procedure_lowered(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    if base.compiler == LIGHT_ARTIFACTS_COMPILER and procedure.definition.graph_format != 7:
+    if base.compiler == LIGHT_ARTIFACTS_COMPILER and int(procedure.definition.graph_format) != 7:
         procedure = name_procedure(procedure)
     candidate_tree = fork_tree(base_tree)
     if isinstance(procedure, ProcedureArtifact):
