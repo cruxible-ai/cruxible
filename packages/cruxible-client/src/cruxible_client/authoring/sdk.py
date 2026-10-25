@@ -4215,6 +4215,8 @@ class Cruxible:
         assert isinstance(payload, ProcedureAuthoringPayload)
         if isinstance(definition, BlueprintInstanceInput):
             pass  # Lowering resolves the Blueprint and each bound Provider.
+        elif isinstance(definition, ProcedureInput) and definition.spec is not None:
+            pass  # the shared typed authored-form lowering checks it
         elif "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
                 ProcedureSourceRequest,

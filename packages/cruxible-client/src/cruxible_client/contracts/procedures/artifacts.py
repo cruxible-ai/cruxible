@@ -245,7 +245,9 @@ class ProcedureArtifact(_GraphEnvelope):
     Provider bound to each slot; it is provenance, not a dependency.
     """
 
-    artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
+    artifact_format: Literal["playbill-procedure-v2", "cruxible-procedure-v3"] = (
+        "cruxible-procedure-v3"
+    )
     acquisition_policy: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("acquisition_policy")
@@ -260,6 +262,22 @@ class ProcedureArtifact(_GraphEnvelope):
     @model_validator(mode="after")
     def _correspondence(self) -> "ProcedureArtifact":
         self._check_envelope("Procedure")
+        if self.artifact_format == "cruxible-procedure-v3":
+            nodes = []
+            for index, node in enumerate(self.definition.nodes):
+                following = (
+                    self.definition.nodes[index + 1].node_id
+                    if index + 1 < len(self.definition.nodes)
+                    else None
+                )
+                updates: dict[str, None] = {}
+                for edge in ("next", "on_true"):
+                    if following is not None and getattr(node, edge, None) == following:
+                        updates[edge] = None
+                nodes.append(node.model_copy(update=updates) if updates else node)
+            object.__setattr__(
+                self, "definition", self.definition.model_copy(update={"nodes": tuple(nodes)})
+            )
         return self
 
 
@@ -369,6 +387,10 @@ def procedure_path(name: str) -> str:
 
 
 def render_procedure(procedure: ProcedureArtifact) -> bytes:
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        return pretty_canonical_bytes(compact_procedure(procedure))
     return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
@@ -396,7 +418,12 @@ def _parse_procedure(
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProcedureArtifact:
     try:
-        procedure = _PROCEDURE_ADAPTER.validate_python(json.loads(content))
+        document = json.loads(content)
+        if document.get("artifact_format") == "cruxible-procedure-v3":
+            from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
+
+            document = expand_procedure(document)
+        procedure = _PROCEDURE_ADAPTER.validate_python(document)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureFormatError("Procedure failed strict versioned validation") from exc
     if not artifact_path_matches(procedure_path(procedure.identity.name), path, codec=codec):
@@ -408,6 +435,10 @@ def _parse_procedure(
 
 @sealed_memo
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        return typed_digest(ArtifactDigest, "cruxible-procedure-v3", compact_procedure(procedure))
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",

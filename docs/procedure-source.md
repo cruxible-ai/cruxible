@@ -1806,3 +1806,53 @@ It rejects out-of-enum comparison literals and straight-line reassignment with
 localized diagnostics. Invoke outputs retain authored names; `return_paths` describes
 branch-specific results, and the legacy global `returns` alias is null. Retained
 source-v1 records continue to reproduce under their original compilation rules.
+
+
+## Authored Procedure specifications
+
+CLI and MCP authoring accept a `procedure` input with a typed `spec`; the same
+`ProcedureSpec` is available from `cruxible_client.authoring.procedures`.
+`Sequence.build()` emits this shared authored form. The Python `@procedure`
+compiler retains its existing AST compilation path.
+
+```json
+{
+  "kind": "procedure",
+  "spec": {
+    "procedure": "catalog.positive",
+    "description": "Return a positive count, or halt without a result.",
+    "input": {"count": "integer"},
+    "returns": "result",
+    "steps": [
+      {"id": "positive", "guard": "input.count > 0", "else": "halt(empty)"},
+      {"project": "result", "fields": {"count": "$input.count"}}
+    ]
+  }
+}
+```
+
+Step verbs are `source`, `tap`, `claim`, `call`, `project`, `transform`, `guard`,
+`inbox`, `propose`, `settle`, `emit`, `invoke`, `select`, `repeat`, and `halt`.
+Each has a declared model that refuses unknown fields. Source/Call interfaces
+use `name@version`; references use `$input.field`, `$step.field`, or `$item.field`
+in item templates. A bare tap reference supplies `{rows, truncated}`.
+`returns: {"from": "parse", "omit": ["items"]}` inserts a typed summary project.
+
+Guard expressions support integer, string, boolean and null operands; input,
+parameter and step fields; `count(step)`, `exists($reference)` and
+`truncated(step)`; the ten comparison operators; and `not`, `and`, `or`, in that
+precedence order. Conditions require booleans and comparisons do not coerce
+strings to numbers. An `else` may name a forward step, `halt(reason)` (optionally
+with a message), or `abort(code, "message")`. Only abort guards need refusal
+codes/messages. Syntax refusals report `procedure_expression_invalid` with the
+authored path and column; unknown references report `procedure_ref_unknown`
+with nearby names; incompatible types report `procedure_operand_type_mismatch`.
+Prepare resolves schemas against the candidate tree and applies the existing
+graph laws. Offline lowering never claims to resolve accepted state.
+
+Compiler revision 36 writes the compact `cruxible-procedure-v3` graph. It omits
+defaults and fallthrough edges, uses a single node `id` when its output has the
+same name, and stores literal predicate operands as JSON scalars. Retained v2
+bytes and digests keep their original rule. `get Procedure:<name>` includes the
+authored specification; unsupported decompilation patterns remain explicit typed
+steps, preserving their graph details.

@@ -155,7 +155,7 @@ class PredicateOperand(_StrictProcedureModel):
     @model_validator(mode="after")
     def _closed_shape(self) -> "PredicateOperand":
         expected = {
-            "literal": (self.value is not None, False, False, False),
+            "literal": (True, False, False, False),
             "input": (False, self.input_name is not None, False, False),
             "step": (False, False, self.alias is not None, False),
             "parameter": (False, False, False, self.parameter_name is not None),
@@ -475,13 +475,25 @@ class GuardNode(_StrictProcedureModel):
     predicate: GuardPredicate
     on_true: str | None = None
     on_false: str = "$abort"
-    refusal_code: str
-    message: str
+    refusal_code: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("refusal_code")
     @classmethod
-    def _refusal_code(cls, value: str) -> str:
-        return _canonical_identifier(value, _NAME_RE, label="guard refusal_code")
+    def _refusal_code(cls, value: str | None) -> str | None:
+        return (
+            None
+            if value is None
+            else _canonical_identifier(value, _NAME_RE, label="guard refusal_code")
+        )
+
+    @model_validator(mode="after")
+    def _abort_diagnostic(self) -> "GuardNode":
+        if "$abort" in {self.on_true, self.on_false} and (
+            self.refusal_code is None or self.message is None
+        ):
+            raise ValueError(f"guard {self.node_id!r}: abort requires refusal_code and message")
+        return self
 
 
 class ProjectNode(_StrictProcedureModel):
@@ -676,6 +688,7 @@ class HaltNode(_StrictProcedureModel):
     kind: Literal["halt"] = "halt"
     node_id: str
     reason: str | None = None
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 TERMINAL_REQUIRED_RUNGS = {

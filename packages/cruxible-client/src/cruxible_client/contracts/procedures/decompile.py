@@ -1,0 +1,248 @@
+"""Render a retained Procedure in the authored grammar without losing topology."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema
+from cruxible_client.contracts.procedures.expressions import render_procedure_expression
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    CaptureEgressNode,
+    GuardNode,
+    HaltNode,
+    InboxEgressNode,
+    ProjectNode,
+    ProposeChangeSetNode,
+    SettleChangeSetNode,
+    SourceNode,
+    StateTapNode,
+    TransformNode,
+)
+
+
+def _name(pin: Any) -> str:
+    if not isinstance(pin, ArtifactPin):
+        raise ValueError("open binding needs an explicit step")
+    return pin.target.name
+
+
+def _short(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith("$steps."):
+        return "$" + value[len("$steps.") :]
+    if isinstance(value, dict):
+        return {k: _short(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_short(v) for v in value]
+    return value
+
+
+def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
+    """Recognized nodes use verbs; all other nodes keep their explicit typed form.
+
+    A stored graph is the authority. Pattern folding is used only where the
+    resulting lowering can reproduce its output and branching exactly.
+    """
+    definition = procedure.definition
+    contracts = {c.identity.name: c.contract_schema for c in procedure.owned_contracts}
+
+    def schema(pin: Any) -> ContractSchema:
+        return contracts[_name(pin)]
+
+    import json
+
+    nodes = definition.nodes
+    by_id = {node.node_id: node for node in nodes}
+    incoming: dict[str, list[str]] = {}
+    for node in nodes:
+        for edge in (
+            getattr(node, "next", None),
+            getattr(node, "on_true", None),
+            getattr(node, "on_false", None),
+        ):
+            if edge is not None:
+                incoming.setdefault(edge, []).append(node.node_id)
+    folded_halts = {
+        node.on_false: node.node_id
+        for node in nodes
+        if isinstance(node, GuardNode)
+        and isinstance(by_id.get(node.on_false), HaltNode)
+        and re.fullmatch(r"[a-z][a-z0-9_.-]*", getattr(by_id[node.on_false], "reason", None) or "")
+        is not None
+        and incoming.get(node.on_false) == [node.node_id]
+    }
+    returns: Any = definition.returns
+    folded_project: str | None = None
+    for index, node in enumerate(nodes):
+        if (
+            len(nodes) > 1
+            and type(node) is ProjectNode
+            and node.node_id == node.as_ == returns
+            and isinstance(node.fields, dict)
+        ):
+            dependencies = _template_aliases(node.fields)
+            position = max(
+                (
+                    i + 1
+                    for i, previous in enumerate(nodes)
+                    if getattr(previous, "as_", None) in dependencies
+                ),
+                default=0,
+            )
+            if position == index and all(
+                source == (nodes[index - 1].node_id if index else "")
+                for source in incoming.get(node.node_id, [])
+            ):
+                folded_project = node.node_id
+                returns = {"fields": _short(node.fields), "id": node.as_}
+                break
+    steps: list[dict[str, Any]] = []
+    for index, node in enumerate(nodes):
+        if node.node_id in folded_halts or node.node_id == folded_project:
+            continue
+        raw = node.model_dump(mode="json", by_alias=True)
+        common: dict[str, Any] = {"id": node.node_id}
+        if raw.get("next") is not None and (
+            index + 1 == len(definition.nodes) or raw["next"] != definition.nodes[index + 1].node_id
+        ):
+            common["next"] = raw["next"]
+        try:
+            if isinstance(node, SourceNode):
+                step = dict(
+                    source=node.as_,
+                    contract=_name(node.capture_contract),
+                    interface=_name(node.interface),
+                    provider=_name(node.provider),
+                    request=_short(node.request),
+                )
+            elif isinstance(node, CallNode):
+                step = dict(
+                    call=node.as_,
+                    interface=_name(node.interface),
+                    provider=_name(node.provider),
+                    input=_short(node.input),
+                )
+                if node.effect_policy is not None:
+                    step["effect_policy"] = _name(node.effect_policy)
+            elif isinstance(node, StateTapNode):
+                step = dict(tap=node.as_, query=_name(node.query), params=_short(node.parameters))
+                if node.budgets is not None:
+                    step["budgets"] = node.budgets.model_dump(mode="json")
+            elif type(node) is ProjectNode and isinstance(node.fields, dict):
+                step = dict(
+                    project=node.as_,
+                    fields=_short(node.fields),
+                    output=schema(node.contract_out).fields,
+                    contract=_name(node.contract_out),
+                )
+            elif isinstance(node, TransformNode):
+                step = dict(
+                    transform=node.as_,
+                    kind=node.transform_kind,
+                    spec=_short(node.spec.model_dump(mode="json")),
+                    input=schema(node.contract_in).fields,
+                    output=schema(node.contract_out).fields,
+                    contract_in=_name(node.contract_in),
+                    contract_out=_name(node.contract_out),
+                )
+            elif isinstance(node, GuardNode):
+                # Non-abort diagnostics are inert at runtime, but remain part of
+                # historical definition digests. Preserve them explicitly.
+                branch = (
+                    f"abort({node.refusal_code}, {json.dumps(node.message)})"
+                    if node.on_false == "$abort"
+                    else node.on_false
+                )
+                if node.on_false in folded_halts:
+                    halt = by_id[node.on_false]
+                    assert isinstance(halt, HaltNode)
+                    branch = (
+                        f"halt({halt.reason}"
+                        + (", " + json.dumps(halt.message) if halt.message is not None else "")
+                        + ")"
+                    )
+                step = dict(
+                    guard=render_procedure_expression(node.predicate),
+                    then=node.on_true,
+                    **{"else": branch},
+                    refusal_code=node.refusal_code,
+                    message=node.message,
+                    else_id=node.on_false if node.on_false in folded_halts else None,
+                )
+            elif isinstance(node, HaltNode) and node.reason is not None:
+                step = dict(halt=node.reason, message=node.message)
+            elif isinstance(node, SettleChangeSetNode):
+                candidates = raw["candidate_templates"]
+                step = dict(
+                    settle=_short(
+                        candidates["items"] if isinstance(candidates, dict) else candidates
+                    ),
+                    result=_short(node.result),
+                )
+            elif isinstance(node, ProposeChangeSetNode) and not node.claim_types:
+                candidates = raw["candidate_templates"]
+                step = dict(
+                    propose=_short(
+                        candidates["items"] if isinstance(candidates, dict) else candidates
+                    ),
+                    result=_short(node.result),
+                )
+            elif isinstance(node, InboxEgressNode):
+                step = dict(inbox=_short(node.input), max_items=node.max_items)
+            elif isinstance(node, CaptureEgressNode):
+                step = dict(
+                    emit=_name(node.capture_contract),
+                    input=_short(node.input),
+                    result=_short(node.result),
+                )
+            else:
+                steps.append({"explicit": node})
+                continue
+            steps.append({**common, **step})
+        except (ValueError, KeyError):
+            steps.append({"explicit": node})
+    budget, caps = definition.budget, definition.hard_caps
+    return ProcedureSpec.model_validate(
+        dict(
+            procedure=definition.name,
+            description=definition.description,
+            input=schema(definition.contract_in).fields,
+            input_contract=_name(definition.contract_in),
+            output=schema(definition.contract_out).fields,
+            output_contract=_name(definition.contract_out),
+            params={}
+            if definition.parameter_contract is None
+            else schema(definition.parameter_contract).fields,
+            parameter_contract=None
+            if definition.parameter_contract is None
+            else _name(definition.parameter_contract),
+            returns=returns,
+            source=definition.source,
+            measurements=definition.measurements,
+            annotations=definition.annotations,
+            halt_order=tuple(node.node_id for node in nodes if node.node_id in folded_halts),
+            activation=procedure.activation_policy,
+            acquisition_policy=procedure.acquisition_policy,
+            contracts=contracts,
+            steps=steps,
+            budget=dict(
+                wall_clock=f"PT{budget.wall_clock.microseconds / 1_000_000:.6f}S",
+                provider_calls=budget.max_provider_calls,
+                capture_bytes=budget.max_capture_bytes,
+                result_bytes=budget.max_result_bytes,
+                items=budget.max_items,
+            ),
+            caps=dict(
+                wall_clock=f"PT{caps.max_wall_clock.microseconds / 1_000_000:.6f}S",
+                provider_calls=caps.max_provider_calls,
+                capture_bytes=caps.max_capture_bytes,
+                result_bytes=caps.max_result_bytes,
+                items=caps.max_items,
+                repeat_attempts=caps.max_repeat_attempts,
+            ),
+        )
+    )

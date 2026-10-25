@@ -2123,6 +2123,22 @@ def _blueprint_origin_refusal(
 
 def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
+    from cruxible_client.contracts.laws import LIGHT_PROCEDURE_LAW
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if context.historical_law_coordinate is None:
+        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        if light != (procedure.artifact_format == "cruxible-procedure-v3"):
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.proposal.member_format_invalid",
+                        "new Procedures require v3 on compiler revision 36; "
+                        "upgrade the compiler or author a v3 Procedure",
+                        context.path,
+                    ),
+                )
+            )
     installed = _installed(context, procedure.artifact_format)
     from cruxible_client.contracts.laws import (
         SDK_SOURCE_PROCEDURE_LAW,
@@ -2135,6 +2151,8 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         and procedure.definition.source.rules == "cruxible.procedure-source.v2"
         else SDK_SOURCE_PROCEDURE_LAW
     )
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        source_law = LIGHT_PROCEDURE_LAW
     if context.historical_law_coordinate is not None and installed != source_law:
         raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
     installed = source_law

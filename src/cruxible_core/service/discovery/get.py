@@ -1769,7 +1769,10 @@ def _procedure_card(
         promoted = projection.typed.facts(
             "cruxible.procedure.track_record", identity=resolved.identity
         )
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
     return GetProcedureCard(
+        authored=decompile_procedure(readiness.artifact),
         measurement_reviews=_procedure_reviews(instance, coordinate, resolved),
         procedure=_name(resolved.identity),
         description=definition.description,

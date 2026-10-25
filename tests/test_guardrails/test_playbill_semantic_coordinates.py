@@ -63,6 +63,7 @@ from cruxible_client.contracts.laws import (
     LIGHT_ACQUISITION_POLICY_LAW,
     LIGHT_ARTIFACTS_UPGRADE_LAW,
     LIGHT_CAPTURE_CONTRACT_LAW,
+    LIGHT_PROCEDURE_LAW,
     LINE_V6_ACCEPTANCE_LAW,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
@@ -621,6 +622,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
 
 
 LAW_COORDINATES += (
+    (
+        LIGHT_PROCEDURE_LAW,
+        "cruxible.procedure.v3",
+        "cruxible-procedure-v3",
+        1,
+        "sha256:8c44aa00b85811717adf2caef6423c56bfcc220d6e693f29d3c6583701a0dfae",
+    ),
     (
         LIGHT_CAPTURE_CONTRACT_LAW,
         "cruxible.capture-contract.v2",

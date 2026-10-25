@@ -10,7 +10,7 @@ schema is supplied -- so the envelope law holds without per-test bookkeeping.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -115,8 +115,14 @@ def procedure_artifact(
     extra_pins: Iterable[ArtifactPin] = (),
     activation_policy: str = "abort",
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "cruxible-procedure-v3",
 ) -> ProcedureArtifact:
-    """One v2 envelope over a graph-v6 definition, its Contracts carried."""
+    """One current envelope over a graph-v6 definition, its Contracts carried.
+
+    Historical fixtures name artifact_format="playbill-procedure-v2" explicitly.
+    """
 
     resolved, owned = carried_definition(definition, contracts=contracts)
     pins = {
@@ -127,6 +133,7 @@ def procedure_artifact(
         )
     }
     return ProcedureArtifact(
+        artifact_format=artifact_format,
         identity=ArtifactIdentity(kind="Procedure", name=resolved.name),
         definition=resolved,
         definition_digest=compute_procedure_definition_digest(resolved).tagged,

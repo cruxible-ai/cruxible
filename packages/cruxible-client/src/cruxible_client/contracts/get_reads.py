@@ -33,6 +33,7 @@ from cruxible_client.contracts.operational_reads import (
     LiveView,
     RunRow,
 )
+from cruxible_client.contracts.procedures.authored import ProcedureSpec
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import ShownValue
@@ -391,6 +392,7 @@ class GetProcedureNode(_StrictGetModel):
 
 
 class GetProcedureCard(_StrictGetModel):
+    authored: ProcedureSpec | None = Field(default=None, exclude_if=lambda value: value is None)
     measurement_reviews: tuple[ProcedureMeasurementReview, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )

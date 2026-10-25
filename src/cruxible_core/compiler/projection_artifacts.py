@@ -8,6 +8,7 @@ import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Literal, Mapping, cast
 
 from pydantic import BaseModel, ValidationError
@@ -476,13 +477,23 @@ def _whole_semantic_mapping(
     )
 
 
+@lru_cache(maxsize=32)
+def _procedure_wire_nodes(content: bytes) -> dict[str, dict[str, Any]]:
+    return {node["id"]: node for node in json.loads(content)["definition"]["nodes"]}
+
+
 def _procedure_node_span(
     content: bytes,
     node: BaseModel,
     *,
     content_digest: str,
+    wire_node: dict[str, Any] | None = None,
 ) -> ContentSpan:
     payload = node.model_dump(mode="json", by_alias=True)
+    # v3 has single ids and compact predicates. The source mapping covers the
+    # exact retained node, including its omitted fallthrough edges.
+    if wire_node is not None:
+        payload = wire_node
     compact = canonical_bytes(payload)
     pretty = pretty_canonical_bytes(payload).removesuffix(b"\n").replace(b"\n", b"\n      ")
     matches = [
@@ -1764,11 +1775,17 @@ def parse_projection_tree(
                         ),
                     )
                 ]
+                wire_nodes = (
+                    _procedure_wire_nodes(content)
+                    if procedure.artifact_format == "cruxible-procedure-v3"
+                    else {}
+                )
                 for node in procedure.definition.nodes:
                     span = _procedure_node_span(
                         content,
                         node,
                         content_digest=input_digest,
+                        wire_node=wire_nodes.get(node.node_id),
                     )
                     mappings.append(
                         (

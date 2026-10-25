@@ -2532,9 +2532,11 @@ def _state_from_records(
                 if not isinstance(raw_halt, dict):
                     raise ValueError("halted run lacks typed halt material")
                 raw_reason = raw_halt.get("reason")
+                raw_message = raw_halt.get("message")
                 terminal = ProcedureHaltTerminal(
                     node_id=str(raw_halt.get("node_id") or last_node_id),
                     reason=raw_reason if isinstance(raw_reason, str) else None,
+                    message=raw_message if isinstance(raw_message, str) else None,
                     journal_coordinate=_journal_coordinate(final_record),
                 )
             elif raw_status == "failed":

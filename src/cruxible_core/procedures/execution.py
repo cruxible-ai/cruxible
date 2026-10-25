@@ -2544,10 +2544,11 @@ class _InternalFailure(Exception):
 
 
 class _Halted(Exception):
-    def __init__(self, *, node_id: str, reason: str | None) -> None:
+    def __init__(self, *, node_id: str, reason: str | None, message: str | None = None) -> None:
         super().__init__("Procedure halted")
         self.node_id = node_id
         self.reason = reason
+        self.message = message
 
 
 class _TransformInputInvalid(ExecutionError):
@@ -2924,6 +2925,7 @@ class ProcedureExecutor:
                 {
                     "node_id": exc.node_id,
                     "reason": exc.reason,
+                    **({"message": exc.message} if exc.message is not None else {}),
                 }
             )
         except _BudgetExceeded as exc:
@@ -3603,7 +3605,7 @@ class ProcedureExecutor:
                     {"node_id": node.node_id, "kind": node.kind, "verdict": "succeeded"},
                 )
                 if isinstance(node, HaltNode):
-                    raise _Halted(node_id=node.node_id, reason=node.reason)
+                    raise _Halted(node_id=node.node_id, reason=node.reason, message=node.message)
             except _RunRefusal:
                 self._append_event(
                     admission,
@@ -3633,9 +3635,9 @@ class ProcedureExecutor:
                 if isinstance(node, GuardNode):
                     raise _RunRefusal(
                         "guard_refused",
-                        node.message,
+                        node.message or "Procedure guard refused.",
                         node_id=node.node_id,
-                        detail_code=node.refusal_code,
+                        detail_code=node.refusal_code or "guard_refused",
                     )
                 raise _RunRefusal(
                     "guard_refused",

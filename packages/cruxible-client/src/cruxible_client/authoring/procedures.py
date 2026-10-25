@@ -34,6 +34,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_owned_contract_digest,
 )
+from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.contracts import validate_contract_schema
 from cruxible_client.contracts.procedures.graph import (
@@ -741,7 +742,25 @@ class Sequence:
         input_, preview = self._compile()
         if preview.errors:
             raise ProcedureCompositionError(preview)
-        return input_
+        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+        from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
+        # Decompile the checked local graph into the same declared authored form
+        # the CLI/MCP accept. Preview-only symbolic pins never enter this spec.
+        definition = ProcedureDefinition.model_validate(_symbolic_pins(input_.definition))
+        owner = ProcedureArtifact.model_construct(
+            definition=definition,
+            owned_contracts=tuple(
+                ProcedureOwnedContract(
+                    identity=parse_artifact_identity("Contract:" + c.name),
+                    schema=_schema(c),
+                )
+                for c in input_.contracts
+            ),
+            activation_policy=input_.activation_policy,
+            acquisition_policy=input_.acquisition_policy,
+        )
+        return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
 
 
 def _has_reference(value: object) -> bool:
@@ -778,6 +797,8 @@ __all__ = [
     "ProviderBinding",
     "ProviderSelectionError",
     "Sequence",
+    "ProcedureSpec",
+    "lower_procedure_spec",
     "Source",
     "StateTap",
     "SubjectKeyClaimObject",

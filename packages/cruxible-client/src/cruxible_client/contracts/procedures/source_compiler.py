@@ -1927,5 +1927,11 @@ def verify_source_graph(procedure: Any) -> None:
         expected_nodes.append(expected)
     expected_definition = compiled.definition.model_copy(update={"nodes": tuple(expected_nodes)})
     expected_contract_tuple = tuple(expected_contracts[name] for name in sorted(expected_contracts))
-    if expected_definition != definition or expected_contract_tuple != contracts:
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        graph_matches = compact_procedure(expected_definition) == compact_procedure(definition)
+    else:
+        graph_matches = expected_definition == definition
+    if not graph_matches or expected_contract_tuple != contracts:
         raise ProjectionFormatError("Retained Procedure source and compiled graph disagree")
