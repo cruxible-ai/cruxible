@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import PredicateOperand
+from cruxible_client.contracts.procedures.models import PredicateOperand, ProcedureDefinition
 
 
 def compact_procedure(value: Any) -> Any:
@@ -53,11 +53,14 @@ def compact_procedure(value: Any) -> Any:
             result["id"] = result.pop("node_id")
             if result.get("as") == result["id"]:
                 result.pop("as")
-        if hasattr(value, "nodes"):
+        if isinstance(value, ProcedureDefinition):
+            from cruxible_client.contracts.procedures.graph import procedure_guard_halt_targets
+
+            guard_halts = procedure_guard_halt_targets(value)
             for index, node in enumerate(result.get("nodes", [])):
                 if index + 1 < len(value.nodes):
                     following = value.nodes[index + 1].node_id
-                    if node.get("next") == following:
+                    if node.get("next") == following and following not in guard_halts:
                         node.pop("next")
                     if node.get("on_true") == following:
                         node.pop("on_true")

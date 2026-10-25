@@ -228,6 +228,18 @@ def _validate_node_references(
         )
 
 
+def procedure_guard_halt_targets(definition: ProcedureDefinition) -> frozenset[str]:
+    """Halts excluded from ordinary implicit fallthrough by graph format 6."""
+    kinds = {node.node_id: node.kind for node in definition.nodes}
+    return frozenset(
+        target
+        for node in definition.nodes
+        if isinstance(node, GuardNode)
+        for target in (node.on_true, node.on_false)
+        if target is not None and target != "$abort" and kinds.get(target) == "halt"
+    )
+
+
 def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     """Enforce the shared forward-only, reachable graph law."""
 
@@ -236,13 +248,7 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
     edges: dict[str, dict[str, str]] = {}
     declared_slots = {slot.slot_name for slot in definition.pin_slots}
-    guard_halt_targets = frozenset(
-        target
-        for node in definition.nodes
-        if isinstance(node, GuardNode)
-        for target in (node.on_true, node.on_false)
-        if target is not None and target != "$abort" and kinds.get(target) == "halt"
-    )
+    guard_halt_targets = procedure_guard_halt_targets(definition)
 
     for index, node in enumerate(definition.nodes):
         declared = _declared_edges(node)

@@ -10,7 +10,10 @@ from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.expressions import render_procedure_expression
-from cruxible_client.contracts.procedures.graph import analyze_procedure
+from cruxible_client.contracts.procedures.graph import (
+    analyze_procedure,
+    procedure_guard_halt_targets,
+)
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
@@ -104,6 +107,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 folded_project = node.node_id
                 returns = {"fields": _short(node.fields), "id": node.as_}
                 break
+    guard_halts = procedure_guard_halt_targets(definition)
     steps: list[dict[str, Any]] = []
     for index, node in enumerate(nodes):
         if node.node_id in folded_halts or node.node_id == folded_project:
@@ -111,7 +115,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         raw = node.model_dump(mode="json", by_alias=True)
         common: dict[str, Any] = {"id": node.node_id}
         if raw.get("next") is not None and (
-            index + 1 == len(definition.nodes) or raw["next"] != definition.nodes[index + 1].node_id
+            index + 1 == len(definition.nodes)
+            or raw["next"] != definition.nodes[index + 1].node_id
+            or raw["next"] in guard_halts
         ):
             common["next"] = raw["next"]
         try:

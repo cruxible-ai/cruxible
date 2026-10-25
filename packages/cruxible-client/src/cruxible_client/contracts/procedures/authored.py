@@ -507,6 +507,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         aliases.add(spec.returns.id)
         schemas[spec.returns.id] = None if spec.output is None else _fields(spec.output)
     previous: str | None = None
+    tap_fields: dict[str, PropertySchema] | None = None
     for index, step in enumerate(spec.steps):
         path = f"$.steps[{index}]"
         id_ = _step_id(step, index)
@@ -572,7 +573,9 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 node["budgets"] = step.budgets
             from cruxible_client.contracts.procedures.source_views import query_view_schema
 
-            output = query_view_schema().fields
+            if tap_fields is None:
+                tap_fields = query_view_schema().fields
+            output = tap_fields
             alias = step.tap
         elif isinstance(step, ClaimStep):
             details = {} if resolve is None else resolve("claim", step)
@@ -602,7 +605,9 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 kind="project",
                 fields=fields,
                 contract_out=contract(
-                    step.contract or spec.procedure + "-" + step.project, output, "contract-out"
+                    step.contract or spec.procedure + "-step-" + step.project,
+                    output,
+                    "contract-out",
                 ),
             )
             alias = step.project
@@ -613,12 +618,12 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 transform_kind=step.kind,
                 spec=template(step.spec.model_dump(mode="json"), path + ".spec"),
                 contract_in=contract(
-                    step.contract_in or spec.procedure + "-" + step.transform + "-input",
+                    step.contract_in or spec.procedure + "-step-" + step.transform + "-input",
                     _fields(step.input),
                     "contract-in",
                 ),
                 contract_out=contract(
-                    step.contract_out or spec.procedure + "-" + step.transform + "-output",
+                    step.contract_out or spec.procedure + "-step-" + step.transform + "-output",
                     output,
                     "contract-out",
                 ),
@@ -701,7 +706,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 kind="select",
                 sources=list(step.sources),
                 contract_out=contract(
-                    step.contract or spec.procedure + "-" + step.select, output, "contract-out"
+                    step.contract or spec.procedure + "-step-" + step.select, output, "contract-out"
                 ),
             )
             alias = step.select
@@ -945,7 +950,7 @@ def _json_field(schema: dict[str, Any]) -> PropertySchema:
     type_ = schema.get("type", "json")
     if type_ == "boolean":
         type_ = "bool"
-    if type_ in {"object", "array"}:
+    if isinstance(type_, list) or type_ in {"object", "array"}:
         return PropertySchema(type="json", json_schema=schema)
     return PropertySchema(type=type_, enum=schema.get("enum"))
 

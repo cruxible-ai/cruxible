@@ -37,7 +37,10 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.closure import ProcedureSlotBinding
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.graph import (
+    compute_procedure_definition_digest,
+    procedure_guard_halt_targets,
+)
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
@@ -263,6 +266,7 @@ class ProcedureArtifact(_GraphEnvelope):
     def _correspondence(self) -> "ProcedureArtifact":
         self._check_envelope("Procedure")
         if self.artifact_format == "cruxible-procedure-v3":
+            guard_halts = procedure_guard_halt_targets(self.definition)
             nodes = []
             for index, node in enumerate(self.definition.nodes):
                 following = (
@@ -273,7 +277,8 @@ class ProcedureArtifact(_GraphEnvelope):
                 updates: dict[str, None] = {}
                 for edge in ("next", "on_true"):
                     if following is not None and getattr(node, edge, None) == following:
-                        updates[edge] = None
+                        if edge != "next" or following not in guard_halts:
+                            updates[edge] = None
                 nodes.append(node.model_copy(update=updates) if updates else node)
             object.__setattr__(
                 self, "definition", self.definition.model_copy(update={"nodes": tuple(nodes)})

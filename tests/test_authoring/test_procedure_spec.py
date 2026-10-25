@@ -473,24 +473,37 @@ def test_spec_dump_preserves_else_with_and_without_aliases():
         )
 
 
-def test_decompile_does_not_fold_a_halt_reached_by_fallthrough():
+def test_decompile_does_not_fold_a_halt_with_a_shared_explicit_edge():
     from tests.test_procedures.test_procedure_artifacts import _artifact, _layout_definition
 
     definition = _layout_definition(halt_before_return=False)
     definition = definition.model_copy(
         update={
             "nodes": tuple(
-                node.model_copy(update={"reason": "empty"}) if node.kind == "halt" else node
+                node.model_copy(update={"reason": "empty"})
+                if node.kind == "halt"
+                else node.model_copy(update={"next": "stop"})
+                if node.kind == "project"
+                else node
                 for node in definition.nodes
             )
         }
     )
     original = _artifact(definition)
     authored = decompile_procedure(original)
-    # result falls through to stop as well as the guard's false arm. That halt
-    # is a real shared graph step, not syntactic sugar owned by one guard.
+    # Format 6 excludes guard halts from implicit fallthrough. This explicit
+    # edge deliberately shares the halt with the guard's false arm.
     assert any(getattr(step, "halt", None) is not None for step in authored.steps)
     assert any(getattr(step, "else_", None) == "stop" for step in authored.steps)
+    from cruxible_client.contracts.procedures.graph import analyze_procedure
+
+    assert analyze_procedure(original.definition).edges["result"] == {"next": "stop"}
+    content = render_procedure(original)
+    assert json.loads(content)["definition"]["nodes"][2]["next"] == "stop"
+    restored = parse_procedure(content, path="procedures/" + original.identity.name + ".json")
+    assert (
+        analyze_procedure(restored.definition).edges == analyze_procedure(original.definition).edges
+    )
 
 
 def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
