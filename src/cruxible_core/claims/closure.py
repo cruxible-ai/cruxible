@@ -173,6 +173,11 @@ def parse_dependency_artifact(
 ) -> ArtifactDependencyStateV1 | None:
     """Read exact selected bytes; retain no second global artifact payload cache."""
 
+    # Claim -> ClaimType and Claim -> input Claim authority remain exact under
+    # both compiler modes. Share this immutable parse across their callers.
+    if path.startswith("claims/"):
+        by_name = False
+
     def derive() -> ArtifactDependencyStateV1 | None:
         value = _parse_dependency_artifact(path, content, by_name=by_name)
         if value is not None and not seal(value):

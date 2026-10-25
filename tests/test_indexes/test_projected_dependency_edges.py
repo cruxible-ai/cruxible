@@ -67,6 +67,10 @@ def test_selected_states_and_outgoing_proofs_are_carried_and_equal_the_cold_path
             # the same immutable state; the uncarried parser is the oracle.
             early = closure.parse_dependency_artifact(path, tree[path], by_name=not historical)
             assert rows.state(path) is early
+            if path.startswith("claims/"):
+                assert early is closure.parse_dependency_artifact(
+                    path, tree[path], by_name=historical
+                )
             assert (
                 early
                 == expected
