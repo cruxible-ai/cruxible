@@ -68,6 +68,7 @@ def _condition_query(*, only_subject: str | None = None) -> QueryDefinition:
         )
     )
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
         entry=QueryEntry(
             binding="item",

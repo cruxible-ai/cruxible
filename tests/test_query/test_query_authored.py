@@ -184,7 +184,8 @@ def test_authored_errors_are_mapped_through_authoring_refusals(tree):
     )
     with pytest.raises(AuthoringLoweringError) as caught:
         _render_non_procedure_member(payload, tree=tree, light_query=True)
-    assert "cruxible.query.filter_invalid" in str(caught.value)
+    assert caught.value.code == "cruxible.query.filter_invalid"
+    assert caught.value.offending_element == "$.where"
     assert "$.where" in str(caught.value)
     assert "column 16" in str(caught.value)
 
@@ -203,3 +204,36 @@ def test_indexed_vocabulary_only_reads_definition_paths(tree, size):
     population.update({f"claims/{i}.json": b"unread" for i in range(size)})
     paths = tuple(tree)
     assert candidate_query_vocabulary(population, paths=paths) == candidate_query_vocabulary(tree)
+
+
+@pytest.mark.parametrize(
+    "light,format",
+    [(True, "playbill-query-definition-v1"), (False, "cruxible-query-definition-v3")],
+)
+def test_new_query_formats_are_gated_by_compiler_revision(light, format, tree, resolver):
+    from types import SimpleNamespace
+
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.proposals.proposals import _query_definition_member
+
+    payload = lower_authoring_input(
+        QueryDefinitionInput(kind="query_definition", query_definition=simple())
+    )
+    path, wire, _ = _render_non_procedure_member(
+        payload, tree=tree, light_query=format == "cruxible-query-definition-v3"
+    )
+    verdict = _query_definition_member(
+        SimpleNamespace(
+            content=wire,
+            path=path,
+            historical_law_coordinate=None,
+            current=SimpleNamespace(
+                compiler=LIGHT_ARTIFACTS_COMPILER if light else CLAIM_REBIND_COMPILER
+            ),
+        )
+    )
+    assert [item.code for item in verdict.diagnostics] == [
+        "cruxible.proposal.member_format_invalid"
+    ]
+    assert "upgrade the compiler" in verdict.diagnostics[0].message
+    assert parse_query_definition(wire, path=path).artifact_format == format

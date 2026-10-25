@@ -19,6 +19,7 @@ from cruxible_core.service.discovery.query_vocabulary import (
     query_refusal,
     value_type_of,
 )
+from cruxible_core.service.read_refusals import ReadRefusalError, nearest
 
 _ENGINE_TYPES: dict[str, QueryValueType] = {
     "string": "string",
@@ -57,17 +58,22 @@ class AuthoredQueryResolver:
             (binding, info)
             for binding, kinds in bindings.items()
             for kind in kinds
-            for info in self.vocabulary.resolve_incoming(kind, name)
+            for info in self.vocabulary.incoming(kind)
+            if info.predicate == name or info.predicate.endswith("." + name)
         ]
         unique = {(binding, info.predicate): info for binding, info in found}
         if len(unique) != 1:
             raise query_refusal(
                 "cruxible.query.ambiguous_field" if unique else "cruxible.query.unknown_field",
                 f"{name!r} must identify one incoming relation from an earlier binding",
-                nearest=tuple(
-                    info.predicate
-                    for info in self.vocabulary.predicates.values()
-                    if info.value_type == "subject" and name.rsplit(".", 1)[-1] in info.predicate
+                nearest=nearest(
+                    name,
+                    [
+                        info.predicate
+                        for kinds in bindings.values()
+                        for kind in kinds
+                        for info in self.vocabulary.incoming(kind)
+                    ],
                 ),
                 field_path=path,
                 repair="state <source_binding.full_predicate explicitly",
@@ -99,7 +105,22 @@ class AuthoredQueryResolver:
                 )
             info = next(iter(found.values()))
             return info.predicate, info.subject_kinds
-        outgoing = self.vocabulary.resolve_field(kinds, name, field_path=path)
+        try:
+            outgoing = self.vocabulary.resolve_field(kinds, name, field_path=path)
+        except ReadRefusalError:
+            incoming = {
+                info.predicate
+                for kind in kinds
+                for info in self.vocabulary.resolve_incoming(kind, name)
+            }
+            if not incoming:
+                raise
+            raise query_refusal(
+                "cruxible.query.follow_not_relation",
+                f"{name!r} is incoming; use a reverse hop",
+                field_path=path,
+                repair="prefix the hop with <",
+            ) from None
         if isinstance(outgoing, str) or outgoing.value_type != "subject":
             raise query_refusal(
                 "cruxible.query.follow_not_relation",

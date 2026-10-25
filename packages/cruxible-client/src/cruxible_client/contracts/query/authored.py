@@ -618,6 +618,34 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
         or query.result_shape != ("path" if query.traversal else "subject")
     ):
         raise ValueError("query result shape requires the explicit typed definition")
+    expected_policy = QueryEvaluationPolicy(
+        visible_verdicts=("stale", "supported")
+        if "stale" in query.evaluation_policy.visible_verdicts
+        else ("supported",),
+        visible_currency=("current", "stale")
+        if "stale" in query.evaluation_policy.visible_verdicts
+        else ("current",),
+        conflict_behavior="surface_conflicts",
+    )
+    path_shape = bool(query.traversal)
+    if (
+        query.dedupe != ("path" if path_shape else "subject")
+        or query.evaluation_policy != expected_policy
+    ):
+        raise ValueError("query policy requires the explicit typed definition")
+    if any(not item.required or item.default is not None for item in query.parameters):
+        raise ValueError("parameter defaults require the explicit typed definition")
+    if any(
+        budget.max_traversal_depth != (10 if path_shape else 1)
+        or budget.max_paths != (20000 if path_shape else None)
+        for budget in (query.default_budgets, query.maximum_budgets)
+    ):
+        raise ValueError("query budgets require the explicit typed definition")
+    if query.projection and any(
+        not isinstance(item.value, (QuerySubjectFieldRef, QueryClaimValueRef, QueryClaimFieldRef))
+        for item in query.projection.fields
+    ):
+        raise ValueError("projection constants require the explicit typed definition")
     entry = query.entry.subject_kinds
     if len(entry) != 1:
         raise ValueError("multiple entry kinds require the explicit typed definition")
