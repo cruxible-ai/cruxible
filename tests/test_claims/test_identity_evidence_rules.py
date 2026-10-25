@@ -545,6 +545,7 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
 
     world = _World(tmp_path)
     query = _query()
+    assert query.artifact_format == "cruxible-query-definition-v3"
     claim_type = _corroborated_type(query_definition_digest(query).tagged)
     _seed_vocabulary(
         world.instance,

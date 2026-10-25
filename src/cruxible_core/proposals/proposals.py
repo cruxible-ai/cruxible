@@ -161,6 +161,7 @@ from cruxible_client.contracts.laws import (
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     QUERY_DEFINITION_LAW,
+    QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
     InstalledAcceptanceLaw,
 )
@@ -2654,7 +2655,8 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     installed = _installed(context, query.artifact_format)
     if (
-        installed.coordinate == QUERY_DEFINITION_LAW
+        installed.coordinate
+        in {QUERY_DEFINITION_LAW, QUERY_DEFINITION_V3_ACCEPTANCE_LAW.coordinate}
         and predecessor is not None
         and predecessor.artifact_digest != law.artifact_digest
     ):
