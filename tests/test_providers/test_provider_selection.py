@@ -12,14 +12,12 @@ def test_bare_name_does_not_fall_back_to_old_only_fitting_build():
         artifact_digest="sha256:" + "2" * 64,
         artifact_kind="ProviderInterface",
         pin_role="provider-interface",
-        interface_digest="sha256:" + "3" * 64,
         effect_class="pure",
         interface_basis="accepted_registration",
         providers=[
             ProviderInterfaceImplementation(
                 provider_identity=old,
                 provider_artifact_digest="sha256:" + "4" * 64,
-                implementation_digest="sha256:" + "5" * 64,
                 newest=False,
                 newest_builds=("Provider:demo/" + "b" * 64,),
             )
