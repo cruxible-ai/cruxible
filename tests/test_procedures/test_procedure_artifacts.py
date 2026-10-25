@@ -524,6 +524,7 @@ def test_named_procedure_has_no_cross_reference_digests() -> None:
     assert "role" not in str(payload["definition"])
     assert parse_procedure(render_procedure(named), path=procedure_path("triage")) == named
     assert render_procedure(historical) == original
+    assert name_procedure(named) == named
     assert parse_procedure(original, path=procedure_path("triage")) == historical
 
 
@@ -549,3 +550,28 @@ def test_named_procedure_checks_owned_contract_names() -> None:
     payload["owned_contracts"] = []
     with pytest.raises(ValidationError, match="every owned Contract"):
         NamedProcedureArtifact.model_validate(payload)
+
+
+def test_named_graph_preserves_reference_shaped_payloads() -> None:
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    payload = {
+        "interface_digest": _digest("literal-interface"),
+        "implementation_digest": _digest("literal-implementation"),
+        "role": "literal-role",
+        "target": {"kind": "Contract", "name": "literal-contract"},
+        "artifact_digest": _digest("literal-artifact"),
+    }
+    definition = _definition()
+    nodes = tuple(
+        node.model_copy(update={"parameters": payload})
+        if isinstance(node, StateTapNode)
+        else node.model_copy(update={"fields": payload})
+        for node in definition.nodes
+    )
+    historical = _artifact(definition.model_copy(update={"nodes": nodes, "annotations": payload}))
+    named = name_procedure(historical)
+    assert named.definition.annotations == payload
+    assert named.definition.nodes[0].parameters == payload
+    assert named.definition.nodes[1].fields == payload
+    assert historical.definition.annotations == payload

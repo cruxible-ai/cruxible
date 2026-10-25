@@ -103,6 +103,13 @@ def test_historical_source_call_copies_still_verify_without_changing_bytes():
     before = procedure.model_dump(mode="json")
     verify_source_graph(procedure)
     assert procedure.model_dump(mode="json") == before
+
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    named = name_procedure(procedure)
+    verify_source_graph(named)
+    assert {contract.identity.name for contract in named.owned_contracts} == {"input", "output"}
+    assert procedure.model_dump(mode="json") == before
     tampered = procedure.definition.model_copy(
         update={
             "nodes": (
