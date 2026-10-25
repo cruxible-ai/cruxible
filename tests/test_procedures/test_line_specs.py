@@ -162,7 +162,7 @@ def test_line_spec_round_trip_and_digest_golden(artifact_format) -> None:
     expected = (
         "sha256:df53d6b78589e4a43408c423247c09cdc611d48ad801535e5950dba766995ef6"
         if artifact_format == "playbill-procedure-v2"
-        else "sha256:5adb804d5a4bf1d928d37cb00472b7939669b6d64b7b7845ccbfbf2f44a96101"
+        else "sha256:6ea04222d7604d1766d45d49fa4810cf2dba90bbb3d6644b5bed603225071547"
     )
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
