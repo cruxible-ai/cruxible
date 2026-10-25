@@ -429,3 +429,30 @@ def test_empty_authored_filters_refuse_instead_of_widening(changes, path, resolv
         lower_query_spec(simple(**changes), resolver)
     assert caught.value.error_code == "cruxible.query.filter_invalid"
     assert caught.value.field_path == path
+
+
+@pytest.mark.parametrize("expression", ['"x" == "y"', '$param == "x"', "true == false"])
+def test_filter_left_operand_must_be_a_value_reference(expression):
+    with pytest.raises(QuerySpecError) as caught:
+        parse_filter(expression)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"
+    assert caught.value.column == 1
+
+
+def test_entry_and_hop_grammar_accept_token_whitespace(resolver):
+    spec = simple(
+        **{"from": {"incident": "security.incident=$incident"}},
+        params={"incident": "string"},
+        hops=[
+            {
+                "vulnerability": (
+                    "incident.vulnerability!:security.vulnerability "
+                    "  where   exists vulnerability.cve_id"
+                )
+            }
+        ],
+    )
+    query = lower_query_spec(spec, resolver)
+    assert query.entry.subject_id.parameter == "incident"
+    assert query.traversal[0].required
+    assert query.traversal[0].where.kind == "claim_presence"

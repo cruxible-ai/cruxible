@@ -3322,7 +3322,9 @@ def _render_non_procedure_member(
                     "$",
                     str(exc),
                     repair_kind="replace_input",
-                    repair_description="Correct the authored fields or budgets to satisfy the query law.",
+                    repair_description=(
+                        "Correct the authored fields or budgets to satisfy the query law."
+                    ),
                 )
         else:
             query = source

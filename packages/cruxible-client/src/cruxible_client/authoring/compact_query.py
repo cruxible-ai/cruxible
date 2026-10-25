@@ -256,7 +256,32 @@ WHERE_SYNTAX = "'f=v', 'f!=v', 'f<v', 'f<=v', 'f>v', 'f>=v', 'f in a,b', 'f exis
 
 def parse_where(expression: str) -> QueryFilter:
     """The authored filter grammar's single-comparison case, with CLI spellings."""
-    from cruxible_client.contracts.query.authored import parse_filter
+    from cruxible_client.contracts.query.authored import QuerySpecError, parse_filter
+
+    membership = _IN_RE.fullmatch(expression)
+    comparison = _OPERATOR_RE.fullmatch(expression)
+    grammar_case = (
+        expression.lstrip().startswith(("exists ", "not exists "))
+        or (membership is not None and membership.group(2).startswith("("))
+        or (comparison is not None and comparison.group(3).startswith('"'))
+    )
+    if grammar_case:
+        try:
+            parsed = parse_filter(expression)
+            if parsed.kind == "presence":
+                return query_filter(str(parsed.operands[0].value), "exists", True)
+            if parsed.kind == "not" and parsed.children[0].kind == "presence":
+                return query_filter(str(parsed.children[0].operands[0].value), "exists", False)
+            if parsed.kind in {"comparison", "membership"} and all(
+                item.kind in {"literal", "name", "decimal"} for item in parsed.operands[1:]
+            ):
+                field = str(parsed.operands[0].value)
+                if parsed.kind == "membership":
+                    return query_filter(field, "in", [item.value for item in parsed.operands[1:]])
+                return query_filter(field, parsed.operator, parsed.operands[1].value)
+        except QuerySpecError as exc:
+            raise ValueError(str(exc)) from exc
+        raise ValueError("--where takes one comparison, membership, or presence test")
 
     match = _EXISTS_RE.fullmatch(expression)
     if match is not None:

@@ -208,6 +208,10 @@ def test_world_sugar_refuses_wrong_names_before_the_wire(
         ("note exists", ("note", "exists", True)),
         ("note !exists", ("note", "exists", False)),
         ("title~ledger", ("title", "contains", "ledger")),
+        ('title == "a, b and c"', ("title", "eq", "a, b and c")),
+        ('title in ("a,b", "c")', ("title", "in", ("a,b", "c"))),
+        ("exists note", ("note", "exists", True)),
+        ("not exists note", ("note", "exists", False)),
     ],
 )
 def test_cli_where_expressions(expression: str, expected: tuple[str, str, object]) -> None:

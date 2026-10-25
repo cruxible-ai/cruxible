@@ -152,7 +152,10 @@ class _FilterParser:
         while offset < len(text.rstrip()):
             match = _TOKEN.match(text, offset)
             if match is None:
-                self.fail("expected a reference, literal, comparison, or parenthesis", offset + 1)
+                invalid = offset
+                while invalid < len(text) and text[invalid].isspace():
+                    invalid += 1
+                self.fail("expected a reference, literal, comparison, or parenthesis", invalid + 1)
             token = next(group for group in match.groups() if group is not None)
             self.tokens.append((token, match.end() - len(token) + 1))
             offset = match.end()
@@ -222,6 +225,14 @@ class _FilterParser:
         if token in {"(", ")", ",", "and", "or", "not", "exists"} or token in _SYMBOLS:
             self.fail(
                 "expected a reference, $parameter, or literal", self.tokens[self.index - 1][1]
+            )
+        if reference and (
+            token.startswith(("$", '"'))
+            or token in {"true", "false", "null"}
+            or re.fullmatch(r"-?\d+(?:\.\d+)?", token)
+        ):
+            self.fail(
+                "expected a binding, binding.predicate, or now", self.tokens[self.index - 1][1]
             )
         if token.startswith("$"):
             return FilterOperand("parameter", token[1:])
@@ -422,11 +433,18 @@ class _LowerQuery:
 
     def lower(self) -> QueryDefinitionSpec:
         binding, entry_text = next(iter(self.spec.from_.items()))
-        kind, equal, parameter = entry_text.partition(" = $")
+        matched_entry = re.fullmatch(
+            r"\s*([a-z][a-z0-9_.]*)\s*(?:=\s*\$([a-z][a-z0-9_]*))?\s*", entry_text
+        )
+        if matched_entry is None:
+            raise QuerySpecError(
+                "cruxible.query.unknown_kind", "expected KIND or KIND = $parameter", path="$.from"
+            )
+        kind, parameter = matched_entry.groups()
         self.resolver.require_kind(kind, path="$.from")
         self.bindings[binding] = (kind,)
         subject_id = None
-        if equal:
+        if parameter is not None:
             if self.spec.params.get(parameter) not in {"string", "subject", "subject_reference"}:
                 raise QuerySpecError(
                     "cruxible.query.parameter_undeclared",
@@ -439,8 +457,12 @@ class _LowerQuery:
         for index, hop in enumerate(self.spec.hops):
             target, expression = next(iter(hop.items()))
             path = f"$.hops[{index}]"
-            relation, filter_separator, condition = expression.partition(" where ")
-            relation, _, target_kind = relation.partition(": ")
+            filtered = re.split(r"\s+where(?:\s+|$)", expression, maxsplit=1)
+            filter_separator = len(filtered) == 2
+            condition = filtered[1] if filter_separator else ""
+            relation_and_kind = re.split(r"\s*:\s*", filtered[0].strip(), maxsplit=1)
+            relation = relation_and_kind[0]
+            target_kind = relation_and_kind[1] if len(relation_and_kind) == 2 else ""
             reverse = relation.startswith("<")
             source, dot, predicate = relation.removeprefix("<").removesuffix("!").partition(".")
             inferred = None
