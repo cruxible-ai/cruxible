@@ -1249,6 +1249,7 @@ def _install_claim_dependencies(
     payload: ClaimAuthoringPayloadV1,
     *,
     base_tree: Mapping[str, bytes],
+    light: bool = False,
 ) -> tuple[MutableMapping[str, bytes], set[str]]:
     """Install a Claim's Subject and ClaimType drafts against the tree it lowers on.
 
@@ -1340,6 +1341,14 @@ def _install_claim_dependencies(
         if accepted is None:
             candidate_tree[draft_path] = rendered
             changed_paths.add(draft_path)
+            if light:
+                from cruxible_core.claims.claim_type_inputs import (
+                    install_builtin_capture_dependencies,
+                )
+
+                changed_paths.update(
+                    install_builtin_capture_dependencies(claim_type_draft, candidate_tree)
+                )
     elif type_artifact_path not in base_tree:
         _refuse(
             "cruxible.authoring.dependency_claim_type_required",
@@ -1564,6 +1573,7 @@ def _lower_claim(
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
+        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     type_content = candidate_base_tree.get(type_path)
     if type_content is None:

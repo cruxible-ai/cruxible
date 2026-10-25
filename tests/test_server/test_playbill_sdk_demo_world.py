@@ -199,7 +199,9 @@ def _install_direct_capture_contract(
     instance = get_playbill_manager().get(instance_id)
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    from cruxible_client.contracts.captures import builtin_contract_for_write
+
+    contract = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     submitted = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="operator"),
@@ -891,7 +893,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         subject_definition=policy_subject,
         claim_type_definition=triage_type,
     ).prepare()
-    assert not kev.refused
+    assert not kev.refused, [d.message for d in kev.diagnostics]
     kev.submit(accept="never")
     kev_proposal = kev.status().proposal_id
     assert kev_proposal is not None

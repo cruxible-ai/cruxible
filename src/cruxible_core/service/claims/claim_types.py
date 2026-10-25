@@ -108,6 +108,8 @@ def service_propose_playbill_claim_type(
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    if proposed_base.compiler == LIGHT_ARTIFACTS_COMPILER:
+        install_builtin_capture_dependencies(claim_type, candidate_tree)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type")
     return admit_proposal(
         instance,
