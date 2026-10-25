@@ -33,7 +33,8 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+from tests.test_procedures.test_procedure_artifacts import _artifact as _frozen_artifact
+from tests.test_procedures.test_procedure_artifacts import _definition
 
 _D0 = "sha256:" + "0" * 64
 
@@ -48,8 +49,31 @@ def _caps(*, calls: int = 0) -> ProcedureHardCaps:
     )
 
 
-def _procedure() -> AcceptedProcedure:
-    artifact = _artifact(_definition(terminal_capability=3))
+def _artifact(definition):
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    return name_procedure(_frozen_artifact(definition))
+
+
+def _closed_definition(*, terminal_capability=3):
+    from cruxible_client.contracts.procedures.models import ProjectNode
+
+    template = _definition(terminal_capability=terminal_capability)
+    return _definition(
+        terminal_capability=terminal_capability,
+        nodes=(
+            ProjectNode(
+                node_id="shape",
+                fields={"rows": []},
+                contract_out=template.contract_out,
+                as_="result",
+            ),
+        ),
+    )
+
+
+def _procedure(*, named=False) -> AcceptedProcedure:
+    artifact = (_artifact if named else _frozen_artifact)(_closed_definition())
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 
     return AcceptedProcedure(
@@ -184,7 +208,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
     instance, _owner = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
-    first_procedure = _artifact(_definition(terminal_capability=3))
+    first_procedure = _artifact(_closed_definition())
     first_accepted = AcceptedProcedure(
         path="procedures/triage.json",
         procedure=first_procedure,
@@ -208,7 +232,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
     )
     assert initial.diagnostics == ()
 
-    successor_definition = _definition(terminal_capability=3).model_copy(
+    successor_definition = _closed_definition().model_copy(
         update={"description": "Successor Procedure."}
     )
     successor_procedure = _artifact(successor_definition).model_copy(
@@ -281,7 +305,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
 
 def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) -> None:
     instance, owner = initialize_local(tmp_path)
-    procedure = _artifact(_definition(terminal_capability=3))
+    procedure = _artifact(_closed_definition())
     tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
         "procedures/triage.json": render_procedure(procedure),

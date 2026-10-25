@@ -1599,7 +1599,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
 
     instance, owner = initialize_local(root)
-    procedure = _procedure()
+    procedure = _procedure(named=True)
     lapsing = _mandate(procedure=procedure).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=UTC)}
     )

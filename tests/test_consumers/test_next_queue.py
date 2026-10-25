@@ -1195,7 +1195,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         service_activate_playbill_proposal(
             instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
         )
-    procedure = _procedure()
+    procedure = _procedure(named=True)
     lapsing = _mandate(procedure=procedure).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=EVALUATION_TIME.tzinfo)}
     )
