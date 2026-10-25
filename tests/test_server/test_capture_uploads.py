@@ -38,10 +38,16 @@ from cruxible_client.contracts.uploads import (
     CaptureUploadCompleteRequest,
     CaptureUploadOpenRequest,
 )
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
+from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+    WorkspaceFileSourceRequestV2,
+)
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.governance.seed_artifacts.workspace_file import (
+    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+)
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -579,8 +585,8 @@ def _definition(interface: dict[str, Any], provider: dict[str, Any], contract_pi
                     ),
                     artifact_digest=interface["artifact_digest"],
                 ),
-                interface_digest=interface["interface_digest"],
-                implementation_digest=provider["implementation_digest"],
+                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
                 request=request,
                 as_="advisory",
                 next="shape",
