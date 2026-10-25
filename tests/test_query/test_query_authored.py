@@ -344,3 +344,88 @@ def test_kit_snapshot_and_carried_successor_use_the_query_codec(tree):
     parsed = parse_query_definition(successor, path=path)
     assert parsed.lifecycle.predecessor_digest == digest
     assert parsed.artifact_format == "cruxible-query-definition-v3"
+
+
+def test_declared_empty_kind_is_an_authored_entry():
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKind,
+        SubjectKindMinted,
+        render_subject_kind,
+        subject_kind_path,
+    )
+
+    kind = SubjectKind(
+        identity=ArtifactIdentity(kind="SubjectKind", name="test.empty"),
+        identity_rule=SubjectKindMinted(),
+    )
+    path = subject_kind_path(kind.identity.name)
+    vocabulary = candidate_query_vocabulary({path: render_subject_kind(kind)}, paths=(path,))
+    spec = QuerySpecInput.model_validate(
+        {"query": "test.empty_query", "from": {"item": "test.empty"}, "fields": ["item"]}
+    )
+    assert lower_query_spec(spec, AuthoredQueryResolver(vocabulary)).entry.subject_kinds == (
+        "test.empty",
+    )
+
+
+def test_role_projection_derives_its_default_name(resolver):
+    query = lower_query_spec(simple(fields=["role(incident.status)"]), resolver)
+    assert query.projection.fields[0].name == "status"
+    assert query.projection.fields[0].value.field == "role"
+
+
+def test_non_scalar_fields_project_and_include_but_do_not_order(resolver):
+    from dataclasses import replace
+
+    from cruxible_core.service.discovery.query_vocabulary import QueryVocabulary
+
+    info = resolver.vocabulary.predicates["security.incident.name"]
+    opaque = replace(info, value_type="exact_content")
+    vocabulary = QueryVocabulary(
+        predicates={opaque.predicate: opaque}, kinds=("security.incident",)
+    )
+    local = AuthoredQueryResolver(vocabulary)
+    query = lower_query_spec(simple(include={"body": "incident.name"}), local)
+    assert query.projection.fields[1].value.predicate == opaque.predicate
+    assert query.includes[0].predicate == opaque.predicate
+    assert (
+        lower_query_spec(simple(where="exists incident.name"), local).where.kind == "claim_presence"
+    )
+    with pytest.raises(ReadRefusalError) as caught:
+        lower_query_spec(simple(order=["incident.name"]), local)
+    assert caught.value.error_code == "cruxible.query.operator_not_applicable"
+
+
+def test_authored_structural_refusal_stays_typed_and_scopes_to_its_member(tree):
+    from cruxible_core.authoring.lowering import AuthoringLoweringError, _rescope_member_error
+
+    spec = simple(limit=2001)
+    payload = lower_authoring_input(
+        QueryDefinitionInput(kind="query_definition", query_definition=spec)
+    )
+    with pytest.raises(AuthoringLoweringError) as caught:
+        _render_non_procedure_member(payload, tree=tree, light_query=True)
+    assert caught.value.code == "cruxible.authoring.query_definition_invalid"
+    error = AuthoringLoweringError(
+        code="cruxible.query.unknown_field",
+        offending_element="$.hops[1]",
+        message="unknown",
+        repairs=(),
+    )
+    scoped = _rescope_member_error(error, index=3, sibling_member_by_claim_id={})
+    assert scoped.offending_element == "members[3].hops[1]"
+
+
+@pytest.mark.parametrize(
+    "changes,path",
+    [
+        ({"where": ""}, "$.where"),
+        ({"hops": [{"vulnerability": "incident.vulnerability where "}]}, "$.hops[0]"),
+    ],
+)
+def test_empty_authored_filters_refuse_instead_of_widening(changes, path, resolver):
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(simple(**changes), resolver)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"
+    assert caught.value.field_path == path

@@ -3316,6 +3316,14 @@ def _render_non_procedure_member(
                     repair_kind="replace_input",
                     repair_description="Correct the authored path using the candidate vocabulary.",
                 )
+            except ValidationError as exc:
+                _refuse(
+                    "cruxible.authoring.query_definition_invalid",
+                    "$",
+                    str(exc),
+                    repair_kind="replace_input",
+                    repair_description="Correct the authored fields or budgets to satisfy the query law.",
+                )
         else:
             query = source
         if light_query:
@@ -5232,7 +5240,7 @@ def _rescope_member_error(
     )
     return AuthoringLoweringError(
         code=error.code,
-        offending_element=f"members[{index}].{error.offending_element}",
+        offending_element=f"members[{index}].{error.offending_element.removeprefix('$.')}",
         message=error.message,
         repairs=repairs,
     )

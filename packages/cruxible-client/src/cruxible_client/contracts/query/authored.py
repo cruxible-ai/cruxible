@@ -253,7 +253,7 @@ def parse_filter(expression: str, *, path: str = "$.where") -> FilterExpression:
 class QuerySpecResolver(Protocol):
     def require_kind(self, kind: str, *, path: str) -> str: ...
     def field(
-        self, kinds: tuple[str, ...], name: str, *, path: str
+        self, kinds: tuple[str, ...], name: str, *, path: str, scalar: bool = False
     ) -> tuple[str, QueryValueType]: ...
     def reverse_source(
         self, bindings: Mapping[str, tuple[str, ...]], name: str, *, path: str
@@ -279,7 +279,9 @@ class _LowerQuery:
         self.spec, self.resolver = spec, resolver
         self.bindings: dict[str, tuple[str, ...]] = {}
 
-    def ref(self, text: str, path: str) -> tuple[QueryValueRef, QueryValueType]:
+    def ref(
+        self, text: str, path: str, *, scalar: bool = False
+    ) -> tuple[QueryValueRef, QueryValueType]:
         if text == "now":
             return QueryEvaluationTimeRef(), "timestamp"
         for field in ("role", "verdict"):
@@ -307,7 +309,9 @@ class _LowerQuery:
             return QuerySubjectFieldRef(
                 binding=binding, field="subject_kind" if name == "subject_kind" else "subject_id"
             ), "string"
-        predicate, value_type = self.resolver.field(self.bindings[binding], name, path=path)
+        predicate, value_type = self.resolver.field(
+            self.bindings[binding], name, path=path, scalar=scalar
+        )
         return QueryClaimValueRef(binding=binding, predicate=predicate), value_type
 
     def operand(
@@ -322,7 +326,7 @@ class _LowerQuery:
         if operand.kind == "reference" or (
             operand.kind == "name" and operand.value in self.bindings
         ):
-            ref, actual = self.ref(str(operand.value), path)
+            ref, actual = self.ref(str(operand.value), path, scalar=True)
             if actual != value_type:
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
@@ -372,7 +376,9 @@ class _LowerQuery:
                 if isinstance(child, QueryClaimPresenceFilter):
                     return child.model_copy(update={"negated": not child.negated})
                 return QueryNegationFilter(operand=child)
-            left, value_type = self.ref(str(expr.operands[0].value), path)
+            left, value_type = self.ref(
+                str(expr.operands[0].value), path, scalar=expr.kind != "presence"
+            )
             if expr.kind == "presence":
                 if not isinstance(left, QueryClaimValueRef):
                     raise QuerySpecError(
@@ -433,10 +439,10 @@ class _LowerQuery:
         for index, hop in enumerate(self.spec.hops):
             target, expression = next(iter(hop.items()))
             path = f"$.hops[{index}]"
-            relation, _, condition = expression.partition(" where ")
+            relation, filter_separator, condition = expression.partition(" where ")
             relation, _, target_kind = relation.partition(": ")
             reverse = relation.startswith("<")
-            source, dot, predicate = relation.removeprefix("<").rstrip("!").partition(".")
+            source, dot, predicate = relation.removeprefix("<").removesuffix("!").partition(".")
             inferred = None
             if reverse and source not in self.bindings:
                 inferred = self.resolver.reverse_source(
@@ -479,13 +485,18 @@ class _LowerQuery:
                     direction="reverse" if reverse else "forward",
                     required=relation.endswith("!"),
                     target_subject_kinds=targets,
-                    where=self.filter(condition, path) if condition else None,
+                    where=self.filter(condition, path) if filter_separator else None,
                 )
             )
         fields = []
         for index, item in enumerate(self.spec.fields):
             if isinstance(item, str):
-                text, name = item, item.rsplit(".", 1)[-1]
+                text = item
+                bare = item
+                for function in ("role", "verdict"):
+                    if item.startswith(function + "(") and item.endswith(")"):
+                        bare = item[len(function) + 1 : -1]
+                name = bare.rsplit(".", 1)[-1]
                 if item in self.bindings:
                     name = item
             else:
@@ -496,7 +507,7 @@ class _LowerQuery:
         for index, ordering in enumerate(self.spec.order):
             override = ordering.type if isinstance(ordering, QueryOrderInput) else None
             text = ordering.field if isinstance(ordering, QueryOrderInput) else ordering
-            ref, value_type = self.ref(text.removeprefix("-"), f"$.order[{index}]")
+            ref, value_type = self.ref(text.removeprefix("-"), f"$.order[{index}]", scalar=True)
             if override is not None:
                 if override != value_type and (value_type, override) != ("string", "decimal"):
                     raise QuerySpecError(
@@ -541,7 +552,7 @@ class _LowerQuery:
             description=self.spec.description,
             entry=entry,
             traversal=tuple(traversal),
-            where=self.filter(self.spec.where, "$.where") if self.spec.where else None,
+            where=self.filter(self.spec.where, "$.where") if self.spec.where is not None else None,
             result_binding=binding,
             result_shape="path" if path_shape else "subject",
             result_cardinality="many",

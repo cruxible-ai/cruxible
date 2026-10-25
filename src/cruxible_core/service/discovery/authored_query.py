@@ -6,9 +6,11 @@ from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from typing import cast
 
+from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_client.contracts.query.grammar import QueryValueType
+from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query_vocabulary import (
@@ -40,16 +42,18 @@ class AuthoredQueryResolver:
     def require_kind(self, kind: str, *, path: str) -> str:
         return self.vocabulary.require_kind(kind, field_path=path)
 
-    def field(self, kinds: tuple[str, ...], name: str, *, path: str) -> tuple[str, QueryValueType]:
+    def field(
+        self, kinds: tuple[str, ...], name: str, *, path: str, scalar: bool = False
+    ) -> tuple[str, QueryValueType]:
         info = self.vocabulary.resolve_field(kinds, name, field_path=path)
-        if isinstance(info, str) or info.value_type not in _ENGINE_TYPES:
+        if isinstance(info, str) or (scalar and info.value_type not in _ENGINE_TYPES):
             raise query_refusal(
                 "cruxible.query.operator_not_applicable",
                 "field is not a stored scalar value",
                 field_path=path,
                 repair="choose a scalar predicate",
             )
-        return info.predicate, _ENGINE_TYPES[info.value_type]
+        return info.predicate, _ENGINE_TYPES.get(info.value_type, "string")
 
     def reverse_source(
         self, bindings: Mapping[str, tuple[str, ...]], name: str, *, path: str
@@ -168,6 +172,12 @@ def _predicate_info(path: str, content: bytes) -> PredicateInfo | None:
     )
 
 
+@lru_cache(maxsize=2048)
+def _declared_kind(path: str, content: bytes) -> str | None:
+    value = parse_subject_kind(content, path=path)
+    return value.identity.name if value.lifecycle.state == "live" else None
+
+
 def candidate_query_vocabulary(
     tree: Mapping[str, bytes], *, paths: Iterable[str] | None = None
 ) -> QueryVocabulary:
@@ -179,6 +189,12 @@ def candidate_query_vocabulary(
     predicates = {}
     kinds: set[str] = set()
     for path in tree if paths is None else paths:
+        if path.startswith("subject-kinds/") and path.endswith(".json"):
+            content = tree.get(path)
+            declared = None if content is None else _declared_kind(path, content)
+            if declared is not None:
+                kinds.add(declared)
+            continue
         if not path.startswith("claim-types/") or not path.endswith(".json"):
             continue
         content = tree.get(path)
@@ -188,7 +204,7 @@ def candidate_query_vocabulary(
         if info is None:
             continue
         predicates[info.predicate] = info
-        kinds.update(info.subject_kinds)
+        kinds.update(concrete_subject_kinds(info.subject_kinds))
         kinds.update(info.object_kinds)
     return QueryVocabulary(predicates=predicates, kinds=tuple(sorted(kinds)))
 
@@ -200,10 +216,14 @@ def candidate_vocabulary_paths(
     from cruxible_core.derived.derived_state import root_and_edits
 
     with instance.bind_accepted_projection(base) as projection:
-        paths = {row.path for row in projection.typed.envelopes(kind="claim-type")}
+        paths = {
+            row.path
+            for kind in ("claim-type", "subject-kind")
+            for row in projection.typed.envelopes(kind=kind)
+        }
     rooted = root_and_edits(tree)
     # The served authoring path always supplies a derived tree; unindexed callers
     # are explicit cold/offline inputs and enumerate their keys once.
     changes = tree if rooted is None else rooted[1]
-    paths.update(path for path in changes if path.startswith("claim-types/"))
+    paths.update(path for path in changes if path.startswith(("claim-types/", "subject-kinds/")))
     return tuple(sorted(paths))

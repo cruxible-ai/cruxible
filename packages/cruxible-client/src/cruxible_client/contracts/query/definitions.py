@@ -153,22 +153,7 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     @model_validator(mode="before")
     @classmethod
     def _v3_defaults(cls, data: Any) -> Any:
-        if (
-            not isinstance(data, Mapping)
-            or data.get("artifact_format") != "cruxible-query-definition-v3"
-        ):
-            return data
-        stated = dict(data)
-        entry = stated.get("entry")
-        if isinstance(entry, Mapping):
-            stated.setdefault(
-                "result_binding",
-                entry.get("binding", "definition" if "artifact_kind" in entry else None),
-            )
-        stated.setdefault("result_cardinality", "many")
-        if "default_budgets" not in stated and "maximum_budgets" in stated:
-            stated["default_budgets"] = stated["maximum_budgets"]
-        return stated
+        return _query_v3_defaults(data)
 
     @field_validator("description")
     @classmethod
@@ -424,6 +409,25 @@ def _spec_schema(schema: dict[str, Any]) -> None:
         schema["required"] = [name for name in required if name not in SPEC_DEFAULTED_FIELDS]
 
 
+def _query_v3_defaults(data: Any) -> Any:
+    if (
+        not isinstance(data, Mapping)
+        or data.get("artifact_format") != "cruxible-query-definition-v3"
+    ):
+        return data
+    stated = dict(data)
+    entry = stated.get("entry")
+    if isinstance(entry, Mapping):
+        stated.setdefault(
+            "result_binding",
+            entry.get("binding", "definition" if "artifact_kind" in entry else None),
+        )
+    stated.setdefault("result_cardinality", "many")
+    if "default_budgets" not in stated and "maximum_budgets" in stated:
+        stated["default_budgets"] = stated["maximum_budgets"]
+    return stated
+
+
 def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     """The spec with each omitted defaulted field stated.
 
@@ -501,7 +505,7 @@ class QueryDefinitionSpec(QueryDefinition):
     @classmethod
     def _defaults(cls, data: Any) -> Any:
         if isinstance(data, Mapping):
-            data = QueryDefinition._v3_defaults(data)
+            data = _query_v3_defaults(data)
             return query_spec_defaults(data)
         return data
 
