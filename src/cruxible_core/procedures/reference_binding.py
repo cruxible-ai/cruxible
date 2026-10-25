@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.dependencies import dependency_pins
+from cruxible_client.contracts.dependencies import EXACT_REGISTRY_TARGET_KINDS, dependency_pins
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
@@ -112,6 +112,10 @@ def bind_procedure_references(
     Payloads, schemas and retained source snapshots are not traversed.
     """
     authored = authored_procedure(accepted)
+    if frozen_pins is not None and {
+        pin for pin in frozen_pins if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS
+    } != {pin for pin in authored.pins if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS}:
+        raise ExecutionError("Recorded registry pins differ from the authored exact pins")
     resolved = {
         c.identity.qualified: (c, procedure_owned_contract_digest(c).tagged)
         for c in authored.owned_contracts
@@ -139,6 +143,14 @@ def bind_procedure_references(
         if isinstance(value, list):
             return [reference(item, field) for item in value]
         identity = ArtifactIdentity.model_validate(value["target"])
+        if identity.kind in EXACT_REGISTRY_TARGET_KINDS:
+            if "artifact_digest" not in value:
+                raise ExecutionError(
+                    f"Registry dependency {identity.qualified!r} requires an exact pin"
+                )
+            # No ledger owner exists for this kind. Its owning registry law
+            # checks the digest; admission and replay retain the same bytes.
+            return ArtifactPin.model_validate(value).model_dump(mode="json")
         _, digest = resolve(identity)
         return ArtifactPin(role=_FIELDS[field], target=identity, artifact_digest=digest).model_dump(
             mode="json"
@@ -208,6 +220,13 @@ def bind_procedure_references(
     definition._authored = authored.definition
     pins = {p for p in iter_pin_bindings(definition) if isinstance(p, ArtifactPin)}
     for pin in dependency_pins(authored) if frozen_pins is None else frozen_pins:
+        if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS:
+            if not isinstance(pin, ArtifactPin):
+                raise ExecutionError(
+                    f"Registry dependency {pin.target.qualified!r} requires an exact pin"
+                )
+            pins.add(pin)
+            continue
         if pin.target.kind != "Contract":
             _, digest = resolve(pin.target)
             pins.add(ArtifactPin(role=pin.role, target=pin.target, artifact_digest=digest))

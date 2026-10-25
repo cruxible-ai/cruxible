@@ -60,6 +60,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.content_memo import request_derive, seal
 from cruxible_client.contracts.dependencies import (
+    EXACT_REGISTRY_TARGET_KINDS,
     dependency_follows_name,
     dependency_pins,
     is_frozen_dependency,
@@ -638,19 +639,7 @@ class ClosureEvaluationV3(_StrictClosureModel):
         return _proofs_for(self.member_dependency_proofs, path)
 
 
-DEFERRED_PIN_TARGET_KINDS: Final = frozenset(
-    {
-        "Contract",
-        "EffectPolicy",
-        "EnvironmentManifest",
-        "ExhaustReducer",
-        "LandingFilter",
-        "Policy",
-        "QueryDefinition",
-        "ReceiptSetManifest",
-        "Reducer",
-    }
-)
+DEFERRED_PIN_TARGET_KINDS: Final = EXACT_REGISTRY_TARGET_KINDS | {"Contract", "QueryDefinition"}
 """Pin target kinds whose referent has no ledger artifact envelope yet.
 
 These component families are exact compiler/policy-registry pins, or
@@ -784,7 +773,10 @@ def _unresolved_pins_for(
         if pin.target.kind in DEFERRED_PIN_TARGET_KINDS and (
             pin.target.kind != "QueryDefinition" or not by_name
         ):
-            continue
+            if not by_name or isinstance(pin, ArtifactPin) or pin.target.kind == "Contract":
+                continue
+            # Registry material has no accepted head. Only an exact stored pin
+            # can name it; a new name reference must be refused as unresolved.
         if is_provenance_pin(source.artifact_kind, pin.role):
             continue
         target_path = paths_by_identity.get(pin.target.qualified)

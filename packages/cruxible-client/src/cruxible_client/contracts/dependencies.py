@@ -14,6 +14,20 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 
+# These registry/manifest kinds have no governed ledger envelope. A digest
+# names their material; interpreting it as a head-bound name would lose it.
+EXACT_REGISTRY_TARGET_KINDS = frozenset(
+    {
+        "EffectPolicy",
+        "EnvironmentManifest",
+        "ExhaustReducer",
+        "LandingFilter",
+        "Policy",
+        "ReceiptSetManifest",
+        "Reducer",
+    }
+)
+
 FIELD_ROLES = {
     "contract_in": "contract-in",
     "contract_out": "contract-out",
@@ -98,7 +112,12 @@ def dependency_pins(
         "capturecontract",
         "provider",
     }:
-        pins = [ArtifactRef(role=pin.role, target=pin.target) for pin in pins]
+        pins = [
+            pin
+            if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS
+            else ArtifactRef(role=pin.role, target=pin.target)
+            for pin in pins
+        ]
 
     def visit(item: object, field: str = "") -> Iterator[ArtifactRef]:
         if isinstance(item, ArtifactNameRef):
