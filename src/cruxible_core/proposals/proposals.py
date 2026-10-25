@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2345,6 +2345,7 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
     identity = line.identity.qualified
     stranded: set[str] = set()
+    triggers: Iterable[AcceptedTrigger | None]
     if context.current.compiler == LIGHT_ARTIFACTS_COMPILER:
         triggers = (
             context.resolved.triggers.get(
