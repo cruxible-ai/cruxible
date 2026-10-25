@@ -683,3 +683,18 @@ def test_named_member_law_evidence_reproduces_with_recorded_coordinates(tmp_path
     assert replay.candidate == candidate, differences(
         candidate.model_dump(mode="json"), replay.candidate.model_dump(mode="json")
     )
+
+
+def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
+    from cruxible_client.contracts.named_references import name_query
+    from cruxible_client.contracts.procedures.source_program import NamedSourceQueryBinding
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.query.definitions import render_query_definition
+    from tests.test_query.test_query_definitions import active_work_query
+
+    query = name_query(active_work_query())
+    binding = NamedSourceQueryBinding(name=query.identity.name, definition=query)
+    wire = compact_procedure(binding)
+    assert wire["definition"] == json.loads(render_query_definition(query))
+    assert "result_cardinality" not in wire["definition"]
+    assert NamedSourceQueryBinding.model_validate(wire) == binding
