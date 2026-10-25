@@ -5060,25 +5060,36 @@ def _evaluate_scoped_members(
         if verdict.member is not None:
             accepted.append(verdict.member)
 
-    if current.compiler == LIGHT_ARTIFACTS_COMPILER and not replaying_accepted:
+    if current.compiler == LIGHT_ARTIFACTS_COMPILER:
         # The reverse index is maintained from changed paths. Recheck only live
         # governed referrers, never Claims or mandate authority pins.
         from cruxible_client.contracts.canonical import pretty_canonical_bytes
         from cruxible_client.contracts.dependencies import dependency_follows_name
 
-        referrers = {
-            edge.source_path
-            for changed_path in scope
-            for edge in parent.dependencies.edges_by_target.get(changed_path, ())
-            if edge.source_path not in scope
-            and dependency_follows_name(
-                parent.dependencies.states[edge.source_path].artifact_kind,
-                parent.dependencies.states[edge.source_path].pins,
-                parent.dependencies.states[changed_path].identity,
-                edge.pin_role,
-            )
-        }
-        for referrer_path in sorted(referrers):
+        # Annotation is consensus evidence, so replay computes it too. The
+        # unchanged referrers retain their references in the candidate; reuse
+        # this one incoming bucket read for both rechecks and review evidence.
+        referrers_by_target: dict[str, set[str]] = {}
+        for changed_path in scope:
+            incoming = parent.dependencies.edges_by_target.get(changed_path, ())
+            paths = set()
+            for edge in incoming:
+                state = candidate_states.get(edge.source_path)
+                if (
+                    edge.source_path not in scope
+                    and state is not None
+                    and state.lifecycle.state == "live"
+                    and dependency_follows_name(
+                        state.artifact_kind,
+                        state.pins,
+                        parent.dependencies.states[changed_path].identity,
+                        edge.pin_role,
+                    )
+                ):
+                    paths.add(edge.source_path)
+            referrers_by_target[changed_path] = paths
+        referrers = {path for paths in referrers_by_target.values() for path in paths}
+        for referrer_path in () if replaying_accepted else sorted(referrers):
             state = candidate_states.get(referrer_path)
             if state is None or state.lifecycle.state != "live":
                 continue
@@ -5139,10 +5150,8 @@ def _evaluate_scoped_members(
                     **member.result,
                     "referrers": sorted(
                         {
-                            candidate_states[edge.source_path].identity.qualified
-                            for edge in candidate_dependencies.edges_by_target.get(member.path, ())
-                            if edge.source_path in referrers
-                            and candidate_states[edge.source_path].lifecycle.state == "live"
+                            candidate_states[path].identity.qualified
+                            for path in referrers_by_target.get(member.path, ())
                         }
                     ),
                 },

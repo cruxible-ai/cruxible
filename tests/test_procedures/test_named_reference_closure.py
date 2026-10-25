@@ -33,6 +33,242 @@ QPATH = "query-definitions/claims-by-status.json"
 PPATH = "procedures/triage.json"
 
 
+def authored_query(name="definitions"):
+    """Hand-written native input, without a legacy conversion round trip."""
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+
+    return NamedQueryDefinition.model_validate(
+        {
+            "identity": {"kind": "QueryDefinition", "name": name},
+            "entry": {
+                "tag": "playbill-query-artifacts-entry-v2",
+                "artifact_kind": "Procedure",
+                "selection": "all",
+            },
+            "result_binding": "definition",
+            "result_shape": "artifact_definition",
+            "result_cardinality": "many",
+            "dedupe": "artifact",
+            "evaluation_policy": {
+                "visible_verdicts": ["supported"],
+                "visible_currency": ["current"],
+                "conflict_behavior": "surface_conflicts",
+            },
+            "default_budgets": {"max_results": 10, "max_traversal_depth": 0},
+            "maximum_budgets": {"max_results": 100, "max_traversal_depth": 0},
+        }
+    )
+
+
+def authored_procedure(name="reader", query="definitions", *, named=True):
+    """Explicit authored fields; only compiler-owned digests are computed."""
+    from cruxible_client.contracts.procedures.artifacts import (
+        NamedProcedureArtifact,
+        ProcedureArtifact,
+        ProcedureOwnedContract,
+        procedure_owned_contract_digest,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
+    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+
+    contract = ProcedureOwnedContract.model_validate(
+        {
+            "identity": {"kind": "Contract", "name": "io"},
+            "schema": {"fields": {}, "allow_extra": True},
+        }
+    )
+
+    def reference(kind, target, role):
+        value = {"target": {"kind": kind, "name": target}}
+        if not named:
+            assert kind == "Contract"
+            value.update(
+                role=role, artifact_digest=procedure_owned_contract_digest(contract).tagged
+            )
+        return value
+
+    raw = {
+        "graph_format": 7 if named else 6,
+        "name": name,
+        "contract_in": reference("Contract", "io", "contract-in"),
+        "contract_out": reference("Contract", "io", "contract-out"),
+        "nodes": [
+            {
+                "kind": "state_tap",
+                "node_id": "read",
+                "as": "result",
+                "query": reference("QueryDefinition", query, "query"),
+                "parameters": {},
+            }
+        ]
+        if query is not None
+        else [
+            {
+                "kind": "constant",
+                "node_id": "result",
+                "as": "result",
+                "fields": {},
+                "contract_out": reference("Contract", "io", "contract-out"),
+            }
+        ],
+        "returns": "result",
+        "budget": {
+            "wall_clock": {"microseconds": 1_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            "max_items": 100,
+        },
+        "hard_caps": {
+            "max_wall_clock": {"microseconds": 1_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            "max_items": 100,
+            "max_repeat_attempts": 1,
+        },
+        "terminal_capability": 1,
+    }
+    definition = (NamedProcedureDefinition if named else ProcedureDefinition).model_validate(raw)
+    payload = {
+        "identity": {"kind": "Procedure", "name": name},
+        "definition": definition,
+        "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        "owned_contracts": (contract,),
+        "activation_policy": "snapshot",
+    }
+    if not named:
+        payload["pins"] = (raw["contract_in"], raw["contract_out"])
+    return (NamedProcedureArtifact if named else ProcedureArtifact).model_validate(payload)
+
+
+def test_genesis_recovery_reproduces_all_named_law_evidence_bytes(tmp_path):
+    import shutil
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.ledger.recovery import candidate_from_change_set_record
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    instance, _ = initialize_local(tmp_path)
+    query = authored_query()
+    procedure = authored_procedure()
+    qpath, ppath = "query-definitions/definitions.json", "procedures/reader.json"
+    revisions = (
+        {qpath: render_query_definition(query)},
+        {ppath: render_procedure(procedure)},
+        {
+            qpath: render_query_definition(
+                query.model_copy(
+                    update={
+                        "description": "Compatible target revision",
+                        "lifecycle": ArtifactLifecycle(
+                            predecessor_digest=query_definition_digest(query).tagged
+                        ),
+                    }
+                )
+            )
+        },
+    )
+    for n, updates in enumerate(revisions):
+        parent = instance.accepted_coordinate()
+        before = instance.tree_at(parent.git_oid)
+        accept_tree(instance, updates, name=f"recovery-{n}")
+        record = instance.accepted_history()[-1].record
+        assert all("referrers" in law.result for law in record.law_evidence)
+        if n == 2:
+            assert record.law_evidence[0].result["referrers"] == ["Procedure:reader"]
+        expected = candidate_from_change_set_record(record)
+        result = evaluate_proposal_tree(
+            base_tree=before,
+            current_tree=before,
+            proposed_tree=instance.tree_at(instance.accepted_coordinate().git_oid),
+            current=parent,
+            bodies=instance.body_store(),
+            timestamp=record.candidate.timestamp,
+            rebased=False,
+            actor_id="owner",
+            replaying_accepted=True,
+            historical_law_coordinates={
+                member.path: (member.law_identifier, record.law_digests[member.law_identifier])
+                for member in expected.members
+            },
+        )
+        assert result.diagnostics == ()
+        assert result.candidate == expected
+        assert canonical_bytes(
+            [e.model_dump(mode="json") for e in result.candidate.law_evidence]
+        ) == (canonical_bytes([e.model_dump(mode="json") for e in record.law_evidence]))
+        head = instance.accepted_coordinate()
+        shutil.rmtree(PlaybillInstance._checkpoint_directory(instance.root), ignore_errors=True)
+        instance = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+        assert instance.accepted_coordinate() == head
+
+
+@pytest.mark.parametrize("unrelated_count", [10, 100])
+def test_proposal_recheck_reads_one_bucket_per_changed_member(tmp_path, unrelated_count):
+    import sys
+    from dataclasses import replace
+
+    from cruxible_core.derived.derived_rows import CanonicalRows
+    from cruxible_core.proposals.proposals import build_tree_state
+
+    instance, _ = initialize_local(tmp_path)
+    current = instance.accepted_coordinate()
+    query, other = authored_query(), authored_query("unrelated")
+    qpath, other_path = "query-definitions/definitions.json", "query-definitions/unrelated.json"
+    parent = {
+        **instance.tree_at(current.git_oid),
+        qpath: render_query_definition(query),
+        other_path: render_query_definition(other),
+        "procedures/reader.json": render_procedure(authored_procedure()),
+        **{
+            f"procedures/unrelated-{n}.json": render_procedure(
+                authored_procedure(f"unrelated-{n}", query="unrelated")
+            )
+            for n in range(unrelated_count)
+        },
+    }
+    state = build_tree_state(parent, by_name=True)
+    buckets = state.dependencies.edges_by_target
+    reads = []
+
+    class CountedBuckets(CanonicalRows):
+        def get(self, key, default=None):
+            # Observe the actual proposal recheck loop, excluding the separate
+            # incremental-index and closure-proof consumers of this same index.
+            if sys._getframe(1).f_code.co_name == "_evaluate_scoped_members":
+                reads.append(key)
+            return super().get(key, default)
+
+        def __iter__(self):
+            raise AssertionError("Proposal rechecks must not scan unrelated referrer buckets")
+
+    observed = CountedBuckets(buckets.rows, buckets.encode, buckets.decode)
+    state = replace(state, dependencies=replace(state.dependencies, edges_by_target=observed))
+    revised = query.model_copy(
+        update={
+            "description": "Compatible revision",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    result = evaluate_proposal_tree(
+        base_tree=parent,
+        current_tree=parent,
+        proposed_tree={**parent, qpath: render_query_definition(revised)},
+        current=current,
+        bodies=instance.body_store(),
+        parent_state=state,
+        timestamp="2026-10-25T04:00:00.000000Z",
+        rebased=False,
+        actor_id="owner",
+    )
+    assert result.diagnostics == ()
+    assert result.candidate is not None
+    assert reads == [qpath]
+    assert result.candidate.law_evidence[0].result["referrers"] == ["Procedure:reader"]
+
+
 def world():
     query = name_query(
         active_work_query(
