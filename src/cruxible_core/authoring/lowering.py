@@ -5863,12 +5863,12 @@ def _stage_change_set_member(
     )
     candidate_tree = fork_tree(staged_tree)
     candidate_tree[path] = content
-    extra: set[str] = set()
+    builtin_paths: set[str] = set()
     if isinstance(member, ClaimTypeAuthoringPayload) and base.compiler == LIGHT_ARTIFACTS_COMPILER:
         from cruxible_core.claims.claim_type_inputs import install_builtin_capture_dependencies
 
-        extra = install_builtin_capture_dependencies(member.claim_type, candidate_tree)
-    return candidate_tree, {"artifact_digest": digest}, extra, {}
+        builtin_paths = install_builtin_capture_dependencies(member.claim_type, candidate_tree)
+    return candidate_tree, {"artifact_digest": digest}, builtin_paths, {}
 
 
 def _resolve_re_author_siblings(
