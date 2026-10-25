@@ -242,6 +242,34 @@ def run_capture_producers(
         proposal_name="v2-capture-surface",
     )
 
+    interface = accepted_interface()
+    provider = accepted_provider()
+    if rule is not None:
+        from cruxible_client.contracts.provider_interfaces import (
+            interface_definition_bytes,
+            interface_definition_digest,
+            interface_definition_digest_domain,
+            provider_interface_digest,
+            provider_interface_path,
+        )
+        from tests.support.provider_builds import legacy_interface_contract
+
+        registration = legacy_interface_contract(
+            interface_id=interface.registration.interface_id,
+            interface_bytes_hex=interface_definition_bytes(interface.registration).hex(),
+            interface_digest=interface_definition_digest(interface.registration),
+            interface_digest_domain=interface_definition_digest_domain(interface.registration),
+            effect_class=interface.registration.effect_class,
+        )
+        interface = interface.model_copy(
+            update={
+                "registration": registration,
+                "path": provider_interface_path(registration.identity.name),
+                "artifact_digest": provider_interface_digest(registration).tagged,
+            }
+        )
+        provider = accepted_build(p2b1_support.provider_v2(registration=registration))
+
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     accepted, prepared, fixture, policy, _contract = _source_fixture(
@@ -250,9 +278,9 @@ def run_capture_producers(
         rule=rule,
         contract=contract,
         terminal_contract=terminal_contract,
+        historical_provider=provider if rule is not None else None,
+        historical_interface=interface if rule is not None else None,
     )
-    interface = accepted_interface()
-    provider = accepted_provider()
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[interface.path] = render_provider_interface(interface.registration)
     tree[provider_path(provider.provider.identity.name)] = render_provider(provider.provider)

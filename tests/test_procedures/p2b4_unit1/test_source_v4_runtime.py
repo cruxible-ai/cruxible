@@ -170,6 +170,8 @@ def _source_fixture(
     capture_budget: int | None = None,
     contract=None,
     terminal_contract=None,
+    historical_provider=None,
+    historical_interface=None,
 ) -> tuple[
     AcceptedProcedure,
     PreparedProcedureRunV9,
@@ -178,10 +180,20 @@ def _source_fixture(
     object,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.
+    if rule is not None and historical_provider is None:
+        from tests.core_support._p2b1_support import provider_v2
+        from tests.support.provider_builds import accepted_build
+
+        historical_provider = accepted_build(provider_v2())
     provider_accepted = _accepted_one_provider(
-        wall_clock=RUN_WALL_CLOCK, max_wall_clock=MAX_WALL_CLOCK
+        wall_clock=RUN_WALL_CLOCK,
+        max_wall_clock=MAX_WALL_CLOCK,
+        provider=historical_provider,
+        interface=historical_interface,
     )
-    provider_prepared, fixture = _prepared_acquisition_run(provider_accepted, tmp_path)
+    provider_prepared, fixture = _prepared_acquisition_run(
+        provider_accepted, tmp_path, provider=historical_provider, interface=historical_interface
+    )
     provider_node = provider_accepted.procedure.definition.nodes[0]
     assert isinstance(provider_node, CallNode)
     contract = capture_contract() if contract is None else contract

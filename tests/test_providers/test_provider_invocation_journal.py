@@ -152,6 +152,8 @@ class _ElapsedClock:
 def _accepted_one_provider(
     *,
     mutation: bool = False,
+    provider: AcceptedProvider | None = None,
+    interface: AcceptedProviderInterfaceRegistration | None = None,
     repeat: bool = False,
     wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
     max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=4_000_000),
@@ -162,8 +164,8 @@ def _accepted_one_provider(
     that runs on the real clock passes the roomy test budget instead.
     """
 
-    provider = accepted_provider()
-    interface = accepted_interface()
+    provider = provider or accepted_provider()
+    interface = interface or accepted_interface()
     provider_pin = pin(
         "provider", "Provider", provider.provider.identity.name, value=provider.artifact_digest
     )

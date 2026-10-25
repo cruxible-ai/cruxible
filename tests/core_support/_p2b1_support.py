@@ -123,9 +123,13 @@ def accepted_interface() -> AcceptedProviderInterfaceRegistration:
     )
 
 
-def provider_v2() -> ProviderV2:
-    registration = interface_registration()
-    interface = accepted_interface()
+def provider_v2(*, registration=None) -> ProviderV2:
+    registration = registration or interface_registration()
+    interface = AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.identity.name),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
     implementation = ProviderImplementationManifestV1(
         interface_id=registration.interface_id,
         interface_digest=interface_definition_digest(registration),
