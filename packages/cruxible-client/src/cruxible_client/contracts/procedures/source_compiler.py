@@ -940,6 +940,8 @@ class _Compiler:
         self, selected: ClaimSelection, node: ast.Call, cardinality: str, limit: int | None = None
     ) -> Value:
         shape = selected.type.structure
+        # One Claim view schema for authored and AST reads; reference() retains
+        # the selected syntax's named or historical exact binding grammar.
         schema = claim_view_schema(shape)
         pin = self.reference(
             role="claim-type",

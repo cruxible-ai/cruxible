@@ -631,3 +631,50 @@ def test_named_retained_source_matches_compact_candidate_graph():
     original = name_procedure(accepted(compiled).procedure)
     verify_source_bindings(original, lookup=lambda identity: None, claim_types=(), by_name=True)
     assert original.definition.graph_format == 7
+
+
+def test_named_claim_reads_keep_the_shared_claim_view_schema():
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
+    from cruxible_client.contracts.procedures.source_program import (
+        NamedProcedureSourceProgram,
+        NamedSourceClaimType,
+    )
+    from cruxible_client.contracts.procedures.source_views import claim_view_schema
+
+    shape = ClaimTypeStructure(
+        predicate="security.asset.internet_facing",
+        allowed_subject_kinds=("security.asset",),
+        object_kind="literal",
+        literal_schema={"type": "boolean"},
+        cardinality="one",
+        permitted_roles=("observation",),
+    )
+    program = NamedProcedureSourceProgram(
+        text=textwrap.dedent("""
+        def example(request, world):
+            exposed = world.security.asset['app'].internet_facing.one()
+            if exposed.value:
+                return Output.value(value='public')
+            return Output.value(value='private')
+        """),
+        filename="named-claim.py",
+        function="example",
+        contracts={"Output": OUTPUT},
+        subject_kinds=("security.asset",),
+        claim_types={shape.predicate: NamedSourceClaimType(structure=shape)},
+    )
+    compiled = compile_source(
+        program,
+        name="example",
+        input=INPUT,
+        output=OUTPUT,
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+    )
+    node = compiled.definition.nodes[0]
+    assert compiled.definition.graph_format == 7
+    assert isinstance(node.claim_type, ArtifactNameRef)
+    assert node.claim_type.target.qualified == "ClaimType:" + shape.predicate
+    assert claim_view_schema(shape).fields["value"].json_schema == shape.literal_schema
+    assert "artifact_digest" not in node.claim_type.model_dump()
