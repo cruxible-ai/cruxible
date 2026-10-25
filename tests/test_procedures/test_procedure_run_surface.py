@@ -277,7 +277,7 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     assert "Restore or succeed" in str(result.terminal.details)
 
 
-def _slotless_procedure(name: str) -> AcceptedProcedure:
+def _slotless_procedure(name: str, *, historical: bool = False) -> AcceptedProcedure:
     """One accepted Procedure with owner-carried contracts and no pin slots.
 
     No state tap, no Provider node and no slot, so a Line binding it closes with
@@ -353,7 +353,8 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
     )
     from cruxible_client.contracts.procedures.names import name_procedure
 
-    procedure = name_procedure(procedure)
+    if not historical:
+        procedure = name_procedure(procedure)
     return AcceptedProcedure(
         path=procedure_path(name),
         procedure=procedure,

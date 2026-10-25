@@ -1078,7 +1078,7 @@ def _assert_line_closure_complete(
     coordinate: AcceptedProjectionCoordinate,
 ) -> None:
     with instance.bind_accepted_projection(coordinate) as projection:
-        for pin in dependency_pins(accepted_line.line):
+        for pin in dependency_pins(accepted_line.line, by_name=False):
             target = projection.typed.dependency_state(pin.target.qualified)
             if target is None:
                 # These component families remain exact registry pins until
@@ -1088,7 +1088,9 @@ def _assert_line_closure_complete(
                 raise ExecutionError(
                     f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
                 )
-            if target.lifecycle.state != "live":
+            if target.lifecycle.state != "live" or (
+                isinstance(pin, ArtifactPin) and target.artifact_digest != pin.artifact_digest
+            ):
                 raise ExecutionError(
                     f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
                 )
@@ -1656,6 +1658,9 @@ def _accepted_acquisition_policies(
                 "WHERE lifecycle='live' AND identity=?"
             )
             parameters = (pin.target.qualified,)
+            if isinstance(pin, ArtifactPin):
+                sql += " AND artifact_digest=?"
+                parameters += (pin.artifact_digest,)
         for identity, digest in projection.typed.connection.execute(
             sql + " ORDER BY artifact_digest", parameters
         ):
