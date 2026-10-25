@@ -37,6 +37,8 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceContract,
     evaluate_provider_interface_law,
+    interface_definition_bytes,
+    interface_definition_digest,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
@@ -185,8 +187,8 @@ def test_pinned_package_documents_survive_contract_only_registration() -> None:
         for item in registrations:
             assert isinstance(item, ProviderInterfaceContract)
             exported = exports[item.interface_id]
-            assert item.interface_digest == exported.interface_digest
-            assert bytes.fromhex(item.interface_bytes_hex) == canonical_bytes(exported.definition)
+            assert interface_definition_digest(item) == exported.interface_digest
+            assert interface_definition_bytes(item) == canonical_bytes(exported.definition)
             assert item.identity.name.startswith(item.interface_id + "/")
             historical = expected["registrations"][item.interface_id]
             assert provider_interface_digest(item).tagged != historical["artifact_digest"]
