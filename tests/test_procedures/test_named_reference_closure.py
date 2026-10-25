@@ -247,3 +247,27 @@ def test_name_index_update_reads_only_changed_bytes_at_two_instance_sizes(unrela
     assert reads == [QPATH]
     assert [e.source_path for e in after.edges_by_target[QPATH]] == [PPATH]
     assert after.edge_root == build_dependency_index(candidate, by_name=True).edge_root
+
+
+def test_named_referrer_evidence_and_compact_rechecks_survive_cold_recovery(tmp_path):
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    query, _, updates = world()
+    instance, _ = initialize_local(tmp_path)
+    accept_tree(instance, updates, name="named-replay-world")
+    procedure_bytes = instance.tree_at(instance.accepted_coordinate().git_oid)[PPATH]
+    successor = query.model_copy(
+        update={
+            "description": "A compatible revision that keeps its named reader.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    accept_tree(instance, {QPATH: render_query_definition(successor)}, name="named-replay-revision")
+    coordinate = instance.accepted_coordinate()
+    instance.refresh()
+    assert instance.accepted_coordinate() == coordinate
+    cold = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert cold.accepted_coordinate() == coordinate
+    assert cold.tree_at(coordinate.git_oid)[PPATH] == procedure_bytes

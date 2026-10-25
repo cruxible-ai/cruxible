@@ -2660,6 +2660,14 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
 
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
+    try:
+        installed = _installed(context, query.artifact_format)
+    except FormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.proposal.member_format_invalid", str(exc), context.path),
+            )
+        )
     predecessor: AcceptedQueryDefinition | None = None
     if context.parent_content is not None:
         previous = parse_query_definition(context.parent_content, path=context.path)
@@ -2682,7 +2690,6 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=(literal_traversal,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
-    installed = _installed(context, query.artifact_format)
     if (
         (
             installed.coordinate == QUERY_DEFINITION_LAW
@@ -5061,7 +5068,9 @@ def _evaluate_scoped_members(
         if verdict.member is not None:
             accepted.append(verdict.member)
 
-    if current.compiler == LIGHT_ARTIFACTS_COMPILER and not replaying_accepted:
+    if current.compiler == LIGHT_ARTIFACTS_COMPILER:
+        # Evidence is deterministic at the recorded parent, including during
+        # recovery. Skipping this on replay drops even an empty referrers list.
         # The reverse index is maintained from changed paths. Recheck only live
         # governed referrers, never Claims or mandate authority pins.
         from cruxible_client.contracts.canonical import pretty_canonical_bytes
@@ -5106,12 +5115,27 @@ def _evaluate_scoped_members(
                     for d in _refused_closure((), unresolved)
                 )
                 continue
+            content = pretty_canonical_bytes(payload)
+            if state.artifact_tag == "cruxible-procedure-v3":
+                from cruxible_client.contracts.procedures.artifacts import (
+                    NamedProcedureArtifact,
+                    render_procedure,
+                )
+
+                content = render_procedure(NamedProcedureArtifact.model_validate(payload))
+            elif state.artifact_tag == "cruxible-query-definition-v3":
+                from cruxible_client.contracts.query.definitions import (
+                    NamedQueryDefinition,
+                    render_query_definition,
+                )
+
+                content = render_query_definition(NamedQueryDefinition.model_validate(payload))
             try:
                 recheck = referrer_kind.evaluate(
                     dataclasses.replace(
                         member_context,
                         path=referrer_path,
-                        content=pretty_canonical_bytes(payload),
+                        content=content,
                         parent_content=None,
                         historical_law_coordinate=None,
                         rechecking=True,
