@@ -69,7 +69,21 @@ REFUSAL = "cruxible.authoring.derivation_requires_execution"
 
 @pytest.fixture
 def world(tmp_path):
-    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    return derivation_world(tmp_path)
+
+
+def derivation_world(tmp_path, *, historical=False):
+    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=historical)
+    from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+        builtin_contract_for_write,
+    )
+
+    profile = (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        if historical
+        else builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+    )
     definition = _claim_type().model_copy(
         update={
             "artifact_format": "playbill-claim-type-v5",
@@ -82,11 +96,7 @@ def world(tmp_path):
                     ClaimEvidenceAdmissionRuleV2(
                         rule_id="derived",
                         claim_roles=("derivation",),
-                        capture_contract_digests=(
-                            capture_contract_digest(
-                                COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-                            ).tagged,
-                        ),
+                        capture_contract_digests=(capture_contract_digest(profile).tagged,),
                         evidence_kinds=("self_asserted",),
                         admission="derivational",
                         subject_binding="exact_claim_subject",
@@ -253,6 +263,31 @@ def test_raw_proposal_cannot_forge_terminal_authority(world):
 
 def _install_line(world):
     policy = _policy()
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if world.instance.accepted_coordinate().compiler != LIGHT_ARTIFACTS_COMPILER:
+        from cruxible_client.contracts.acquisition_policies import (
+            IndependentCoherence,
+            InputAcquisitionRule,
+            SourceAcquisitionPolicyV1,
+        )
+
+        policy = SourceAcquisitionPolicyV1(
+            identity=policy.identity,
+            inputs=(
+                InputAcquisitionRule(
+                    input_name="unused",
+                    requirement="required",
+                    permitted_replayability=("exact",),
+                    max_age=policy.max_age,
+                    on_unavailable="refuse",
+                    on_stale="refuse",
+                    on_oversized="refuse",
+                    on_conflict="preserve",
+                ),
+            ),
+            coherence=IndependentCoherence(),
+        )
     line = _served_line(world.reducer, policy).model_copy(update={"max_authority": "propose"})
     mandate = _line_mandate(world.reducer)
     _accept_more(
