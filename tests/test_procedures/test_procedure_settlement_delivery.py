@@ -38,7 +38,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import SettleChangeSetNode
 from cruxible_client.contracts.query.definitions import (
-    CLAIM_TYPE_PIN_ROLE,
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -79,10 +79,7 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 def _condition(*, only_subject: str | None, require_claim: bool = False) -> QueryDefinition:
     """The settle condition; `require_claim` also projects the not-yet-accepted Claim."""
 
-    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
-
-    return QueryDefinition(
-        artifact_format="cruxible-query-definition-v3",
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="security.settle-condition"),
         entry=QueryEntry(
             binding="advisory",
@@ -129,17 +126,6 @@ def _condition(*, only_subject: str | None, require_claim: bool = False) -> Quer
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=(
-            (
-                ArtifactPin(
-                    role=CLAIM_TYPE_PIN_ROLE,
-                    target=claim_type.identity,
-                    artifact_digest=claim_type_digest(claim_type).tagged,
-                ),
-            )
-            if require_claim
-            else ()
-        ),
     )
 
 
@@ -289,6 +275,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         # Landing a Capture of the trigger contract makes an armed Line due.
         from cruxible_client.contracts.captures import (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+            builtin_contract_for_write,
             capture_contract_path,
             render_capture_contract,
         )
@@ -308,7 +295,9 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         )
         trigger_members[
             capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
-        ] = render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+        ] = render_capture_contract(
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+        )
         PROCEDURES[root] = with_terminal
     claim_types = {
         predicate: _predicate_claim_type(predicate)

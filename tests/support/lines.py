@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactRef
+from cruxible_client.contracts.named_references import name_trigger
 from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
     ActionTarget,
@@ -25,10 +26,11 @@ def line_trigger(
     line: str,
     schedule: TriggerSchedule,
     lifecycle: ArtifactLifecycle | None = None,
+    named: bool = True,
 ) -> Trigger:
     """A Trigger that runs the named Line on `schedule`."""
 
-    return Trigger(
+    trigger = Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
         target=LineTarget(
@@ -41,6 +43,8 @@ def line_trigger(
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
 
+    return name_trigger(trigger) if named else trigger
+
 
 def action_trigger(
     name: str,
@@ -49,19 +53,22 @@ def action_trigger(
     interval_seconds: int | None = None,
     schedule: TriggerSchedule | None = None,
     lifecycle: ArtifactLifecycle | None = None,
+    named: bool = True,
 ) -> Trigger:
     """A Trigger that fires one internal action, on a cadence unless given a schedule."""
 
     if schedule is None:
         assert interval_seconds is not None
         schedule = CadenceSchedule(interval_seconds=interval_seconds)
-    return Trigger(
+    trigger = Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
         target=ActionTarget(action=action),
         pins=trigger_schedule_pins(schedule),
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
+
+    return name_trigger(trigger) if named else trigger
 
 
 def successor(
@@ -70,17 +77,32 @@ def successor(
     schedule: TriggerSchedule | None = None,
     target: LineTarget | ActionTarget | None = None,
     state: Literal["live", "retired"] = "live",
+    named: bool = True,
 ) -> Trigger:
     """The next version of a Trigger, pinning its exact predecessor."""
 
+    if named:
+        result = name_trigger(trigger).model_copy(
+            update={
+                "schedule": schedule or trigger.schedule,
+                "target": target or trigger.target,
+                "lifecycle": ArtifactLifecycle(
+                    state=state,
+                    predecessor_digest=trigger_digest(trigger).tagged,
+                ),
+            }
+        )
+        return name_trigger(result)
     schedule = schedule or trigger.schedule
-    return Trigger(
+    result = Trigger(
         identity=trigger.identity,
         schedule=schedule,
         target=target or trigger.target,
         pins=trigger_schedule_pins(schedule),
         lifecycle=ArtifactLifecycle(state=state, predecessor_digest=trigger_digest(trigger).tagged),
     )
+
+    return name_trigger(result) if named else result
 
 
 def trigger_members(*triggers: Trigger) -> dict[str, bytes]:
