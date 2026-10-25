@@ -48,6 +48,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryValueRef,
     QueryValueType,
 )
+from cruxible_client.contracts.query.values import coerce_query_value
 
 
 class _AuthoredModel(BaseModel):
@@ -370,6 +371,14 @@ class _LowerQuery:
             )
         if isinstance(left, QueryClaimValueRef):
             value = self.resolver.literal(left.predicate, operator, value, path=path)
+        if not coerce_query_value(value, value_type).ok:
+            raise QuerySpecError(
+                "cruxible.query.value_type_mismatch", f"expected a {value_type} literal", path=path
+            )
+        if isinstance(left, QueryClaimFieldRef) and value not in left.vocabulary:
+            raise QuerySpecError(
+                "cruxible.query.unknown_member", f"use one of {left.vocabulary}", path=path
+            )
         return QueryLiteralRef(value=value)
 
     def filter(self, text: str, path: str) -> QueryFilter:
@@ -637,17 +646,37 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
         text = f"{value.binding}.{value.predicate}"
         return f"{value.field}({text})" if isinstance(value, QueryClaimFieldRef) else text
 
+    def filter_operand(value: QueryValueRef, *, left: bool = False) -> None:
+        if (
+            isinstance(value, QueryClaimFieldRef)
+            or (
+                left
+                and not isinstance(
+                    value, (QueryClaimValueRef, QuerySubjectFieldRef, QueryEvaluationTimeRef)
+                )
+            )
+            or (isinstance(value, QueryLiteralRef) and isinstance(value.value, (dict, list)))
+        ):
+            raise ValueError("filter operands require the explicit typed definition")
+
     def condition(value: QueryFilter) -> str:
         if isinstance(value, QueryComparisonFilter):
+            filter_operand(value.left, left=True)
+            filter_operand(value.right)
             symbols = {v: k for k, v in _SYMBOLS.items()}
             symbols["eq"] = "=="
             return f"{ref(value.left)} {symbols[value.operator]} {ref(value.right)}"
         if isinstance(value, QueryMembershipFilter):
+            filter_operand(value.left, left=True)
+            for item in value.values:
+                filter_operand(item)
             text = f"{ref(value.left)} in ({', '.join(ref(item) for item in value.values)})"
             return f"not ({text})" if value.negated else text
         if isinstance(value, QueryClaimPresenceFilter):
             return ("not " if value.negated else "") + f"exists {value.binding}.{value.predicate}"
         if isinstance(value, QueryNegationFilter):
+            if isinstance(value.operand, (QueryMembershipFilter, QueryClaimPresenceFilter)):
+                raise ValueError("explicit filter wrappers require the typed definition")
             return f"not ({condition(value.operand)})"
         word = " and " if isinstance(value, QueryConjunctionFilter) else " or "
         return "(" + word.join(condition(item) for item in value.filters) + ")"

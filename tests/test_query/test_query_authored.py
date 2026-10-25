@@ -490,3 +490,34 @@ def test_authored_query_repetition_is_a_noop_and_revisions_bind_the_predecessor(
             payload, tree={**tree, path: render_query_definition(retired)}, light_query=True
         )
     assert caught.value.code == "cruxible.query_definition.lifecycle_invalid"
+
+
+@pytest.mark.parametrize("expression", ["incident == 3", "now > 1"])
+def test_non_predicate_reference_literals_are_type_checked(expression, resolver):
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(simple(where=expression), resolver)
+    assert caught.value.error_code == "cruxible.query.value_type_mismatch"
+
+
+def test_get_does_not_render_an_unlowerable_or_different_filter_tree(resolver):
+    from cruxible_client.contracts.query.grammar import (
+        QueryClaimFieldRef,
+        QueryComparisonFilter,
+        QueryLiteralRef,
+        QueryNegationFilter,
+    )
+
+    query = lower_query_spec(simple(where='incident.name in ("one", "two")'), resolver)
+    explicit = query.model_copy(update={"where": QueryNegationFilter(operand=query.where)})
+    with pytest.raises(ValueError, match="typed definition"):
+        query_spec_from_definition(explicit)
+    role_filter = QueryComparisonFilter(
+        left=QueryClaimFieldRef(
+            binding="incident", predicate="security.incident.status", field="role"
+        ),
+        operator="eq",
+        right=QueryLiteralRef(value="observation"),
+        value_type="string",
+    )
+    with pytest.raises(ValueError, match="typed definition"):
+        query_spec_from_definition(query.model_copy(update={"where": role_filter}))
