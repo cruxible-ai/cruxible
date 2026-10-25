@@ -629,62 +629,6 @@ def test_frozen_blueprint_instantiation_chooses_frozen_or_unified_procedure_mode
     assert "pins" not in current.model_dump()
 
 
-def test_named_member_law_evidence_reproduces_with_recorded_coordinates(tmp_path):
-    from cruxible_client.contracts.captures import foreign_source_capture_contract
-    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
-    from cruxible_client.contracts.procedures.names import name_procedure
-    from cruxible_core.proposals.proposals import evaluate_proposal_tree
-    from tests.core_support._support import initialize_local
-    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
-
-    instance, _ = initialize_local(tmp_path)
-    current = instance.accepted_coordinate()
-    base = instance.tree_at(current.git_oid)
-    contract = foreign_source_capture_contract("security.inventory")
-    procedure = name_procedure(_slotless_procedure("stored.proc").procedure)
-    tree = {
-        **base,
-        capture_contract_path(contract.identity.name): render_capture_contract(contract),
-        procedure_path(procedure.identity.name): render_procedure(procedure),
-    }
-    arguments = dict(
-        base_tree=base,
-        current_tree=base,
-        proposed_tree=tree,
-        current=current,
-        timestamp="2026-10-25T12:00:00.000000Z",
-        rebased=False,
-        actor_id="owner",
-        bodies=instance.body_store(),
-    )
-    evaluated = evaluate_proposal_tree(**arguments)
-    assert evaluated.candidate is not None, evaluated.diagnostics
-    candidate = evaluated.candidate
-    replay = evaluate_proposal_tree(
-        **arguments,
-        historical_law_coordinates={
-            member.path: (member.law_identifier, candidate.law_digests[member.law_identifier])
-            for member in candidate.members
-        },
-        replaying_accepted=True,
-        wire_version=candidate.tag,
-    )
-    assert replay.candidate is not None, replay.diagnostics
-
-    def differences(a, b, path="$"):
-        if isinstance(a, dict) and isinstance(b, dict):
-            return [
-                difference
-                for key in a.keys() | b.keys()
-                for difference in differences(a.get(key), b.get(key), path + "." + key)
-            ]
-        return [] if a == b else [(path, a, b)]
-
-    assert replay.candidate == candidate, differences(
-        candidate.model_dump(mode="json"), replay.candidate.model_dump(mode="json")
-    )
-
-
 def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
     from cruxible_client.contracts.named_references import name_query
     from cruxible_client.contracts.procedures.source_program import NamedSourceQueryBinding

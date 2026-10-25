@@ -856,12 +856,90 @@ def _diff_release(
     return diff, owned
 
 
-def _retirement(path: str, current: bytes) -> bytes:
+def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
     state = _artifact_state(path, current)
     content, _digest = _render(
         path,
         _successor_payload(json.loads(current), predecessor=state.artifact_digest, state="retired"),
     )
+    if not by_name:
+        return content
+    from cruxible_client.contracts.named_references import name_line, name_query, name_trigger
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    if path.startswith("procedures/"):
+        from cruxible_client.contracts.procedures.artifacts import (
+            ProcedureArtifact,
+            parse_procedure,
+            render_procedure,
+        )
+
+        procedure = name_procedure(parse_procedure(content, path=path))
+        assert isinstance(procedure, ProcedureArtifact)
+        return render_procedure(procedure)
+    if path.startswith("blueprints/"):
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+        from cruxible_client.contracts.procedures.blueprints import (
+            parse_blueprint,
+            render_blueprint,
+        )
+
+        blueprint = name_procedure(parse_blueprint(content, path=path))
+        assert isinstance(blueprint, BlueprintArtifact)
+        return render_blueprint(blueprint)
+    if path.startswith("query-definitions/"):
+        from cruxible_client.contracts.query.definitions import (
+            parse_query_definition,
+            render_query_definition,
+        )
+
+        return render_query_definition(name_query(parse_query_definition(content, path=path)))
+    if path.startswith("lines/"):
+        from cruxible_client.contracts.procedures.line_specs import (
+            parse_line_spec,
+            render_line_spec,
+        )
+
+        return render_line_spec(name_line(parse_line_spec(content, path=path)))
+    if path.startswith("triggers/"):
+        from cruxible_client.contracts.triggers import parse_trigger, render_trigger
+
+        return render_trigger(name_trigger(parse_trigger(content, path=path)))
+    if path.startswith("capture-contracts/"):
+        from cruxible_client.contracts.capture_contract_inputs import (
+            CaptureContractInputRecord,
+            lower_capture_contract_input,
+        )
+        from cruxible_client.contracts.captures import (
+            parse_capture_contract,
+            render_capture_contract,
+        )
+
+        return render_capture_contract(
+            lower_capture_contract_input(
+                CaptureContractInputRecord(name=state.identity.name, lifecycle="retired"),
+                predecessor=parse_capture_contract(current, path=path),
+                named=True,
+            )
+        )
+    if path.startswith("source-acquisition-policies/"):
+        from cruxible_client.contracts.acquisition_policies import (
+            SourceAcquisitionPolicy,
+            SourceAcquisitionPolicyV1,
+            parse_acquisition_policy,
+            render_acquisition_policy,
+        )
+
+        policy = parse_acquisition_policy(content, path=path)
+        if isinstance(policy, SourceAcquisitionPolicyV1):
+            # A tombstone cannot execute legacy fallback/coherence behavior.
+            # Retain every alias age bound in the current terminal format.
+            policy = SourceAcquisitionPolicy(
+                identity=policy.identity,
+                overrides={rule.input_name: rule.max_age for rule in policy.inputs},
+                lifecycle=policy.lifecycle,
+            )
+        return render_acquisition_policy(policy)
     return content
 
 
@@ -923,6 +1001,7 @@ def _settle_dropped(
     keep: frozenset[str],
     retire_dependents: frozenset[str],
     kept: Mapping[str, KitKeptDivergence],
+    by_name: bool = False,
 ) -> set[str]:
     """Decide each definition the kit installed that the release dropped.
 
@@ -997,14 +1076,16 @@ def _settle_dropped(
                 dependent_count=dependents,
             )
         )
-        diff.writes[path] = _retirement(path, current)
+        diff.writes[path] = _retirement(path, current, by_name=by_name)
         if dependents:
             retiring_with_dependents.add(identity)
         for consumer_path, consumer in consumers:
             # A ClaimType whose evidence rules need the retired contract retires
             # with it, and its own dependents with it.
             if consumer_path not in diff.writes:
-                diff.writes[consumer_path] = _retirement(consumer_path, tree[consumer_path])
+                diff.writes[consumer_path] = _retirement(
+                    consumer_path, tree[consumer_path], by_name=by_name
+                )
             retiring_with_dependents.add(consumer.qualified)
     return retiring_with_dependents
 
@@ -2037,6 +2118,7 @@ def _add_kit(
         keep=keep,
         retire_dependents=frozenset(request.retire_dependents),
         kept=kept,
+        by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     ownership = _foreign_takeovers(receipts, manifest, diff)
     blocked.extend(item.detail for item in ownership)
@@ -2294,7 +2376,9 @@ def _remove_kit(
         diff.plan.append(
             KitPathPlan(path=entry.path, action="retire", identity=state.identity.qualified)
         )
-        diff.writes[entry.path] = _retirement(entry.path, current)
+        diff.writes[entry.path] = _retirement(
+            entry.path, current, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if edited:
         return KitChangeResult(
