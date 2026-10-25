@@ -304,6 +304,15 @@ def test_query_binds_request_parameters_and_types_the_result():
     assert compiled.definition.nodes[0].kind == "state_tap"
     assert compiled.definition.nodes[0].parameters == {"status": "ready"}
 
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    named = name_procedure(accepted(compiled).procedure)
+    verify_source_graph(named)
+    binding = named.definition.source.bindings["work"].model_dump(mode="json")
+    assert "version" not in binding
+    assert "pins" not in binding["definition"]
+
 
 def test_capture_terminal_has_declared_result_and_requires_material_schema():
     from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
@@ -362,6 +371,15 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
     )
     assert result.definition.nodes[0].as_ == "observation"
     assert result.definition.nodes[-1].result == {"value": "$steps.observation.retrieved.final_url"}
+
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    named = name_procedure(accepted(result).procedure)
+    verify_source_graph(named)
+    binding = named.definition.source.bindings["fetch"].model_dump(mode="json")
+    assert set(binding) == {"kind", "provider", "interface", "effect_class", "operation"}
+    assert named.definition.source.capture_contracts == ("http", "registered")
     missing = program.model_copy(
         update={
             "bindings": {
@@ -580,3 +598,23 @@ def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp
         type(compiled.definition).model_validate(
             {**compiled.definition.model_dump(), "returns": "invented"}
         )
+
+
+def test_named_retained_source_reproduces_without_digest_selections():
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    compiled = compile("""
+        def example(request):
+            return Output.value(value='named')
+    """)
+    historical = accepted(compiled).procedure
+    named = name_procedure(historical)
+    verify_source_graph(historical)
+    verify_source_graph(named)
+    source = named.definition.source.model_dump(mode="json")
+    assert source["rules"] == "cruxible.procedure-source.v3"
+    assert source["syntax_rules"] == "cruxible.procedure-source.v1"
+    assert "artifact_digest" not in str(source)
+    assert "interface_digest" not in str(source)
+    assert "implementation_digest" not in str(source)

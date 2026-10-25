@@ -33,7 +33,7 @@ _memo: OrderedDict[str, Mapping[str, ProcedureNodeDigests]] = OrderedDict()
 def compute_node_digests(definition: ProcedureDefinition) -> Mapping[str, ProcedureNodeDigests]:
     """Compute the vector directly, exactly as the graph law does."""
 
-    return compute_procedure_node_digests(definition)
+    return compute_procedure_node_digests(getattr(definition, "_authored", definition))
 
 
 def cached_node_digests(

@@ -24,6 +24,8 @@ from functools import cache
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.captures import capture_components
+
 STORED_PREFIX = "playbill."
 PUBLIC_PREFIX = "cruxible."
 
@@ -97,9 +99,9 @@ def _reserved_exact() -> tuple[str, ...]:
         COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     ):
         pins = (
-            *contract.coordinate_schema_pins,
-            *contract.selector_schema_pins,
-            contract.commitment_canonicalizer,
+            *capture_components(contract).coordinate_schema_pins,
+            *capture_components(contract).selector_schema_pins,
+            capture_components(contract).commitment_canonicalizer,
         )
         names.update(pin.target.name for pin in pins)
     return tuple(sorted(name for name in names if name.startswith(STORED_PREFIX)))

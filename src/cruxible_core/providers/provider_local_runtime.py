@@ -44,11 +44,13 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     Provider,
     ProviderV2,
+    provider_interface_pin,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderDescendantProcessV1,
@@ -703,7 +705,7 @@ class LocalProviderExecutionDriver:
                 item
                 for item in provider.runtime_artifact.manifest.implementations
                 if item.interface_id == registration.interface_id
-                and item.interface_digest == registration.interface_digest
+                and item.interface_digest == interface_definition_digest(registration)
                 and item.entrypoint == implementation_record.entrypoint
             ),
             None,
@@ -850,18 +852,8 @@ class LocalProviderExecutionDriver:
         provider = accepted_provider.provider
         registration = accepted_interface.registration
         provider_artifact_digest = accepted_provider.artifact_digest
-        interface_pin = next(
-            (
-                pin
-                for pin in provider.pins
-                if pin.target.kind == "ProviderInterface" and pin.target == registration.identity
-            ),
-            None,
-        )
-        if (
-            interface_pin is None
-            or interface_pin.artifact_digest != accepted_interface.artifact_digest
-        ):
+        interface_pin = provider_interface_pin(provider, registration.interface_id)
+        if interface_pin is None or interface_pin.target != registration.identity:
             raise ProviderLocalRuntimeRefused(
                 "undeclared_interface", "Provider does not pin this accepted interface"
             )
@@ -870,7 +862,7 @@ class LocalProviderExecutionDriver:
                 provider_artifact_digest=provider_artifact_digest,
                 interface_artifact_digest=accepted_interface.artifact_digest,
                 interface_id=registration.interface_id,
-                interface_digest=registration.interface_digest,
+                interface_digest=interface_definition_digest(registration),
                 implementation_digest=implementation_digest,
                 deployment_digest=deployment.deployment_digest,
                 materialization_digest=materialization_digest,

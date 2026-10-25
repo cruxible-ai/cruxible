@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+from typing import cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import (
@@ -153,6 +154,16 @@ def read_resolution_contract(
     return contract
 
 
+def capture_contract_name(instance: PlaybillInstance, digest: str) -> str | None:
+    with instance.accepted_history_reader() as history:
+        version = history.artifact(digest)
+    return (
+        None
+        if version is None or not version.identity.startswith("CaptureContract:")
+        else version.identity
+    )
+
+
 def read_capture_event(
     instance: PlaybillInstance,
     selector: CaptureEventSelector,
@@ -201,7 +212,9 @@ def read_capture_event(
     if (
         not isinstance(payload, dict)
         or payload.get("tag") != "playbill-procedure-produced-capture-v1"
-        or payload.get("capture_contract_digest") != selector.capture_contract_digest
+        or not isinstance(payload.get("capture_contract_digest"), str)
+        or capture_contract_name(instance, cast(str, payload["capture_contract_digest"]))
+        != selector.capture_contract_identity.qualified
     ):
         raise TriggerCaptureRefused(
             "trigger_capture_invalid", "trigger event does not match its CaptureContract selector"

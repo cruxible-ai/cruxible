@@ -103,6 +103,13 @@ def test_historical_source_call_copies_still_verify_without_changing_bytes():
     before = procedure.model_dump(mode="json")
     verify_source_graph(procedure)
     assert procedure.model_dump(mode="json") == before
+
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    named = name_procedure(procedure)
+    verify_source_graph(named)
+    assert {contract.identity.name for contract in named.owned_contracts} == {"input", "output"}
+    assert procedure.model_dump(mode="json") == before
     tampered = procedure.definition.model_copy(
         update={
             "nodes": (
@@ -183,3 +190,29 @@ def test_interface_schema_checks_json_constraints():
             direction="input",
             normalize_call=True,
         )
+
+
+def test_named_retained_binding_uses_pure_for_historical_none():
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    compiled = compiled_call()
+    source = compiled.definition.source
+    legacy_source = source.model_copy(
+        update={
+            "bindings": {
+                "echo": source.bindings["echo"].model_copy(update={"effect_class": "none"})
+            }
+        }
+    )
+    legacy = accepted(
+        dataclasses.replace(
+            compiled, definition=compiled.definition.model_copy(update={"source": legacy_source})
+        )
+    ).procedure
+    verify_source_graph(legacy)
+    before = legacy.model_dump(mode="json")
+    named = name_procedure(legacy)
+    verify_source_graph(named)
+    assert named.definition.source.bindings["echo"].effect_class == "pure"
+    assert legacy.model_dump(mode="json") == before
+    assert legacy.definition.source.bindings["echo"].effect_class == "none"

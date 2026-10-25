@@ -673,7 +673,6 @@ def blueprint_example() -> BlueprintInput:
     def carried(name: str, role: str) -> dict[str, str]:
         return {"kind": "carried_contract", "name": name, "role": role}
 
-    interface_digest = "sha256:" + "0" * 64
     return BlueprintInput(
         kind="blueprint",
         definition={
@@ -687,7 +686,6 @@ def blueprint_example() -> BlueprintInput:
                     "slot_name": "lookup",
                     "pin_role": "provider",
                     "artifact_kind": "Provider",
-                    "interface_digest": interface_digest,
                 }
             ],
             "nodes": [
@@ -700,9 +698,6 @@ def blueprint_example() -> BlueprintInput:
                         "role": "provider-interface",
                         "target": "ProviderInterface:replace-me",
                     },
-                    "interface_digest": interface_digest,
-                    "contract_in": carried("lookup-request", "contract-in"),
-                    "contract_out": carried("lookup-result", "contract-out"),
                     "input": "$input",
                     "as": "result",
                 }

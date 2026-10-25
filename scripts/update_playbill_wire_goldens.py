@@ -45,6 +45,7 @@ from cruxible_client.contracts.merkle import (
     ROOT_PREFIX,
     build_merkle_manifest,
 )
+from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -52,7 +53,9 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
+    parse_query_definition,
     query_definition_digest,
+    query_definition_path,
     render_query_definition,
 )
 from cruxible_client.contracts.source_references import SourceHandle, source_handle_digest
@@ -148,9 +151,14 @@ def _update_query_golden() -> None:
             _query_claim_type("project.work_item.status")
         ).tagged,
     }
-    for pin in raw["pins"]:
+    for pin in raw.get("pins", []):
         pin["artifact_digest"] = digests[pin["target"]["name"]]
-    definition = QueryDefinition.model_validate(raw)
+    definition = name_query(
+        parse_query_definition(
+            json.dumps(raw, indent=2, sort_keys=True).encode() + b"\n",
+            path=query_definition_path(raw["identity"]["name"]),
+        )
+    )
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged

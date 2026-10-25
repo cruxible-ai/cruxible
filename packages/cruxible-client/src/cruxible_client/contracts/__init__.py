@@ -2135,7 +2135,6 @@ class ProviderInterfaceImplementation(BaseModel):
     )
     provider_identity: str
     provider_artifact_digest: str
-    implementation_digest: str
     #: The most recently registered live build of its provider name.
     newest: bool = True
     #: Exact head(s) of this provider name, including builds on other contracts.
@@ -2150,7 +2149,6 @@ class ProviderInterfaceEntry(BaseModel):
     artifact_digest: str
     artifact_kind: Literal["ProviderInterface"]
     pin_role: Literal["provider-interface"]
-    interface_digest: str
     effect_class: Literal["pure", "external_read", "external_mutation"]
     interface_basis: Literal["accepted_registration"]
     providers: list[ProviderInterfaceImplementation] = Field(default_factory=list)

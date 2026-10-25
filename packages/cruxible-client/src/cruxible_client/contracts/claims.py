@@ -47,6 +47,7 @@ from cruxible_client.contracts.captures import (
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
     VerifiedCaptureMemo,
+    capture_components,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_erasure_authorized,
@@ -355,9 +356,9 @@ def _verified_contract_subject_binding(
     mapping_pin = next(
         (
             pin
-            for pin in contract.pins
+            for pin in capture_components(contract).pins
             if pin.role == "source-subject-mapping"
-            and pin.artifact_digest == contract.source_subject_mapping_digest
+            and pin.artifact_digest == capture_components(contract).source_subject_mapping_digest
         ),
         None,
     )

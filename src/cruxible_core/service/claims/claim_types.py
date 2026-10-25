@@ -29,6 +29,7 @@ from cruxible_core.claims.claim_type_migrations import (
     build_claim_type_migration_candidate,
     claim_type_migration_inventory,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.governance.actor_context import TransportCapability
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
@@ -184,7 +185,11 @@ def service_propose_playbill_claim_type_input(
     )
     path = claim_type_path(claim_type.predicate)
     inventory = (
-        claim_type_migration_inventory(tree, root=claim_type.identity) if path in tree else ()
+        claim_type_migration_inventory(
+            tree, root=claim_type.identity, by_name=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
+        if path in tree
+        else ()
     )
     candidate_tree: Mapping[str, bytes]
     if inventory:

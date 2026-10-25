@@ -47,7 +47,7 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import PC_HR_ARTIFACT_CODEC_COMPILERS
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER, PC_HR_ARTIFACT_CODEC_COMPILERS
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_state import row_values
 from cruxible_core.indexes.projection import (
@@ -901,7 +901,9 @@ def _clean_unaccepted_generations(
                 window=_GenerationWindow(
                     generation=parent,
                     tree=parent_tree,
-                    state=build_tree_state(parent_tree),
+                    state=build_tree_state(
+                        parent_tree, by_name=parent.compiler == LIGHT_ARTIFACTS_COMPILER
+                    ),
                 ),
                 repository_path=repository_path,
                 object_format=object_format,
@@ -1107,7 +1109,9 @@ def recover_instance(
         window = _GenerationWindow(
             generation=genesis_generation,
             tree=genesis.tree,
-            state=build_tree_state(genesis.tree),
+            state=build_tree_state(
+                genesis.tree, by_name=genesis_generation.compiler == LIGHT_ARTIFACTS_COMPILER
+            ),
         )
     else:
         history = [

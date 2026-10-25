@@ -12,6 +12,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProcedureNode,
 )
+from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 from cruxible_client.contracts.procedures.source_program import (
     SourceContract,
     SourceDiagnostic,
@@ -81,7 +82,7 @@ class ProcedureSourcePreview(_Closed):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
     name: str
     coordinate: AcceptedCoordinate
-    definition: ProcedureDefinition | None = None
+    definition: ProcedureDefinition | NamedProcedureDefinition | None = None
     contracts: tuple[SourceContract, ...] = ()
     source_map: tuple[SourceMapEntry, ...] = ()
     errors: tuple[SourceDiagnostic, ...] = ()

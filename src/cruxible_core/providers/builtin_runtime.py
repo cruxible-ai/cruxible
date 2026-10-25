@@ -48,7 +48,10 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
+)
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
@@ -175,7 +178,7 @@ def builtin_provider_binding(
         record is None
         or record.entrypoint != builtin.entrypoint
         or record.interface_id != registration.interface_id
-        or record.interface_digest != registration.interface_digest
+        or record.interface_digest != interface_definition_digest(registration)
         or {item.materialization_digest for item in record.materialization_references}
         != {builtin.materialization_digest}
     ):
@@ -187,7 +190,7 @@ def builtin_provider_binding(
         provider_artifact_digest=accepted_provider.artifact_digest,
         interface_artifact_digest=accepted_interface.artifact_digest,
         interface_id=registration.interface_id,
-        interface_digest=registration.interface_digest,
+        interface_digest=interface_definition_digest(registration),
     )
 
 

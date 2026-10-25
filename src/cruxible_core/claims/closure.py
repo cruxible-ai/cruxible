@@ -29,6 +29,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
+    ArtifactRef,
     parse_artifact_identity,
 )
 from cruxible_client.contracts.candidates import DependencyProofReference, dependency_proof_order
@@ -58,6 +59,11 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.content_memo import request_derive, seal
+from cruxible_client.contracts.dependencies import (
+    dependency_follows_name,
+    dependency_pins,
+    is_frozen_dependency,
+)
 from cruxible_client.contracts.documents import (
     DocumentArtifactAdapter,
     document_digest,
@@ -140,7 +146,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
     artifact_tag: str
     identity: ArtifactIdentity
     artifact_digest: str
-    pins: tuple[ArtifactPin, ...]
+    pins: tuple[ArtifactPin | ArtifactRef, ...]
     lifecycle: ArtifactLifecycle
 
     @field_validator("path")
@@ -161,19 +167,23 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         return SemanticAddress.whole_artifact(self.path)
 
 
-def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
+def parse_dependency_artifact(
+    path: str, content: bytes, *, by_name: bool = False
+) -> ArtifactDependencyStateV1 | None:
     """Read exact selected bytes; retain no second global artifact payload cache."""
 
     def derive() -> ArtifactDependencyStateV1 | None:
-        value = _parse_dependency_artifact(path, content)
+        value = _parse_dependency_artifact(path, content, by_name=by_name)
         if value is not None and not seal(value):
             raise TypeError("dependency state must be deeply immutable")
         return value
 
-    return request_derive(("core.dependency_state", path, content), derive)
+    return request_derive(("core.dependency_state", path, content, by_name), derive)
 
 
-def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
+def _parse_dependency_artifact(
+    path: str, content: bytes, *, by_name: bool = False
+) -> ArtifactDependencyStateV1 | None:
     """Derive metadata from exact artifact bytes, preserving parser refusals."""
 
     try:
@@ -203,7 +213,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=trigger.artifact_format,
                 identity=trigger.identity,
                 artifact_digest=trigger_digest(trigger).tagged,
-                pins=trigger.pins,
+                pins=dependency_pins(trigger, by_name=by_name),
                 lifecycle=trigger.lifecycle,
             )
         if path.startswith("resolution-contracts/"):
@@ -219,7 +229,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=resolution.artifact_format,
                 identity=resolution.identity,
                 artifact_digest=resolution_contract_digest(resolution).tagged,
-                pins=resolution.pins,
+                pins=dependency_pins(resolution, by_name=by_name),
                 lifecycle=resolution.lifecycle,
             )
         if path.startswith("attestations/"):
@@ -270,7 +280,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=claim_type.artifact_format,
                 identity=claim_type.identity,
                 artifact_digest=claim_type_digest(claim_type).tagged,
-                pins=claim_type.pins,
+                pins=dependency_pins(claim_type, by_name=by_name),
                 lifecycle=claim_type.lifecycle,
             )
         if path.startswith("capture-contracts/"):
@@ -281,7 +291,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=contract.artifact_format,
                 identity=contract.identity,
                 artifact_digest=capture_contract_digest(contract).tagged,
-                pins=contract.pins,
+                pins=dependency_pins(contract, by_name=by_name),
                 lifecycle=contract.lifecycle,
             )
         if path.startswith("providers/"):
@@ -292,7 +302,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=provider.artifact_format,
                 identity=provider.identity,
                 artifact_digest=provider_digest(provider).tagged,
-                pins=provider.pins,
+                pins=dependency_pins(provider, by_name=by_name),
                 lifecycle=provider.lifecycle,
             )
         if path.startswith("provider-interfaces/"):
@@ -303,7 +313,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=registration.artifact_format,
                 identity=registration.identity,
                 artifact_digest=provider_interface_digest(registration).tagged,
-                pins=registration.pins,
+                pins=dependency_pins(registration, by_name=by_name),
                 lifecycle=registration.lifecycle,
             )
         if path.startswith("source-acquisition-policies/"):
@@ -336,7 +346,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=procedure.artifact_format,
                 identity=procedure.identity,
                 artifact_digest=procedure_artifact_digest(procedure).tagged,
-                pins=procedure.pins,
+                pins=dependency_pins(procedure, by_name=by_name),
                 lifecycle=procedure.lifecycle,
             )
         if path.startswith("blueprints/"):
@@ -352,7 +362,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=blueprint.artifact_format,
                 identity=blueprint.identity,
                 artifact_digest=blueprint_digest(blueprint).tagged,
-                pins=blueprint.pins,
+                pins=dependency_pins(blueprint, by_name=by_name),
                 lifecycle=blueprint.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
@@ -374,7 +384,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=line.artifact_format,
                 identity=line.identity,
                 artifact_digest=line_spec_digest(line).tagged,
-                pins=line.pins,
+                pins=dependency_pins(line, by_name=by_name),
                 lifecycle=line.lifecycle,
             )
         if path.startswith("query-definitions/"):
@@ -385,7 +395,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 artifact_tag=query.artifact_format,
                 identity=query.identity,
                 artifact_digest=query_definition_digest(query).tagged,
-                pins=query.pins,
+                pins=dependency_pins(query, by_name=by_name),
                 lifecycle=query.lifecycle,
             )
         if path.startswith("exhaust-promotions/"):
@@ -420,11 +430,13 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
 
 def dependency_artifacts(
     tree: Mapping[str, bytes],
+    *,
+    by_name: bool = False,
 ) -> tuple[ArtifactDependencyStateV1, ...]:
     items = tuple(
         parsed
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if (parsed := parse_dependency_artifact(path, tree[path])) is not None
+        if (parsed := parse_dependency_artifact(path, tree[path], by_name=by_name)) is not None
     )
     identities = tuple(item.identity.qualified for item in items)
     if len(identities) != len(set(identities)):
@@ -436,7 +448,7 @@ class UnresolvedArtifactPinV1(_StrictClosureModel):
     source_path: str
     source_artifact_digest: str
     target_identity: ArtifactIdentity
-    expected_target_digest: str
+    expected_target_digest: str | None
     pin_role: str
     reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"]
 
@@ -711,6 +723,7 @@ def _outgoing_edges(
     *,
     states: Mapping[str, ArtifactDependencyStateV1],
     paths_by_identity: Mapping[str, str],
+    by_name: bool = False,
 ) -> tuple[DependencyProofReference, ...]:
     """Resolve one member's outgoing edges against the tree it belongs to."""
 
@@ -718,7 +731,11 @@ def _outgoing_edges(
     for pin in source.pins:
         target_path = paths_by_identity.get(pin.target.qualified)
         target = None if target_path is None else states[target_path]
-        if target is None or target.artifact_digest != pin.artifact_digest:
+        if target is None or (
+            isinstance(pin, ArtifactPin)
+            and (not by_name or is_frozen_dependency(source.artifact_kind, pin.role))
+            and target.artifact_digest != pin.artifact_digest
+        ):
             continue
         edges.append(
             dependency_proof(
@@ -734,6 +751,8 @@ def _outgoing_edges(
 
 def _edges(
     artifacts: tuple[ArtifactDependencyStateV1, ...],
+    *,
+    by_name: bool = False,
 ) -> tuple[DependencyProofReference, ...]:
     """Resolve one whole tree's edge set from scratch: the differential oracle."""
 
@@ -746,6 +765,7 @@ def _edges(
             source,
             states=states,
             paths_by_identity=paths_by_identity,
+            by_name=by_name,
         )
     )
 
@@ -755,19 +775,26 @@ def _unresolved_pins_for(
     *,
     states: Mapping[str, ArtifactDependencyStateV1],
     paths_by_identity: Mapping[str, str],
+    by_name: bool = False,
 ) -> tuple[UnresolvedArtifactPinV1, ...]:
     """Classify one scoped member's own pins; reads nothing outside its pin list."""
 
     missing: list[UnresolvedArtifactPinV1] = []
     for pin in source.pins:
-        if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
+        if pin.target.kind in DEFERRED_PIN_TARGET_KINDS and (
+            pin.target.kind != "QueryDefinition" or not by_name
+        ):
             continue
         if is_provenance_pin(source.artifact_kind, pin.role):
             continue
         target_path = paths_by_identity.get(pin.target.qualified)
         target = None if target_path is None else states[target_path]
         reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = None
-        if target is None or target.artifact_digest != pin.artifact_digest:
+        if target is None or (
+            isinstance(pin, ArtifactPin)
+            and (not by_name or is_frozen_dependency(source.artifact_kind, pin.role))
+            and target.artifact_digest != pin.artifact_digest
+        ):
             reason = "missing_or_digest_mismatch"
         elif source.lifecycle.state == "live" and target.lifecycle.state == "retired":
             reason = "live_source_targets_retired"
@@ -777,7 +804,7 @@ def _unresolved_pins_for(
                     source_path=source.path,
                     source_artifact_digest=source.artifact_digest,
                     target_identity=pin.target,
-                    expected_target_digest=pin.artifact_digest,
+                    expected_target_digest=getattr(pin, "artifact_digest", None),
                     pin_role=pin.role,
                     reason=reason,
                 )
@@ -805,6 +832,7 @@ class DependencyIndexV1:
     edges_by_source: Mapping[str, tuple[DependencyProofReference, ...]]
     edges_by_target: Mapping[str, tuple[DependencyProofReference, ...]]
     edge_tree: MerkleTree[DependencyEdgeRoot]
+    by_name: bool = False
 
     @property
     def edge_root(self) -> DependencyEdgeRoot:
@@ -835,6 +863,7 @@ def reverse_pin_closure(
     include: Callable[[ArtifactDependencyStateV1], bool],
     claim_identity_by_digest: Mapping[str, ArtifactIdentity] | None = None,
     resolve_claim_digest: Callable[[str], ArtifactIdentity | None] | None = None,
+    by_name: bool = False,
 ) -> tuple[ReversePinClosureItem, ...]:
     """Return the complete included reverse-dependency closure of ``root``.
 
@@ -859,7 +888,9 @@ def reverse_pin_closure(
         base = EvaluationRows(snapshot._accepted_reader())
         try:
             selected = base if snapshot._parent is None else base.overlay(snapshot._edits)
-            return _walk_reverse_pin_closure(root, include, selected.reverse_neighbors)
+            return _walk_reverse_pin_closure(
+                root, include, selected.reverse_neighbors, by_name=by_name
+            )
         finally:
             base.close()
 
@@ -902,13 +933,15 @@ def reverse_pin_closure(
             values.append((state, tuple(sorted(roles_set, key=lambda item: item.encode("utf-8")))))
         return tuple(values)
 
-    return _walk_reverse_pin_closure(root, include, neighbors)
+    return _walk_reverse_pin_closure(root, include, neighbors, by_name=by_name)
 
 
 def _walk_reverse_pin_closure(
     root: ArtifactIdentity,
     include: Callable[[ArtifactDependencyStateV1], bool],
     neighbors: Callable[[str], tuple[tuple[ArtifactDependencyStateV1, tuple[str, ...]], ...]],
+    *,
+    by_name: bool = False,
 ) -> tuple[ReversePinClosureItem, ...]:
     """One deterministic BFS; excluded nodes are traversal boundaries."""
     pending = deque((root.qualified,))
@@ -922,7 +955,15 @@ def _walk_reverse_pin_closure(
             # Provenance is never a dependency: a Claim that only records which
             # version of the triggering artifact its evidence used is not reached.
             roles = tuple(
-                role for role in all_roles if not is_provenance_pin(state.artifact_kind, role)
+                role
+                for role in all_roles
+                if not is_provenance_pin(state.artifact_kind, role)
+                and not (
+                    by_name
+                    and dependency_follows_name(
+                        state.artifact_kind, state.pins, parse_artifact_identity(triggering), role
+                    )
+                )
             )
             if not roles:
                 continue
@@ -991,7 +1032,9 @@ def _edge_rows(
     return CanonicalRows.build(values, encode=_encode_edges, decode=_EDGE_ROWS.validate_json)
 
 
-def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
+def build_dependency_index(
+    tree: Mapping[str, bytes], *, by_name: bool = False
+) -> DependencyIndexV1:
     """Build one tree's complete dependency index by parsing every member.
 
     This is the cold path, and the oracle every incremental result is compared
@@ -999,8 +1042,8 @@ def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
     or settlement, which holds no cross-call state at all -- takes it.
     """
 
-    artifacts = dependency_artifacts(tree)
-    edges = _edges(artifacts)
+    artifacts = dependency_artifacts(tree, by_name=by_name)
+    edges = _edges(artifacts, by_name=by_name)
     return DependencyIndexV1(
         states=_state_rows({item.path: item for item in artifacts}),
         paths_by_identity=PersistentMap({item.identity.qualified: item.path for item in artifacts}),
@@ -1010,6 +1053,7 @@ def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
         edges_by_source=_edge_rows(_grouped_edges(edges, key="source_path")),
         edges_by_target=_edge_rows(_grouped_edges(edges, key="target_path")),
         edge_tree=build_dependency_edge_tree(edges),
+        by_name=by_name,
     )
 
 
@@ -1056,7 +1100,7 @@ def update_dependency_index(
         content = tree.get(path)
         if content is None:
             continue
-        parsed = parse_dependency_artifact(path, content)
+        parsed = parse_dependency_artifact(path, content, by_name=index.by_name)
         if parsed is None:
             continue
         identity = parsed.identity.qualified
@@ -1093,7 +1137,9 @@ def update_dependency_index(
         resolved = (
             ()
             if state is None
-            else _outgoing_edges(state, states=states, paths_by_identity=paths_by_identity)
+            else _outgoing_edges(
+                state, states=states, paths_by_identity=paths_by_identity, by_name=index.by_name
+            )
         )
         for edge in resolved:
             affected_targets.add(edge.target_path)
@@ -1126,6 +1172,7 @@ def update_dependency_index(
         edges_by_source=edges_by_source.finish(),
         edges_by_target=edges_by_target.finish(),
         edge_tree=update_dependency_edge_tree(index.edge_tree, updated=updates),
+        by_name=index.by_name,
     )
 
 
@@ -1156,6 +1203,7 @@ def judge_dependency_closure(
     parent: DependencyIndexV1,
     candidate: DependencyIndexV1,
     scope: tuple[str, ...],
+    by_name: bool = False,
 ) -> _ClosureFacts:
     """Judge one scope against two indexes; reads only the scope's own neighbourhood.
 
@@ -1179,7 +1227,12 @@ def judge_dependency_closure(
             dependent = parent.states[edge.source_path]
             if dependent.lifecycle.state != "live":
                 continue
-            if is_provenance_pin(dependent.artifact_kind, edge.pin_role):
+            if is_provenance_pin(dependent.artifact_kind, edge.pin_role) or (
+                by_name
+                and dependency_follows_name(
+                    dependent.artifact_kind, dependent.pins, changed.identity, edge.pin_role
+                )
+            ):
                 continue
             missing.append(
                 IncompleteClosureItemV1(
@@ -1202,6 +1255,7 @@ def judge_dependency_closure(
                     source,
                     states=candidate.states,
                     paths_by_identity=candidate.paths_by_identity,
+                    by_name=by_name,
                 )
             )
         proofs.append(

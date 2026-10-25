@@ -342,3 +342,64 @@ def test_catching_up_reads_only_the_records_since_the_last_sync(
     read.clear()
     backend.catch_up_index(_stream())
     assert read == []
+
+
+def test_capture_discovery_follows_contract_names_and_caches_exact_version_resolution(tmp_path):
+    from datetime import timedelta
+
+    from cruxible_core.exhaust import ProcedureExhaustWriter
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    from tests.test_storage.test_journal_backends import NOW, _actor, _coordinate, _digest
+
+    backend = _backend(tmp_path, "named-captures")
+    _activate(backend)
+    (tmp_path / "bodies").mkdir()
+    bodies = ContentAddressedBodyStore(tmp_path / "bodies")
+    writer = ProcedureExhaustWriter(journal=backend, bodies=bodies, fencing_token="writer-a")
+    digests = [_digest("contract-v1"), _digest("contract-v2"), _digest("other-contract")]
+    records = []
+    for index, digest in enumerate(digests):
+        records.append(
+            writer.append(
+                stream=_stream(),
+                partition_id="runs-2026-08",
+                event_kind="produced_capture",
+                accepted_coordinate=_coordinate(),
+                procedure_artifact_digest=_digest("procedure"),
+                definition_digest=_digest("definition"),
+                actor_context=_actor(),
+                recorded_at=NOW + timedelta(seconds=index),
+                run_id="run-a",
+                payload={
+                    "tag": "playbill-procedure-produced-capture-v1",
+                    "capture_contract_digest": digest,
+                    "observed_at": NOW.isoformat(),
+                },
+            )
+        )
+    options = dict(bodies=bodies, since=None, until=NOW + timedelta(minutes=1), limit=10)
+    # Another consumer can populate exact selectors before names are requested.
+    exact, _, complete = backend.index.captures(_stream(), contract_digest=digests[0], **options)
+    assert complete and exact == (records[0],)
+    reads = []
+
+    def resolve(digest):
+        reads.append(digest)
+        return "CaptureContract:feed" if digest in digests[:2] else "CaptureContract:other"
+
+    found, cursor, complete = backend.index.captures(
+        _stream(), contract_identity="CaptureContract:feed", resolve_contract=resolve, **options
+    )
+    assert complete and cursor is None
+    assert found == (records[1], records[0])
+    assert reads == digests
+    assert (
+        backend.index.captures(
+            _stream(), contract_identity="CaptureContract:feed", resolve_contract=resolve, **options
+        )[0]
+        == found
+    )
+    assert reads == digests
+    assert [row.record.payload_digest for row in records] == [
+        row.record.payload_digest for row in backend.select_records(_stream(), run_id="run-a")
+    ]

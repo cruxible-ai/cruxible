@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from cruxible_client.contracts.artifacts import ArtifactPin, parse_artifact_identity
+from cruxible_client.contracts.artifacts import (
+    ArtifactNameRef,
+    ArtifactPin,
+    parse_artifact_identity,
+)
 from cruxible_client.contracts.authoring.inputs import (
     AcceptedReferenceInput,
     CarriedContractInput,
@@ -46,7 +50,6 @@ from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     GuardPredicate,
     ProcedureBudget,
-    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureNode,
     ProcedurePinSlotRef,
@@ -54,6 +57,8 @@ from cruxible_client.contracts.procedures.models import (
     TransformKind,
     derived_terminal_capability,
 )
+from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+from cruxible_client.contracts.procedures.names import named_graph
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimRetirementItem,
     ProcedureClaimStatement,
@@ -90,12 +95,12 @@ def procedure_record_constructor(
         if direction == "input"
         else artifact.definition.contract_out
     )
-    if not isinstance(pin, ArtifactPin):
+    if not isinstance(pin, ArtifactPin | ArtifactNameRef):
         raise ValueError("Typed execution requires a resolved owner-carried Contract")
     for contract in artifact.owned_contracts:
-        if (
-            contract.identity == pin.target
-            and procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
+        if contract.identity == pin.target and (
+            isinstance(pin, ArtifactNameRef)
+            or procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
         ):
             return RecordConstructor(contract.contract_schema)
     raise ValueError("Procedure contract is absent from its exact owner closure")
@@ -157,8 +162,6 @@ class ProviderBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     provider: str
     interface: str
-    interface_digest: str
-    implementation_digest: str
     effect_class: Literal["pure", "external_read", "external_mutation"] | None = None
     operation_contract: ProviderOperationContract | None = None
     coordinate: AcceptedCoordinate | None = None
@@ -168,13 +171,6 @@ class ProviderBinding(BaseModel):
         if self.operation_contract is None:
             raise ValueError("This interface has no declared operation contract")
         return RecordConstructor(self.operation_contract.input)
-
-    @field_validator("interface_digest", "implementation_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        from cruxible_client.contracts.canonical import ArtifactDigest
-
-        return ArtifactDigest.from_tagged(value).tagged
 
     @classmethod
     def from_interface(
@@ -210,8 +206,6 @@ class ProviderBinding(BaseModel):
         return cls(
             provider=selected.provider_identity,
             interface=entry.identity,
-            interface_digest=entry.interface_digest,
-            implementation_digest=selected.implementation_digest,
             effect_class=entry.effect_class,
             operation_contract=entry.operation_contract,
         )
@@ -570,16 +564,12 @@ class Sequence:
                     binding = ProviderBinding(
                         provider="unbound",
                         interface="unbound",
-                        interface_digest="sha256:" + "0" * 64,
-                        implementation_digest="sha256:" + "0" * 64,
                     )
                 node.update(
                     provider=_accepted(binding.provider, "Provider", "provider"),
                     interface=_accepted(
                         binding.interface, "ProviderInterface", "provider-interface"
                     ),
-                    interface_digest=binding.interface_digest,
-                    implementation_digest=binding.implementation_digest,
                 )
             if isinstance(
                 step, (Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet, Halt)
@@ -684,7 +674,9 @@ class Sequence:
         )
         edges: dict[str, dict[str, str]] = {}
         try:
-            checked = ProcedureDefinition.model_validate(_symbolic_pins(definition))
+            checked = NamedProcedureDefinition.model_validate(
+                named_graph(_symbolic_pins(definition))
+            )
             edges = analyze_procedure(checked).edges
         except (ValueError, ProcedureGraphFormatError) as exc:
             error(None, "graph_invalid", str(exc))

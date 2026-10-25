@@ -52,7 +52,11 @@ from cruxible_core.service.procedures.procedure_runs import (
     trigger_accepted_at,
     trigger_binding_for,
 )
-from cruxible_core.service.procedures.resolution_contracts import bind_window, capture_event_time
+from cruxible_core.service.procedures.resolution_contracts import (
+    bind_window,
+    capture_contract_name,
+    capture_event_time,
+)
 from cruxible_core.triggers.cadence import timer_instants
 
 #: The cursor position of a timed Trigger's page: the last tick it listed.
@@ -371,7 +375,8 @@ def service_check_line_trigger(
                 records, next_position, trigger_complete = journal.index.captures(
                     _stream(instance),
                     bodies=instance.body_store(),
-                    contract_digest=selector.capture_contract_digest,
+                    contract_identity=selector.capture_contract_identity.qualified,
+                    resolve_contract=lambda digest: capture_contract_name(instance, digest),
                     logical_sources=selector.logical_sources,
                     since=request.since - delay if request.since else None,
                     until=until if include_future_windows else until - delay,

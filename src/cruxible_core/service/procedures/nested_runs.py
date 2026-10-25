@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
-from cruxible_client.contracts.procedures.artifacts import DIRECT_NODE_KINDS, AcceptedProcedure
+from cruxible_client.contracts.procedures.artifacts import (
+    DIRECT_NODE_KINDS,
+    AcceptedProcedure,
+    parse_procedure,
+)
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     InvokeNode,
@@ -20,6 +24,7 @@ from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.typed_state import OWNER_BY_IDENTITY_KIND
 from cruxible_core.procedures.egress import CaptureTerminalEgressSink
 from cruxible_core.procedures.execution import (
     NestedProcedureRunAdmission,
@@ -38,6 +43,7 @@ from cruxible_core.procedures.nested import (
     constrained_caps,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
+from cruxible_core.procedures.reference_binding import replay_procedure_references
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
@@ -52,7 +58,6 @@ def retained_delegation(
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV2, parse_admission_payload
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureRunRecoveryRequired,
-        _accepted_procedure,
         _records_for_run,
     )
     from cruxible_core.storage.cas import BodyAccessContext
@@ -91,18 +96,55 @@ def retained_delegation(
         or parent.admission_binding_digest != binding.parent_admission_digest
     ):
         raise ProcedureRunRecoveryRequired("Nested recovery names another parent admission")
-    coordinate = instance.resolve_accepted_coordinate(
+    instance.resolve_accepted_coordinate(
         git_oid=parent.accepted_coordinate.git_oid,
         semantic_root=parent.accepted_coordinate.semantic_root,
         generation_root=parent.accepted_coordinate.generation_root,
         compiler_digest=parent.accepted_coordinate.compiler_digest,
     )
-    accepted = _accepted_procedure(
-        instance, name=parent.procedure_identity.name, coordinate=coordinate
-    )
-    child = _accepted_procedure(
-        instance, name=admission.procedure_identity.name, coordinate=coordinate
-    )
+
+    def version(run: ProcedureRunAdmissionV1) -> AcceptedProcedure:
+        found = instance.accepted_artifact_version(
+            run.accepted_coordinate, run.procedure_artifact_digest, family="procedures/"
+        )
+        if found is None:
+            raise ProcedureRunRecoveryRequired("Recorded Procedure bytes are unavailable")
+        path, raw = found
+        authored = AcceptedProcedure(
+            path=path,
+            procedure=parse_procedure(raw, path=path),
+            artifact_digest=run.procedure_artifact_digest,
+        )
+
+        def exact(identity: ArtifactIdentity, digest: str) -> tuple[Any, str] | None:
+            owner = OWNER_BY_IDENTITY_KIND.get(identity.kind)
+            if owner is None:
+                return None
+            location = instance.accepted_artifact_version(
+                run.accepted_coordinate, digest, family=owner.table.replace("_", "-") + "/"
+            )
+            if location is None:
+                return None
+            member_path, body = location
+            from cruxible_core.claims.closure import parse_dependency_artifact
+
+            state = parse_dependency_artifact(member_path, body)
+            if state is None or state.identity != identity or state.artifact_digest != digest:
+                return None
+            return owner.parse(body, path=member_path), digest
+
+        return replay_procedure_references(
+            authored,
+            pins=run.full_pins,
+            lookup_exact=exact,
+            implementations={
+                item.node_id: item.implementation_digest
+                for item in getattr(run, "resolved_provider_bindings", ())
+            },
+        )
+
+    accepted = version(parent)
+    child = version(admission)
     node = next(
         (
             node
@@ -149,7 +191,7 @@ class ServedNestedProcedureRunner:
         from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
         accepted = _accepted_procedure(
-            self.instance, name=pin.target.name, coordinate=self.coordinate
+            self.instance, name=pin.target.name, coordinate=self.coordinate, bind_references=True
         )
         if accepted.artifact_digest != pin.artifact_digest:
             raise ProcedureBoundaryRefused(

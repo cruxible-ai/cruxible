@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, NoReturn, cast
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.contract_schema import (
@@ -54,6 +54,10 @@ ValueType = ContractSchema | PropertySchema
 #: provenance and is recompiled on cold replay and verification, so the
 #: historical spelling stays in the language. Both compile to the same graph.
 QUERY_BUDGETS_SOURCE_NAMES = frozenset({"QueryBudgets", "QueryBudgetsV1"})
+
+
+def source_syntax(program: ProcedureSourceProgram) -> str:
+    return getattr(program, "syntax_rules", program.rules)
 
 
 @dataclass(frozen=True)
@@ -332,6 +336,14 @@ class _Compiler:
             )
         )
 
+    def reference(
+        self, *, role: str, target: ArtifactIdentity, artifact_digest: str | None
+    ) -> ArtifactPin | ArtifactNameRef:
+        if getattr(self.program, "rules") == "cruxible.procedure-source.v3":
+            return ArtifactNameRef(target=target)
+        assert artifact_digest is not None
+        return ArtifactPin(role=role, target=target, artifact_digest=artifact_digest)
+
     def contract(self, source: SourceContract) -> dict[str, Any]:
         from cruxible_client.contracts.procedures.artifacts import (
             ProcedureOwnedContract,
@@ -346,7 +358,7 @@ class _Compiler:
         owned = ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=source.name), schema=source.schema_
         )
-        return ArtifactPin(
+        return self.reference(
             role="contract-out",
             target=owned.identity,
             artifact_digest=procedure_owned_contract_digest(owned).tagged,
@@ -366,7 +378,7 @@ class _Compiler:
                 if (
                     kind in {"source", "call", "state_tap", "state_claim"}
                     or kind == "invoke"
-                    and self.program.rules == "cruxible.procedure-source.v2"
+                    and source_syntax(self.program) != "cruxible.procedure-source.v1"
                 )
                 and self.assignment_alias
                 else node_id
@@ -773,7 +785,7 @@ class _Compiler:
             if value.type != binding.input:
                 self.fail(node, "Use the child's typed input constructor", "contract_mismatch")
             self.required_child_rung = max(self.required_child_rung, binding.required_terminal_rung)
-            child = ArtifactPin(
+            child = self.reference(
                 role="procedure",
                 target=ArtifactIdentity(kind="Procedure", name=binding.name),
                 artifact_digest=binding.version,
@@ -854,7 +866,7 @@ class _Compiler:
                     "Admitted query parameters cannot depend on provider or runtime outputs",
                     "late_state_selector",
                 )
-            query_pin = ArtifactPin(
+            query_pin = self.reference(
                 role="query",
                 target=ArtifactIdentity(
                     kind="QueryDefinition", name=binding.name.removeprefix("QueryDefinition:")
@@ -884,7 +896,7 @@ class _Compiler:
             )
 
         def pin(role: str, kind: str, target: str, digest: str) -> dict[str, Any]:
-            return ArtifactPin(
+            return self.reference(
                 role=role,
                 target=ArtifactIdentity(kind=kind, name=target.removeprefix(kind + ":")),
                 artifact_digest=digest,
@@ -987,7 +999,7 @@ class _Compiler:
                 "claim": PropertySchema(type="json"),
             }
         )
-        pin = ArtifactPin(
+        pin = self.reference(
             role="claim-type",
             target=ArtifactIdentity(kind="ClaimType", name=shape.predicate),
             artifact_digest=selected.type.version,
@@ -1261,7 +1273,7 @@ class _Compiler:
             stmt,
             candidate_templates=templates,
             claim_types=[
-                ArtifactPin(
+                self.reference(
                     role="claim-type",
                     target=ArtifactIdentity(kind="ClaimType", name=name),
                     artifact_digest=self.program.claim_types[name].version,
@@ -1276,14 +1288,23 @@ class _Compiler:
         if not value.literal or not isinstance(value.wire, str):
             self.fail(node, "Capture contract must be an accepted name", "binding_required")
         name = value.wire.removeprefix("CaptureContract:")
-        version = self.program.capture_contracts.get(name)
-        if version is None:
+        version = (
+            None
+            if getattr(self.program, "rules") == "cruxible.procedure-source.v3"
+            else self.program.capture_contracts.get(name)
+        )
+        if (
+            getattr(self.program, "rules") == "cruxible.procedure-source.v3"
+            and name not in self.program.capture_contracts
+        ):
+            self.fail(node, f"CaptureContract {name!r} was not resolved", "binding_required")
+        if version is None and getattr(self.program, "rules") != "cruxible.procedure-source.v3":
             self.fail(
                 node,
                 f"CaptureContract {name!r} was not resolved at the authoring base",
                 "binding_required",
             )
-        return ArtifactPin(
+        return self.reference(
             role="capture-contract",
             target=ArtifactIdentity(kind="CaptureContract", name=name),
             artifact_digest=version,
@@ -1365,7 +1386,7 @@ class _Compiler:
             if operator is None:
                 self.fail(node, "Unsupported comparison operator")
             left, right = self.value(node.left), self.value(node.comparators[0])
-            if self.program.rules == "cruxible.procedure-source.v2":
+            if source_syntax(self.program) != "cruxible.procedure-source.v1":
                 for value, other, location in (
                     (left, right, node.left),
                     (right, left, node.comparators[0]),
@@ -1478,7 +1499,7 @@ class _Compiler:
                         "reserved_name",
                     )
                 if (
-                    self.program.rules == "cruxible.procedure-source.v2"
+                    source_syntax(self.program) != "cruxible.procedure-source.v1"
                     and stmt.targets[0].id in self.environment
                 ):
                     self.fail(
@@ -1747,46 +1768,57 @@ def _compile_source(
         )
     root_in = compiler.contract(input)
     root_in["role"] = "contract-in"
-    definition = ProcedureDefinition.model_validate(
-        dict(
-            name=name,
-            description=description,
-            contract_in=root_in,
-            contract_out=compiler.contract(output),
-            nodes=tuple(compiler.nodes),
-            returns=(compiler.returns[0] if compiler.returns else "result")
-            if program.rules == "cruxible.procedure-source.v1"
-            else None,
-            budget=budget,
-            hard_caps=hard_caps,
-            terminal_capability=capability,
-            pin_slots=[
-                {
-                    "slot_name": name,
-                    "pin_role": "provider",
-                    "artifact_kind": "Provider",
-                    "interface_digest": compiler.slots[name].interface_digest,
-                }
-                for name in sorted(compiler.slots, key=lambda item: item.encode("utf-8"))
-            ],
-            source=program.model_copy(
-                update={
-                    "contracts": {
-                        k: v for k, v in program.contracts.items() if k in compiler.used_contracts
-                    },
-                    "bindings": {
-                        k: v for k, v in program.bindings.items() if k in compiler.used_bindings
-                    },
-                    "claim_types": {
-                        k: v for k, v in program.claim_types.items() if k in compiler.used_types
-                    },
-                    "subject_kinds": tuple(
-                        k for k in program.subject_kinds if k in compiler.used_kinds
-                    ),
-                }
-            ),
-        )
+    definition_data = dict(
+        name=name,
+        description=description,
+        contract_in=root_in,
+        contract_out=compiler.contract(output),
+        nodes=tuple(compiler.nodes),
+        returns=(compiler.returns[0] if compiler.returns else "result")
+        if source_syntax(program) == "cruxible.procedure-source.v1"
+        else None,
+        budget=budget,
+        hard_caps=hard_caps,
+        terminal_capability=capability,
+        pin_slots=[
+            {
+                "slot_name": name,
+                "pin_role": "provider",
+                "artifact_kind": "Provider",
+                "interface_digest": compiler.slots[name].interface_digest,
+            }
+            for name in sorted(compiler.slots, key=lambda item: item.encode("utf-8"))
+        ],
+        source=program.model_copy(
+            update={
+                "contracts": {
+                    k: v for k, v in program.contracts.items() if k in compiler.used_contracts
+                },
+                "bindings": {
+                    k: v for k, v in program.bindings.items() if k in compiler.used_bindings
+                },
+                "claim_types": {
+                    k: v for k, v in program.claim_types.items() if k in compiler.used_types
+                },
+                "subject_kinds": tuple(
+                    k for k in program.subject_kinds if k in compiler.used_kinds
+                ),
+            }
+        ),
     )
+    definition: ProcedureDefinition
+    if getattr(program, "rules") == "cruxible.procedure-source.v3":
+        # Convert model values before selecting the strict graph grammar.
+        from pydantic_core import to_jsonable_python
+
+        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+        from cruxible_client.contracts.procedures.names import named_graph
+
+        definition = NamedProcedureDefinition.model_validate(
+            named_graph(to_jsonable_python(definition_data))
+        )
+    else:
+        definition = ProcedureDefinition.model_validate(definition_data)
     return CompiledSource(
         definition,
         tuple(compiler.contracts[k] for k in sorted(compiler.contracts)),
@@ -1853,11 +1885,11 @@ def verify_source_graph(procedure: Any) -> None:
         raise ProjectionFormatError("Source Procedures must carry their declared Contracts")
 
     def root(pin: Any) -> SourceContract:
-        if isinstance(pin, ArtifactPin):
+        if isinstance(pin, ArtifactPin | ArtifactNameRef):
             for contract in procedure.owned_contracts:
-                if (
-                    contract.identity == pin.target
-                    and procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
+                if contract.identity == pin.target and (
+                    isinstance(pin, ArtifactNameRef)
+                    or procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
                 ):
                     return SourceContract(
                         name=contract.identity.name, schema=contract.contract_schema

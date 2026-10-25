@@ -42,7 +42,9 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureEnvelopeAny,
+    capture_components,
     capture_contract_digest,
+    capture_retention_policy,
     foreign_source_capture_contract,
     parse_capture_contract,
 )
@@ -142,14 +144,14 @@ def accepted_capture_contract(
 def _erasure_rule(contract: CaptureContract) -> str | None:
     """The registered erasure rule the contract pins, when it authorizes erasure."""
 
-    policy = contract.retention_erasure_policy
+    policy = capture_retention_policy(contract)
     if policy.erasure != "authorized_by_rule" or policy.erasure_rule_digest is None:
         return None
     pinned = any(
         pin.role == "erasure-rule"
         and pin.artifact_digest == policy.erasure_rule_digest
         and CAPTURE_COMPONENTS.resolves(pin)
-        for pin in contract.pins
+        for pin in capture_components(contract).pins
     )
     return policy.erasure_rule_digest if pinned else None
 

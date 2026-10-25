@@ -47,6 +47,7 @@ from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureRetentionErasurePolicy,
     capture_contract_digest,
+    capture_retention_policy,
     foreign_source_capture_contract,
     parse_capture_contract,
     parse_capture_envelope,
@@ -263,7 +264,7 @@ def _retention(
         raw = None if path is None else instance.blob_at(git_oid, path)
         if raw is not None and path is not None:
             contract = parse_capture_contract(raw, path=path)
-    return None if contract is None else contract.retention_erasure_policy
+    return None if contract is None else capture_retention_policy(contract)
 
 
 def _absence_permitted(

@@ -7,8 +7,14 @@ from collections.abc import Callable, Iterable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar
 
-from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.captures import CaptureContract, capture_contract_digest
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.captures import CaptureContract as LightCaptureContract
+from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    NamedCaptureContract,
+    capture_contract_digest,
+)
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.procedures.artifacts import (
@@ -52,6 +58,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceContract,
     ProviderInterfaceContractV3,
     ProviderInterfaceRegistrationV1,
+    interface_definition_digest,
     provider_effect_class,
     provider_interface_digest,
     provider_operation_contract,
@@ -225,8 +232,6 @@ def resolve_source(
         for node in child.definition.nodes:
             if isinstance(node, InvokeNode):
                 nested = require("Procedure", node.procedure.target.name, ProcedureArtifact)
-                if procedure_artifact_digest(nested).tagged != node.procedure.artifact_digest:
-                    fail(f"{identity} has a child binding that is not current at this coordinate")
                 required = max(required, child_shape(nested, (*active, identity))[1])
         child_shapes[identity] = (capture, required)
         return capture, required
@@ -244,7 +249,7 @@ def resolve_source(
             implementations = [
                 item
                 for item in provider.implementations
-                if item.interface_digest == interface.interface_digest
+                if item.interface_digest == interface_definition_digest(interface)
             ]
             if len(implementations) != 1:
                 fail(
@@ -256,7 +261,7 @@ def resolve_source(
                 provider_version=provider_digest(provider).tagged,
                 interface=interface.identity.name,
                 interface_version=provider_interface_digest(interface).tagged,
-                interface_digest=interface.interface_digest,
+                interface_digest=interface_definition_digest(interface),
                 implementation_digest=implementations[0].implementation_digest,
                 effect_class=provider_effect_class(interface),
                 operation=provider_operation_contract(interface),
@@ -266,7 +271,7 @@ def resolve_source(
             bindings[name] = SourceSlotBinding(
                 interface=interface.identity.name,
                 interface_version=provider_interface_digest(interface).tagged,
-                interface_digest=interface.interface_digest,
+                interface_digest=interface_definition_digest(interface),
                 effect_class=provider_effect_class(interface),
                 operation=provider_operation_contract(interface),
             )
@@ -317,7 +322,11 @@ def resolve_source(
             and isinstance(node.value.value, str)
         ):
             name = node.value.value.removeprefix("CaptureContract:")
-            artifact = require("CaptureContract", name, CaptureContract)
+            artifact: CaptureContract = accepted(
+                "CaptureContract",
+                name,
+                (CaptureContractV1, LightCaptureContract, NamedCaptureContract),
+            )
             captures[name] = capture_contract_digest(artifact).tagged
     types: dict[str, SourceClaimType] = {}
     kinds: set[str] = set(subject_kinds)
@@ -393,6 +402,7 @@ def verify_source_bindings(
     lookup: SourceLookup,
     claim_types: Iterable[object],
     subject_kinds: Iterable[str] = (),
+    by_name: bool = False,
 ) -> None:
     """Acceptance resolves retained declarations against the candidate state.
 
@@ -423,7 +433,7 @@ def verify_source_bindings(
     owned = {c.identity.qualified: c for c in procedure.owned_contracts}
 
     def root(pin: ArtifactPin | ProcedurePinSlotRef) -> SourceContract:
-        if not isinstance(pin, ArtifactPin) or pin.target.qualified not in owned:
+        if not isinstance(pin, ArtifactPin | ArtifactNameRef) or pin.target.qualified not in owned:
             raise ValueError("Source Procedure root requires an owned Contract")
         contract = owned[pin.target.qualified]
         return SourceContract(name=contract.identity.name, schema=contract.contract_schema)
@@ -447,7 +457,7 @@ def verify_source_bindings(
         lookup=lookup,
         claim_types=claim_types,
         subject_kinds=subject_kinds,
-        rules=program.rules,
+        rules=getattr(program, "syntax_rules", program.rules),
         retained_terminal_capability=definition.terminal_capability,
     )
     # Older retained source may carry an author's absolute source location.
@@ -464,5 +474,14 @@ def verify_source_bindings(
             )
         }
     )
-    if compiled.definition != expected:
+    if by_name or getattr(definition, "graph_format") == 7:
+        from cruxible_client.contracts.procedures.names import named_graph
+
+        expected_graph = named_graph(expected.model_dump(mode="json", by_alias=True))
+        actual_graph = named_graph(compiled.definition.model_dump(mode="json", by_alias=True))
+        expected_graph.pop("source", None)
+        actual_graph.pop("source", None)
+        if actual_graph != expected_graph:
+            raise ValueError("Procedure source bindings violate the candidate graph contract")
+    elif compiled.definition != expected:
         raise ValueError("Procedure source bindings differ from their accepted definitions")

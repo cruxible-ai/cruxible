@@ -14,7 +14,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
@@ -54,12 +54,12 @@ class ProcedurePinSlot(_StrictProcedureModel):
     def _slot_name(cls, value: str) -> str:
         return _canonical_identifier(value, _NAME_RE, label="Procedure slot_name")
 
-    @field_validator("pin_role")
+    @field_validator("pin_role", check_fields=False)
     @classmethod
     def _pin_role(cls, value: str) -> str:
         return _canonical_identifier(value, _ROLE_RE, label="Procedure slot pin_role")
 
-    @field_validator("artifact_kind")
+    @field_validator("artifact_kind", check_fields=False)
     @classmethod
     def _artifact_kind(cls, value: str) -> str:
         if unicodedata.normalize("NFC", value) != value or not re.fullmatch(
@@ -68,7 +68,7 @@ class ProcedurePinSlot(_StrictProcedureModel):
             raise ValueError("Procedure slot artifact_kind must be a canonical artifact kind")
         return value
 
-    @field_validator("interface_digest")
+    @field_validator("interface_digest", check_fields=False)
     @classmethod
     def _interface_digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -85,7 +85,8 @@ class ProcedurePinSlotRef(_StrictProcedureModel):
         return _canonical_identifier(value, _NAME_RE, label="Procedure slot reference")
 
 
-ProcedurePinBinding = ArtifactPin | ProcedurePinSlotRef
+LegacyProcedurePinBinding = ArtifactPin | ProcedurePinSlotRef
+ProcedurePinBinding = LegacyProcedurePinBinding | ArtifactNameRef
 
 
 class ProcedureBudget(_StrictProcedureModel):
@@ -246,7 +247,7 @@ class StateTapNode(_StrictProcedureModel):
 
     kind: Literal["state_tap"] = "state_tap"
     node_id: str
-    query: ProcedurePinBinding
+    query: LegacyProcedurePinBinding
     parameters: object = Field(default_factory=dict)
     as_: str = Field(alias="as")
     next: str | None = None
@@ -260,7 +261,7 @@ class StateTapNode(_StrictProcedureModel):
 
 
 def _validate_explicit_provider_binding(
-    provider: ProcedurePinBinding,
+    provider: LegacyProcedurePinBinding,
     implementation_digest: str | None,
 ) -> None:
     if isinstance(provider, ArtifactPin):
@@ -273,8 +274,8 @@ def _validate_explicit_provider_binding(
 class SourceNode(_StrictProcedureModel):
     kind: Literal["source"] = "source"
     node_id: str
-    capture_contract: ProcedurePinBinding
-    provider: ProcedurePinBinding
+    capture_contract: LegacyProcedurePinBinding
+    provider: LegacyProcedurePinBinding
     interface: ArtifactPin
     interface_digest: str
     implementation_digest: str | None = None
@@ -282,7 +283,7 @@ class SourceNode(_StrictProcedureModel):
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -300,7 +301,7 @@ class SourceNode(_StrictProcedureModel):
 class ExhaustTapNode(_StrictProcedureModel):
     kind: Literal["exhaust_tap"] = "exhaust_tap"
     node_id: str
-    reducer_or_query: ProcedurePinBinding
+    reducer_or_query: LegacyProcedurePinBinding
     journal_identity: str
     as_: str = Field(alias="as")
     next: str | None = None
@@ -316,22 +317,22 @@ class CallNode(_StrictProcedureModel):
 
     kind: Literal["call"] = "call"
     node_id: str
-    provider: ProcedurePinBinding
+    provider: LegacyProcedurePinBinding
     interface: ArtifactPin
     interface_digest: str
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBinding | None = Field(
+    contract_in: LegacyProcedurePinBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    contract_out: ProcedurePinBinding | None = Field(
+    contract_out: LegacyProcedurePinBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    effect_policy: ProcedurePinBinding | None = None
+    effect_policy: LegacyProcedurePinBinding | None = None
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -456,8 +457,8 @@ class TransformNode(_StrictProcedureModel):
     kind: Literal["transform"] = "transform"
     node_id: str
     transform_kind: TransformKind
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
+    contract_in: LegacyProcedurePinBinding
+    contract_out: LegacyProcedurePinBinding
     spec: ProcedureTransformSpec
     as_: str = Field(alias="as")
     next: str | None = None
@@ -488,7 +489,7 @@ class ProjectNode(_StrictProcedureModel):
     kind: Literal["project"] = "project"
     node_id: str
     fields: object
-    contract_out: ProcedurePinBinding
+    contract_out: LegacyProcedurePinBinding
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -504,24 +505,24 @@ class RepeatBodyNode(_StrictProcedureModel):
     node_id: str
     operation: Literal["call", "transform"]
     transform_kind: TransformKind | None = None
-    provider: ProcedurePinBinding | None = None
+    provider: LegacyProcedurePinBinding | None = None
     interface: ArtifactPin | None = None
     interface_digest: str | None = None
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBinding | None = Field(
+    contract_in: LegacyProcedurePinBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    contract_out: ProcedurePinBinding | None = Field(
+    contract_out: LegacyProcedurePinBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    effect_policy: ProcedurePinBinding | None = Field(
+    effect_policy: LegacyProcedurePinBinding | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
     spec: ProcedureTransformSpec | object
     as_: str = Field(alias="as")
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -583,7 +584,7 @@ class RepeatNode(_StrictProcedureModel):
 class CaptureEgressNode(_StrictProcedureModel):
     kind: Literal["emit_capture"] = "emit_capture"
     node_id: str
-    capture_contract: ProcedurePinBinding
+    capture_contract: LegacyProcedurePinBinding
     input: object
     result: object
 
@@ -734,7 +735,7 @@ class SelectNode(_StrictProcedureModel):
     kind: Literal["select"] = "select"
     node_id: str
     sources: tuple[str, ...]
-    contract_out: ProcedurePinBinding
+    contract_out: LegacyProcedurePinBinding
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -832,9 +833,9 @@ class ProcedureDefinition(_StrictProcedureModel):
     graph_format: Literal[6] = 6
     name: str
     description: str | None = None
-    contract_in: ProcedurePinBinding
-    contract_out: ProcedurePinBinding
-    parameter_contract: ProcedurePinBinding | None = None
+    contract_in: LegacyProcedurePinBinding
+    contract_out: LegacyProcedurePinBinding
+    parameter_contract: LegacyProcedurePinBinding | None = None
     nodes: tuple[ProcedureNode, ...]
     returns: str | None = None
     pin_slots: tuple[ProcedurePinSlot, ...] = ()
@@ -903,7 +904,8 @@ class ProcedureDefinition(_StrictProcedureModel):
         # alias; source-v1 retains its display-only alias.
         if (
             self.source is not None
-            and self.source.rules == "cruxible.procedure-source.v2"
+            and getattr(self.source, "syntax_rules", self.source.rules)
+            == "cruxible.procedure-source.v2"
             and self.returns is not None
         ):
             raise ValueError("Source-v2 uses explicit return paths, not a return alias")
@@ -982,7 +984,7 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
     found: list[ProcedurePinBinding] = []
 
     def visit(item: object) -> None:
-        if isinstance(item, ArtifactPin | ProcedurePinSlotRef):
+        if isinstance(item, ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef):
             found.append(item)
             return
         if isinstance(item, BaseModel):

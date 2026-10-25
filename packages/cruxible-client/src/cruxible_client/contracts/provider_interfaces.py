@@ -486,6 +486,42 @@ ProviderInterfaceDigestDomain: TypeAlias = Literal[
 ]
 
 
+@sealed_memo
+def interface_definition_bytes(
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
+) -> bytes:
+    """Canonical install definition; historical bytes keep their original rule."""
+    if isinstance(registration, ProviderInterfaceContract):
+        return canonical_bytes(registration.interface.model_dump(mode="json"))
+    return bytes.fromhex(registration.interface_bytes_hex)
+
+
+def interface_definition_digest_domain(
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
+) -> ProviderInterfaceDigestDomain:
+    if isinstance(registration, ProviderInterfaceContract):
+        return "cruxible.interface.stub.v1"
+    return registration.interface_digest_domain
+
+
+@sealed_memo
+def interface_definition_digest(
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
+) -> str:
+    """Installation code identity, never a governed cross-reference pin."""
+    if isinstance(registration, ProviderInterfaceContract):
+        return provider_external_interface_definition_digest(
+            interface_definition_bytes(registration).hex(), domain="cruxible.interface.stub.v1"
+        )
+    return registration.interface_digest
+
+
 def provider_interface_contract_key(
     *,
     interface_id: str,
@@ -629,27 +665,6 @@ class ProviderInterfaceContract(_StrictInterfaceModel):
     def effect_class(self) -> ProviderEffectClass:
         return self.interface.effect_class
 
-    @property
-    @sealed_memo
-    def interface_bytes_hex(self) -> str:
-        return canonical_bytes(self.interface.model_dump(mode="json")).hex()
-
-    @property
-    def interface_digest_domain(self) -> Literal["cruxible.interface.stub.v1"]:
-        return "cruxible.interface.stub.v1"
-
-    @property
-    @sealed_memo
-    def interface_digest(self) -> str:
-        # Compatibility for existing pin readers; no digest is stored in v4.
-        return provider_external_interface_definition_digest(
-            self.interface_bytes_hex, domain=self.interface_digest_domain
-        )
-
-    @property
-    def pins(self) -> tuple[ArtifactPin, ...]:
-        return ()
-
 
 def provider_interface_contract(
     *, interface: ProviderInterfaceDefinition
@@ -683,7 +698,7 @@ def provider_operation_contract(
         return registration.interface.contracts
     from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 
-    return read_provider_operation_contract(registration.interface_bytes_hex)
+    return read_provider_operation_contract(interface_definition_bytes(registration).hex())
 
 
 ProviderInterfaceRegistrationAny: TypeAlias = Annotated[

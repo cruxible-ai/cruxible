@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 from datetime import datetime
 
 from cruxible_client.contracts.acquisition_policies import (
@@ -15,9 +15,11 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.captures import capture_retention_policy
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -47,7 +49,7 @@ def bind_trigger_capture(
     line: LineSpec,
     procedure: AcceptedProcedure,
     event: TriggerEventReference | None,
-    contracts: Mapping[str, CaptureContract],
+    contracts: MutableMapping[str, CaptureContract],
     policy: SourceAcquisitionPolicy,
     evaluation_time: datetime,
     max_bytes: int,
@@ -74,13 +76,14 @@ def bind_trigger_capture(
             "trigger_capture_invalid",
             "trigger_capture_input: named independent acquisition rule required",
         )
-    contract = contracts.get(selector.capture_contract_digest)
+    assert isinstance(node.capture_contract, ArtifactPin)
+    contract = contracts.get(node.capture_contract.artifact_digest)
     if contract is None or contract.identity != selector.capture_contract_identity:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
             "trigger_capture_input: exact accepted CaptureContract missing",
         )
-    if contract.retention_erasure_policy.body_retention == "never_materialize":
+    if capture_retention_policy(contract).body_retention == "never_materialize":
         raise TriggerCaptureRefused(
             "trigger_capture_forbidden",
             "trigger_capture_input: CaptureContract forbids materialization",
@@ -126,11 +129,20 @@ def bind_trigger_capture(
         raise TriggerCaptureRefused(
             "trigger_capture_unavailable", "The exact retained Capture material is unavailable."
         )
-    if envelope.capture_contract_digest != selector.capture_contract_digest:
+    if envelope.capture_contract_digest != payload.get("capture_contract_digest"):
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
             "trigger_capture_input: Capture differs from the event contract",
         )
+    exact = instance.accepted_capture_contract_version(
+        record.accepted_coordinate, envelope.capture_contract_digest
+    )
+    if exact is None or exact.contract.identity != selector.capture_contract_identity:
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid",
+            "The event's exact contract is unavailable or names another contract",
+        )
+    contracts[exact.artifact_digest] = exact.contract
     if envelope.observed_at > evaluation_time:
         raise TriggerCaptureRefused(
             "trigger_capture_not_yet_observed",
@@ -173,12 +185,12 @@ def bind_trigger_capture(
         input=LandedCaptureRunInputV1(
             input_name=node.as_,
             capture_digest=digest,
-            capture_contract_digest=selector.capture_contract_digest,
+            capture_contract_digest=envelope.capture_contract_digest,
             landing_cursor="procedure-event:" + event.record_digest,
         ),
         material=ProcedureCaptureMaterialV1(
             capture_digest=digest,
-            capture_contract_digest=selector.capture_contract_digest,
+            capture_contract_digest=envelope.capture_contract_digest,
             envelope=envelope,
             value=value,
             epistemic_grade=contract.epistemic_grade,

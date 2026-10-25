@@ -50,7 +50,7 @@
   "parameters": [],
   "pins": [
     {
-      "artifact_digest": "sha256:7e9374f1bf2fd1bff6c59f4b2208415a43c5e6b6e9ce9b39715bf45c0e4939ce",
+      "artifact_digest": "sha256:92e40239c480988e42799489a6644c42d4013b38ed4e50322801a9ada86853be",
       "role": "claim-type",
       "target": {
         "kind": "ClaimType",

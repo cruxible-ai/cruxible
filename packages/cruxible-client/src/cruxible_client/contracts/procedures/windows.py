@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import (
     AfterValidator,
@@ -50,11 +50,15 @@ class CaptureEventSelector(_WindowModel):
             raise ValueError("capture event selector must name a CaptureContract")
         return self
 
-    @field_validator("capture_contract_digest")
+    @field_validator("capture_contract_digest", check_fields=False)
     @classmethod
     def _digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
         return value
+
+
+class NamedCaptureEventSelector(CaptureEventSelector):
+    capture_contract_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
 
 
 class TriggerEventReference(_WindowModel):
@@ -91,6 +95,10 @@ class CaptureEventWindow(_WindowModel):
     kind: Literal["capture_event"] = "capture_event"
     event: CaptureEventSelector
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+
+class NamedCaptureEventWindow(CaptureEventWindow):
+    event: NamedCaptureEventSelector
 
 
 ObservationWindow = Annotated[FixedWindow | CaptureEventWindow, Field(discriminator="kind")]

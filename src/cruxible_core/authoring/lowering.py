@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
+from typing import Any, Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -29,6 +29,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
     ArtifactRef,
 )
@@ -174,6 +175,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
+from cruxible_client.contracts.named_references import name_line, name_query, name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -204,6 +206,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.blueprints import (
     BlueprintInstantiationError,
     blueprint_digest,
+    blueprint_interfaces,
     blueprint_path,
     instantiate_blueprint,
     parse_blueprint,
@@ -231,14 +234,21 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.names import name_procedure
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     CaptureEventWindow,
     FixedWindow,
 )
-from cruxible_client.contracts.provider_interfaces import provider_interface_path
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    parse_provider_interface,
+    provider_interface_digest,
+    provider_interface_path,
+)
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
+    ProviderV2,
     parse_provider,
     provider_digest,
     provider_path,
@@ -2662,6 +2672,7 @@ def _parse_reference_tree(
             registry=projection_registry_for_compiler(base.compiler),
             artifact_kinds=artifact_kinds_for_compiler(base.compiler),
             artifact_codec=artifact_codec_for_compiler(base.compiler),
+            by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER,
             bodies=instance.body_store(),
         )
     except CruxibleError as exc:
@@ -2862,6 +2873,67 @@ def _lower_procedure(
             owned_contracts=owned_contracts,
         )
     )
+    if not source_authoring:
+        # Authoring carries names; only this transient compiler input has exact
+        # implementation metadata. Governed graph7 drops these mirrors.
+        from copy import deepcopy
+
+        from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
+        resolved_definition = deepcopy(resolved_definition)
+        for node in cast(Any, resolved_definition).get("nodes", ()):
+            for occurrence in (node, *node.get("body", ())):
+                if (
+                    occurrence.get("kind") not in {"call", "source"}
+                    and occurrence.get("operation") != "call"
+                ):
+                    continue
+                interface_ref = occurrence.get("interface")
+                provider_ref = occurrence.get("provider")
+                if not isinstance(interface_ref, dict) or not isinstance(provider_ref, dict):
+                    continue
+                interface_path = provider_interface_path(interface_ref["target"]["name"])
+                registration = parse_provider_interface(
+                    base_tree[interface_path], path=interface_path
+                )
+                occurrence["interface_digest"] = interface_definition_digest(registration)
+                if "slot_name" in provider_ref:
+                    for declaration in cast(Any, resolved_definition).get("pin_slots", ()):
+                        if declaration["slot_name"] == provider_ref["slot_name"]:
+                            declaration.setdefault("pin_role", "provider")
+                            declaration.setdefault("artifact_kind", "Provider")
+                            declaration["interface_digest"] = occurrence["interface_digest"]
+                    continue
+                provider_member_path = provider_path(provider_ref["target"]["name"])
+                provider_value = parse_provider(
+                    base_tree[provider_member_path], path=provider_member_path
+                )
+                if not isinstance(provider_value, ProviderV2):
+                    _refuse(
+                        "cruxible.authoring.provider_runtime_required",
+                        "definition",
+                        "Provider occurrence requires an installed runtime build.",
+                        repair_kind="replace_binding",
+                        repair_description="Select an installed provider build.",
+                    )
+                matches = tuple(
+                    row
+                    for row in provider_value.implementations
+                    if row.interface_id == registration.interface_id
+                    and row.interface_digest == interface_definition_digest(registration)
+                )
+                if len(matches) != 1:
+                    _refuse(
+                        "cruxible.authoring.provider_implementation_ambiguous",
+                        "definition",
+                        "Select one fitting provider implementation",
+                        repair_kind="replace_binding",
+                        repair_description=(
+                            "Bind a provider implementing the named interface exactly once."
+                        ),
+                    )
+                occurrence["interface_digest"] = matches[0].interface_digest
+                occurrence["implementation_digest"] = matches[0].implementation_digest
     definition: ProcedureDefinition
     try:
         definition = ProcedureDefinition.model_validate(resolved_definition)
@@ -3023,6 +3095,8 @@ def _procedure_lowered(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
+    if base.compiler == LIGHT_ARTIFACTS_COMPILER:
+        procedure = name_procedure(procedure)
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor
@@ -3167,10 +3241,26 @@ def _lower_blueprint_instance(
         candidates=candidate_artifacts,
         candidate_identities=candidate_identities,
     )
+
+    def interface_lookup(
+        identity: ArtifactIdentity,
+    ) -> AcceptedProviderInterfaceRegistration | None:
+        member_path = provider_interface_path(identity.name)
+        raw = base_tree.get(member_path)
+        if raw is None:
+            return None
+        value = parse_provider_interface(raw, path=member_path)
+        return AcceptedProviderInterfaceRegistration(
+            path=member_path,
+            registration=value,
+            artifact_digest=provider_interface_digest(value).tagged,
+        )
+
     try:
         procedure = instantiate_blueprint(
             blueprint,
             blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+            interface_registrations=blueprint_interfaces(blueprint, interface_lookup),
             name=instantiation.name,
             providers=providers,
             activation_policy=payload.activation_policy,
@@ -3218,6 +3308,7 @@ def _render_non_procedure_member(
     | SourceAcquisitionPolicyAuthoringPayload,
     *,
     tree: Mapping[str, bytes] | None = None,
+    light: bool = False,
 ) -> tuple[str, bytes, str]:
     if isinstance(payload, ResolutionContractAuthoringPayload):
         from cruxible_client.contracts.resolution_contracts import (
@@ -3256,7 +3347,7 @@ def _render_non_procedure_member(
                 if previous_bytes is None
                 else parse_capture_contract(previous_bytes, path=path)
             )
-            contract = lower_capture_contract_input(record, predecessor=previous)
+            contract = lower_capture_contract_input(record, predecessor=previous, named=light)
         else:
             contract = payload.capture_contract
         return (
@@ -3324,6 +3415,14 @@ def _render_non_procedure_member(
                     )
                 pins[key] = pin
             body = query.model_dump(mode="json")
+            if light:
+                # Exact temporary pins validate vocabulary before the current
+                # named writer emits the governed bytes.
+                body["artifact_format"] = (
+                    "playbill-query-definition-v2"
+                    if query.result_shape == "artifact_definition"
+                    else "playbill-query-definition-v1"
+                )
             body["pins"] = [
                 p.model_dump(mode="json")
                 for p in sorted(
@@ -3331,6 +3430,8 @@ def _render_non_procedure_member(
                 )
             ]
             query = QueryDefinition.model_validate(body)
+        if light:
+            query = name_query(query)
         return (
             query_definition_path(query.identity.name),
             render_query_definition(query),
@@ -3353,6 +3454,7 @@ def _render_line_member(
     payload: LineAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    light: bool = False,
 ) -> tuple[str, bytes, str]:
     """Lower one Line decision into the exact LineSpec its accepted closure pins.
 
@@ -3447,6 +3549,14 @@ def _render_line_member(
             if len(sources) == 1 and isinstance(sources[0], SourceNode)
             else None
         )
+        if isinstance(contract, ArtifactNameRef):
+            contract_path = capture_contract_path(contract.target.name)
+            accepted_contract = parse_capture_contract(tree[contract_path], path=contract_path)
+            contract = ArtifactPin(
+                role="capture-contract",
+                target=contract.target,
+                artifact_digest=capture_contract_digest(accepted_contract).tagged,
+            )
         if not isinstance(contract, ArtifactPin):
             _refuse(
                 "cruxible.authoring.line_trigger_input_invalid",
@@ -3501,6 +3611,8 @@ def _render_line_member(
         ),
     )
     line = LineSpec.model_validate(line_fields)
+    if light:
+        line = name_line(line)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
@@ -3568,6 +3680,7 @@ def _render_trigger_member(
     payload: TriggerAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
+    light: bool = False,
 ) -> tuple[str, bytes, str]:
     """Lower one Trigger decision; a Line target is named by identity, never pinned.
 
@@ -3600,6 +3713,8 @@ def _render_trigger_member(
                 ),
             }
         )
+        if light:
+            retired = name_trigger(retired)
         return path, render_trigger(retired), trigger_digest(retired).tagged
     if payload.line_name is not None:
         if line_spec_path(payload.line_name) not in tree:
@@ -3655,6 +3770,8 @@ def _render_trigger_member(
     if previous_content is not None and previous is not None:
         if _same_revision_content(trigger, previous):
             return path, previous_content, trigger_digest(previous).tagged
+    if light:
+        trigger = name_trigger(trigger)
     return path, render_trigger(trigger), trigger_digest(trigger).tagged
 
 
@@ -3692,11 +3809,13 @@ def _render_subject_kind_member(
     return path, render_subject_kind(declared), subject_kind_digest(declared).tagged
 
 
-def _contract_fields_summary(procedure: ProcedureArtifact, contract: ArtifactPin) -> dict[str, str]:
+def _contract_fields_summary(
+    procedure: ProcedureArtifact, contract: ArtifactPin | ArtifactNameRef
+) -> dict[str, str]:
     for owned in procedure.owned_contracts:
-        if (
-            owned.identity == contract.target
-            and procedure_owned_contract_digest(owned).tagged == contract.artifact_digest
+        if owned.identity == contract.target and (
+            isinstance(contract, ArtifactNameRef)
+            or procedure_owned_contract_digest(owned).tagged == contract.artifact_digest
         ):
             return {
                 name: field.type + (" (optional)" if field.optional else "")
@@ -3720,7 +3839,7 @@ def _check_line_parameters(
     """
 
     contract = procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin):
+    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
         return
     accepted = AcceptedProcedure(
         path=procedure_path_value,
@@ -3966,8 +4085,9 @@ def _lower_non_procedure(
     | CaptureContractAuthoringPayload
     | SourceAcquisitionPolicyAuthoringPayload,
     base_tree: Mapping[str, bytes],
+    light: bool = False,
 ) -> LoweredAuthoring:
-    path, content, digest = _render_non_procedure_member(payload, tree=base_tree)
+    path, content, digest = _render_non_procedure_member(payload, tree=base_tree, light=light)
     candidate_tree = fork_tree(base_tree)
     candidate_tree[path] = content
     changed = () if base_tree.get(path) == content else ((path, content),)
@@ -5498,12 +5618,16 @@ def _stage_change_set_member(
         candidate_tree[mandate_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, LineAuthoringPayload):
-        line_path, content, digest = _render_line_member(member, tree=staged_tree)
+        line_path, content, digest = _render_line_member(
+            member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, TriggerAuthoringPayload):
-        trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
+        trigger_member_path, content, digest = _render_trigger_member(
+            member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
         return (
@@ -5520,7 +5644,9 @@ def _stage_change_set_member(
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[kind_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
-    _path, content, digest = _render_non_procedure_member(member, tree=staged_tree)
+    _path, content, digest = _render_non_procedure_member(
+        member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     candidate_tree = fork_tree(staged_tree)
     candidate_tree[path] = content
     return candidate_tree, {"artifact_digest": digest}, set(), {}
@@ -5750,7 +5876,9 @@ def _stage_claim_type_succession(
             ),
         )
     try:
-        inventory = claim_type_migration_inventory(staged_tree, root=successor.identity)
+        inventory = claim_type_migration_inventory(
+            staged_tree, root=successor.identity, by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
     except ClaimTypeMigrationError as error:
         _refuse(
             "cruxible.authoring.claim_type_succession_closure_unsupported",
@@ -6292,9 +6420,13 @@ def _lower_authoring(
         LineAuthoringPayload | TriggerAuthoringPayload | SubjectKindAuthoringPayload,
     ):
         path, content, digest = (
-            _render_line_member(intent.payload, tree=base_tree)
+            _render_line_member(
+                intent.payload, tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+            )
             if isinstance(intent.payload, LineAuthoringPayload)
-            else _render_trigger_member(intent.payload, tree=base_tree)
+            else _render_trigger_member(
+                intent.payload, tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+            )
             if isinstance(intent.payload, TriggerAuthoringPayload)
             else _render_subject_kind_member(intent.payload, tree=base_tree)
         )
@@ -6316,7 +6448,9 @@ def _lower_authoring(
             changed_members=changed,
             idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
-    return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
+    return _lower_non_procedure(
+        payload=intent.payload, base_tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
 
 
 __all__ = [

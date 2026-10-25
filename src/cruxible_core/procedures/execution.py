@@ -12,6 +12,8 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable, Literal, Protocol, TypeVar, cast, overload
 
+from cruxible_client.contracts.captures import capture_retention_policy
+
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
 
@@ -27,7 +29,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
@@ -2105,11 +2107,15 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+def _exact_pin(
+    binding: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef, *, label: str
+) -> ArtifactPin:
     """An accepted Procedure pins every dependency exactly; only a Blueprint has slots."""
 
     if isinstance(binding, ProcedurePinSlotRef):
         raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
+    if isinstance(binding, ArtifactNameRef):
+        raise ExecutionError(f"{label} has not been resolved at admission")
     return binding
 
 
@@ -2306,7 +2312,9 @@ def prepare_direct_procedure_run(
     procedure = accepted.procedure
     if procedure.definition.open_slots:
         raise ExecutionError("a Blueprint's open slots cannot run; instantiate it first")
-    if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
         raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
     materials = list(
@@ -3120,7 +3128,15 @@ class ProcedureExecutor:
                     matches
                     or contract is None
                     or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
-                    or supplied.capture_contract_digest != contract_pin.artifact_digest
+                    or (
+                        captured_contract := self.capture_contracts.get(
+                            supplied.capture_contract_digest
+                        )
+                    )
+                    is None
+                    or captured_contract.identity != contract_pin.target
+                    or capture_contract_digest(captured_contract).tagged
+                    != supplied.capture_contract_digest
                     or self._acquisition_rule(node.as_) is None
                     or selected is None
                     or selected.disposition != "selected"
@@ -3238,7 +3254,7 @@ class ProcedureExecutor:
             contract = self.capture_contracts.get(landed.input.capture_contract_digest)
             state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
                 selector_privacy=(
-                    contract.retention_erasure_policy.selector_privacy
+                    capture_retention_policy(contract).selector_privacy
                     if contract is not None
                     else "direct_allowed"
                 ),

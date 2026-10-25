@@ -577,7 +577,6 @@ class GetProviderCard(_StrictGetModel):
 
 class GetProviderInterfaceProvider(_StrictGetModel):
     provider: str
-    implementation_digest: str
 
 
 class GetProviderInterfaceCard(_StrictGetModel):
@@ -594,7 +593,6 @@ class GetProviderInterfaceCard(_StrictGetModel):
     output: tuple[str, ...] = ()
     effect: Literal["pure", "external_read", "external_mutation"]
     providers: tuple[GetProviderInterfaceProvider, ...] = ()
-    interface_digest: str
     next: tuple[str, ...] = ()
 
 

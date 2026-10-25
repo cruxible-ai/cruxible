@@ -40,6 +40,7 @@ from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.content_memo import sealed_derive
+from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
@@ -227,7 +228,7 @@ OWNER_CODECS = (
             ("identity_digest", "TEXT NOT NULL"),
             ("occurrence_epoch", "INTEGER NOT NULL CHECK(occurrence_epoch>=1)"),
             ("procedure_identity", "TEXT NOT NULL"),
-            ("procedure_digest", "TEXT NOT NULL"),
+            ("procedure_digest", "TEXT"),
             (
                 "requested_terminal_rung",
                 "INTEGER NOT NULL CHECK(requested_terminal_rung IN (1,2,3))",
@@ -494,7 +495,7 @@ def schema_sql() -> str:
         ) STRICT""",
             """CREATE TABLE pins (
             source_identity TEXT NOT NULL, edge_kind TEXT NOT NULL CHECK(edge_kind IN ('required_pin','consumed_claim_input')),
-            ordinal INTEGER NOT NULL CHECK(ordinal>=0), target_identity TEXT, target_digest TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal>=0), target_identity TEXT, target_digest TEXT,
             resolution_status TEXT NOT NULL CHECK(resolution_status IN ('resolved','unresolved','ambiguous')),
             pin_role TEXT,
             PRIMARY KEY(source_identity,edge_kind,ordinal),
@@ -712,12 +713,27 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         runtime = getattr(source, "runtime_artifact", None)
         result["distribution_version"] = None if runtime is None else runtime.distribution.version
         result["registration_sequence"] = 0
+    if owner.kind == "capture-contract":
+        from cruxible_client.contracts.captures import capture_components
+
+        components = capture_components(source)
+        result.update(
+            replay_policy_digest=components.replay_policy_digest,
+            provenance_rule_digest=components.provenance_rule_digest,
+        )
     if owner.kind == "provider-interface":
+        from cruxible_client.contracts.provider_interfaces import (
+            interface_definition_digest,
+        )
+
+        result.update(
+            interface_digest=interface_definition_digest(source),
+        )
         result["registration_sequence"] = 0
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
             procedure_identity=source.procedure.target.qualified,
-            procedure_digest=source.procedure.artifact_digest,
+            procedure_digest=getattr(source.procedure, "artifact_digest", None),
         )
     if owner.kind == "procedure-mandate":
         # The grant verb is authored; the index keeps its internal ordering value.
@@ -1391,8 +1407,13 @@ class TypedStateReader:
 
         if self.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row.kind == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
+            from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 
-            state = parse_dependency_artifact(row.path, self.member_bytes(row.path))
+            state = parse_dependency_artifact(
+                row.path,
+                self.member_bytes(row.path),
+                by_name=self.accepted.compiler == LIGHT_ARTIFACTS_COMPILER,
+            )
             if state is None or (
                 state.artifact_kind,
                 state.artifact_tag,
@@ -1410,7 +1431,7 @@ class TypedStateReader:
             artifact_tag=row.format_tag,
             identity=adapted.identity,
             artifact_digest=row.artifact_digest,
-            pins=adapted.pins,
+            pins=dependency_pins(adapted),
             lifecycle=adapted.lifecycle,
         )
 
