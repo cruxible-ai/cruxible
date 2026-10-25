@@ -23,9 +23,10 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
+from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import ProcedureDefinition
 from cruxible_client.contracts.provider_interfaces import (
+    interface_definition_digest,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
@@ -61,7 +62,7 @@ def web_provider(registration, selectors=None):
     implementation = template.runtime_artifact.manifest.implementations[0].model_copy(
         update={
             "interface_id": registration.interface_id,
-            "interface_digest": registration.interface_digest,
+            "interface_digest": interface_definition_digest(registration),
             "entrypoint": "cruxible_provider_web.fetch:WebFetch",
             "declared_input_buckets": tuple(sorted(selectors.values())),
             "bucket_conformance": {selector: name for name, selector in selectors.items()},
@@ -93,7 +94,7 @@ def web_provider(registration, selectors=None):
             ),
         }
     )
-    return as_build(provider)
+    return name_provider(as_build(provider))
 
 
 def acquisition_result():
@@ -173,7 +174,7 @@ def test_sdk_source_retains_and_reads_acquisition(
                 run_id="sdk-acquisition",
                 input={"url": URL},
                 interface_id="web.fetch",
-                interface_digest=web_fetch_interface_registration().interface_digest,
+                interface_digest=interface_definition_digest(web_fetch_interface_registration()),
                 implementation_digest="sha256:" + "a" * 64,
                 declared_endpoints=("https://fixture.invalid",),
                 input_bucket="legacy=none",
@@ -246,14 +247,16 @@ def test_sdk_source_retains_and_reads_acquisition(
             target=provider.identity,
             artifact_digest=provider_digest(provider).tagged,
         ),
-        interface_pin=provider.pins[0],
+        interface_pin=ArtifactPin(
+            role="provider-interface",
+            target=registration.identity,
+            artifact_digest=provider_interface_digest(registration).tagged,
+        ),
         policy_pin=source._policy_pin(policy),
     )
     raw = procedure.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"][0].update(
         {
-            "interface_digest": registration.interface_digest,
-            "implementation_digest": provider.implementations[0].implementation_digest,
             "request": request,
         }
     )
@@ -261,7 +264,7 @@ def test_sdk_source_retains_and_reads_acquisition(
     if over_limit:
         # With no owned list seam, authoring takes max_items from the hard cap.
         raw["hard_caps"]["max_items"] = 1
-    definition = ProcedureDefinition.model_validate(raw)
+    definition = type(procedure.definition).model_validate(raw)
     procedure = procedure.model_copy(
         update={
             "definition": definition,
@@ -313,10 +316,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_interface_definition_digest,
-    )
-    from tests.core_support._p2b1_support import interface_registration
 
     http, instance_id, reviewer = playbill_http
     manager = get_playbill_manager()
@@ -328,14 +327,18 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
         output_schema = {
             "fields": {"size": {"type": "int"}, "limit": {"type": "int", "default": 20}}
         }
-    preimage = canonical_bytes(
-        {"effect_class": "external_read", "contracts": {"input": schema, "output": output_schema}}
-    ).hex()
-    registration = interface_registration().model_copy(
-        update={
-            "interface_bytes_hex": preimage,
-            "interface_digest": provider_interface_definition_digest(preimage),
-        }
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceDefinition,
+        provider_interface_contract,
+    )
+
+    registration = provider_interface_contract(
+        interface=ProviderInterfaceDefinition(
+            interface_id="demo.interface",
+            version=1,
+            effect_class="external_read",
+            contracts={"input": schema, "output": output_schema},
+        )
     )
     provider = web_provider(registration, {"demo.small": "size=*"})
     proposal = source.submit_member_candidate(
@@ -392,7 +395,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
                     "role": "provider-interface",
                     "target": registration.identity.qualified,
                 },
-                "interface_digest": registration.interface_digest,
+                "interface_digest": interface_definition_digest(registration),
                 "implementation_digest": provider.implementations[0].implementation_digest,
             }
         ],
