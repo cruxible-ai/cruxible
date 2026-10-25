@@ -748,7 +748,7 @@ def authorize_erasure(contract: CaptureContractAny) -> CaptureContractAny:
     return CaptureContractV1.model_validate(
         {
             **contract.model_dump(mode="python"),
-            "retention_erasure_policy": named_policy,
+            "retention_erasure_policy": policy,
             "pins": pins,
         }
     )

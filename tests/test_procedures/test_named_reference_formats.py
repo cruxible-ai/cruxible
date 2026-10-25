@@ -723,3 +723,24 @@ def test_graph7_blueprint_refuses_before_writing_a_procedure(tmp_path):
     )
     assert instance.accepted_coordinate() == before
     assert "procedures/test.blueprint.json" not in instance.tree_at(before.git_oid)
+
+
+def test_frozen_v1_erasure_authorization_keeps_its_exact_rule_pin():
+    from cruxible_client.contracts.captures import CaptureContractV1, capture_retention_policy
+    from tests.core_support._pc_c_support import capture_contract
+
+    contract = capture_contract()
+    original = render_capture_contract(contract)
+    authorized = authorize_erasure(contract)
+    assert isinstance(authorized, CaptureContractV1)
+    assert capture_retention_policy(authorized).erasure == "authorized_by_rule"
+    rule = next(pin for pin in authorized.pins if pin.role == "erasure-rule")
+    assert capture_retention_policy(authorized).erasure_rule_digest == rule.artifact_digest
+    assert (
+        parse_capture_contract(
+            render_capture_contract(authorized),
+            path=capture_contract_path(authorized.identity.name),
+        )
+        == authorized
+    )
+    assert render_capture_contract(contract) == original
