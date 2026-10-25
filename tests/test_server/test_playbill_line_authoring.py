@@ -93,7 +93,7 @@ def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(
         members=(
             authoring_example("procedure"),  # type: ignore[arg-type]
             authoring_example("acquisition-policy"),  # type: ignore[arg-type]
-            line.model_copy(update={"acquisition_policy_name": "replace-me"}),
+            line.model_copy(update={"acquisition_policy_name": "default"}),
         ),
     )
     _accept(http, instance_id, key, change_set)

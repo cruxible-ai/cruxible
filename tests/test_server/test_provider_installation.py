@@ -652,7 +652,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     contract = http_contract()
-    policy = _policy(name="installed-web-policy", input_name="observation")
+    policy = _policy(name="installed-web-policy")
     draft = (
         pb.changes(rationale="Retain a fetched observation.")
         .capture_contract(contract)

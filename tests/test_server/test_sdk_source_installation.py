@@ -117,7 +117,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
 
     contract = http_contract(name="test.web")
     output_contract = procedure_contract(name="test.web-output", max_bytes=1_048_576)
-    policy = _policy(name="source-reads", input_name="observation")
+    policy = _policy(name="source-reads")
     accept(
         pb.changes(rationale="Observe a typed HTTP response.")
         .capture_contract(contract)

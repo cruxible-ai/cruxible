@@ -126,7 +126,7 @@ def _author(world: Any) -> None:
         world,
         world.pb.changes(rationale="Retain fetched observations.")
         .capture_contract(contract)
-        .acquisition_policy(_policy(name=POLICY, input_name="observation")),
+        .acquisition_policy(_policy(name=POLICY)),
     )
     interface = _web_fetch_entry(world)
     example = procedure_example()
