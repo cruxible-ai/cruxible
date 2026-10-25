@@ -154,7 +154,6 @@ def _author(world: Any) -> None:
                     "role": "provider-interface",
                     "target": interface["identity"],
                 },
-                "interface_digest": interface["interface_digest"],
                 "request": {
                     "url": "https://fixture.invalid/api/v1/measurements.json",
                     "expected_format": "json",
@@ -173,7 +172,6 @@ def _author(world: Any) -> None:
                 "slot_name": "fetch",
                 "pin_role": "provider",
                 "artifact_kind": "Provider",
-                "interface_digest": interface["interface_digest"],
             }
         ],
         "budget": {

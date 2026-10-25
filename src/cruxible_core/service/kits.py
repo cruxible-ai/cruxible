@@ -1618,7 +1618,7 @@ def _default_implementers(
             for row in connection.execute(
                 "SELECT DISTINCT p.source_identity FROM main.pins p "
                 "JOIN main.providers r ON r.identity=p.source_identity "
-                "WHERE p.target_identity=? AND p.target_digest=? "
+                "WHERE p.target_identity=? AND (p.target_digest=? OR p.target_digest IS NULL) "
                 "AND p.edge_kind='required_pin' AND p.pin_role='provider-interface' "
                 "AND r.lifecycle='live' AND r.provider_name<>?",
                 (registration.identity.qualified, artifact_digest, provider.provider_id),
