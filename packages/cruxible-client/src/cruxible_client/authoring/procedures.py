@@ -348,7 +348,7 @@ class CompositionDiagnostic(BaseModel):
 class ProcedureStateDependency(BaseModel):
     node_id: str
     kind: Literal["claim", "query"]
-    selection: ArtifactPin | ProcedurePinSlotRef
+    selection: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
     cardinality: Literal["one", "all", "query"]
     limit: int | None = None
     admitted_context: bool = True
@@ -368,21 +368,21 @@ class ProcedureBranchValue(BaseModel):
     kind: Literal["guard", "select"]
     producers: tuple[str, ...] = ()
     predicate: GuardPredicate | None = None
-    contract: ArtifactPin | ProcedurePinSlotRef | None = None
+    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | None = None
     successors: dict[str, str] = Field(default_factory=dict)
 
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
     kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
-    contract: ArtifactPin | ProcedurePinSlotRef
+    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
     # The authority the path's terminal needs; a pure or halting path needs none.
     required_authority: AuthorityVerb | None
 
 
 class ProcedureChildCall(BaseModel):
     node_id: str
-    procedure: ArtifactPin
+    procedure: ArtifactPin | ArtifactNameRef
     inherits_authority: bool = True
     shares_budget: bool = True
 
@@ -393,8 +393,8 @@ class ProcedurePreview(BaseModel):
     name: str
     ready_for_prepare: bool
     contracts: tuple[CarriedContractInput, ...]
-    contract_in: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
-    contract_out: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
+    contract_in: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
+    contract_out: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
     # The most this Procedure's terminals can do: observe, propose or settle.
     authority: AuthorityVerb
     acquisition_policy: str | None

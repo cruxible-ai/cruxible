@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.floor import FloorManifest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -266,6 +267,10 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         "track_record",
     )
     assert card.identity.qualified == "Procedure:triage"
+    assert isinstance(card.input_contract.input, ArtifactNameRef)
+    assert isinstance(card.output_contract, ArtifactNameRef)
+    assert card.input_contract.input.target.qualified == "Contract:empty-input"
+    assert card.output_contract.target.qualified == "Contract:rows-output"
     assert card.runnable == "direct"
     assert card.capabilities.node_kinds == ("project", "state_tap")
     assert card.capabilities.authority == "observe"
