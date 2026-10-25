@@ -944,7 +944,7 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
         ).bundle
         policy_path = f"source-acquisition-policies/{POLICY}.json"
         raw = json.loads(release.contents()[policy_path])
-        raw["inputs"][0]["max_age"] = {"microseconds": 1}
+        raw["max_age"] = {"microseconds": 1}
         changed = render_acquisition_policy(SourceAcquisitionPolicy.model_validate(raw))
         prior = KitBundle(
             manifest=release.manifest.model_copy(
