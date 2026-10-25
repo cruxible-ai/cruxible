@@ -14,10 +14,10 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ConstantNode,
     InboxEgressNode,
     ReturnNode,
 )
+from cruxible_client.contracts.procedures.named_models import NamedConstantNode
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 from tests.core_support._support import initialize_local
@@ -76,7 +76,7 @@ def _rewritten(
     data["definition"].pop("source", None)
     definition = type(artifact.definition).model_validate(data["definition"])
     data["definition_digest"] = compute_procedure_definition_digest(definition).tagged
-    return ProcedureArtifact.model_validate(data)
+    return type(artifact).model_validate(data)
 
 
 def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
@@ -91,7 +91,7 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
     for node in child.definition.nodes:
         if isinstance(node, ReturnNode):
             returned = node.as_
-            node = ConstantNode(
+            node = NamedConstantNode(
                 node_id=node.node_id,
                 fields=node.fields,
                 contract_out=node.contract_out,
