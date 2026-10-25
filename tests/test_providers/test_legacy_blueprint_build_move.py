@@ -334,6 +334,7 @@ def test_instantiating_a_historical_blueprint_writes_pure_for_a_none_slot():
     assert render_blueprint(historical) == before
 
 
+@pytest.mark.usefixtures("contracted_demo")
 @pytest.mark.parametrize("source", [False, True])
 def test_blueprint_build_move_preserves_a_named_acquisition_override(source):
     old, _new, _bp, procedure, path, tree, move = legacy_blueprint_move(source)
