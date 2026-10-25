@@ -431,10 +431,10 @@ def _query_v3_defaults(data: Any) -> Any:
 def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     """The spec with each omitted defaulted field stated.
 
-    - ``result_shape``: ``path`` with traversal, otherwise ``subject`` for a
-      Subject entry; ``artifact_definition`` for an artifacts entry (v2).
+    - ``result_shape``: ``subject`` for a Subject entry;
+      ``artifact_definition`` for an artifacts entry (v2).
     - ``result_cardinality``: ``many``.
-    - ``dedupe``: follows the result shape (``subject``, ``path`` or ``artifact``).
+    - ``dedupe``: ``subject`` or ``artifact`` for those shapes; other shapes state it.
     - ``evaluation_policy``: supported, current Claims; conflicts surfaced.
     - budgets: 100 results by default, 1000 at most, the traversal's own depth.
 
@@ -448,19 +448,10 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     )
     if artifacts:
         stated.setdefault("artifact_format", "playbill-query-definition-v2")
-    shape = stated.setdefault(
-        "result_shape",
-        "artifact_definition" if artifacts else ("path" if stated.get("traversal") else "subject"),
-    )
+    shape = stated.setdefault("result_shape", "artifact_definition" if artifacts else "subject")
     stated.setdefault("result_cardinality", "many")
-    stated.setdefault(
-        "dedupe",
-        "artifact"
-        if shape == "artifact_definition"
-        else "subject"
-        if shape == "subject"
-        else "path",
-    )
+    if shape in ("subject", "artifact_definition"):
+        stated.setdefault("dedupe", "artifact" if shape == "artifact_definition" else "subject")
     stated.setdefault(
         "evaluation_policy",
         {

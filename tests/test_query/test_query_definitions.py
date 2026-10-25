@@ -1144,3 +1144,39 @@ def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> N
     ]
     # An accepted definition stays strict: every field is stated.
     assert set(SPEC_DEFAULTED_FIELDS) <= set(QueryDefinition.model_json_schema()["required"])
+
+
+@pytest.mark.parametrize("format", ["playbill-query-definition-v1", "cruxible-query-definition-v3"])
+def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    explicit = active_work_query(
+        artifact_format=format,
+        result_shape="subject",
+        dedupe="subject",
+        default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
+        maximum_budgets=QueryBudgets(max_results=500, max_traversal_depth=4),
+    )
+    stated = explicit.model_dump(mode="json")
+    stated.pop("result_shape")
+    stated.pop("dedupe")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "subject"
+    assert defaulted.dedupe == "subject"
+    assert defaulted.model_dump(mode="json") == explicit.model_dump(mode="json")
+    assert query_definition_digest(defaulted) == query_definition_digest(explicit)
+
+
+def test_explicit_path_specs_still_receive_the_path_budget_defaults():
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    stated = active_work_query().model_dump(mode="json")
+    stated.pop("default_budgets")
+    stated.pop("maximum_budgets")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "path"
+    assert defaulted.dedupe == "path"
+    for budget in (defaulted.default_budgets, defaulted.maximum_budgets):
+        assert budget.max_paths == 20000
+        assert budget.max_paths_per_result == 100
+        assert budget.max_traversal_depth == len(defaulted.traversal)
