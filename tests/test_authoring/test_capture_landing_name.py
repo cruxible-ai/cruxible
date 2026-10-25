@@ -59,7 +59,10 @@ SELECTOR = CaptureEventSelector(
 
 def tree():
     line = _served_line(
-        "triage", accepted=_slotless_procedure("triage"), policy=_acquisition_policy("triage")
+        "triage",
+        accepted=_slotless_procedure("triage", historical=True),
+        policy=_acquisition_policy("triage"),
+        historical=True,
     )
     return {
         PATH: render_capture_contract(CONTRACT),
@@ -82,7 +85,7 @@ def test_name_form_produces_identical_trigger_bytes_digest_and_pins():
     staged = tree()
     named = _render_trigger_member(payload(), tree=staged)
     exact = line_trigger(
-        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR)
+        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR), named=False
     )
     assert named == (
         "triggers/on-landing.json",
@@ -235,12 +238,19 @@ def test_payload_prepare_resolves_against_candidate_overlay_and_explains_the_pin
     )
     assert member["capture_contract"] == {
         "capture_contract_identity": contract.identity.model_dump(mode="json"),
-        "capture_contract_digest": capture_contract_digest(contract).tagged,
     }
     stored = parse_trigger(
         computed.lowered.proposed_tree["triggers/on-landing.json"], path="triggers/on-landing.json"
     )
-    assert stored.pins[0].artifact_digest == capture_contract_digest(contract).tagged
+    assert stored.artifact_format == "cruxible-trigger-v2"
+    assert stored.pins == ()
+    assert stored.schedule.event.capture_contract_identity == contract.identity
+    # The frozen renderer still binds the overlay to its exact version.
+    _path, content, _digest = _render_trigger_member(
+        trigger, tree=computed.lowered.proposed_tree, light=False
+    )
+    frozen = parse_trigger(content, path=_path)
+    assert frozen.pins[0].artifact_digest == capture_contract_digest(contract).tagged
 
 
 @pytest.mark.parametrize("window_close", [False, True])
@@ -274,6 +284,7 @@ def test_named_capture_window_uses_the_shared_resolver_and_exact_stored_bytes():
         schedule=WindowCloseSchedule(
             window=CaptureEventWindow(event=SELECTOR, duration_seconds=60),
         ),
+        named=False,
     )
     assert (content, digest) == (render_trigger(exact), trigger_digest(exact).tagged)
     assert parse_trigger(content, path=path).pins == exact.pins

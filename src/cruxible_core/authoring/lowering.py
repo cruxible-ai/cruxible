@@ -3940,7 +3940,7 @@ def _render_trigger_member(
         line_path = line_spec_path(payload.line_name)
         line = parse_line_spec(tree[line_path], path=line_path)
         if line.trigger_event is not None and not schedule_satisfies_input(
-            schedule, CaptureEventInput(event=line.trigger_event)
+            schedule, CaptureEventInput(event=line.trigger_event), by_name=light
         ):
             _refuse(
                 "cruxible.trigger.event_not_accepted",

@@ -66,6 +66,7 @@ def _served_line(
     *,
     accepted: AcceptedProcedure,
     policy: SourceAcquisitionPolicy,
+    historical: bool = False,
 ) -> LineSpec:
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -101,7 +102,7 @@ def _served_line(
 
     from cruxible_client.contracts.named_references import name_line
 
-    return name_line(line)
+    return line if historical else name_line(line)
 
 
 def _line_mandate(accepted: AcceptedProcedure) -> ProcedureMandateV1:
