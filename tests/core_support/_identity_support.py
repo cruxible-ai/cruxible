@@ -19,6 +19,7 @@ from pathlib import Path
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
     capture_contract_path,
     render_capture_contract,
 )
@@ -178,7 +179,7 @@ def seed_identity_vocabulary(instance: PlaybillInstance) -> None:
     }
     for claim_type in IDENTITY_CLAIM_TYPES:
         updates[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
-    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    contract = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     updates[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     accept_tree(instance, updates, name="identity-seed")
 

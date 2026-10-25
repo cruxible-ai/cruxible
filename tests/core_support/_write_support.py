@@ -29,6 +29,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -57,6 +58,7 @@ from tests.core_support._support import initialize_local
 KIND = "project.work_item"
 SUBJECTS = ("wi-1", "wi-2", "wi-3")
 REPORTS = foreign_source_capture_contract("repo.reports")
+SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 OWNER = AuthenticatedActor(actor_id="owner")
 
 
@@ -84,7 +86,7 @@ def _claim_type(
     captured_only: bool = False,
 ) -> ClaimType:
     predicate = f"{KIND}.{field}"
-    contract = REPORTS if captured_only else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    contract = REPORTS if captured_only else SELF_SOURCE
     return ClaimType(
         artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
@@ -152,7 +154,7 @@ def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner"
         tree[subject_path(KIND, subject_id)] = render_subject(_shell(subject_id))
     for claim_type in CLAIM_TYPES:
         tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
-    for contract in (COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, REPORTS):
+    for contract in (SELF_SOURCE, REPORTS):
         tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     declare_created_kinds(
         instance.tree_at(base.git_oid), tree, instance=instance, actor_id=actor_id
