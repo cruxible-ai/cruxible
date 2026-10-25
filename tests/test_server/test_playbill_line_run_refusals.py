@@ -289,7 +289,9 @@ def _accept_members(instance, reviewer_key_path: Path, members, *, timestamp: st
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    assert proposed.candidate is not None, proposed.evaluation.diagnostics
+    assert proposed.candidate is not None, [
+        (d.code, d.message, d.subject) for d in proposed.evaluation.diagnostics
+    ]
     assert proposed.evaluation.evaluated_tree_oid is not None
     reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
     material = GeneratedKeyMaterial(
