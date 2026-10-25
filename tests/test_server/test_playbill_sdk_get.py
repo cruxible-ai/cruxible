@@ -526,7 +526,9 @@ def test_sdk_get_reads_provider_names_and_exact_builds(
     client, instance_id, key = owned_playbill_http
     instance = get_playbill_manager().get(instance_id)
     document, build = package.__wrapped__(tmp_path)
-    provider = build(1)
+    from cruxible_client.contracts.named_references import name_provider
+
+    provider = name_provider(build(1))
     members = {
         provider_interface_path(item.identity.name): render_provider_interface(item)
         for item in document.interface_registrations()
