@@ -185,13 +185,15 @@ class _FilterParser:
         self.index += 1
         return token
 
-    def expression(self, level: int = 0) -> FilterExpression:
+    def expression(self, level: int = 0, depth: int = 0) -> FilterExpression:
+        if depth >= 64 and self.peek() in {"not", "("}:
+            self.fail("expected at most 64 nested parentheses or not operators")
         if level < 2:
             word: Literal["or", "and"] = "or" if level == 0 else "and"
-            children = [self.expression(level + 1)]
+            children = [self.expression(level + 1, depth)]
             while self.peek() == word:
                 self.take()
-                children.append(self.expression(level + 1))
+                children.append(self.expression(level + 1, depth))
             return (
                 children[0]
                 if len(children) == 1
@@ -199,10 +201,10 @@ class _FilterParser:
             )
         if self.peek() == "not":
             self.take()
-            return FilterExpression("not", children=(self.expression(2),))
+            return FilterExpression("not", children=(self.expression(2, depth + 1),))
         if self.peek() == "(":
             self.take()
-            result = self.expression()
+            result = self.expression(depth=depth + 1)
             self.take(")")
             return result
         if self.peek() == "exists":

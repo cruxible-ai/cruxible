@@ -654,3 +654,16 @@ def test_reserved_binding_names_refuse_with_a_rename_repair(binding, location, r
         lower_query_spec(spec, resolver)
     assert caught.value.error_code == "cruxible.query.unknown_field"
     assert caught.value.field_path == ("$.from" if location == "from" else "$.hops[0]")
+
+
+@pytest.mark.parametrize("wrapper", ["parentheses", "not"])
+def test_deep_filters_refuse_with_a_source_column_instead_of_recursing(wrapper, resolver):
+    atom = 'incident.name == "x"'
+    expression = "(" * 400 + atom + ")" * 400 if wrapper == "parentheses" else "not " * 400 + atom
+    with pytest.raises(QuerySpecError, match="at most 64") as caught:
+        lower_query_spec(simple(where=expression), resolver)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"
+    assert caught.value.field_path == "$.where"
+    assert caught.value.column == (65 if wrapper == "parentheses" else 257)
+    within_limit = "(" * 64 + atom + ")" * 64 if wrapper == "parentheses" else "not " * 64 + atom
+    assert parse_filter(within_limit)
