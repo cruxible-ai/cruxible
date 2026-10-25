@@ -90,6 +90,15 @@ def test_shared_authoring_envelope():
     assert payload.definition["procedure_spec"]["procedure"] == authored.procedure
 
 
+def test_authored_spec_keeps_a_typed_schema_in_both_wire_modes():
+    request = ProcedureSpec.model_json_schema(mode="validation")
+    response = ProcedureSpec.model_json_schema(mode="serialization")
+    assert response == request
+    assert request["additionalProperties"] is False
+    assert {"procedure", "input", "steps"} <= set(request["properties"])
+    assert request["properties"]["steps"]["type"] == "array"
+
+
 CORPUS = json.loads(
     (Path(__file__).parents[1] / "fixtures/procedures/security-p1.json").read_text()
 )
