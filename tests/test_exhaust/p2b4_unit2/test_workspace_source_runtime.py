@@ -12,7 +12,6 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
@@ -129,6 +128,27 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         selector_type="relation-primary-key-v1",
         selector={"id": 7, "relation": "orders"},
     )
+    from cruxible_core.procedures.reference_binding import (
+        BoundAcceptedProcedure,
+        authored_procedure,
+    )
+
+    authored = authored_procedure(accepted)
+    authored_definition = authored.definition.model_copy(
+        update={
+            "nodes": (
+                authored.definition.nodes[0].model_copy(
+                    update={"request": request.model_dump(mode="json")}
+                ),
+            )
+        }
+    )
+    authored = authored.model_copy(
+        update={
+            "definition": authored_definition,
+            "definition_digest": compute_procedure_definition_digest(authored_definition).tagged,
+        }
+    )
     old_node = accepted.procedure.definition.nodes[0]
     assert isinstance(old_node, SourceNode)
     source_node = old_node.model_copy(
@@ -138,16 +158,18 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         }
     )
     definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
+    definition._authored = authored_definition
     procedure = accepted.procedure.model_copy(
         update={
             "definition": definition,
-            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "definition_digest": authored.definition_digest,
         }
     )
-    accepted = AcceptedProcedure(
+    accepted = BoundAcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
+        authored=authored,
+        artifact_digest=procedure_artifact_digest(authored).tagged,
     )
 
     old_occurrence = prepared.acquisition_plan.external_occurrences[0]
