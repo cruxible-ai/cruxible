@@ -498,6 +498,85 @@ def test_decompile_inventory_recognizes_return_and_halt_patterns():
     assert authored.steps[6].else_ == "halt(no_change)"
 
 
+@pytest.mark.parametrize("node_kind", ["guard", "repeat"])
+@pytest.mark.parametrize("predicate_shape", ["empty_path", "single_all", "single_any"])
+def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predicate_shape):
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+    from tests.test_procedures.test_procedure_execution import _repeat_transform_procedure
+
+    leaf = GuardPredicate(
+        left=PredicateOperand(
+            kind="step",
+            alias="rows" if node_kind == "guard" else "shaped",
+            path=() if predicate_shape == "empty_path" else ("flag",),
+        ),
+        operator="eq",
+        right=PredicateOperand(kind="literal", value=True),
+    )
+    predicate = (
+        leaf
+        if predicate_shape == "empty_path"
+        else GuardPredicate(**{"all_of" if predicate_shape == "single_all" else "any_of": (leaf,)})
+    )
+    if node_kind == "repeat":
+        original = _repeat_transform_procedure().procedure
+        repeat = original.definition.nodes[0].model_copy(update={"until": predicate})
+        definition = original.definition.model_copy(update={"nodes": (repeat,)})
+    else:
+        from cruxible_client.contracts.procedures.models import GuardNode, HaltNode
+
+        base = _definition()
+        guard = GuardNode(node_id="gate", predicate=predicate, on_false="stop")
+        definition = base.model_copy(
+            update={
+                "nodes": (
+                    base.nodes[0],
+                    guard,
+                    base.nodes[1].model_copy(
+                        update={"fields": {"rows": "$steps.rows.result.rows"}}
+                    ),
+                    HaltNode(node_id="stop", reason="no"),
+                )
+            }
+        )
+        original = _artifact(definition)
+    original = original.model_copy(update={"definition": definition})
+    authored = decompile_procedure(original)
+    explicit = next(step.explicit for step in authored.steps if hasattr(step, "explicit"))
+    assert explicit == next(node for node in definition.nodes if node.kind == node_kind)
+    if node_kind == "guard":
+        assert any(getattr(step, "halt", None) == "no" for step in authored.steps)
+
+    lowered = lower_procedure_spec(authored)
+    contracts = {pin.target.name: pin for pin in original.pins if pin.target.kind == "Contract"}
+
+    def rebind(value):
+        if isinstance(value, dict):
+            if value.get("kind") == "carried_contract":
+                return (
+                    contracts[value["name"]]
+                    .model_copy(update={"role": value["role"]})
+                    .model_dump(mode="json")
+                )
+            if value.get("kind") == "accepted":
+                return next(
+                    pin.model_dump(mode="json")
+                    for pin in original.pins
+                    if pin.role == value["role"] and pin.target.qualified == value["target"]
+                )
+            return {key: rebind(member) for key, member in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [rebind(member) for member in value]
+        return value
+
+    actual = ProcedureDefinition.model_validate(rebind(lowered.definition))
+    assert compute_procedure_definition_digest(actual) == compute_procedure_definition_digest(
+        definition
+    )
+
+
 def test_decompile_recognizes_the_generated_tap_view_and_lowers_it_back():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     call = next(node for node in original.definition.nodes if node.kind == "call")

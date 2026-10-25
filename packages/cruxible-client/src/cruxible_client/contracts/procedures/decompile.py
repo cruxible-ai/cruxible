@@ -9,7 +9,10 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.procedures.expressions import render_procedure_expression
+from cruxible_client.contracts.procedures.expressions import (
+    parse_procedure_expression,
+    render_procedure_expression,
+)
 from cruxible_client.contracts.procedures.graph import (
     analyze_procedure,
     procedure_guard_halt_targets,
@@ -19,6 +22,7 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNode,
     ClaimTapNode,
     GuardNode,
+    GuardPredicate,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
@@ -64,6 +68,15 @@ def _short(value: Any, tap_aliases: frozenset[str]) -> Any:
     return value
 
 
+def _expression(predicate: GuardPredicate) -> str | None:
+    """Use EXPR only when its parser reproduces the exact retained predicate."""
+    try:
+        text = render_procedure_expression(predicate)
+        return text if parse_procedure_expression(text) == predicate else None
+    except (ValueError, RecursionError):
+        return None
+
+
 def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     """Recognized nodes use verbs; all other nodes keep their explicit typed form.
 
@@ -79,6 +92,11 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     import json
 
     nodes = definition.nodes
+    expressions = {
+        node.node_id: _expression(node.predicate if isinstance(node, GuardNode) else node.until)
+        for node in nodes
+        if isinstance(node, (GuardNode, RepeatNode))
+    }
     tap_aliases = frozenset(node.as_ for node in nodes if isinstance(node, StateTapNode))
 
     def short(value: Any) -> Any:
@@ -93,6 +111,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         node.on_false: node.node_id
         for node in nodes
         if isinstance(node, GuardNode)
+        and expressions[node.node_id] is not None
         and not (set(node.predicate.step_aliases()) & {"input", "param"})
         and isinstance(by_id.get(node.on_false), HaltNode)
         and re.fullmatch(r"[a-z][a-z0-9_.-]*", getattr(by_id[node.on_false], "reason", None) or "")
@@ -175,11 +194,14 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     contract=_name(node.contract_out),
                 )
             elif isinstance(node, RepeatNode):
+                if expressions[node.node_id] is None:
+                    steps.append({"explicit": node})
+                    continue
                 step = dict(
                     repeat=node.as_,
                     max_attempts=node.max_attempts,
                     body=node.body,
-                    until=render_procedure_expression(node.until),
+                    until=expressions[node.node_id],
                 )
             elif isinstance(node, StateTapNode):
                 step = dict(tap=node.as_, query=_name(node.query), params=short(node.parameters))
@@ -203,7 +225,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     contract_out=_name(node.contract_out),
                 )
             elif isinstance(node, GuardNode):
-                if set(node.predicate.step_aliases()) & {"input", "param"}:
+                if expressions[node.node_id] is None or (
+                    set(node.predicate.step_aliases()) & {"input", "param"}
+                ):
                     steps.append({"explicit": node})
                     continue
                 # Non-abort diagnostics are inert at runtime, but remain part of
@@ -222,7 +246,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                         + ")"
                     )
                 step = dict(
-                    guard=render_procedure_expression(node.predicate),
+                    guard=expressions[node.node_id],
                     then=node.on_true,
                     **{"else": branch},
                     refusal_code=node.refusal_code,
