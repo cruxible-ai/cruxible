@@ -303,3 +303,16 @@ def test_compact_v3_input_restores_equal_budgets_before_spec_defaults(resolver):
     payload = QueryDefinitionAuthoringPayload.model_validate({"query_definition": wire})
     assert payload.query_definition.default_budgets == query.maximum_budgets
     assert payload.query_definition.maximum_budgets == query.maximum_budgets
+
+
+def test_v3_artifact_entry_restores_its_default_binding(tree):
+    from cruxible_client.authoring.examples import query_ontology_example
+
+    payload = lower_authoring_input(query_ontology_example())
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    body = json.loads(wire)
+    assert "binding" not in body["entry"]
+    assert "result_binding" not in body
+    query = parse_query_definition(wire, path=path)
+    assert query.result_binding == query.entry.binding == "definition"
+    assert query_definition_digest(query).tagged == digest

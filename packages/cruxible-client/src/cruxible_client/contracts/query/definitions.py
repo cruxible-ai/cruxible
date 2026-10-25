@@ -161,7 +161,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
         stated = dict(data)
         entry = stated.get("entry")
         if isinstance(entry, Mapping):
-            stated.setdefault("result_binding", entry.get("binding"))
+            stated.setdefault(
+                "result_binding",
+                entry.get("binding", "definition" if "artifact_kind" in entry else None),
+            )
         stated.setdefault("result_cardinality", "many")
         if "default_budgets" not in stated and "maximum_budgets" in stated:
             stated["default_budgets"] = stated["maximum_budgets"]
