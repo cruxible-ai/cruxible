@@ -562,14 +562,21 @@ def test_named_graph_preserves_reference_shaped_payloads() -> None:
         "target": {"kind": "Contract", "name": "literal-contract"},
         "artifact_digest": _digest("literal-artifact"),
     }
-    definition = _definition()
+    base = _artifact(_definition())
     nodes = tuple(
         node.model_copy(update={"parameters": payload})
         if isinstance(node, StateTapNode)
         else node.model_copy(update={"fields": payload})
-        for node in definition.nodes
+        for node in base.definition.nodes
     )
-    historical = _artifact(definition.model_copy(update={"nodes": nodes, "annotations": payload}))
+    literal_definition = base.definition.model_copy(update={"nodes": nodes, "annotations": payload})
+    historical = ProcedureArtifact.model_validate(
+        {
+            **base.model_dump(mode="json", by_alias=True),
+            "definition": literal_definition,
+            "definition_digest": compute_procedure_definition_digest(literal_definition).tagged,
+        }
+    )
     named = name_procedure(historical)
     assert named.definition.annotations == payload
     assert named.definition.nodes[0].parameters == payload
