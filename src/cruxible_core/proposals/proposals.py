@@ -2783,6 +2783,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         context.current.compiler
         in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER}
         and context.parent_content is None
+        and not context.rechecking
         and "/" not in provider.identity.name
         and provider.identity.name != "cruxible-builtin"
     ):
@@ -2814,7 +2815,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
             _sibling_control_domains(
                 context.candidate_tree, provider, context.path, context.candidate_states
             )
-            if predecessor is None
+            if predecessor is None and not context.rechecking
             else frozenset()
         ),
     )

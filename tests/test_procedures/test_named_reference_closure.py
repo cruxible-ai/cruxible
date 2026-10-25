@@ -60,6 +60,119 @@ def authored_query(name="definitions"):
     )
 
 
+def authored_capture_contract():
+    from cruxible_client.contracts.captures import NamedCaptureContract
+
+    def component(name):
+        return {"target": {"kind": "Contract", "name": name}}
+
+    return NamedCaptureContract.model_validate(
+        {
+            "identity": {"kind": "CaptureContract", "name": "test.capture"},
+            "shape": "http_response",
+            "replay": "exact",
+            "components": {
+                "coordinate_schemas": [component("http-response-v1")],
+                "selector_schemas": [component("whole-response-v1")],
+                "commitment_canonicalizer": component("canonical-json-v1"),
+                "replay_policy": component("playbill.external.exact-replay-v1"),
+                "provenance_rule": component("playbill.external.daemon-fetched-v1"),
+                "source_subject_mapping": component("playbill.external.record-subject-v1"),
+            },
+            "selection_budget": {"max_bytes": 100, "max_rows": 1, "max_items": 1},
+            "retention_erasure_policy": {
+                "body_retention": "required_for_duration",
+                "minimum_retention": {"microseconds": 1},
+                "erasure": "prohibited",
+                "selector_privacy": "direct_allowed",
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_existing_signing_provider_is_rechecked_without_creation_gates(tmp_path, named):
+    from cruxible_client.contracts.captures import capture_contract_digest, render_capture_contract
+    from cruxible_client.contracts.providers import (
+        NamedProviderIdentity,
+        ProviderV1,
+        render_provider,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    current = instance.accepted_coordinate()
+    contract = authored_capture_contract()
+    declarations = (
+        {"capture_contracts": [{"target": {"kind": "CaptureContract", "name": "test.capture"}}]}
+        if named
+        else {
+            "capture_contract_digests": [capture_contract_digest(contract).tagged],
+            "pins": [
+                {
+                    "role": "capture-contract",
+                    "target": contract.identity,
+                    "artifact_digest": capture_contract_digest(contract).tagged,
+                }
+            ],
+        }
+    )
+    signer = (NamedProviderIdentity if named else ProviderV1).model_validate(
+        {
+            "identity": {"kind": "Provider", "name": "acme.orders"},
+            "control_domain": "acme",
+            "signing_keys": [
+                {"key_id": "primary", "public_key": "11" * 32, "valid_from": "2026-08-16T12:00:00Z"}
+            ],
+            **declarations,
+        }
+    )
+    cpath, ppath = "capture-contracts/test.capture.json", "providers/acme.orders.json"
+    base = {**instance.tree_at(current.git_oid), cpath: render_capture_contract(contract)}
+    parent = {**base, ppath: render_provider(signer)}
+    for retired in (False, True):
+        successor = contract.model_copy(
+            update={
+                "selection_budget": contract.selection_budget.model_copy(update={"max_bytes": 200}),
+                "lifecycle": ArtifactLifecycle(
+                    state="retired" if retired else "live",
+                    predecessor_digest=capture_contract_digest(contract).tagged,
+                ),
+            }
+        )
+        result = evaluate_proposal_tree(
+            base_tree=parent,
+            current_tree=parent,
+            proposed_tree={**parent, cpath: render_capture_contract(successor)},
+            current=current,
+            bodies=instance.body_store(),
+            timestamp="2026-10-25T04:00:00.000000Z",
+            rebased=False,
+            actor_id="owner",
+        )
+        if retired:
+            assert result.candidate is None
+            assert any(
+                "Broken referrer Provider:acme.orders" in d.message for d in result.diagnostics
+            )
+        else:
+            assert result.diagnostics == ()
+            assert result.candidate is not None
+            assert result.candidate.law_evidence[0].result["referrers"] == ["Provider:acme.orders"]
+        assert parent[ppath] == render_provider(signer)
+    creation = evaluate_proposal_tree(
+        base_tree=base,
+        current_tree=base,
+        proposed_tree=parent,
+        current=current,
+        bodies=instance.body_store(),
+        timestamp="2026-10-25T04:00:00.000000Z",
+        rebased=False,
+        actor_id="owner",
+    )
+    assert creation.candidate is None
+    assert any(d.code == "cruxible.provider.single_path_closed" for d in creation.diagnostics)
+
+
 def authored_procedure(name="reader", query="definitions", *, named=True):
     """Explicit authored fields; only compiler-owned digests are computed."""
     from cruxible_client.contracts.procedures.artifacts import (
