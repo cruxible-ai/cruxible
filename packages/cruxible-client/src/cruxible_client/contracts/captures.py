@@ -10,6 +10,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, runtime_checkable
 
 from pydantic import (
@@ -48,7 +49,7 @@ from cruxible_client.contracts.cas_contracts import (
     BodyAccessContext,
     CasObjectMetadata,
 )
-from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
+from cruxible_client.contracts.content_memo import ParseMemo, seal, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -433,6 +434,7 @@ class NamedCaptureContract(_StrictCaptureModel):
 CaptureContractAny = CaptureContractV1 | CaptureContract | NamedCaptureContract
 
 
+@sealed_memo
 def capture_components(contract: CaptureContractAny) -> CaptureContractComponents:
     """Interpret named compiler components; historical stored digests stay exact."""
     if isinstance(contract, CaptureContract):
@@ -476,6 +478,7 @@ def capture_components(contract: CaptureContractAny) -> CaptureContractComponent
     )
 
 
+@sealed_memo
 def capture_retention_policy(contract: CaptureContractAny) -> CaptureRetentionErasurePolicy:
     if not isinstance(contract, NamedCaptureContract):
         return contract.retention_erasure_policy
@@ -634,6 +637,7 @@ def _light_builtin(
     )
 
 
+@lru_cache(maxsize=1024)
 def capture_component_pin(role: str, name: str) -> ArtifactPin:
     """Return one compiler-owned, digest-addressed Capture component pin."""
 
@@ -942,6 +946,16 @@ COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS = (
 )
 
 
+# These compiler profiles are owned here and published only after construction.
+# Sealing lets their legacy and named component views share the same memo rule
+# as parsed immutable artifacts, without caching mutable caller-owned copies.
+for _builtin_capture_profile in (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    *COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
+):
+    seal(_builtin_capture_profile)
+
+
 def foreign_source_capture_contract(logical_source_identity: str) -> NamedCaptureContract:
     return name_capture_contract(
         _light_builtin(
@@ -956,6 +970,8 @@ def foreign_source_capture_contract(logical_source_identity: str) -> NamedCaptur
 def is_coordinator_self_source_contract(contract: CaptureContractAny) -> bool:
     if contract.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID:
         return False
+    if contract.lifecycle.predecessor_digest is None:
+        return contract in COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS
     return (
         contract.model_copy(
             update={"lifecycle": contract.lifecycle.model_copy(update={"predecessor_digest": None})}

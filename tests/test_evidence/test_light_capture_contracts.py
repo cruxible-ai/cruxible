@@ -582,3 +582,33 @@ def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
         identity_rules=True,
     )
     assert isinstance(result.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)
+
+
+@pytest.mark.parametrize("named", [True, False])
+def test_parsed_components_and_retention_views_are_reused_without_changing_stored_bytes(named):
+    from cruxible_client.contracts.captures import capture_components, capture_retention_policy
+
+    contract = (
+        lower_capture_contract_input(
+            CaptureContractInputRecord(name="memo.capture", shape="http_response"), named=True
+        )
+        if named
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    wire = render_capture_contract(contract)
+    parsed = parse_capture_contract(wire, path=capture_contract_path(contract.identity.name))
+    components = capture_components(parsed)
+    retention = capture_retention_policy(parsed)
+    assert capture_components(parsed) is components
+    assert capture_retention_policy(parsed) is retention
+    assert render_capture_contract(parsed) == wire
+    # A caller's edited copy is a new value and must derive its own view.
+    edited = parsed.model_copy(
+        update={
+            "selection_budget": parsed.selection_budget.model_copy(
+                update={"max_bytes": parsed.selection_budget.max_bytes + 1}
+            )
+        }
+    )
+    assert capture_components(edited) == components
+    assert render_capture_contract(edited) != wire
