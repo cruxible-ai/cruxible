@@ -151,6 +151,9 @@ def accepted_procedure(
     extra_pins: Iterable[ArtifactPin] = (),
     activation_policy: str = "abort",
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "cruxible-procedure-v3",
 ) -> AcceptedProcedure:
     procedure = procedure_artifact(
         definition,
@@ -158,6 +161,7 @@ def accepted_procedure(
         extra_pins=extra_pins,
         activation_policy=activation_policy,
         lifecycle=lifecycle,
+        artifact_format=artifact_format,
     )
     return AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
