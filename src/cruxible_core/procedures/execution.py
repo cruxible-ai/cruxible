@@ -2310,7 +2310,9 @@ def prepare_direct_procedure_run(
     procedure = accepted.procedure
     if procedure.definition.open_slots:
         raise ExecutionError("a Blueprint's open slots cannot run; instantiate it first")
-    if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
         raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
     materials = list(
