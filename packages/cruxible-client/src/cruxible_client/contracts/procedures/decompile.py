@@ -26,6 +26,7 @@ from cruxible_client.contracts.procedures.models import (
     HaltNode,
     InboxEgressNode,
     InvokeNode,
+    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatNode,
@@ -38,6 +39,8 @@ from cruxible_client.contracts.procedures.models import (
 
 
 def _name(pin: Any) -> str:
+    if isinstance(pin, ProcedurePinSlotRef):
+        return pin.slot_name
     if not isinstance(pin, (ArtifactNameRef, ArtifactPin)):
         raise ValueError("open binding needs an explicit step")
     return pin.target.name
@@ -301,6 +304,10 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         dict(
             procedure=definition.name,
             description=definition.description,
+            slots={
+                slot.slot_name: _name(slot.interface).replace("/v", "@")
+                for slot in definition.pin_slots
+            },
             input=schema(definition.contract_in).fields,
             input_contract=_name(definition.contract_in),
             output=schema(definition.contract_out).fields,

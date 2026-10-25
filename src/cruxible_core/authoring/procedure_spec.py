@@ -201,7 +201,7 @@ def resolve_procedure_spec(
                 output = operation.material if isinstance(step, SourceStep) else operation.output
                 return {
                     "bindings": {
-                        "provider": {"kind": "slot", "slot_name": provider_name},
+                        "provider": {"slot_name": provider_name},
                         "interface": _ref(
                             "ProviderInterface",
                             interface_identity,

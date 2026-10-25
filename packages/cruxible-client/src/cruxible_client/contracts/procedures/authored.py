@@ -587,7 +587,7 @@ def lower_procedure_spec(
             )
             node.update(details.get("bindings", {}))
             if step.provider in spec.slots:
-                node["provider"] = {"kind": "slot", "slot_name": step.provider}
+                node["provider"] = {"slot_name": step.provider}
             output = details.get("output")
             if isinstance(step, CallStep):
                 node["input"] = template(step.input, path + ".input")
@@ -918,7 +918,7 @@ def lower_procedure_spec(
                 }
                 for slot, interface in sorted(spec.slots.items())
             ]
-            if resolve is not None
+            if named or resolve is not None
             else []
         )
     if spec.params:

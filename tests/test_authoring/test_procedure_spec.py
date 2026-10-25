@@ -1002,3 +1002,63 @@ def test_measurement_node_coordinates_are_not_graph_node_ids():
     assert (
         parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact
     )
+
+
+def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
+    authored = ProcedureSpec.model_validate(
+        {
+            "procedure": "test.slotted",
+            "input": {"value": "integer"},
+            "output": {"value": "integer"},
+            "slots": {"compute": "test.compute@1"},
+            "steps": [
+                {
+                    "call": "result",
+                    "interface": "test.compute@1",
+                    "provider": "compute",
+                    "input": {"value": "$input.value"},
+                }
+            ],
+            "returns": "result",
+        }
+    )
+    lowered = lower_procedure_spec(authored)
+    definition = ProcedureDefinition.model_validate(lowered.definition)
+    assert definition.open_slots == ("compute",)
+    assert definition.pin_slots[0].interface.target.name == "test.compute/v1"
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+
+    original = ProcedureArtifact(
+        identity={"kind": "Procedure", "name": definition.name},
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        owned_contracts=lower_authoring_input(lowered).owned_contracts,
+        activation_policy="snapshot",
+    )
+    restored = decompile_procedure(original)
+    assert restored.slots == authored.slots
+    assert restored.steps[0].provider == "compute"
+    assert (
+        ProcedureDefinition.model_validate(lower_procedure_spec(restored).definition) == definition
+    )
+    assert (
+        parse_procedure(render_procedure(original), path="procedures/test.slotted.json") == original
+    )
+
+
+def test_slots_cannot_stand_in_non_provider_positions():
+    with pytest.raises(ValueError, match="requires role='contract-in'"):
+        ProcedureDefinition.model_validate(
+            {
+                **lower_procedure_spec(spec()).definition,
+                "contract_in": {"slot_name": "compute"},
+                "pin_slots": [
+                    {
+                        "slot_name": "compute",
+                        "interface": {
+                            "target": {"kind": "ProviderInterface", "name": "test.compute/v1"}
+                        },
+                    }
+                ],
+            }
+        )

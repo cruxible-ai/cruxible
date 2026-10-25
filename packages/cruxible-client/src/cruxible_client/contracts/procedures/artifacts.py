@@ -391,6 +391,19 @@ def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
         != compute_procedure_definition_digest(envelope.definition).tagged
     ):
         raise ValueError(f"{kind} definition digest does not reproduce")
+    slots = {slot.slot_name: slot for slot in envelope.definition.pin_slots}
+    provider_slots = {
+        getattr(occurrence, "provider").slot_name
+        for _, occurrence in provider_occurrences(envelope.definition)
+        if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef)
+    }
+    if set(envelope.definition.open_slots) != provider_slots or provider_slots != set(slots):
+        raise ValueError("Declare and use slots only in Provider positions")
+    for _, occurrence in provider_occurrences(envelope.definition):
+        if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef):
+            slot = slots[getattr(occurrence, "provider").slot_name]
+            if getattr(slot, "interface", None) != getattr(occurrence, "interface"):
+                raise ValueError("Provider slot and occurrence interfaces differ")
     contracts = {contract.identity for contract in envelope.owned_contracts}
     referenced = {
         binding.target
