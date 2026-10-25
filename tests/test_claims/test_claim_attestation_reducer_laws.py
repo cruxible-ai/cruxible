@@ -33,7 +33,7 @@ from cruxible_core.service.discovery.next import (
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from tests.core_support._next_support import unfolded_next
-from tests.test_claims.test_claim_attestation_service import RECORDED_AT, _request
+from tests.test_claims.test_claim_attestation_service import RECORDED_AT, SELF_SOURCE, _request
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
@@ -57,6 +57,7 @@ def _door_world(
             (
                 build_coordinator_self_source_capture(
                     store=instance.body_store(),
+                    accepted_contract=SELF_SOURCE,
                     actor_id="owner",
                     claim_id=claim_id,
                     body=f"new observation {index}\n".encode(),
@@ -260,6 +261,7 @@ def test_unsure_and_later_events_never_erase_new_capture_memberships(tmp_path: P
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     second = build_coordinator_self_source_capture(
         store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
         actor_id="owner",
         claim_id=claim_id,
         body=b"later observation\n",
