@@ -735,3 +735,112 @@ def test_name_index_update_reads_only_changed_bytes_at_two_instance_sizes(unrela
     assert reads == [QPATH]
     assert [e.source_path for e in after.edges_by_target[QPATH]] == [PPATH]
     assert after.edge_root == build_dependency_index(candidate, by_name=True).edge_root
+
+
+def test_genesis_recovery_reproduces_subject_creation_and_key_claim_evidence(tmp_path):
+    from cruxible_client.contracts.captures import (
+        DirectForeignSourceSelection,
+        foreign_source_capture_contract,
+    )
+    from cruxible_client.contracts.semantic import ContentSpan
+    from cruxible_core.proposals.proposals import (
+        claim_admission_accounts_from_candidate,
+        claim_type_expansions_from_candidate,
+    )
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._knowledge_loop_support import (
+        TIMESTAMP,
+        activate,
+        authoring,
+        subject_shell,
+    )
+    from tests.core_support._support import initialize_fresh
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    instance, owner = initialize_fresh(tmp_path)
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract("fixture.work-items"),
+        additional_subjects=(subject_shell("wi-43"),),
+    )
+
+    def differences(a, b, path="$"):
+        if isinstance(a, dict) and isinstance(b, dict):
+            return [
+                d
+                for key in a.keys() | b.keys()
+                for d in differences(a.get(key), b.get(key), path + "." + key)
+            ]
+        if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+            return [
+                d
+                for index, (x, y) in enumerate(zip(a, b, strict=True))
+                for d in differences(x, y, f"{path}[{index}]")
+            ]
+        return [] if a == b else [(path, a, b)]
+
+    parent = instance.accepted_coordinate()
+    before = instance.tree_at(parent.git_oid)
+    from cruxible_core.indexes.evaluated_state import derive_indexed_state
+    from cruxible_core.proposals.proposals import build_tree_state
+
+    warm = derive_indexed_state(instance.immutable_tree_at(parent.git_oid))
+    cold = build_tree_state(before, by_name=True)
+    warm_edges = [edge.model_dump(mode="json") for edge in warm.dependencies.edges()]
+    cold_edges = [edge.model_dump(mode="json") for edge in cold.dependencies.edges()]
+    assert warm_edges == cold_edges
+    assert warm.dependencies.edge_root == cold.dependencies.edge_root
+    body = instance.body_store().store(b"status: ready")
+    inspection = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-42", "ready", with_claim_type=False).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelection(
+                    logical_source_identity="fixture.work-items",
+                    span=ContentSpan(content_digest=body.digest, start_byte=0, end_byte=13),
+                ),
+            }
+        ),
+        actor_id="owner",
+        proposal_name="ordinary-claim",
+        timestamp=TIMESTAMP,
+    )
+    proposed = inspection.proposal.proposal
+    candidate = proposed.candidate
+    assert candidate is not None, proposed.evaluation.diagnostics
+    replay = evaluate_proposal_tree(
+        base_tree=before,
+        current_tree=before,
+        proposed_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
+        current=parent,
+        bodies=instance.body_store(),
+        timestamp=candidate.candidate.timestamp,
+        rebased=False,
+        actor_id="owner",
+        replaying_accepted=True,
+        wire_version=candidate.tag,
+        replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
+        claim_type_expansions=claim_type_expansions_from_candidate(candidate),
+        historical_law_coordinates={
+            member.path: (member.law_identifier, candidate.law_digests[member.law_identifier])
+            for member in candidate.members
+        },
+    )
+    assert replay.diagnostics == ()
+    assert replay.candidate is not None
+    assert replay.candidate == candidate, differences(
+        candidate.model_dump(mode="json"), replay.candidate.model_dump(mode="json")
+    )
+
+    activate(instance, owner, inspection)
+
+
+def test_ordinary_claim_fixture_survives_genesis_recovery(tmp_path):
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _ = seed_claims(tmp_path)
+    current = instance.accepted_coordinate()
+    cold = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert cold.accepted_coordinate() == current

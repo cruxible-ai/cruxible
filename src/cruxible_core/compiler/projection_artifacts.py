@@ -1257,7 +1257,7 @@ def parse_projection_tree(
                         target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in claim_type.pins
+                    for pin in dependency_pins(claim_type, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
