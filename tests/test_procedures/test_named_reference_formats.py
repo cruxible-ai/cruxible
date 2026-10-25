@@ -542,3 +542,62 @@ def test_named_v3_wire_omits_pin_tags_defaults_and_duplicate_node_ids():
         )
         == original
     )
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, historical):
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
+    from cruxible_client.contracts.authoring.models import QueryDefinitionAuthoringPayload
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import lower_authoring
+    from cruxible_core.authoring.store import AuthoringIntentStore
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._support import initialize_local
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    initialize = initialize_legacy_local if historical else initialize_local
+    instance, _ = initialize(tmp_path)
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
+    )
+    authored = ProcedureSpec(
+        procedure="test.writer",
+        input={"value": "integer"},
+        returns="result",
+        steps=({"project": "result", "fields": {"value": "$input.value"}},),
+    )
+    query = QueryDefinitionSpec(
+        identity=ArtifactIdentity(kind="QueryDefinition", name="test.writer"),
+        entry={
+            "tag": "playbill-query-artifacts-entry-v2",
+            "artifact_kind": "Procedure",
+            "selection": "all",
+        },
+        result_binding="definition",
+    )
+    cases = (
+        (
+            lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
+            "procedures/test.writer.json",
+            "playbill-procedure-v2" if historical else "cruxible-procedure-v3",
+        ),
+        (
+            QueryDefinitionAuthoringPayload(query_definition=query),
+            "query-definitions/test.writer.json",
+            "playbill-query-definition-v2" if historical else "cruxible-query-definition-v3",
+        ),
+    )
+    for payload, path, expected in cases:
+        view = coordinator.create(
+            actor=AuthenticatedActor(actor_id="owner"),
+            payload=payload,
+            canonical_timestamp="2026-10-25T12:00:00.000000Z",
+        )
+        lowered = lower_authoring(instance, intent=view.intent, actor_id="owner")
+        body = json.loads(lowered.proposed_tree[path])
+        assert body["artifact_format"] == expected
+        if not historical:
+            assert "pins" not in body
