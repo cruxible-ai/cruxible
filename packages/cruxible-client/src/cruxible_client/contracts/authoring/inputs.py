@@ -978,10 +978,17 @@ def _procedure_payload(
             "Carried Contract names must be unique.",
             "Remove or rename the duplicate declaration.",
         )
-    definition = cast(
-        dict[str, object],
-        _procedure_references(value.definition, contracts=by_name),
-    )
+    if value.definition.get("graph_format") == 7:
+        from copy import deepcopy
+
+        # This tree already carries typed names. Legacy reference spellings
+        # inside templates are opaque data, never authoring instructions.
+        definition = deepcopy(value.definition)
+    else:
+        definition = cast(
+            dict[str, object],
+            _procedure_references(value.definition, contracts=by_name),
+        )
     return ProcedureAuthoringPayload(
         definition=definition,
         activation_policy=value.activation_policy,

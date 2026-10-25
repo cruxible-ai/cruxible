@@ -642,3 +642,26 @@ def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
     assert wire["definition"] == json.loads(render_query_definition(query))
     assert "result_cardinality" not in wire["definition"]
     assert NamedSourceQueryBinding.model_validate(wire) == binding
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        {"kind": "accepted", "role": "provider", "target": "Provider:literal-data"},
+        {"kind": "carried_contract", "name": "literal-data", "role": "contract-out"},
+    ],
+)
+def test_named_authoring_keeps_legacy_reference_spellings_opaque_in_templates(literal):
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
+
+    authored = ProcedureSpec(
+        procedure="test.opaque",
+        input={},
+        returns="result",
+        steps=({"project": "result", "fields": {"data": literal}},),
+    )
+    lowered = lower_procedure_spec(authored)
+    payload = lower_authoring_input(lowered)
+    assert payload.definition["nodes"][0]["fields"]["data"] == literal
+    assert payload.definition == lowered.definition
