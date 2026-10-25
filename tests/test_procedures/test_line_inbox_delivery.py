@@ -358,9 +358,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
-    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
     from cruxible_core.governance.seed_artifacts.workspace_file import (
-        WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
         WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
         WORKSPACE_FILE_INTERFACE_ID,
     )
@@ -410,8 +408,6 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
             SOURCE_ALIAS: ProviderBinding(
                 provider=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
                 interface=WORKSPACE_FILE_INTERFACE_ID,
-                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
             )
         }
     )
@@ -419,16 +415,16 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("inbox",)
     assert preview.authority == "observe"
-    built = plan.build()
-    assert built.definition["nodes"][-1] == {
-        "kind": "post_inbox",
-        "node_id": "inbox",
-        "input": {"items": f"$steps.{SOURCE_ALIAS}.content.json.rows"},
-    }
+    plan.build()
 
     _accept_sdk_input(instance, owner, Cruxible.procedure(object(), definition=plan).payload)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     accepted = parse_procedure(tree[procedure_path("sdk-inbox")], path=procedure_path("sdk-inbox"))
+    assert accepted.definition.model_dump(mode="json", by_alias=True)["nodes"][-1] == {
+        "kind": "post_inbox",
+        "node_id": "inbox",
+        "input": {"items": f"$steps.{SOURCE_ALIAS}.content.json.rows"},
+    }
     line = _served_line(accepted, policy)
     _accept_more(
         instance,
