@@ -81,6 +81,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -411,8 +412,7 @@ def _claim_type_pin(field_name: str) -> ArtifactPin:
 def _condition() -> QueryDefinition:
     """The settle condition: the target work item exists; its status rides along."""
 
-    return QueryDefinition(
-        artifact_format="cruxible-query-definition-v3",
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=CONDITION_NAME),
         entry=QueryEntry(
             binding="item",
@@ -442,7 +442,6 @@ def _condition() -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=(_claim_type_pin("status"),),
     )
 
 

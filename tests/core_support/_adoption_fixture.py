@@ -83,6 +83,7 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_path,
@@ -284,8 +285,7 @@ def _claim_type_path(claim_type: ClaimType) -> str:
 
 
 def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
-    return QueryDefinition(
-        artifact_format="cruxible-query-definition-v3",
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=f"project.reading_{index:04d}"),
         entry=QueryEntry(
             binding="item",
@@ -312,13 +312,6 @@ def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=(
-            ArtifactPin(
-                role="claim-type",
-                target=claim_type.identity,
-                artifact_digest=claim_type_digest(claim_type).tagged,
-            ),
-        ),
     )
 
 

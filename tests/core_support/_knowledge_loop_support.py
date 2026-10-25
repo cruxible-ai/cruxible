@@ -22,7 +22,11 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
+from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
+    QueryDefinition,
+    QueryEvaluationPolicy,
+)
 from cruxible_client.contracts.query.grammar import (
     QueryBudgets,
     QueryClaimValueRef,
@@ -237,6 +241,7 @@ def work_item_query(
     name: str = QUERY_NAME,
     *,
     claim_type: ClaimType | None = None,
+    named: bool = True,
 ) -> QueryDefinition:
     """Return one many-cardinality Subject read over every accepted work item."""
 
@@ -258,8 +263,7 @@ def work_item_query(
                 )
             }
         )
-    return QueryDefinition(
-        artifact_format="cruxible-query-definition-v3",
+    query = NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntry(binding="item", subject_kinds=(SUBJECT_KIND,)),
         result_binding="item",
@@ -285,13 +289,21 @@ def work_item_query(
         ),
         default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
-        pins=(
-            ArtifactPin(
-                role="claim-type",
-                target=claim_type.identity,
-                artifact_digest=claim_type_digest(claim_type).tagged,
-            ),
-        ),
+    )
+    if named:
+        return query
+    return QueryDefinition.model_validate(
+        {
+            **query.model_dump(mode="json"),
+            "artifact_format": "playbill-query-definition-v1",
+            "pins": [
+                ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ).model_dump(mode="json")
+            ],
+        }
     )
 
 
