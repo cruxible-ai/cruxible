@@ -32,6 +32,7 @@ from cruxible_client.contracts.procedures.contract_schema import (
     PropertyType,
 )
 from cruxible_client.contracts.procedures.expressions import (
+    MAX_EXPRESSION_LENGTH,
     ProcedureExpressionError,
     parse_procedure_expression,
 )
@@ -135,7 +136,7 @@ class TransformStep(StepOptions):
 
 
 class GuardStep(StepOptions):
-    guard: str
+    guard: Annotated[str, Field(max_length=MAX_EXPRESSION_LENGTH)]
     then: str | None = None
     refusal_code: str | None = None
     message: str | None = None
@@ -181,7 +182,7 @@ class RepeatStep(StepOptions):
     repeat: StepId
     max_attempts: Annotated[int, Field(strict=True, ge=1)]
     body: tuple[RepeatBodyNode, ...]
-    until: str
+    until: Annotated[str, Field(max_length=MAX_EXPRESSION_LENGTH)]
 
 
 class HaltStep(StepOptions):

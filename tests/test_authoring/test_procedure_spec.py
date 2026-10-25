@@ -72,6 +72,27 @@ def test_refusal_table(expression, code):
         assert "value" in str(caught.value) and "Did you mean" in str(caught.value)
 
 
+@pytest.mark.parametrize("verb", ["guard", "repeat"])
+def test_guard_and_until_limit_length_and_report_nested_expression_paths(verb):
+    from cruxible_client.contracts.procedures.authored import GuardStep, RepeatStep
+    from cruxible_client.contracts.procedures.expressions import MAX_EXPRESSION_LENGTH
+
+    model = GuardStep if verb == "guard" else RepeatStep
+    field = "guard" if verb == "guard" else "until"
+    data = {} if verb == "guard" else {"repeat": "loop", "max_attempts": 1, "body": []}
+    with pytest.raises(ValidationError) as caught:
+        model.model_validate({**data, field: " " * (MAX_EXPRESSION_LENGTH + 1)})
+    assert caught.value.errors()[0]["type"] == "string_too_long"
+    assert caught.value.errors()[0]["loc"] == (field,)
+
+    authored = spec(steps=[{**data, field: "not " * 2000 + "true"}])
+    with pytest.raises(ProcedureSpecError) as refusal:
+        lower_procedure_spec(authored)
+    assert refusal.value.code == "cruxible.authoring.procedure_expression_invalid"
+    assert refusal.value.field_path == "$.steps[0]." + field
+    assert "column" in str(refusal.value)
+
+
 def test_shared_authoring_envelope():
     authored = spec()
     wrapped = ProcedureInput(kind="procedure", spec=authored)

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 
 from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
 
+MAX_EXPRESSION_LENGTH = 16_384
+MAX_EXPRESSION_DEPTH = 64
+
 
 @dataclass(eq=False)
 class ProcedureExpressionError(ValueError):
@@ -21,6 +24,7 @@ class ProcedureExpressionError(ValueError):
 _TOKEN = re.compile(
     r'\s*(?:(?P<string>"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*")|(?P<int>-?(?:0|[1-9][0-9]*))|(?P<op>==|!=|>=|<=|>|<)|(?P<name>\$?[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)|(?P<punct>[(),]))'
 )
+_TRAILING_WHITESPACE = re.compile(r"\s*\Z")
 _OPERATORS = {
     "==": "eq",
     "!=": "ne",
@@ -37,10 +41,14 @@ _OPERATORS = {
 
 class _Parser:
     def __init__(self, text: str):
+        if len(text) > MAX_EXPRESSION_LENGTH:
+            raise ProcedureExpressionError(
+                MAX_EXPRESSION_LENGTH + 1, f"at most {MAX_EXPRESSION_LENGTH} characters"
+            )
         self.tokens: list[tuple[str, str, int]] = []
         pos = 0
         while pos < len(text):
-            if not text[pos:].strip():
+            if _TRAILING_WHITESPACE.match(text, pos):
                 break
             match = _TOKEN.match(text, pos)
             if match is None:
@@ -64,23 +72,27 @@ class _Parser:
         if not self.take(value):
             raise ProcedureExpressionError(self.tokens[self.index][2], repr(value))
 
-    def expression(self) -> GuardPredicate:
-        children = [self.conjunction()]
+    def expression(self, depth: int = 0) -> GuardPredicate:
+        children = [self.conjunction(depth)]
         while self.take("or"):
-            children.append(self.conjunction())
+            children.append(self.conjunction(depth))
         return children[0] if len(children) == 1 else GuardPredicate(any_of=tuple(children))
 
-    def conjunction(self) -> GuardPredicate:
-        children = [self.unary()]
+    def conjunction(self, depth: int) -> GuardPredicate:
+        children = [self.unary(depth)]
         while self.take("and"):
-            children.append(self.unary())
+            children.append(self.unary(depth))
         return children[0] if len(children) == 1 else GuardPredicate(all_of=tuple(children))
 
-    def unary(self) -> GuardPredicate:
+    def unary(self, depth: int) -> GuardPredicate:
+        if depth > MAX_EXPRESSION_DEPTH:
+            raise ProcedureExpressionError(
+                self.tokens[self.index][2], f"nesting depth at most {MAX_EXPRESSION_DEPTH}"
+            )
         if self.take("not"):
-            return GuardPredicate(not_of=self.unary())
+            return GuardPredicate(not_of=self.unary(depth + 1))
         if self.take("("):
-            value = self.expression()
+            value = self.expression(depth + 1)
             self.require(")")
             return value
         left = self.operand()
