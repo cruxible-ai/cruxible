@@ -25,6 +25,8 @@ from cruxible_client.contracts.provider_contracts import (
 from cruxible_client.contracts.provider_interfaces import (
     ProviderEffectClass,
     ProviderInterfaceRegistrationAny,
+    interface_definition_bytes,
+    interface_definition_digest,
     parse_provider_interface,
     provider_effect_class,
     provider_interface_digest,
@@ -67,14 +69,13 @@ class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
     )
     provider_identity: str
     provider_artifact_digest: str
-    implementation_digest: str
     #: This build is its provider name's most recently registered live build:
     #: what a bare provider name selects.
     newest: bool = True
     #: Exact head(s) of this provider name, including builds on other contracts.
     newest_builds: tuple[str, ...] = ()
 
-    @field_validator("provider_artifact_digest", "implementation_digest")
+    @field_validator("provider_artifact_digest")
     @classmethod
     def _digests(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -87,7 +88,6 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     artifact_digest: str
     artifact_kind: Literal["ProviderInterface"] = "ProviderInterface"
     pin_role: Literal["provider-interface"] = "provider-interface"
-    interface_digest: str
     effect_class: ProviderEffectClass
     interface_basis: Literal["accepted_registration"] = "accepted_registration"
     # Additive: the live Providers implementing this interface, so an author can
@@ -95,7 +95,7 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
     operation_contract: ProviderOperationContract | None = None
 
-    @field_validator("artifact_digest", "interface_digest")
+    @field_validator("artifact_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -142,7 +142,6 @@ def _provider_interfaces(
                 ProviderInterfaceImplementationV1(
                     provider_identity=provider.identity.qualified,
                     provider_artifact_digest=provider_digest(provider).tagged,
-                    implementation_digest=implementation.implementation_digest,
                     newest=provider.identity.qualified in newest_builds,
                     newest_builds=build_heads.get(provider.provider_name, ()),
                 )
@@ -153,20 +152,21 @@ def _provider_interfaces(
             providers=tuple(
                 sorted(
                     implementations.get(
-                        (registration.identity.qualified, registration.interface_digest), ()
+                        (
+                            registration.identity.qualified,
+                            interface_definition_digest(registration),
+                        ),
+                        (),
                     ),
-                    key=lambda item: (
-                        item.provider_identity.encode("utf-8"),
-                        item.implementation_digest.encode("ascii"),
-                    ),
+                    key=lambda item: (item.provider_identity.encode("utf-8"),),
                 )
             ),
             identity=registration.identity.qualified,
             artifact_digest=provider_interface_digest(registration).tagged,
-            interface_digest=registration.interface_digest,
             operation_contract=(
                 provider_operation_contract(registration)
-                if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
+                if "contracts"
+                in json.loads(bytes.fromhex(interface_definition_bytes(registration).hex()))
                 else None
             ),
             effect_class=provider_effect_class(registration),

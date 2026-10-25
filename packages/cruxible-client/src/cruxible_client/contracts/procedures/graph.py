@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Iterator
 
 from pydantic import BaseModel
@@ -228,6 +230,18 @@ def _validate_node_references(
         )
 
 
+def procedure_guard_halt_targets(definition: ProcedureDefinition) -> frozenset[str]:
+    """Halts excluded from ordinary implicit fallthrough by graph format 6."""
+    kinds = {node.node_id: node.kind for node in definition.nodes}
+    return frozenset(
+        target
+        for node in definition.nodes
+        if isinstance(node, GuardNode)
+        for target in (node.on_true, node.on_false)
+        if target is not None and target != "$abort" and kinds.get(target) == "halt"
+    )
+
+
 def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     """Enforce the shared forward-only, reachable graph law."""
 
@@ -236,13 +250,7 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
     edges: dict[str, dict[str, str]] = {}
     declared_slots = {slot.slot_name for slot in definition.pin_slots}
-    guard_halt_targets = frozenset(
-        target
-        for node in definition.nodes
-        if isinstance(node, GuardNode)
-        for target in (node.on_true, node.on_false)
-        if target is not None and target != "$abort" and kinds.get(target) == "halt"
-    )
+    guard_halt_targets = procedure_guard_halt_targets(definition)
 
     for index, node in enumerate(definition.nodes):
         declared = _declared_edges(node)
@@ -383,9 +391,32 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     )
 
 
-def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
-    payload = node.model_dump(mode="json", by_alias=True)
-    payload.pop("node_id")
+@sealed_memo
+def _procedure_edge_targets(definition: ProcedureDefinition) -> Mapping[tuple[str, str], str]:
+    graph = analyze_procedure(definition)
+    return MappingProxyType(
+        {
+            (node, label): target
+            for node, edges in graph.edges.items()
+            for label, target in edges.items()
+        }
+    )
+
+
+def procedure_edge_target(definition: ProcedureDefinition, node_id: str, label: str) -> str | None:
+    """One effective edge; immutable accepted definitions build the index once."""
+    return _procedure_edge_targets(definition).get((node_id, label))
+
+
+def _node_local_payload(node: ProcedureNode, *, named: bool = False) -> dict[str, object]:
+    if named:
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        payload = compact_procedure(node)
+        payload.pop("id")
+    else:
+        payload = node.model_dump(mode="json", by_alias=True)
+        payload.pop("node_id")
     payload.pop("next", None)
     payload.pop("on_true", None)
     payload.pop("on_false", None)
@@ -405,14 +436,15 @@ def _procedure_node_digests(
     definition: ProcedureDefinition,
 ) -> tuple[tuple[str, ProcedureNodeDigests], ...]:
     graph = analyze_procedure(definition)
+    named = int(definition.graph_format) == 7
     nodes = {node.node_id: node for node in definition.nodes}
     result: dict[str, ProcedureNodeDigests] = {}
     for node_id in reversed(graph.node_ids):
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "playbill-procedure-node-local-v6",
-            _node_local_payload(node),
+            "cruxible-procedure-node-local-v7" if named else "playbill-procedure-node-local-v6",
+            _node_local_payload(node, named=named),
         ).tagged
         successor_digests = {
             label: (target if target == "$abort" else result[target].subtree_digest)
@@ -420,7 +452,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "playbill-procedure-node-subtree-v6",
+            "cruxible-procedure-node-subtree-v7" if named else "playbill-procedure-node-subtree-v6",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -435,11 +467,17 @@ def _procedure_node_digests(
 @sealed_memo
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
     node_digests = dict(_procedure_node_digests(definition))
-    payload = definition.model_dump(mode="json", by_alias=True)
+    named = int(definition.graph_format) == 7
+    if named:
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        payload = compact_procedure(definition)
+    else:
+        payload = definition.model_dump(mode="json", by_alias=True)
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "playbill-procedure-definition-v6",
+        "cruxible-procedure-definition-v7" if named else "playbill-procedure-definition-v6",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

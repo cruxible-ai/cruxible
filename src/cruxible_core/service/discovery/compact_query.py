@@ -71,11 +71,13 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
     AcceptedQueryDefinition,
+    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
+    validate_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
@@ -854,7 +856,7 @@ def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[Artif
 
 
 def _accepted(query: QueryDefinition) -> AcceptedQueryDefinition:
-    strict = QueryDefinition.model_validate(query.model_dump(mode="json"))
+    strict = validate_query_definition(query)
     return AcceptedQueryDefinition(
         path=query_definition_path(strict.identity.name),
         query=strict,
@@ -1997,7 +1999,9 @@ def _artifact_definition(
 # -- spec and named queries -------------------------------------------------------
 
 
-def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> QueryDefinition:
+def _pinned_spec(
+    vocabulary: QueryVocabulary, spec: QueryDefinitionSpec | NamedQueryDefinitionSpec
+) -> QueryDefinition:
     if isinstance(spec.entry, QueryEntry):
         for index, kind in enumerate(spec.entry.subject_kinds):
             vocabulary.require_kind(kind, field_path=f"spec.entry.subject_kinds[{index}]")
@@ -2011,6 +2015,8 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> Quer
                 repair="use accepted predicates (query kind=ClaimType lists them)",
                 field_path="spec",
             )
+    if isinstance(spec, NamedQueryDefinitionSpec):
+        return validate_query_definition(spec)
     explicit = {pin.target.name: pin for pin in spec.pins if pin.role == CLAIM_TYPE_PIN_ROLE}
     for predicate, pin in explicit.items():
         if pin.artifact_digest != vocabulary.predicates[predicate].claim_type_digest:
@@ -2032,7 +2038,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> Quer
         )
     )
     try:
-        return QueryDefinition.model_validate(
+        return validate_query_definition(
             {
                 **spec.model_dump(mode="json"),
                 "pins": [pin.model_dump(mode="json") for pin in pins],

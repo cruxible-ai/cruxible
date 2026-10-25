@@ -470,8 +470,12 @@ def _world(tmp_path):
         if path == claim_type_path(_claim_type().predicate)
     )
     status = claim_type.predicate
-    query = _query().model_copy(
+    from cruxible_client.contracts.named_references import name_query
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    query = name_query(_query()).model_copy(
         update={
+            "artifact_format": "cruxible-query-definition-v3",
             "identity": ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
             "entry": QueryEntry(
                 binding="item",
@@ -487,16 +491,20 @@ def _world(tmp_path):
                 )
             ),
             "parameters": (QueryParameterDeclaration(name="asset_id", value_type="string"),),
-            "pins": (
-                ArtifactPin(
-                    role="claim-type",
-                    target=claim_type.identity,
-                    artifact_digest=claim_type_digest(claim_type).tagged,
-                ),
-            ),
         }
     )
-    procedure = _artifact(_definition(terminal_capability=3))
+    procedure = name_procedure(
+        _artifact(
+            _definition(
+                terminal_capability=3,
+                query=ArtifactPin(
+                    role="query",
+                    target=query.identity,
+                    artifact_digest=query_definition_digest(query).tagged,
+                ),
+            )
+        )
+    )
     accepted_procedure = AcceptedProcedure(
         path="procedures/triage.json",
         procedure=procedure,
@@ -562,7 +570,7 @@ def test_a_fail_open_condition_refuses_during_proposal_evaluation(tmp_path) -> N
         update={
             "where": QueryNegationFilter(
                 operand=QueryClaimPresenceFilter(
-                    binding="item", predicate=query.pins[0].target.name
+                    binding="item", predicate=query.referenced_predicates[0]
                 )
             )
         }

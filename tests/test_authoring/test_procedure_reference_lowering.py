@@ -34,7 +34,9 @@ from tests.test_claims.test_claims import _claim_type
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    coordinator, _actor = _world_holding_a_document(tmp_path_factory.mktemp("reference-lowering"))
+    coordinator, _actor = _world_holding_a_document(
+        tmp_path_factory.mktemp("reference-lowering"), historical=True
+    )
     instance = coordinator.instance
     base = instance.accepted_coordinate()
     return instance, base, instance.immutable_tree_at(base.git_oid)
@@ -70,7 +72,7 @@ def _outcome(instance, base, tree, payload, **kwargs):
 @pytest.mark.parametrize("case", ["live", "missing", "retired", "wrong-kind", "malformed"])
 def test_reference_bytes_pins_and_typed_refusals_match_full_tree(world, monkeypatch, case):
     instance, base, original = world
-    query = _change_set_query()
+    query = _change_set_query(named=False)
     if case == "retired":
         query = query.model_copy(update={"lifecycle": ArtifactLifecycle(state="retired")})
     target = query.identity
@@ -162,7 +164,7 @@ def test_duplicate_envelopes_remain_unresolved(world, monkeypatch):
     from dataclasses import replace
 
     instance, base, original = world
-    query = _change_set_query()
+    query = _change_set_query(named=False)
     tree = SnapshotTree(
         {**original, query_definition_path(query.identity.name): render_query_definition(query)}
     )

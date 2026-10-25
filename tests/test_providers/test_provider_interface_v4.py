@@ -13,6 +13,8 @@ from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderInterfaceDefinition,
     evaluate_provider_interface_law,
+    interface_definition_bytes,
+    interface_definition_digest,
     parse_provider_interface,
     provider_effect_class,
     provider_external_interface_definition_digest,
@@ -101,9 +103,15 @@ def test_v4_stores_typed_json_with_exact_sparse_definition_and_wheel_digest(extr
     assert path == "provider-interfaces/demo.interface/v2.json"
     parsed = parse_provider_interface(render_provider_interface(interface), path=path)
     assert parsed == interface
-    assert bytes.fromhex(parsed.interface_bytes_hex) == canonical_bytes(value)
-    assert parsed.interface_digest == package_document(value).interfaces[0].interface_digest
+    assert interface_definition_bytes(parsed) == canonical_bytes(value)
+    assert (
+        interface_definition_digest(parsed)
+        == package_document(value).interfaces[0].interface_digest
+    )
     assert provider_operation_contract(parsed) is parsed.interface.contracts
+    assert not any(
+        hasattr(parsed, field) for field in ("interface_digest", "interface_bytes_hex", "pins")
+    )
 
 
 @pytest.mark.parametrize(
@@ -150,6 +158,26 @@ def test_install_reuses_identical_name_version_and_refuses_a_second_definition()
     with pytest.raises(RequestRefusedError, match="existing interface name and version"):
         _interface_bindings(tree, package_document(definition(refusals=["different"])))
     assert _interface_bindings(tree, package_document(definition(version=3)))[0][1] is False
+
+
+def test_install_before_compiler_36_keeps_a_frozen_v3_registration():
+    document = package_document(definition())
+    ((legacy, live),) = _interface_bindings({}, document, named=False)
+    assert not live
+    assert legacy.artifact_format == "cruxible-provider-interface-v3"
+    assert legacy.effect_class == "none"
+    assert interface_definition_bytes(legacy) == canonical_bytes(definition())
+    assert interface_definition_digest(legacy) == document.interfaces[0].interface_digest
+    original = render_provider_interface(legacy)
+    assert _interface_bindings(
+        {provider_interface_path(legacy.identity.name): original}, document, named=False
+    ) == ((legacy, True),)
+    assert render_provider_interface(legacy) == original
+    # Retain the original exact-byte/digest assertions for the frozen wrapper;
+    # the current-format test above checks its replacement typed-JSON surface.
+    parsed, value = legacy, definition()
+    assert bytes.fromhex(parsed.interface_bytes_hex) == canonical_bytes(value)
+    assert parsed.interface_digest == package_document(value).interfaces[0].interface_digest
 
 
 def test_v4_law_freezes_definition_and_allows_explicit_retirement():

@@ -877,8 +877,8 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.core_support._light_capture_support import record_contract
-    from tests.core_support._p2b1_support import accepted_interface
     from tests.support.provider_builds import capture_provider_build
+    from tests.support.provider_builds import capture_provider_interface as accepted_interface
 
     contract = record_contract() if contract is None else contract
     provider_artifact = capture_provider_build(contract)
@@ -951,6 +951,7 @@ def _record_capture(
     is answered.
     """
 
+    from cruxible_client.contracts.captures import capture_components
     from cruxible_core.evidence.source_readers import (
         ExternalSourceReadRequestV1,
         FakeVersionedExternalSourceReader,
@@ -958,6 +959,7 @@ def _record_capture(
     )
     from tests.core_support._pc_c_support import NOW, digest, provider_run
 
+    components = capture_components(contract)
     kind, subject_id = subject.split("/", 1)
     selector = {
         "relation": "orders",
@@ -969,15 +971,15 @@ def _record_capture(
     reader = FakeVersionedExternalSourceReader()
     reader.seed(
         source_identity="commerce.production.orders",
-        coordinate_type=contract.coordinate_schema_pins[0].target.name,
+        coordinate_type=components.coordinate_schema_pins[0].target.name,
         coordinate="0/16B6C50",
         selector_type=next(
             (
                 pin.target.name
-                for pin in contract.selector_schema_pins
+                for pin in components.selector_schema_pins
                 if pin.target.name == "relation-primary-key-v1"
             ),
-            contract.selector_schema_pins[0].target.name,
+            components.selector_schema_pins[0].target.name,
         ),
         selector=selector,
         value={"order_id": subject_id, "status": "ready"},
@@ -992,15 +994,15 @@ def _record_capture(
                 logical_source_identity="commerce.production.orders",
                 adapter_digest=digest("test-adapter", "postgres-v1"),
             ),
-            coordinate_type=contract.coordinate_schema_pins[0].target.name,
+            coordinate_type=components.coordinate_schema_pins[0].target.name,
             coordinate="0/16B6C50",
             selector_type=next(
                 (
                     pin.target.name
-                    for pin in contract.selector_schema_pins
+                    for pin in components.selector_schema_pins
                     if pin.target.name == "relation-primary-key-v1"
                 ),
-                contract.selector_schema_pins[0].target.name,
+                components.selector_schema_pins[0].target.name,
             ),
             selector=selector,
             materialization="cas",

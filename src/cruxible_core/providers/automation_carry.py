@@ -6,7 +6,7 @@ parameters and conditions are data, never reference replacement targets.
 
 from collections.abc import Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, normalize_canonical
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
@@ -56,7 +56,7 @@ def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProce
 
     line = parse_carry_line(content, path=path)
     contract = procedure.procedure.definition.contract_in
-    if not isinstance(contract, ArtifactPin):
+    if not isinstance(contract, ArtifactPin | ArtifactNameRef):
         return
     try:
         OwnedProcedureContractValidator(procedure).validate_contract(

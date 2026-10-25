@@ -25,7 +25,9 @@ def package(tmp_path: Path):
 def provider_world(tmp_path, package, *, together=False):
     instance, owner = initialize_local(tmp_path)
     document, build = package
-    first, second = build(1), build(2)
+    from cruxible_client.contracts.named_references import name_provider
+
+    first, second = name_provider(build(1)), name_provider(build(2))
     definitions = {
         provider_interface_path(item.identity.name): render_provider_interface(item)
         for item in document.interface_registrations()

@@ -27,8 +27,8 @@ from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
-    QueryDefinition,
-    QueryDefinitionSpec,
+    NamedQueryDefinition,
+    NamedQueryDefinitionSpec,
     QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
@@ -141,9 +141,10 @@ def _spec(
     orderings: tuple[QueryOrdering, ...] = (),
     parameters: tuple[QueryParameterDeclaration, ...] = (),
     name: str = "test.claim_fields",
-) -> QueryDefinitionSpec:
-    return QueryDefinitionSpec.model_validate(
+) -> NamedQueryDefinitionSpec:
+    return NamedQueryDefinitionSpec.model_validate(
         dict(
+            artifact_format="cruxible-query-definition-v3",
             identity=ArtifactIdentity(kind="QueryDefinition", name=name),
             entry=QueryEntry(binding="item", subject_kinds=(KIND,)),
             result_binding="item",
@@ -169,23 +170,12 @@ def _spec(
 
 def _accepted(
     instance: PlaybillInstance,
-    spec: QueryDefinitionSpec,
+    spec: NamedQueryDefinitionSpec,
     coordinate: AcceptedProjectionCoordinate | None = None,
 ) -> AcceptedQueryDefinition:
     """The spec as a strict definition, pinned to the ClaimTypes accepted at the coordinate."""
 
-    with instance.bind_accepted_projection(
-        coordinate or instance.accepted_coordinate()
-    ) as projection:
-        pins = tuple(
-            ArtifactPin(
-                role="claim-type",
-                target=ArtifactIdentity(kind="ClaimType", name=predicate),
-                artifact_digest=projection.typed.envelope("ClaimType:" + predicate).artifact_digest,
-            )
-            for predicate in sorted(spec.referenced_predicates)
-        )
-    query = QueryDefinition.model_validate({**spec.model_dump(mode="json"), "pins": pins})
+    query = NamedQueryDefinition.model_validate(spec.model_dump(mode="json"))
     return AcceptedQueryDefinition(
         path=query_definition_path(query.identity.name),
         query=query,
@@ -615,7 +605,7 @@ def test_claims_agreeing_on_a_value_but_not_a_role_state_no_single_role(
         # Refusing on a conflict is a one-cardinality read's choice.
         declared = spec.model_dump(mode="json")
         declared["evaluation_policy"]["conflict_behavior"] = conflict
-        spec = QueryDefinitionSpec.model_validate(
+        spec = NamedQueryDefinitionSpec.model_validate(
             {
                 **declared,
                 "result_cardinality": "one",

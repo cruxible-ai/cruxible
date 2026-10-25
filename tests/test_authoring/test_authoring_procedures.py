@@ -43,6 +43,7 @@ from cruxible_client.contracts.procedures.results import (
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     query_definition_digest,
+    validate_query_definition,
 )
 from cruxible_client.contracts.query.grammar import QueryProjection
 from cruxible_core.authoring import lowering
@@ -63,6 +64,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
@@ -232,12 +234,13 @@ def _carried_definition() -> dict[str, object]:
     }
 
 
-def _change_set_query() -> QueryDefinition:
+def _change_set_query(*, named: bool = True) -> QueryDefinition:
     example = query_claims_by_type_example().query_definition
     assert example.projection is not None
-    return example.model_copy(
+    from cruxible_client.contracts.named_references import name_query
+
+    return (name_query(example) if named else example).model_copy(
         update={
-            "pins": (),
             "projection": QueryProjection(fields=(example.projection.fields[0],)),
         }
     )
@@ -398,10 +401,12 @@ def _submit_approve_activate(
 
 def _world_holding_a_document(
     tmp_path: Path,
+    *,
+    historical: bool = False,
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
     """One instance whose accepted tree governs a single Document."""
 
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
     body = instance.store_document_body(b"# Accepted design\n")
     shell = DocumentShell(
         identity="document:design",
@@ -578,7 +583,7 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
 def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     tokens = iter(f"{value:032x}" for value in range(1, 20))
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -588,7 +593,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
         ),
     )
     actor = AuthenticatedActor(actor_id="owner")
-    query = _change_set_query()
+    query = _change_set_query(named=False)
     accepted_spelling_for_new_candidate = coordinator.compile(
         actor=actor,
         payload=_with_accepted_query_reference(_change_set_payload(query)),
@@ -697,10 +702,10 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
 def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    query_v1 = _change_set_query()
+    query_v1 = _change_set_query(named=False)
     _submit_approve_activate(
         coordinator,
         actor=actor,
@@ -879,7 +884,7 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     )
     renamed_values = query.model_dump(mode="json")
     renamed_values["identity"] = {"kind": "QueryDefinition", "name": "renamed"}
-    renamed = QueryDefinition.model_validate(renamed_values)
+    renamed = validate_query_definition(renamed_values)
     with pytest.raises(ValueError, match="cannot change member identity"):
         coordinator.replace_payload(
             created.intent.intent_id,
@@ -1373,7 +1378,7 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     assert result.receipt.terminal == result.terminal
 
 
-def _accepted_authoring_trio(tmp_path):
+def _accepted_authoring_trio(tmp_path, *, historical=False):
     from cruxible_client.contracts.acquisition_policies import (
         SourceAcquisitionPolicy,
     )
@@ -1384,7 +1389,7 @@ def _accepted_authoring_trio(tmp_path):
         authoring_member_identity,
     )
 
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     procedure = _list_contract_payload()
@@ -1397,7 +1402,7 @@ def _accepted_authoring_trio(tmp_path):
     line = LineAuthoringPayload(
         name=name,
         procedure_name=name,
-        acquisition_policy_name="demo",
+        acquisition_policy_name=None if historical else "demo",
         max_authority="observe",
     )
     mandate = ProcedureMandateAuthoringPayload(
@@ -1410,7 +1415,12 @@ def _accepted_authoring_trio(tmp_path):
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
     payload = ChangeSetAuthoringPayload(
-        members=tuple(sorted((policy, procedure, line, mandate), key=authoring_member_identity))
+        members=tuple(
+            sorted(
+                (procedure, line, mandate) if historical else (policy, procedure, line, mandate),
+                key=authoring_member_identity,
+            )
+        )
     )
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
@@ -1473,12 +1483,15 @@ def test_unchanged_procedure_line_mandate_submit_reuses_accepted_state(tmp_path)
             assert instance.accepted_coordinate() == coordinate
 
 
-def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path):
+@pytest.mark.parametrize("historical", [True, False])
+def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path, historical):
     from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 
-    coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(tmp_path)
+    coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(
+        tmp_path, historical=historical
+    )
     instance = coordinator.instance
     before = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = procedure_path(procedure.definition["name"])
@@ -1495,7 +1508,12 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
     computed = compute_preflight(instance, intent=intent, actor=actor)
     assert computed.result.verdict == "passed", computed.result.frontier
     lowered = computed.lowered
-    assert not lowered.idempotent and len(lowered.changed_members) == 3
+    if historical:
+        assert not lowered.idempotent and len(lowered.changed_members) == 3
+    else:
+        assert not lowered.idempotent and len(lowered.changed_members) == 2
+        line_path = f"lines/{procedure.definition['name']}.json"
+        assert lowered.proposed_tree[line_path] == before[line_path]
     new = parse_procedure(lowered.proposed_tree[path], path=path)
     assert new.lifecycle.predecessor_digest == old_digest
     new_digest = procedure_artifact_digest(new).tagged

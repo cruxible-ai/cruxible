@@ -227,7 +227,8 @@ def test_move_work_is_flat_with_same_name_build_population(tmp_path, monkeypatch
             )
         seen = []
 
-        def settle(tree, *, writes, connection, movers, moves):
+        def settle(tree, *, writes, connection, movers, moves, by_name):
+            assert not by_name
             seen.extend(movers)
             return SettledMoves()
 
@@ -323,7 +324,13 @@ def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, p
 
     (tmp_path / "accepted").mkdir()
     instance, owner = initialize_local(tmp_path / "accepted")
-    document, build = package
+    from cruxible_client.contracts.named_references import name_provider
+
+    document, frozen_build = package
+
+    def build(i):
+        return name_provider(frozen_build(i))
+
     first, second, third, fourth = (build(i) for i in range(1, 5))
 
     def accept(label, providers, *, interfaces=False):

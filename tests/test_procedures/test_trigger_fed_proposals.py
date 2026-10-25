@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import parse_claim
@@ -25,11 +25,10 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, evidence_by_item
@@ -65,7 +64,15 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     instance, owner, procedure, root, policy = fixtures._world(tmp_path)
     # A second Procedure of the same shape, ending in a proposal terminal.
     monkeypatch.setattr(fixtures, "PROCEDURE_NAME", PROPOSER)
-    pins = {pin.role: pin for pin in procedure.pins}
+    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
+
+    bound = _accepted_procedure(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        name=procedure.identity.name,
+        bind_references=True,
+    )
+    pins = {pin.role: pin for pin in bound.procedure.pins}
     proposer = terminal_procedure(
         fixtures._procedure(
             instance,
@@ -77,30 +84,16 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     )
     monkeypatch.undo()
     contract = capture_contract()
-    selector = CaptureEventSelector(
+    selector = NamedCaptureEventSelector(
         capture_contract_identity=contract.identity,
-        capture_contract_digest=capture_contract_digest(contract).tagged,
     )
     served = fixtures._served_line(proposer, policy)
-    line = LineSpec.model_validate(
+    line = type(served).model_validate(
         {
             **served.model_dump(mode="python"),
             "max_authority": "propose",
             "trigger_input": fixtures.SOURCE_ALIAS,
             "trigger_event": selector,
-            "pins": tuple(
-                sorted(
-                    (
-                        *served.pins,
-                        ArtifactPin(
-                            role="trigger-capture-contract",
-                            target=selector.capture_contract_identity,
-                            artifact_digest=selector.capture_contract_digest,
-                        ),
-                    ),
-                    key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-                )
-            ),
         }
     )
     claim_type = _claim_type(capture_contract_digest(contract).tagged)

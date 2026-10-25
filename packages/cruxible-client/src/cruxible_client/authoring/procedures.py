@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from cruxible_client.contracts.artifacts import ArtifactPin, parse_artifact_identity
+from cruxible_client.contracts.artifacts import (
+    ArtifactNameRef,
+    ArtifactPin,
+    parse_artifact_identity,
+)
 from cruxible_client.contracts.authoring.inputs import (
     AcceptedReferenceInput,
     CarriedContractInput,
@@ -33,6 +37,11 @@ from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_owned_contract_digest,
+)
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureSpec,
+    ProcedureSpecError,
+    lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.contracts import validate_contract_schema
@@ -46,7 +55,6 @@ from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     GuardPredicate,
     ProcedureBudget,
-    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureNode,
     ProcedurePinSlotRef,
@@ -54,6 +62,8 @@ from cruxible_client.contracts.procedures.models import (
     TransformKind,
     derived_terminal_capability,
 )
+from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+from cruxible_client.contracts.procedures.names import named_graph
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimRetirementItem,
     ProcedureClaimStatement,
@@ -90,12 +100,12 @@ def procedure_record_constructor(
         if direction == "input"
         else artifact.definition.contract_out
     )
-    if not isinstance(pin, ArtifactPin):
+    if not isinstance(pin, ArtifactPin | ArtifactNameRef):
         raise ValueError("Typed execution requires a resolved owner-carried Contract")
     for contract in artifact.owned_contracts:
-        if (
-            contract.identity == pin.target
-            and procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
+        if contract.identity == pin.target and (
+            isinstance(pin, ArtifactNameRef)
+            or procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
         ):
             return RecordConstructor(contract.contract_schema)
     raise ValueError("Procedure contract is absent from its exact owner closure")
@@ -157,8 +167,6 @@ class ProviderBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     provider: str
     interface: str
-    interface_digest: str
-    implementation_digest: str
     effect_class: Literal["pure", "external_read", "external_mutation"] | None = None
     operation_contract: ProviderOperationContract | None = None
     coordinate: AcceptedCoordinate | None = None
@@ -168,13 +176,6 @@ class ProviderBinding(BaseModel):
         if self.operation_contract is None:
             raise ValueError("This interface has no declared operation contract")
         return RecordConstructor(self.operation_contract.input)
-
-    @field_validator("interface_digest", "implementation_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        from cruxible_client.contracts.canonical import ArtifactDigest
-
-        return ArtifactDigest.from_tagged(value).tagged
 
     @classmethod
     def from_interface(
@@ -210,8 +211,6 @@ class ProviderBinding(BaseModel):
         return cls(
             provider=selected.provider_identity,
             interface=entry.identity,
-            interface_digest=entry.interface_digest,
-            implementation_digest=selected.implementation_digest,
             effect_class=entry.effect_class,
             operation_contract=entry.operation_contract,
         )
@@ -349,7 +348,7 @@ class CompositionDiagnostic(BaseModel):
 class ProcedureStateDependency(BaseModel):
     node_id: str
     kind: Literal["claim", "query"]
-    selection: ArtifactPin | ProcedurePinSlotRef
+    selection: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
     cardinality: Literal["one", "all", "query"]
     limit: int | None = None
     admitted_context: bool = True
@@ -369,21 +368,21 @@ class ProcedureBranchValue(BaseModel):
     kind: Literal["guard", "select"]
     producers: tuple[str, ...] = ()
     predicate: GuardPredicate | None = None
-    contract: ArtifactPin | ProcedurePinSlotRef | None = None
+    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | None = None
     successors: dict[str, str] = Field(default_factory=dict)
 
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
     kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
-    contract: ArtifactPin | ProcedurePinSlotRef
+    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
     # The authority the path's terminal needs; a pure or halting path needs none.
     required_authority: AuthorityVerb | None
 
 
 class ProcedureChildCall(BaseModel):
     node_id: str
-    procedure: ArtifactPin
+    procedure: ArtifactPin | ArtifactNameRef
     inherits_authority: bool = True
     shares_budget: bool = True
 
@@ -394,8 +393,8 @@ class ProcedurePreview(BaseModel):
     name: str
     ready_for_prepare: bool
     contracts: tuple[CarriedContractInput, ...]
-    contract_in: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
-    contract_out: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
+    contract_in: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
+    contract_out: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
     # The most this Procedure's terminals can do: observe, propose or settle.
     authority: AuthorityVerb
     acquisition_policy: str | None
@@ -570,16 +569,12 @@ class Sequence:
                     binding = ProviderBinding(
                         provider="unbound",
                         interface="unbound",
-                        interface_digest="sha256:" + "0" * 64,
-                        implementation_digest="sha256:" + "0" * 64,
                     )
                 node.update(
                     provider=_accepted(binding.provider, "Provider", "provider"),
                     interface=_accepted(
                         binding.interface, "ProviderInterface", "provider-interface"
                     ),
-                    interface_digest=binding.interface_digest,
-                    implementation_digest=binding.implementation_digest,
                 )
             if isinstance(
                 step, (Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet, Halt)
@@ -684,7 +679,9 @@ class Sequence:
         )
         edges: dict[str, dict[str, str]] = {}
         try:
-            checked = ProcedureDefinition.model_validate(_symbolic_pins(definition))
+            checked = NamedProcedureDefinition.model_validate(
+                named_graph(_symbolic_pins(definition))
+            )
             edges = analyze_procedure(checked).edges
         except (ValueError, ProcedureGraphFormatError) as exc:
             error(None, "graph_invalid", str(exc))
@@ -696,6 +693,23 @@ class Sequence:
             contracts=tuple(contracts[name] for name in sorted(contracts)),
         )
         lower_authoring_input(input_)  # Same pure payload lowering used by SDK/CLI/HTTP.
+        if not errors:
+            authored = _authored_input(input_)
+            assert authored.spec is not None
+            try:
+                lower_procedure_spec(authored.spec)
+            except ProcedureSpecError as exc:
+                index = exc.field_path.partition("$.steps[")[2].partition("]")[0]
+                authored_step = (
+                    authored.spec.steps[int(index)]
+                    if index.isdigit() and int(index) < len(authored.spec.steps)
+                    else None
+                )
+                error(
+                    getattr(authored_step, "id", None),
+                    exc.code.removeprefix("cruxible.authoring."),
+                    str(exc),
+                )
         # Do not expose internal unbound stand-ins as if they were selections.
         visible_nodes = tuple(
             {
@@ -741,7 +755,31 @@ class Sequence:
         input_, preview = self._compile()
         if preview.errors:
             raise ProcedureCompositionError(preview)
-        return input_
+        return _authored_input(input_)
+
+
+def _authored_input(input_: ProcedureInput) -> ProcedureInput:
+    """One conversion shared by preview validation and the submitted input."""
+    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
+    # Preview-only symbolic pins never enter the recognized authored steps.
+    definition = NamedProcedureDefinition.model_validate(
+        named_graph(_symbolic_pins(input_.definition))
+    )
+    owner = ProcedureArtifact.model_construct(
+        definition=definition,
+        owned_contracts=tuple(
+            ProcedureOwnedContract(
+                identity=parse_artifact_identity("Contract:" + c.name),
+                schema=_schema(c),
+            )
+            for c in input_.contracts
+        ),
+        activation_policy=input_.activation_policy,
+        acquisition_policy=input_.acquisition_policy,
+    )
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
 
 
 def _has_reference(value: object) -> bool:
@@ -778,6 +816,8 @@ __all__ = [
     "ProviderBinding",
     "ProviderSelectionError",
     "Sequence",
+    "ProcedureSpec",
+    "lower_procedure_spec",
     "Source",
     "StateTap",
     "SubjectKeyClaimObject",

@@ -715,17 +715,17 @@ class ProposalEvidenceStore:
     ) -> tuple[ApprovalSubmission, ...]:
         if candidate_directory.is_symlink() or not candidate_directory.is_dir():
             raise ProposalIntegrityError("approval evidence directory is not trustworthy")
+        # New signers may arrive while this read runs. Pair each submission with
+        # the exact path read, rather than enumerating a newer directory for checks.
+        paths = tuple(sorted(candidate_directory.glob("*.json"), key=lambda item: item.name))
         submissions = tuple(
             self._read_model(path, ApprovalSubmission, label="approval submission")
-            for path in sorted(candidate_directory.glob("*.json"), key=lambda item: item.name)
+            for path in paths
         )
         signer_ids = tuple(item.attestation.signer_id for item in submissions)
         if signer_ids != tuple(sorted(set(signer_ids), key=lambda value: value.encode("utf-8"))):
             raise ProposalIntegrityError("approval evidence is not uniquely signer-ordered")
-        for path, submission in zip(
-            sorted(candidate_directory.glob("*.json"), key=lambda item: item.name),
-            submissions,
-        ):
+        for path, submission in zip(paths, submissions, strict=True):
             if path.name != f"{submission.attestation.signer_id}.json":
                 raise ProposalIntegrityError("approval evidence filename differs from signer")
             if submission.attestation.payload_digest != candidate_digest_value:

@@ -497,7 +497,7 @@ def test_verified_acceptance_carries_proof_roots_to_both_physical_and_card_free_
 
     instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
     head = instance.accepted_coordinate()
-    cold = build_tree_state(instance.tree_at(head.git_oid))
+    cold = build_tree_state(instance.tree_at(head.git_oid), by_name=True)
     retained = instance._accepted_evaluation_proofs
     assert retained is not None and retained[0] == head.git_oid
 

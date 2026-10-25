@@ -16,6 +16,8 @@ from collections.abc import Callable, Mapping
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceContract,
+    interface_definition_digest,
+    interface_definition_digest_domain,
     parse_provider_interface,
     provider_interface_contract_key,
     provider_interface_digest,
@@ -40,8 +42,8 @@ CREATE TABLE provider_control_domains (
 ) STRICT;
 CREATE INDEX providers_by_registration ON providers(provider_name,registration_sequence DESC,identity) WHERE lifecycle='live';
 CREATE TABLE provider_pinners (
- source_identity TEXT NOT NULL, target_identity TEXT NOT NULL, target_digest TEXT NOT NULL, provider_name TEXT NOT NULL,
- PRIMARY KEY(source_identity,target_identity,target_digest)
+ source_identity TEXT NOT NULL, target_identity TEXT NOT NULL, target_digest TEXT, provider_name TEXT NOT NULL,
+ PRIMARY KEY(source_identity,target_identity)
 ) STRICT;
 CREATE INDEX provider_pinners_by_name ON provider_pinners(provider_name,source_identity,target_identity);
 """
@@ -85,8 +87,8 @@ def registration_key(content: bytes, path: str) -> str:
             return f"v{registration.interface.version}"
         return provider_interface_contract_key(
             interface_id=registration.interface_id,
-            interface_digest_domain=registration.interface_digest_domain,
-            interface_digest=registration.interface_digest,
+            interface_digest_domain=interface_definition_digest_domain(registration),
+            interface_digest=interface_definition_digest(registration),
             effect_class=registration.effect_class,
         ).value
 

@@ -65,6 +65,7 @@ def inspect_provider_package(
     lock: bytes,
     dependencies: tuple[tuple[str, bytes], ...] = (),
     delivery: KitProviderDelivery = "bundled",
+    named: bool = True,
 ) -> InspectedProviderPackage:
     """The manifest entry for one wheel, its lock and its path-sourced dependency wheels.
 
@@ -126,7 +127,7 @@ def inspect_provider_package(
     }
     supplied = {item.name: item.version for item in dependency_pins}
     check_path_dependencies(pin.name, by_path, supplied, delivery=delivery)
-    registrations = document.interface_registrations()
+    registrations = document.interface_registrations(named=named)
     if set(by_path) - set(supplied):
         # An index default given no wheel for a path dependency: the consumer's
         # closure is the index's, so there is no exact closure to record here.

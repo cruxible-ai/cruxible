@@ -43,6 +43,7 @@ from cruxible_client.contracts.claims import (
     LegacyCitationReference,
     claim_citation_id,
 )
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisKind
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.query.grammar import byte_sorted
@@ -280,6 +281,9 @@ class CoverageLineOverlay(_StrictCoverageModel):
         return self
 
 
+_OCCURRENCE_IDENTITIES: ValueMemo[str] = ValueMemo(capacity=16384)
+
+
 def occurrence_identity_digest(
     *,
     source: LogicalSourceIdentity,
@@ -297,15 +301,32 @@ def occurrence_identity_digest(
     Sha256Value.from_tagged(observed_commitment_digest)
     if ordinal < 0:
         raise ValueError("occurrence ordinal must be non-negative")
-    return typed_digest(
-        Sha256Value,
-        OCCURRENCE_IDENTITY_DIGEST_DOMAIN,
-        {
-            "observed_commitment_digest": observed_commitment_digest,
-            "ordinal": ordinal,
-            "source": source.model_dump(mode="json"),
-        },
-    ).tagged
+    # Construction and nested overlay validation reproduce the same identity.
+    # Key only the frozen preimage's scalar values, so copied/decoded sources
+    # share the derivation without retaining caller-owned models or offsets.
+    # Keep ordinal types distinct: Python equates True, 1 and 1.0, while the
+    # frozen canonical preimage distinguishes them (and refuses floats).
+    return _OCCURRENCE_IDENTITIES.derive(
+        (
+            source.tag,
+            source.plane,
+            source.identity,
+            observed_commitment_digest,
+            type(ordinal),
+            ordinal,
+        ),
+        lambda: (
+            typed_digest(
+                Sha256Value,
+                OCCURRENCE_IDENTITY_DIGEST_DOMAIN,
+                {
+                    "observed_commitment_digest": observed_commitment_digest,
+                    "ordinal": ordinal,
+                    "source": source.model_dump(mode="json"),
+                },
+            ).tagged
+        ),
+    )
 
 
 # -- request grammar ------------------------------------------------------

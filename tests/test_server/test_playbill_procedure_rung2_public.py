@@ -249,8 +249,8 @@ def _procedure_definition(
                     ),
                     artifact_digest=interface["artifact_digest"],
                 ),
-                interface_digest=interface["interface_digest"],
-                implementation_digest=provider["implementation_digest"],
+                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
                 request=request.model_dump(mode="json"),
                 as_="advisory",
                 next="shape",
@@ -301,6 +301,11 @@ def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> d
     are referenced as candidates in it.
     """
 
+    from cruxible_client.contracts.procedures.names import named_graph
+
+    # Current authoring names dependencies; exact invocation bindings remain in receipts.
+    definition = named_graph(definition.model_dump(mode="json", by_alias=True))
+
     def rewrite(value: object) -> object:
         if isinstance(value, dict):
             if set(value) == {"role", "target", "artifact_digest"}:
@@ -329,7 +334,7 @@ def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> d
             return [rewrite(item) for item in value]
         return value
 
-    return rewrite(definition.model_dump(mode="json", by_alias=True))  # type: ignore[return-value]
+    return rewrite(definition)  # type: ignore[return-value]
 
 
 def _binding_digest(workspace: Path) -> str:
@@ -396,11 +401,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     # 1. Discover the seeded interface and the built-in Provider implementing it.
     interface = interface_entry(transport, instance_id, "workspace.file")
     assert interface["identity"] == "ProviderInterface:workspace.file"
-    assert interface["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
+    assert "interface_digest" not in interface
     assert "classifier_status" not in interface
     (provider,) = interface["providers"]
     assert provider["provider_identity"] == "Provider:cruxible-builtin"
-    assert provider["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    assert "implementation_digest" not in provider
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
@@ -560,6 +565,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert state.run_id is not None
     # The built-in ran in-process, and its durable receipt says so.
     (invocation,) = _provider_receipts(instance_id)
+    assert invocation["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
     assert invocation["fence_scope"] == "in_process"
     assert invocation["egress"]["observer_backend"] == "core.in-process"
     assert invocation["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST

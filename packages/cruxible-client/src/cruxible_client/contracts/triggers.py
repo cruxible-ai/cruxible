@@ -22,14 +22,22 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Annotated, Final, Literal, TypeAlias
+from typing import Annotated, ClassVar, Final, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
     ArtifactRef,
 )
@@ -49,6 +57,9 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     CaptureEventWindow,
+    FixedWindow,
+    NamedCaptureEventSelector,
+    NamedCaptureEventWindow,
     ObservationWindow,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -291,7 +302,9 @@ def schedule_capture_selector(schedule: TriggerSchedule) -> CaptureEventSelector
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
-def schedule_satisfies_input(schedule: TriggerSchedule, required: TriggerInputRecord) -> bool:
+def schedule_satisfies_input(
+    schedule: TriggerSchedule, required: TriggerInputRecord, *, by_name: bool = True
+) -> bool:
     """Whether every fire of ``schedule`` carries the event ``required`` names.
 
     The one rule for every target: a Line's accepted event and an internal
@@ -306,7 +319,7 @@ def schedule_satisfies_input(schedule: TriggerSchedule, required: TriggerInputRe
     event = required.event
     return (
         selector.capture_contract_identity == event.capture_contract_identity
-        and selector.capture_contract_digest == event.capture_contract_digest
+        and (by_name or selector.capture_contract_digest == event.capture_contract_digest)
         and (
             not event.logical_sources
             or bool(selector.logical_sources)
@@ -367,6 +380,44 @@ class Trigger(_StrictTriggerModel):
         return self.target.action if isinstance(self.target, ActionTarget) else None
 
 
+class NamedLineTarget(LineTarget):
+    line: ArtifactNameRef  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _line(self) -> NamedLineTarget:
+        if self.line.target.kind != "Line":
+            raise ValueError("a Trigger names a Line")
+        return self
+
+
+class NamedCaptureLandingSchedule(CaptureLandingSchedule):
+    event: NamedCaptureEventSelector
+
+
+class NamedWindowCloseSchedule(WindowCloseSchedule):
+    window: Annotated[FixedWindow | NamedCaptureEventWindow, Field(discriminator="kind")]
+
+
+class NamedTrigger(Trigger):
+    artifact_format: Literal["cruxible-trigger-v2"] = "cruxible-trigger-v2"  # type: ignore[assignment]
+    schedule: Annotated[
+        CadenceSchedule
+        | CronSchedule
+        | NamedCaptureLandingSchedule
+        | NamedWindowCloseSchedule
+        | GenerationAcceptedSchedule,
+        Field(discriminator="kind"),
+    ]
+    target: Annotated[NamedLineTarget | ActionTarget, Field(discriminator="kind")]
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _shape(self) -> NamedTrigger:
+        if self.identity.kind != "Trigger" or not _TRIGGER_NAME_RE.fullmatch(self.identity.name):
+            raise ValueError("Trigger identity must be path-addressable and kind Trigger")
+        return self
+
+
 def trigger_path(name: str) -> str:
     if not _TRIGGER_NAME_RE.fullmatch(name):
         raise TriggerFormatError("Trigger identity is not path-addressable")
@@ -387,7 +438,9 @@ def parse_trigger(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
 ) -> Trigger:
     try:
-        trigger = Trigger.model_validate(json.loads(content))
+        trigger: Trigger = TypeAdapter[Trigger | NamedTrigger](
+            Trigger | NamedTrigger
+        ).validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise TriggerFormatError("Trigger failed strict validation") from exc
     if not artifact_path_matches(trigger_path(trigger.identity.name), path, codec=codec):
@@ -399,7 +452,7 @@ def parse_trigger(
 
 class AcceptedTrigger(_StrictTriggerModel):
     path: str
-    trigger: Trigger
+    trigger: Annotated[Trigger | NamedTrigger, Field(discriminator="artifact_format")]
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -446,6 +499,7 @@ def evaluate_trigger_law(
     predecessor: AcceptedTrigger | None,
     target_line_live: bool | None = None,
     target_line_input: TriggerInputRecord | None = None,
+    by_name: bool = False,
     actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
 ) -> TriggerLawResult:
     """Judge one Trigger against its predecessor and what it aims at.
@@ -534,7 +588,9 @@ def evaluate_trigger_law(
                 )
             target = f"Line {trigger.target.line.target.qualified!r}"
             required = target_line_input or NoTriggerInput()
-        if not schedule_satisfies_input(trigger.schedule, required):
+        if not schedule_satisfies_input(
+            trigger.schedule, required, by_name=by_name or isinstance(trigger, NamedTrigger)
+        ):
             assert isinstance(required, CaptureEventInput)
             needed = (
                 "its declared trigger_event contract and source restriction"

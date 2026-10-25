@@ -203,7 +203,7 @@ def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinition:
 
 
 def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedure:
-    accepted, _, _ = _accepted_procedure()
+    accepted, _, _ = _accepted_procedure(artifact_format="playbill-procedure-v2")
     payload = accepted.procedure.model_dump(mode="json")
     payload["pins"] = [
         pin.model_dump(mode="json")

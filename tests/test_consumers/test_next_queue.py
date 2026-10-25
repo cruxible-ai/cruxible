@@ -1129,15 +1129,18 @@ def test_a_door_row_follows_the_repair_of_an_account_capture_it_could_not_read(
     assert statuses == {"proven"}
 
 
+@pytest.mark.parametrize("historical", [True, False])
 def test_a_retired_dependency_capture_rewritten_in_place_is_caught_by_the_sweep(
-    world,  # noqa: F811
+    tmp_path, historical
 ) -> None:
     from tests.core_support._retirement_support import retire_claim
+    from tests.test_authoring.test_derivation_admission import derivation_world
     from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
 
-    derived = _run_and_accept(world)
-    retire_claim(world.instance, world.owner, derived.identity.name)
-    instance = world.instance
+    derived_world = derivation_world(tmp_path, historical=historical)
+    derived = _run_and_accept(derived_world)
+    retire_claim(derived_world.instance, derived_world.owner, derived.identity.name)
+    instance = derived_world.instance
     _drain(instance, _DERIVED_AT)
     capture = derived.backing.capture_digests[0]
     tables = facts.stored_tables(instance)
@@ -1195,7 +1198,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         service_activate_playbill_proposal(
             instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
         )
-    procedure = _procedure()
+    procedure = _procedure(named=True)
     lapsing = _mandate(procedure=procedure).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=EVALUATION_TIME.tzinfo)}
     )

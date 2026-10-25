@@ -47,6 +47,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
+from cruxible_client.contracts.named_references import name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
@@ -81,6 +82,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -102,6 +104,7 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest, su
 from cruxible_client.contracts.triggers import (
     GenerationAcceptedSchedule,
     parse_trigger,
+    render_trigger,
     trigger_path,
 )
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
@@ -114,7 +117,7 @@ from cruxible_core.server.registry import get_registry
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import work_item_query
-from tests.core_support._write_support import CLAIM_TYPES, KIND, report_evidence
+from tests.core_support._write_support import CLAIM_TYPES, KIND, SELF_SOURCE, report_evidence
 from tests.core_support._write_support import seed_write_vocabulary as _seed_vocabulary
 from tests.support.lines import line_trigger, successor, trigger_members
 
@@ -340,6 +343,9 @@ def _procedure(
         ),
         activation_policy="drain",
     )
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    procedure = name_procedure(procedure)
     return AcceptedProcedure(
         path=procedure_path(name),
         procedure=procedure,
@@ -357,7 +363,7 @@ def _pin(accepted: AcceptedProcedure) -> ArtifactPin:
 
 def _line(name: str, accepted: AcceptedProcedure, *, authority: str) -> LineSpec:
     pin = _pin(accepted)
-    return LineSpec(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=pin,
@@ -372,6 +378,10 @@ def _line(name: str, accepted: AcceptedProcedure, *, authority: str) -> LineSpec
         epsilon={"$decimal": "0.1"},
         pins=(pin,),
     )
+
+    from cruxible_client.contracts.named_references import name_line
+
+    return name_line(line)
 
 
 def _item(subject: str, value: str) -> dict[str, object]:
@@ -411,7 +421,7 @@ def _claim_type_pin(field_name: str) -> ArtifactPin:
 def _condition() -> QueryDefinition:
     """The settle condition: the target work item exists; its status rides along."""
 
-    return QueryDefinition(
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=CONDITION_NAME),
         entry=QueryEntry(
             binding="item",
@@ -441,7 +451,6 @@ def _condition() -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=(_claim_type_pin("status"),),
     )
 
 
@@ -531,7 +540,11 @@ def definitions(world: World) -> dict[str, bytes]:
                 schedule=GenerationAcceptedSchedule(),
             )
         ),
-        "triggers/curation-detect.json": _CURATION_DETECT.read_bytes(),
+        "triggers/curation-detect.json": render_trigger(
+            name_trigger(
+                parse_trigger(_CURATION_DETECT.read_bytes(), path="triggers/curation-detect.json")
+            )
+        ),
     }
     return members
 
@@ -586,6 +599,7 @@ def attestation_request(
     if basis == "new_capture":
         capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
+            accepted_contract=SELF_SOURCE,
             actor_id=OPERATOR,
             claim_id=claim_id,
             body=f"scale observation {subject} {now.isoformat()}\n".encode(),

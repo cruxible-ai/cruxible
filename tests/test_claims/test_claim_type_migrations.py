@@ -91,6 +91,7 @@ from cruxible_core.service.discovery.next import NextRequest, service_playbill_n
 from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
+from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_indexes.test_projection_next import _accepted_procedure
@@ -98,8 +99,8 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
 
-def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
-    instance, owner = initialize_local(tmp_path)
+def _accepted_claim_world(tmp_path: Path, *, historical=False):  # type: ignore[no-untyped-def]
+    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
     _seed_claim_surface(instance, owner)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
@@ -661,14 +662,14 @@ def test_legacy_migration_cannot_retire_a_live_claim_without_attribution(
 
 
 def test_v1_refuses_when_complete_closure_contains_a_query_definition(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     _seed_claim_surface(instance, owner)
     current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     current_type = parse_claim_type(
         current_tree[claim_type_path(_claim_type().predicate)],
         path=claim_type_path(_claim_type().predicate),
     )
-    query = _query_definition(1, current_type)
+    query = _query_definition(1, current_type, named=False)
     current_tree[query_definition_path(query.identity.name)] = render_query_definition(query)
     _accept_tree(instance, owner, current_tree, timestamp=TIMESTAMP, proposal_name="seed-query")
 
@@ -681,14 +682,14 @@ def test_v1_refuses_when_complete_closure_contains_a_query_definition(tmp_path: 
 
 
 def test_v2_preflight_and_submit_cover_claim_and_query_dependents(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     _seed_claim_surface(instance, owner)
     current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     current_type = parse_claim_type(
         current_tree[claim_type_path(_claim_type().predicate)],
         path=claim_type_path(_claim_type().predicate),
     )
-    query = _query_definition(1, current_type)
+    query = _query_definition(1, current_type, named=False)
     current_tree[query_definition_path(query.identity.name)] = render_query_definition(query)
     _accept_tree(instance, owner, current_tree, timestamp=TIMESTAMP, proposal_name="seed-query")
 
@@ -749,7 +750,7 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
     )
 
 
-def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
+def _activate_migration(instance, owner, successor, dependents, *, historical=False):  # type: ignore[no-untyped-def]
     v3_dependents = tuple(
         ClaimTypeDependentDisposition(
             identity=item.identity,
@@ -763,16 +764,19 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
         )
         for item in dependents
     )
+    request = (
+        ClaimTypeMigrationRequestV2(mode="submit", successor=successor, dependents=dependents)
+        if historical
+        else ClaimTypeMigrationRequest(mode="submit", successor=successor, dependents=v3_dependents)
+    )
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequest(
-            mode="submit",
-            successor=successor,
-            dependents=v3_dependents,
-        ),
+        request=request,
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
+    assert isinstance(
+        result, ClaimTypeMigrationResultV2 if historical else ClaimTypeMigrationResultV3
+    )
     candidate = result.proposal.proposal.candidate
     assert candidate is not None
     approval = _sign(
@@ -863,11 +867,11 @@ def _assert_current_adjudication_evidence(instance, claim_id: str) -> None:  # t
 def test_retired_query_definition_does_not_block_later_claim_type_migration(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     _seed_claim_surface(instance, owner)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     type_path = claim_type_path(_claim_type().predicate)
-    query = _query_definition(1, parse_claim_type(tree[type_path], path=type_path))
+    query = _query_definition(1, parse_claim_type(tree[type_path], path=type_path), named=False)
     query_path = query_definition_path(query.identity.name)
     tree[query_path] = render_query_definition(query)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="seed-query")
@@ -875,16 +879,20 @@ def test_retired_query_definition_does_not_block_later_claim_type_migration(
     _activate_migration(
         instance,
         owner,
-        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        _successor(instance),
         (ClaimTypeDependentDispositionV2(identity=query.identity, disposition="retire"),),
+        historical=True,
     )
     retired_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert parse_query_definition(retired_tree[query_path], path=query_path).lifecycle.state == (
         "retired"
     )
 
-    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
-        update={"attestation_consequence_policy": _policy(2)}
+    successor = _successor(instance).model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v4",
+            "attestation_consequence_policy": _policy(2),
+        }
     )
     preflight = service_migrate_claim_type(
         instance,

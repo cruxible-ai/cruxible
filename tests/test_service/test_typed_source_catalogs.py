@@ -325,7 +325,7 @@ def test_source_catalogs_select_exact_contract_and_policy_pins(tmp_path, monkeyp
         == ()
     )
     assert reads == []
-    procedure = _slotless_procedure("policy-procedure").procedure
+    procedure = _slotless_procedure("policy-procedure", historical=True).procedure
     assert _direct_acquisition_policy(
         instance, coordinate=coordinate, procedure=procedure, input_names=("orders",)
     ) == (policy_pin.artifact_digest, policy)

@@ -115,6 +115,9 @@ class EvaluationRows:
             except BaseException:
                 projection.close()
                 raise
+        from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+        self.by_name = projection.accepted.compiler == LIGHT_ARTIFACTS_COMPILER
         self.projection = projection
         self.connection = projection._connection
         self.reader = projection.typed
@@ -258,7 +261,7 @@ class EvaluationRows:
         if self.reader.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row[0] == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
-            state = parse_dependency_artifact(path, self.source_bytes(path))
+            state = parse_dependency_artifact(path, self.source_bytes(path), by_name=self.by_name)
             if state is None or (
                 state.artifact_kind,
                 state.artifact_tag,
@@ -298,7 +301,12 @@ class EvaluationRows:
             return (
                 ()
                 if state is None
-                else _outgoing_edges(state, states=self.states, paths_by_identity=self.identities)
+                else _outgoing_edges(
+                    state,
+                    states=self.states,
+                    paths_by_identity=self.identities,
+                    by_name=self.by_name,
+                )
             )
 
         return self._memo(("outgoing", path), compute)
@@ -340,7 +348,14 @@ class EvaluationRows:
                 tuple(edge for values in outgoing.values() for edge in values)
             )
         return DependencyIndexV1(
-            self.states, self.identities, pin_sources, outgoing, incoming, edge_tree
+            self.states, self.identities, pin_sources, outgoing, incoming, edge_tree, self.by_name
+        )
+
+    def edge_match(self) -> str:
+        return (
+            "(target.artifact_digest=p.target_digest OR p.target_digest IS NULL OR source.kind IN ('procedure','blueprint','query-definition','trigger','line','source-acquisition-policy','capture-contract','provider'))"
+            if self.by_name
+            else "target.artifact_digest=p.target_digest"
         )
 
     def projected_edges(self) -> tuple[DependencyProofReference, ...]:
@@ -358,7 +373,7 @@ class EvaluationRows:
                 f"target.artifact_digest, p.pin_role FROM {self.table('pins')} p "
                 f"JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity "
                 f"JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity "
-                f"AND target.artifact_digest=p.target_digest WHERE p.edge_kind='required_pin'"
+                f"AND {self.edge_match()} WHERE p.edge_kind='required_pin'"
             )
         )
 
@@ -366,7 +381,7 @@ class EvaluationRows:
         return tuple(
             row[0]
             for row in self.connection.execute(
-                f"SELECT DISTINCT {side}.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity AND target.artifact_digest=p.target_digest WHERE p.edge_kind='required_pin' ORDER BY {side}.path"
+                f"SELECT DISTINCT {side}.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity AND {self.edge_match()} WHERE p.edge_kind='required_pin' ORDER BY {side}.path"
             )
         )
 
@@ -790,7 +805,15 @@ class SelectionSpec:
             lambda path: self.call(lambda rows: rows.incoming(path)),
             lambda: self.call(lambda rows: rows.resolved_edge_paths("target")),
         )
-        return DependencyIndexV1(states, identities, sources, outgoing, incoming, edge_tree)
+        return DependencyIndexV1(
+            states,
+            identities,
+            sources,
+            outgoing,
+            incoming,
+            edge_tree,
+            self.call(lambda rows: rows.by_name),
+        )
 
     def claim_subjects(self) -> ClaimSubjectIndex:
         by_claim = self.rows(

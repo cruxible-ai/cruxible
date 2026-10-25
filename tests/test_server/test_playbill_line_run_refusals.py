@@ -66,6 +66,7 @@ def _served_line(
     *,
     accepted: AcceptedProcedure,
     policy: SourceAcquisitionPolicy,
+    historical: bool = False,
 ) -> LineSpec:
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -77,7 +78,7 @@ def _served_line(
         target=policy.identity,
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
-    return LineSpec(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -98,6 +99,10 @@ def _served_line(
             )
         ),
     )
+
+    from cruxible_client.contracts.named_references import name_line
+
+    return line if historical else name_line(line)
 
 
 def _line_mandate(accepted: AcceptedProcedure) -> ProcedureMandateV1:
@@ -284,7 +289,9 @@ def _accept_members(instance, reviewer_key_path: Path, members, *, timestamp: st
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    assert proposed.candidate is not None, proposed.evaluation.diagnostics
+    assert proposed.candidate is not None, [
+        (d.code, d.message, d.subject) for d in proposed.evaluation.diagnostics
+    ]
     assert proposed.evaluation.evaluated_tree_oid is not None
     reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
     material = GeneratedKeyMaterial(

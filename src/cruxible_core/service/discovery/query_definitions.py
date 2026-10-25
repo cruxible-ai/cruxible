@@ -56,13 +56,23 @@ def _view(
     path: str,
     coordinate: AcceptedProjectionCoordinate,
 ) -> QueryDefinitionView:
+    from cruxible_client.contracts.query.authored import query_spec_from_definition
+
+    envelope = query.model_dump(mode="json")
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
+        try:
+            envelope = query_spec_from_definition(query).model_dump(
+                mode="json", by_alias=True, exclude_defaults=True
+            )
+        except ValueError:
+            pass
     return QueryDefinitionView(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         path=path,
         name=query.identity.name,
         identity=query.identity.qualified,
         artifact_digest=query_definition_digest(query).tagged,
-        envelope=query.model_dump(mode="json"),
+        envelope=envelope,
     )
 
 

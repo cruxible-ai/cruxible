@@ -19,7 +19,7 @@ import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Literal, Protocol
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
@@ -106,12 +106,13 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
-from cruxible_core.providers.automation_carry import carry_automation
+from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
     Mover,
     SettledMoves,
@@ -168,12 +169,18 @@ def _builtin(kind: str, name: str, digest: str) -> bool:
     return digest in _builtin_definitions().get((kind, name), frozenset())
 
 
-def _builtin_refusals(tree: Mapping[str, bytes], contents: Mapping[str, bytes]) -> list[str]:
+def _builtin_refusals(
+    tree: Mapping[str, bytes], contents: Mapping[str, bytes], *, by_name: bool = False
+) -> list[str]:
     """A release pinning a built-in needs this instance to hold that exact one."""
 
     refused = []
     for path, content in sorted(contents.items()):
-        for pin in _artifact_state(path, content).pins:
+        state = parse_dependency_artifact(path, content, by_name=by_name)
+        assert state is not None
+        for pin in state.pins:
+            if not isinstance(pin, ArtifactPin):
+                continue
             if not _builtin(pin.target.kind, pin.target.name, pin.artifact_digest):
                 continue
             held_path = (
@@ -218,7 +225,25 @@ def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
 
 
 def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
-    content = pretty_canonical_bytes(payload)
+    if path.startswith("procedures/") and payload.get("artifact_format") == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.artifacts import (
+            NamedProcedureArtifact,
+            render_procedure,
+        )
+
+        content = render_procedure(NamedProcedureArtifact.model_validate(payload))
+    elif (
+        path.startswith("query-definitions/")
+        and payload.get("artifact_format") == "cruxible-query-definition-v3"
+    ):
+        from cruxible_client.contracts.query.definitions import (
+            NamedQueryDefinition,
+            render_query_definition,
+        )
+
+        content = render_query_definition(NamedQueryDefinition.model_validate(payload))
+    else:
+        content = pretty_canonical_bytes(payload)
     return content, _artifact_state(path, content).artifact_digest
 
 
@@ -245,7 +270,7 @@ def _dependency_order(
     def exact(path: str) -> set[str]:
         found = set()
         for pin in states[path].pins:
-            target = by_digest.get(pin.artifact_digest) or by_identity.get(
+            target = by_digest.get(getattr(pin, "artifact_digest", "")) or by_identity.get(
                 (pin.target.kind, pin.target.name)
             )
             if target is not None:
@@ -354,6 +379,7 @@ def service_build_kit(
             lock=lock,
             dependencies=dependencies,
             delivery=item.delivery,
+            named=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         if item.delivery == "index":
             # A default provider installs by name: the kit carries none of its
@@ -399,9 +425,17 @@ def _bundled_provider_pins(
     """
 
     for pin in state.pins:
-        if pin.target.kind != "Provider" or _builtin(
-            "Provider", pin.target.name, pin.artifact_digest
-        ):
+        if pin.target.kind != "Provider":
+            continue
+        held = tree_providers.get(provider_path(pin.target.name))
+        digest = (
+            pin.artifact_digest
+            if isinstance(pin, ArtifactPin)
+            else ""
+            if held is None
+            else held.artifact_digest
+        )
+        if _builtin("Provider", pin.target.name, digest):
             continue
         name = parse_provider_build_name(pin.target.name).name
         package = bundled.get(name)
@@ -426,7 +460,8 @@ def _bundled_provider_pins(
         held = tree_providers.get(provider_path_here)
         provider = (
             None
-            if held is None or held.artifact_digest != pin.artifact_digest
+            if held is None
+            or (isinstance(pin, ArtifactPin) and held.artifact_digest != pin.artifact_digest)
             else parse_provider(tree[provider_path_here], path=provider_path_here)
         )
         differs = _build_difference(provider, package)
@@ -830,12 +865,90 @@ def _diff_release(
     return diff, owned
 
 
-def _retirement(path: str, current: bytes) -> bytes:
+def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
     state = _artifact_state(path, current)
     content, _digest = _render(
         path,
         _successor_payload(json.loads(current), predecessor=state.artifact_digest, state="retired"),
     )
+    if not by_name:
+        return content
+    from cruxible_client.contracts.named_references import name_line, name_query, name_trigger
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    if path.startswith("procedures/"):
+        from cruxible_client.contracts.procedures.artifacts import (
+            ProcedureArtifact,
+            parse_procedure,
+            render_procedure,
+        )
+
+        procedure = name_procedure(parse_procedure(content, path=path))
+        assert isinstance(procedure, ProcedureArtifact)
+        return render_procedure(procedure)
+    if path.startswith("blueprints/"):
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+        from cruxible_client.contracts.procedures.blueprints import (
+            parse_blueprint,
+            render_blueprint,
+        )
+
+        blueprint = name_procedure(parse_blueprint(content, path=path))
+        assert isinstance(blueprint, BlueprintArtifact)
+        return render_blueprint(blueprint)
+    if path.startswith("query-definitions/"):
+        from cruxible_client.contracts.query.definitions import (
+            parse_query_definition,
+            render_query_definition,
+        )
+
+        return render_query_definition(name_query(parse_query_definition(content, path=path)))
+    if path.startswith("lines/"):
+        from cruxible_client.contracts.procedures.line_specs import (
+            parse_line_spec,
+            render_line_spec,
+        )
+
+        return render_line_spec(name_line(parse_line_spec(content, path=path)))
+    if path.startswith("triggers/"):
+        from cruxible_client.contracts.triggers import parse_trigger, render_trigger
+
+        return render_trigger(name_trigger(parse_trigger(content, path=path)))
+    if path.startswith("capture-contracts/"):
+        from cruxible_client.contracts.capture_contract_inputs import (
+            CaptureContractInputRecord,
+            lower_capture_contract_input,
+        )
+        from cruxible_client.contracts.captures import (
+            parse_capture_contract,
+            render_capture_contract,
+        )
+
+        return render_capture_contract(
+            lower_capture_contract_input(
+                CaptureContractInputRecord(name=state.identity.name, lifecycle="retired"),
+                predecessor=parse_capture_contract(current, path=path),
+                named=True,
+            )
+        )
+    if path.startswith("source-acquisition-policies/"):
+        from cruxible_client.contracts.acquisition_policies import (
+            SourceAcquisitionPolicy,
+            SourceAcquisitionPolicyV1,
+            parse_acquisition_policy,
+            render_acquisition_policy,
+        )
+
+        policy = parse_acquisition_policy(content, path=path)
+        if isinstance(policy, SourceAcquisitionPolicyV1):
+            # A tombstone cannot execute legacy fallback/coherence behavior.
+            # Retain every alias age bound in the current terminal format.
+            policy = SourceAcquisitionPolicy(
+                identity=policy.identity,
+                overrides={rule.input_name: rule.max_age for rule in policy.inputs},
+                lifecycle=policy.lifecycle,
+            )
+        return render_acquisition_policy(policy)
     return content
 
 
@@ -897,6 +1010,7 @@ def _settle_dropped(
     keep: frozenset[str],
     retire_dependents: frozenset[str],
     kept: Mapping[str, KitKeptDivergence],
+    by_name: bool = False,
 ) -> set[str]:
     """Decide each definition the kit installed that the release dropped.
 
@@ -971,14 +1085,16 @@ def _settle_dropped(
                 dependent_count=dependents,
             )
         )
-        diff.writes[path] = _retirement(path, current)
+        diff.writes[path] = _retirement(path, current, by_name=by_name)
         if dependents:
             retiring_with_dependents.add(identity)
         for consumer_path, consumer in consumers:
             # A ClaimType whose evidence rules need the retired contract retires
             # with it, and its own dependents with it.
             if consumer_path not in diff.writes:
-                diff.writes[consumer_path] = _retirement(consumer_path, tree[consumer_path])
+                diff.writes[consumer_path] = _retirement(
+                    consumer_path, tree[consumer_path], by_name=by_name
+                )
             retiring_with_dependents.add(consumer.qualified)
     return retiring_with_dependents
 
@@ -992,6 +1108,7 @@ def _settle_dependents(
     movers: tuple[Mover, ...] = (),
     moves: Mapping[str, ProviderBuildMove] | None = None,
     keep_build: frozenset[str] = frozenset(),
+    by_name: bool = False,
 ) -> SettledMoves:
     """Every write, plus one successor for each accepted dependent they change.
 
@@ -1014,6 +1131,7 @@ def _settle_dependents(
         moves=moves,
         keep=keep_build,
         retire_with=frozenset(retire_with),
+        by_name=by_name,
     )
     if not settled.refused:
         diff.plan[:] = [
@@ -1081,6 +1199,8 @@ def _planned_automation(
     roots: tuple[ArtifactIdentity, ...],
     writes: Mapping[str, bytes],
     retire_with: set[str],
+    *,
+    by_name: bool = False,
 ) -> tuple[tuple[AutomationCarryV1, ...], tuple[StoppedAutomationV1, ...]]:
     """Affected automation before installation, with unavailable final digests.
 
@@ -1109,6 +1229,24 @@ def _planned_automation(
     stops: dict[str, StoppedAutomationV1] = {}
     for item in items:
         if item.artifact_kind not in {"line", "procedure-mandate"}:
+            continue
+        if (
+            by_name
+            and item.artifact_kind == "line"
+            and item.triggering_identity.qualified not in retiring_procedures
+        ):
+            continue
+        if by_name and item.artifact_kind == "line":
+            line = parse_carry_line(tree[item.path], path=item.path)
+            stops[line.identity.qualified] = StoppedAutomationV1(
+                identity=line.identity.qualified,
+                kind="line",
+                stopped_by=line.procedure.target.qualified,
+            )
+            for trigger, _ in live_triggers_of(connection, line.identity.qualified):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=line.identity.qualified
+                )
             continue
         row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
         if row.procedure not in retiring_procedures:
@@ -1481,7 +1619,7 @@ def _default_implementers(
             for row in connection.execute(
                 "SELECT DISTINCT p.source_identity FROM main.pins p "
                 "JOIN main.providers r ON r.identity=p.source_identity "
-                "WHERE p.target_identity=? AND p.target_digest=? "
+                "WHERE p.target_identity=? AND (p.target_digest=? OR p.target_digest IS NULL) "
                 "AND p.edge_kind='required_pin' AND p.pin_role='provider-interface' "
                 "AND r.lifecycle='live' AND r.provider_name<>?",
                 (registration.identity.qualified, artifact_digest, provider.provider_id),
@@ -1576,6 +1714,7 @@ def _early_refusals(
     *,
     downgrade: bool,
     installed_version: str | None,
+    by_name: bool = False,
 ) -> list[str]:
     """Refusals the current state decides, checked before any provider installs.
 
@@ -1584,7 +1723,7 @@ def _early_refusals(
     package's.
     """
 
-    refused = _builtin_refusals(tree, contents)
+    refused = _builtin_refusals(tree, contents, by_name=by_name)
     if downgrade:
         refused.append(
             f"release {manifest.version} is older than installed {installed_version}; "
@@ -1594,7 +1733,7 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest
+    instance: PlaybillInstance, manifest: KitManifest, *, named: bool
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
@@ -1615,6 +1754,7 @@ def _inspect_staged(
             dependencies=tuple(
                 (item.filename, read(item.filename)) for item in provider.dependencies
             ),
+            named=named,
         )
         for provider in manifest.providers
         if provider.delivery == "bundled"
@@ -1699,7 +1839,11 @@ def _provider_remap(
     remap: dict[str, str] = {}
     for path, content in contents.items():
         for pin in _artifact_state(path, content).pins:
-            if pin.target.kind == "Provider" and pin.target.name in held:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in held
+            ):
                 remap[pin.artifact_digest] = held[pin.target.name]
     return remap
 
@@ -1836,7 +1980,11 @@ def _add_kit(
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
     inspected = (
-        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
+        None
+        if mode.previewing or not manifest.providers
+        else _inspect_staged(
+            instance, manifest, named=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.
@@ -1875,6 +2023,7 @@ def _add_kit(
             contents,
             downgrade=transition == "downgrade" and not request.allow_downgrade,
             installed_version=installed_version,
+            by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         # A definition another installed kit owns or holds, which the release
         # would replace: the initial tree's diff decides it, with the same keep
@@ -1950,7 +2099,10 @@ def _add_kit(
                 "the definitions that pin it are not proposed",
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
-    blocked = _builtin_refusals(tree, contents)
+    assert mode.head is not None
+    blocked = _builtin_refusals(
+        tree, contents, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
     )
@@ -1980,6 +2132,7 @@ def _add_kit(
         keep=keep,
         retire_dependents=frozenset(request.retire_dependents),
         kept=kept,
+        by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     ownership = _foreign_takeovers(receipts, manifest, diff)
     blocked.extend(item.detail for item in ownership)
@@ -2055,6 +2208,7 @@ def _add_kit(
                     ),
                     diff.writes,
                     retire_with,
+                    by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
                 )
             except (ClaimTypeMigrationError, ValueError) as exc:
                 blocked.append(f"automation inventory incomplete: {exc}")
@@ -2071,6 +2225,7 @@ def _add_kit(
                 movers=movers,
                 moves=moves,
                 keep_build=frozenset(request.keep_build),
+                by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
             blocked.extend(settled.refused)
             blocked.extend(
@@ -2235,7 +2390,9 @@ def _remove_kit(
         diff.plan.append(
             KitPathPlan(path=entry.path, action="retire", identity=state.identity.qualified)
         )
-        diff.writes[entry.path] = _retirement(entry.path, current)
+        diff.writes[entry.path] = _retirement(
+            entry.path, current, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if edited:
         return KitChangeResult(

@@ -18,6 +18,7 @@ from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketDimension,
     ProviderBucketVocabulary,
     ProviderInterfaceRegistrationV1,
+    interface_definition_digest,
     provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
     provider_bucket_fixture_set_digest,
@@ -122,12 +123,16 @@ def accepted_interface() -> AcceptedProviderInterfaceRegistration:
     )
 
 
-def provider_v2() -> ProviderV2:
-    registration = interface_registration()
-    interface = accepted_interface()
+def provider_v2(*, registration=None) -> ProviderV2:
+    registration = registration or interface_registration()
+    interface = AcceptedProviderInterfaceRegistration(
+        path=provider_interface_path(registration.identity.name),
+        registration=registration,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
     implementation = ProviderImplementationManifestV1(
         interface_id=registration.interface_id,
-        interface_digest=registration.interface_digest,
+        interface_digest=interface_definition_digest(registration),
         entrypoint="demo.runtime:Provider",
         backends=("local_env",),
         declared_input_buckets=("size=*",),

@@ -795,9 +795,8 @@ GROWS: dict[str, dict[str, str]] = {
     # Workspace-source next digests passed with section-copy commitments (strict XPASS).
     # Keep that case under the ordinary guard, without changing ratio or slack.
     # Its encodes no longer grow after the encode-once batch (measured XPASS).
-    "read.coverage.workspace_sources": _grows(
-        _COVERAGE, "canonical_digests", "file_opens", "cas_body_reads"
-    ),
+    # Named self-source fixture bytes now make digest work flat (strict XPASS).
+    "read.coverage.workspace_sources": _grows(_COVERAGE, "file_opens", "cas_body_reads"),
     "read.audit.first_page": {
         **_grows(
             _AUDIT,
@@ -1320,3 +1319,11 @@ def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
         for cursor in entry.get("cursors", ()):
             lines.append(f"\n    {cursor}")
     return "".join(lines)
+
+
+def test_scale_factories_author_named_procedures_and_lines():
+    procedure = _worlds._procedure("scale-native", terminal=None, capability=1)
+    line = _worlds._line("scale-native", procedure, authority="observe")
+    assert procedure.procedure.artifact_format == "cruxible-procedure-v3"
+    assert procedure.procedure.definition.graph_format == 7
+    assert line.artifact_format == "cruxible-line-v7"

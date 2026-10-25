@@ -30,6 +30,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     capture_contract_successor_break,
+    capture_retention_policy,
     capture_shape_components,
 )
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
@@ -82,7 +83,7 @@ def capture_contract_input_template(*, expanded: bool = False) -> dict[str, obje
     return record
 
 
-def lower_capture_contract_input(
+def _lower_capture_contract_input(
     record: CaptureContractInputRecord, *, predecessor: CaptureContractAny | None = None
 ) -> CaptureContract:
     """New definitions default once; omitted edit fields retain accepted values."""
@@ -125,7 +126,7 @@ def lower_capture_contract_input(
         if predecessor.identity == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity:
             previous = predecessor
             predecessor = builtin_contract_for_write(
-                COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous
+                COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous, named=False
             )
         else:
             converted = None
@@ -142,7 +143,7 @@ def lower_capture_contract_input(
                             replay=replay,
                             components=components,
                             selection_budget=predecessor.selection_budget,
-                            retention_erasure_policy=predecessor.retention_erasure_policy,
+                            retention_erasure_policy=capture_retention_policy(predecessor),
                             epistemic_grade=predecessor.epistemic_grade,
                             lifecycle=predecessor.lifecycle,
                         )
@@ -167,7 +168,7 @@ def lower_capture_contract_input(
         updates["selection_budget"] = predecessor.selection_budget.model_copy(
             update={"max_bytes": record.max_bytes}
         )
-    policy = predecessor.retention_erasure_policy
+    policy = capture_retention_policy(predecessor)
     if "retention" in record.model_fields_set:
         assert record.retention is not None
         policy = policy.model_copy(
@@ -200,3 +201,41 @@ def lower_capture_contract_input(
             f"cruxible.capture_contract.incompatible_successor: {broken} changed; use a new name"
         )
     return contract
+
+
+def lower_capture_contract_input(
+    record: CaptureContractInputRecord,
+    *,
+    predecessor: CaptureContractAny | None = None,
+    named: bool = False,
+) -> CaptureContractAny:
+    from cruxible_client.contracts.captures import (
+        NamedCaptureContract,
+        capture_components,
+        name_capture_contract,
+    )
+
+    original = predecessor
+    if isinstance(predecessor, NamedCaptureContract):
+        predecessor = CaptureContract.model_validate(
+            {
+                **predecessor.model_dump(
+                    mode="python",
+                    exclude={"artifact_format", "components", "retention_erasure_policy"},
+                ),
+                "components": capture_components(predecessor),
+                "retention_erasure_policy": capture_retention_policy(predecessor),
+            }
+        )
+    result = _lower_capture_contract_input(record, predecessor=predecessor)
+    if original is not None:
+        result = result.model_copy(
+            update={
+                "lifecycle": result.lifecycle.model_copy(
+                    update={
+                        "predecessor_digest": capture_contract_digest(original).tagged,
+                    }
+                )
+            }
+        )
+    return name_capture_contract(result) if named else result

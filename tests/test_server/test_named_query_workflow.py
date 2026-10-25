@@ -14,16 +14,42 @@ from cruxible_client.authoring.examples import (
 )
 from cruxible_client.authoring.sdk import Cruxible, Proposal
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
-from cruxible_client.contracts.authoring.inputs import ChangeSetInput, ClaimTypeInput
+from cruxible_client.contracts.authoring.inputs import (
+    ChangeSetInput,
+    ClaimTypeInput,
+    QueryDefinitionInput,
+)
+from cruxible_client.contracts.get_reads import GetQueryCard
+from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
 
+def query_authored_example() -> QueryDefinitionInput:
+    return QueryDefinitionInput(
+        kind="query_definition",
+        query_definition=QuerySpecInput.model_validate(
+            {
+                "query": "project.authored_work_items",
+                "from": {"item": "project.work_item"},
+                "where": 'item.status == "ready"',
+                "fields": ["item", "item.status"],
+            }
+        ),
+    )
+
+
 @pytest.mark.parametrize("surface", ["sdk", "cli", "mcp"])
 @pytest.mark.parametrize(
-    "example", [query_ontology_example, query_procedures_example, query_claims_by_type_example]
+    "example",
+    [
+        query_ontology_example,
+        query_procedures_example,
+        query_claims_by_type_example,
+        query_authored_example,
+    ],
 )
 def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, surface, example):
     transport, instance_id, private_key = playbill_http
@@ -33,7 +59,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     workspace.mkdir()
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=workspace)
     definition = example()
-    ordinary = example is query_claims_by_type_example
+    ordinary = example in (query_claims_by_type_example, query_authored_example)
     input = (
         ChangeSetInput(
             kind="change_set",
@@ -62,7 +88,9 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         if ordinary:
             change = pb.changes()
             ref = change.claim_type(_predicate_type("project.work_item.status"))
-            change.query_definition(definition, vocabulary=(ref,))
+            change.query_definition(
+                definition, vocabulary=() if example is query_authored_example else (ref,)
+            )
             intent = change.prepare()
         else:
             intent = pb.query_definition(definition=definition).prepare()
@@ -101,6 +129,12 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     receipt = proposal.approve(signer=signer, reviewed=reviewed)
     assert receipt.activation is not None and receipt.activation.status == "accepted"
     name = definition.query_definition.identity.name
+    if example is query_authored_example:
+        card = pb.get(f"QueryDefinition:{name}").value
+        assert isinstance(card, GetQueryCard)
+        assert isinstance(card.definition, QuerySpecInput)
+        assert card.definition.query == name
+        assert card.definition.from_ == definition.query_definition.from_
     if surface == "cli":
         page = api.QueryResultRecord.model_validate(
             invoke("query", "--name", name, "--receipt", "full")

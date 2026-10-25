@@ -21,6 +21,9 @@ from tests.core_support._adoption_fixture import MINIATURE, TIER_1, build_fixtur
 
 def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> None:
     fixture = build_fixture(tmp_path, MINIATURE)
+    from tests.core_support._adoption_fixture import SELF_SOURCE
+
+    assert SELF_SOURCE.artifact_format == "cruxible-capture-contract-v3"
     assert fixture.member_count == MINIATURE.expected_members
     # One vocabulary generation, one readings generation, one seed-Claim chunk.
     assert fixture.head_sequence == 3 + MINIATURE.generations

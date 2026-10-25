@@ -38,7 +38,11 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
-from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
+from cruxible_client.contracts.captures import (
+    CaptureContract,
+    NamedCaptureContract,
+    capture_contract_path,
+)
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
@@ -67,6 +71,7 @@ from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     FixedWindow,
     LogicalSources,
+    NamedCaptureEventSelector,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -75,7 +80,13 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
     validate_change_set_rationale,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
+from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
+    NamedQueryDefinitionSpec,
+    QueryDefinition,
+    QueryDefinitionSpec,
+)
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -121,7 +132,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:a2542281ae93a8ae0d0ea8e99f16ec0e3e1c8b0b23f70a89d6125288c4290412"
+    "sha256:4e3c0f5cdeae2a56758fd1c253d7d2b0b5eecd5ef7ffe9ccf186881f9a818792"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -925,7 +936,13 @@ class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
         "playbill-query-definition-authoring-payload-v1"
     )
-    query_definition: QueryDefinitionSpec | QueryDefinition
+    query_definition: (
+        QuerySpecInput
+        | QueryDefinitionSpec
+        | QueryDefinition
+        | NamedQueryDefinitionSpec
+        | NamedQueryDefinition
+    )
 
 
 class ApprovalPolicyAuthoringPayload(_StrictAuthoringModel):
@@ -992,7 +1009,7 @@ class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
         "playbill-capture-contract-authoring-payload-v1"
     )
-    capture_contract: CaptureContract | CaptureContractInputRecord
+    capture_contract: CaptureContract | NamedCaptureContract | CaptureContractInputRecord
 
 
 class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
@@ -1945,7 +1962,7 @@ class ResolvedTriggerCaptureContract(_StrictAuthoringModel):
     """The exact contract a Trigger resolved during this prepare or preview."""
 
     trigger_name: str
-    event: CaptureEventSelector
+    event: CaptureEventSelector | NamedCaptureEventSelector
 
 
 class PreflightResult(_StrictAuthoringModel):

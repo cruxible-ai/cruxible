@@ -23,12 +23,13 @@ from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
     InputAcquisitionRule,
     SourceAcquisitionPolicyV1,
+    acquisition_policy_digest,
     acquisition_rule,
 )
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -38,11 +39,13 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
+    capture_retention_policy,
 )
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
     ExecutionError,
@@ -65,6 +68,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
+    ProcedureArtifactAny,
     ProcedureNodeSupport,
     ProcedureRunnable,
     check_provider_node_contract,
@@ -165,6 +169,7 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
     provider_effect_class,
 )
 from cruxible_client.contracts.providers import (
@@ -280,6 +285,7 @@ from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
+from cruxible_core.procedures.reference_binding import authored_procedure, bind_procedure_references
 from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     TerminalItemDependencyManifestV1,
@@ -555,7 +561,7 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     #: The Procedure's artifact digest, named as every other kind's proof names it.
     artifact_digest: str
     definition_digest: str
-    artifact: ProcedureArtifact
+    artifact: ProcedureArtifactAny
     runnable: ProcedureRunnable
     unsupported_nodes: tuple[ProcedureNodeSupport, ...]
     next_operation: ProcedureNextOperationV1
@@ -747,6 +753,7 @@ def _accepted_procedure(
     name: str,
     coordinate: AcceptedProjectionCoordinate,
     allow_retired: bool = False,
+    bind_references: bool = False,
 ) -> AcceptedProcedure:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -757,11 +764,43 @@ def _accepted_procedure(
         assert procedure is not None
         if procedure.lifecycle.state == "retired" and not allow_retired:
             raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
-        return AcceptedProcedure(
-            path=path,
-            procedure=procedure,
-            artifact_digest=envelope.artifact_digest,
+        accepted = AcceptedProcedure(
+            path=path, procedure=procedure, artifact_digest=envelope.artifact_digest
         )
+        if not bind_references:
+            return accepted
+
+        def lookup(identity: ArtifactIdentity) -> tuple[Any, str] | None:
+            row = projection.typed.envelope(identity.qualified)
+            source = projection.typed.source(identity.qualified)
+            return None if row is None or source is None else (source, row.artifact_digest)
+
+        def fitting(interface: ArtifactIdentity) -> tuple[tuple[Any, str], ...]:
+            registration = projection.typed.source(interface.qualified)
+            if registration is None:
+                return ()
+            candidates = projection.typed.connection.execute(
+                "SELECT DISTINCT r.identity,r.artifact_digest FROM pins p JOIN providers r "
+                "ON r.identity=p.source_identity WHERE p.target_identity=? "
+                "AND p.edge_kind='required_pin' AND r.lifecycle='live' ORDER BY r.identity",
+                (interface.qualified,),
+            )
+            result = []
+            for identity, digest in candidates:
+                provider = projection.typed.source(identity)
+                if (
+                    isinstance(provider, ProviderV2)
+                    and sum(
+                        row.interface_id == registration.interface_id
+                        and row.interface_digest == interface_definition_digest(registration)
+                        for row in provider.implementations
+                    )
+                    == 1
+                ):
+                    result.append((provider, digest))
+            return tuple(result)
+
+        return bind_procedure_references(accepted, lookup=lookup, slots=fitting)
 
 
 def _accepted_runtime_policy(
@@ -1039,7 +1078,7 @@ def _assert_line_closure_complete(
     coordinate: AcceptedProjectionCoordinate,
 ) -> None:
     with instance.bind_accepted_projection(coordinate) as projection:
-        for pin in accepted_line.line.pins:
+        for pin in dependency_pins(accepted_line.line, by_name=False):
             target = projection.typed.dependency_state(pin.target.qualified)
             if target is None:
                 # These component families remain exact registry pins until
@@ -1049,7 +1088,9 @@ def _assert_line_closure_complete(
                 raise ExecutionError(
                     f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
                 )
-            if target.artifact_digest != pin.artifact_digest or target.lifecycle.state != "live":
+            if target.lifecycle.state != "live" or (
+                isinstance(pin, ArtifactPin) and target.artifact_digest != pin.artifact_digest
+            ):
                 raise ExecutionError(
                     f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
                 )
@@ -1468,7 +1509,7 @@ def _plan_external_occurrences(
             "provider_artifact_digest": provider.artifact_digest,
             "interface_artifact_digest": interface.artifact_digest,
             "interface_id": registration.interface_id,
-            "interface_digest": registration.interface_digest,
+            "interface_digest": interface_definition_digest(registration),
             "implementation_digest": implementation_digest,
             "effect_class": provider_effect_class(registration),
             "local_execution": local,
@@ -1598,7 +1639,7 @@ def _accepted_acquisition_policies(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     *,
-    pin: ArtifactPin | None = None,
+    pin: ArtifactPin | ArtifactNameRef | None = None,
     name: str | None = None,
 ) -> tuple[tuple[str, SourceAcquisitionPolicy], ...]:
     policies: list[tuple[str, SourceAcquisitionPolicy]] = []
@@ -1614,9 +1655,12 @@ def _accepted_acquisition_policies(
         if pin is not None:
             sql = (
                 "SELECT identity,artifact_digest FROM source_acquisition_policies "
-                "WHERE lifecycle='live' AND identity=? AND artifact_digest=?"
+                "WHERE lifecycle='live' AND identity=?"
             )
-            parameters = (pin.target.qualified, pin.artifact_digest)
+            parameters = (pin.target.qualified,)
+            if isinstance(pin, ArtifactPin):
+                sql += " AND artifact_digest=?"
+                parameters += (pin.artifact_digest,)
         for identity, digest in projection.typed.connection.execute(
             sql + " ORDER BY artifact_digest", parameters
         ):
@@ -1656,7 +1700,7 @@ def _direct_acquisition_policy(
     )
     if pin is not None:
         pinned = next(
-            (policy for digest, policy in accepted_policies if digest == pin.artifact_digest),
+            (policy for digest, policy in accepted_policies),
             None,
         )
         if pinned is None:
@@ -1671,7 +1715,7 @@ def _direct_acquisition_policy(
         refusal = _policy_coverage_refusal(pinned, input_names)
         if refusal is not None:
             raise refusal
-        return pin.artifact_digest, pinned
+        return acquisition_policy_digest(pinned).tagged, pinned
     if not accepted_policies:
         name = procedure.acquisition_policy or DEFAULT_ACQUISITION_POLICY_NAME
         raise SourceAcquisitionPolicyRequired(
@@ -1801,7 +1845,7 @@ def _readiness(
         procedure_identity=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
         definition_digest=accepted.procedure.definition_digest,
-        artifact=accepted.procedure,
+        artifact=authored_procedure(accepted),
         runnable=runnable,
         unsupported_nodes=unsupported,
         next_operation=ProcedureNextOperationV1(
@@ -2532,9 +2576,11 @@ def _state_from_records(
                 if not isinstance(raw_halt, dict):
                     raise ValueError("halted run lacks typed halt material")
                 raw_reason = raw_halt.get("reason")
+                raw_message = raw_halt.get("message")
                 terminal = ProcedureHaltTerminal(
                     node_id=str(raw_halt.get("node_id") or last_node_id),
                     reason=raw_reason if isinstance(raw_reason, str) else None,
+                    message=raw_message if isinstance(raw_message, str) else None,
                     journal_coordinate=_journal_coordinate(final_record),
                 )
             elif raw_status == "failed":
@@ -3288,7 +3334,7 @@ def service_run_playbill_procedure(
     # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
     # addressed only by run_id through service_get_playbill_procedure_run.
     lane: Literal["current", "replay"] = "current"
-    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
     if caller_rung is not None:
         require_run_permission(
             "cruxible_procedure_run",
@@ -3679,6 +3725,7 @@ def _run_playbill_line(
         instance,
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
+        bind_references=True,
     )
     require_run_permission(
         "cruxible_line_run",
@@ -3702,7 +3749,7 @@ def _run_playbill_line(
                 "current_line_artifact_digest": accepted_line.artifact_digest,
             },
         )
-    if accepted.artifact_digest != accepted_line.line.procedure.artifact_digest:
+    if accepted.procedure.identity != accepted_line.line.procedure.target:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4420,9 +4467,9 @@ def _run_playbill_line(
         members=tuple(
             capture_admission_material_member(
                 item.input,
-                policy=capture_contracts[
-                    item.input.capture_contract_digest
-                ].retention_erasure_policy,
+                policy=capture_retention_policy(
+                    capture_contracts[item.input.capture_contract_digest]
+                ),
                 admitted_at=evaluation_time,
                 body_digest=instance.body_store()
                 .digest_bytes(canonical_bytes(item.material.value))
@@ -4457,9 +4504,9 @@ def _run_playbill_line(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=line_requested_rung(accepted_line.line),
         selector_privacies={
-            item.input.capture_digest: capture_contracts[
-                item.input.capture_contract_digest
-            ].retention_erasure_policy.selector_privacy
+            item.input.capture_digest: capture_retention_policy(
+                capture_contracts[item.input.capture_contract_digest]
+            ).selector_privacy
             for item in landed_materials
         },
         taint_labels=(),
@@ -5078,7 +5125,33 @@ def service_prepare_playbill_line_admission(
         )
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
-        verify_line_admission_spec(bound, accepted_line)
+        procedure_binding = None
+        if isinstance(accepted_line.line.procedure, ArtifactNameRef):
+            procedure = _accepted_procedure(
+                instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+            )
+            procedure_binding = ArtifactPin(
+                role="procedure",
+                target=procedure.procedure.identity,
+                artifact_digest=procedure.artifact_digest,
+            )
+        policy_binding = None
+        if isinstance(accepted_line.line.acquisition_policy, ArtifactNameRef):
+            policies = _accepted_acquisition_policies(
+                instance, coordinate, pin=accepted_line.line.acquisition_policy
+            )
+            if not policies:
+                raise ExecutionError("Line acquisition policy is unavailable at admission")
+            digest, acquisition = policies[0]
+            policy_binding = ArtifactPin(
+                role="acquisition-policy", target=acquisition.identity, artifact_digest=digest
+            )
+        verify_line_admission_spec(
+            bound,
+            accepted_line,
+            procedure_binding=procedure_binding,
+            acquisition_policy_binding=policy_binding,
+        )
     except ExecutionError as exc:
         return ProcedureAdmissionRefusal(
             code="artifact_binding_mismatch",

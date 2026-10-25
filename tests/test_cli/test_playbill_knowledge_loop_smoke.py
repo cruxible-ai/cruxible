@@ -40,7 +40,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec
 from cruxible_core.cli.commands.playbill import _local_git_workspace_root
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
@@ -620,7 +620,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             # The fixture ClaimType was lowered to the current format. Resolve
             # its dependency at the accepted base, rather than pinning the old
             # fixture envelope's digest.
-            query_definition=QueryDefinitionSpec.model_validate(
+            query_definition=NamedQueryDefinitionSpec.model_validate(
                 work_item_query(claim_type=claim_type).model_dump(mode="json", exclude={"pins"})
             ),
         ).model_dump(mode="json"),
@@ -673,13 +673,17 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert [item["name"] for item in definitions["queries"]] == [QUERY_NAME]
     query_proof = cruxible.json("get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"]
     assert query_proof["name"] == QUERY_NAME
-    assert query_proof["envelope"]["pins"] == [
-        {
-            "role": "claim-type",
-            "target": claim_type_proof["envelope"]["identity"],
-            "artifact_digest": claim_type_proof["artifact_digest"],
-        }
-    ]
+    from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+    from cruxible_client.contracts.query.definitions import validate_query_definition
+
+    query_owner = validate_query_definition(query_proof["envelope"])
+    assert query_owner.artifact_format == "cruxible-query-definition-v3"
+    assert query_owner.referenced_predicates == (claim_type_proof["envelope"]["predicate"],)
+    assert "pins" not in query_proof["envelope"]
+    assert (
+        claim_type_digest(ClaimType.model_validate(claim_type_proof["envelope"])).tagged
+        == claim_type_proof["artifact_digest"]
+    )
 
     # 6. Execute the entrypoint. The full receipt is the replay coordinate of
     #    the read.

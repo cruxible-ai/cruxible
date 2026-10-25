@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
-from typing import Any, Literal
+from collections.abc import Callable, Mapping
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactNameRef,
+    ArtifactPin,
+)
 from cruxible_client.contracts.canonical import (
     CURRENT_ARTIFACT_CODEC,
     ArtifactCodec,
@@ -32,6 +37,10 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import (
     BlueprintArtifact,
     BlueprintOrigin,
+    NamedBlueprintArtifact,
+    NamedBlueprintBinding,
+    NamedBlueprintOrigin,
+    NamedProcedureArtifact,
     ProcedureArtifact,
     check_provider_node_contract,
     procedure_owned_contract_digest,
@@ -49,7 +58,10 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRef,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
+)
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2, provider_interface_pin
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -84,7 +96,9 @@ def render_blueprint(blueprint: BlueprintArtifact) -> bytes:
     return pretty_canonical_bytes(blueprint.model_dump(mode="json", by_alias=True))
 
 
-_BLUEPRINT_ADAPTER: TypeAdapter[BlueprintArtifact] = TypeAdapter(BlueprintArtifact)
+_BLUEPRINT_ADAPTER: TypeAdapter[BlueprintArtifact | NamedBlueprintArtifact] = TypeAdapter(
+    BlueprintArtifact | NamedBlueprintArtifact
+)
 
 
 def parse_blueprint(
@@ -114,7 +128,9 @@ def blueprint_digest(blueprint: BlueprintArtifact) -> ArtifactDigest:
 
 class AcceptedBlueprint(_Strict):
     path: str
-    blueprint: BlueprintArtifact
+    blueprint: Annotated[
+        BlueprintArtifact | NamedBlueprintArtifact, Field(discriminator="artifact_format")
+    ]
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -154,6 +170,7 @@ def evaluate_blueprint_law(
     path: str,
     predecessor: AcceptedBlueprint | None,
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration] | None = None,
+    by_name: bool = False,
 ) -> BlueprintLawResult:
     """Stable identity, predecessor, and every slot typed by an accepted interface."""
 
@@ -181,17 +198,31 @@ def evaluate_blueprint_law(
                 "Blueprint successor does not pin its exact predecessor.",
                 path=path,
             )
+    by_name = by_name or isinstance(blueprint, NamedBlueprintArtifact)
     interfaces = {} if provider_interfaces is None else provider_interfaces
-    for slot in blueprint.definition.pin_slots:
-        if not any(
-            item.registration.interface_digest == slot.interface_digest
-            for item in interfaces.values()
-        ):
-            return _refusal(
-                "cruxible.blueprint.slot_interface_unknown",
-                f"Slot {slot.slot_name!r} names no accepted ProviderInterface.",
-                path=path,
-            )
+    if not by_name:
+        for slot in blueprint.definition.pin_slots:
+            if not any(
+                interface_definition_digest(item.registration) == slot.interface_digest
+                for item in interfaces.values()
+            ):
+                return _refusal(
+                    "cruxible.blueprint.slot_interface_unknown",
+                    f"Slot {slot.slot_name!r} names no accepted ProviderInterface.",
+                    path=path,
+                )
+    else:
+        for slot in blueprint.definition.pin_slots:
+            reference = blueprint_slot_interface(blueprint, slot)
+            accepted = None if reference is None else interfaces.get(reference.target.qualified)
+            if accepted is None and isinstance(reference, ArtifactPin):
+                accepted = interfaces.get(reference.artifact_digest)
+            if accepted is None or accepted.registration.lifecycle.state != "live":
+                return _refusal(
+                    "cruxible.blueprint.slot_interface_unknown",
+                    f"Slot {slot.slot_name!r} names no accepted ProviderInterface.",
+                    path=path,
+                )
     # The occurrence checks the Procedure law runs, on the same positions, so a
     # Blueprint no Provider could ever satisfy is refused here rather than at
     # every instantiation. Only the Provider and implementation lookups wait
@@ -199,20 +230,43 @@ def evaluate_blueprint_law(
     declared = {slot.slot_name: slot for slot in blueprint.definition.pin_slots}
     for occurrence_id, occurrence in provider_occurrences(blueprint.definition):
         interface_pin = getattr(occurrence, "interface")
-        interface_digest = getattr(occurrence, "interface_digest")
-        accepted_interface = interfaces.get(interface_pin.artifact_digest)
+        accepted_interface = interfaces.get(interface_pin.target.qualified)
+        if accepted_interface is None and isinstance(interface_pin, ArtifactPin):
+            accepted_interface = interfaces.get(interface_pin.artifact_digest)
         if accepted_interface is None or (
             accepted_interface.registration.identity != interface_pin.target
-            or accepted_interface.registration.interface_digest != interface_digest
         ):
             return _refusal(
                 "cruxible.blueprint.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
                 path=path,
             )
+        if not by_name and (
+            not isinstance(interface_pin, ArtifactPin)
+            or interface_pin.artifact_digest != accepted_interface.artifact_digest
+            or getattr(occurrence, "interface_digest")
+            != interface_definition_digest(accepted_interface.registration)
+        ):
+            return _refusal(
+                "cruxible.blueprint.provider_interface_pin_mismatch",
+                "Provider occurrence does not pin its exact interface.",
+                path=path,
+            )
         slot_ref = getattr(occurrence, "provider")
         if isinstance(slot_ref, ProcedurePinSlotRef) and (
-            declared[slot_ref.slot_name].interface_digest != interface_digest
+            (
+                getattr(
+                    blueprint_slot_interface(blueprint, declared[slot_ref.slot_name]),
+                    "target",
+                    None,
+                )
+                != interface_pin.target
+            )
+            if by_name
+            else (
+                declared[slot_ref.slot_name].interface_digest
+                != getattr(occurrence, "interface_digest")
+            )
         ):
             return _refusal(
                 "cruxible.blueprint.provider_interface_pin_mismatch",
@@ -236,13 +290,13 @@ def evaluate_blueprint_law(
 
 def blueprint_slot_interface(
     blueprint: BlueprintArtifact, slot: ProcedurePinSlot
-) -> ArtifactPin | None:
+) -> ArtifactPin | ArtifactNameRef | None:
     """The exact ProviderInterface pin the slot's Provider positions name."""
 
     for _occurrence_id, occurrence in provider_occurrences(blueprint.definition):
         if getattr(getattr(occurrence, "provider", None), "slot_name", None) == slot.slot_name:
             interface = getattr(occurrence, "interface", None)
-            return interface if isinstance(interface, ArtifactPin) else None
+            return interface if isinstance(interface, ArtifactPin | ArtifactNameRef) else None
     return None
 
 
@@ -287,15 +341,38 @@ def _replace_slots(
     return value
 
 
+def blueprint_interfaces(
+    blueprint: BlueprintArtifact,
+    lookup: Callable[[ArtifactIdentity], AcceptedProviderInterfaceRegistration | None],
+) -> dict[str, AcceptedProviderInterfaceRegistration]:
+    result = {}
+    for _, occurrence in provider_occurrences(blueprint.definition):
+        identity = getattr(occurrence, "interface").target
+        if identity.qualified in result:
+            continue
+        accepted = lookup(identity)
+        if accepted is None:
+            raise BlueprintInstantiationError(
+                "cruxible.blueprint.provider_interface_unknown",
+                f"Interface {identity.qualified} is unavailable",
+            )
+        result[identity.qualified] = accepted
+    return result
+
+
 def instantiate_blueprint(
     blueprint: BlueprintArtifact,
     *,
     blueprint_artifact_digest: str,
     name: str,
     providers: Mapping[str, AcceptedProvider],
+    interface_registrations: Mapping[str, AcceptedProviderInterfaceRegistration] | None = None,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] | None = None,
     extra_pins: tuple[ArtifactPin, ...] = (),
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "playbill-procedure-v2",
 ) -> ProcedureArtifact:
     """Bind one accepted Provider per slot and return the ordinary Procedure it yields.
 
@@ -304,6 +381,15 @@ def instantiate_blueprint(
     exactly one implementation of the slot's interface.
     """
 
+    if isinstance(blueprint, NamedBlueprintArtifact):
+        return _instantiate_named_blueprint(
+            blueprint,
+            name=name,
+            providers=providers,
+            interfaces={} if interface_registrations is None else interface_registrations,
+            activation_policy=activation_policy,
+            lifecycle=lifecycle,
+        )
     declarations = {slot.slot_name: slot for slot in blueprint.definition.pin_slots}
     if set(providers) != set(declarations):
         missing = sorted(set(declarations) - set(providers))
@@ -341,6 +427,19 @@ def instantiate_blueprint(
                 f"Provider {provider.provider.identity.name!r} pins no registration "
                 f"for slot {slot_name!r}",
                 slot=slot_name,
+            )
+        if isinstance(interface, ArtifactNameRef):
+            accepted_interface = (interface_registrations or {}).get(interface.target.qualified)
+            if accepted_interface is None:
+                raise BlueprintInstantiationError(
+                    "cruxible.blueprint.provider_interface_unknown",
+                    "Instantiation needs the accepted named interface registration.",
+                    slot=slot_name,
+                )
+            interface = ArtifactPin(
+                role="provider-interface",
+                target=interface.target,
+                artifact_digest=accepted_interface.artifact_digest,
             )
         interfaces[slot_name] = interface
         implementations[slot_name] = implementation
@@ -398,7 +497,8 @@ def instantiate_blueprint(
             "cruxible.blueprint.binding_closure_failed",
             "Instantiation produced pins outside the Blueprint's exact closure.",
         )
-    return ProcedureArtifact(
+    result = ProcedureArtifact(
+        artifact_format="playbill-procedure-v2",
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -418,6 +518,14 @@ def instantiate_blueprint(
             bindings=tuple(bindings),
         ),
     )
+
+    if artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        named = name_procedure(result)
+        assert isinstance(named, NamedProcedureArtifact)
+        return named
+    return result
 
 
 def _bind_graph(
@@ -466,7 +574,11 @@ def _recompile_source(
             provider=provider.identity.name,
             provider_version=provider_digest(provider).tagged,
             interface=interface.target.name,
-            interface_version=interface.artifact_digest,
+            interface_version=(
+                interface.artifact_digest
+                if isinstance(interface, ArtifactPin)
+                else value.interface_version
+            ),
             interface_digest=value.interface_digest,
             implementation_digest=implementations[slot_name],
             effect_class=provider_effect_class(value),
@@ -497,6 +609,121 @@ def _recompile_source(
         description=definition.description,
     )
     return compiled.definition
+
+
+def _instantiate_named_blueprint(
+    blueprint: NamedBlueprintArtifact,
+    *,
+    name: str,
+    providers: Mapping[str, AcceptedProvider],
+    interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] | None,
+    lifecycle: ArtifactLifecycle | None,
+) -> NamedProcedureArtifact:
+    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+    from cruxible_client.contracts.procedures.source_compiler import compile_source
+    from cruxible_client.contracts.procedures.source_program import (
+        NamedSourceProviderBinding,
+        NamedSourceSlotBinding,
+        SourceContract,
+    )
+
+    declarations = {slot.slot_name: slot for slot in blueprint.definition.pin_slots}
+    if set(providers) != set(declarations):
+        raise BlueprintInstantiationError(
+            "cruxible.blueprint.binding_set_mismatch", "Bind exactly every Blueprint slot"
+        )
+    for slot_name, slot in declarations.items():
+        registration = interfaces.get(slot.interface.target.qualified)
+        provider = providers[slot_name].provider
+        if registration is None or not isinstance(provider, ProviderV2):
+            raise BlueprintInstantiationError(
+                "cruxible.blueprint.provider_interface_mismatch",
+                "Slot requires an accepted interface and runtime build",
+                slot=slot_name,
+            )
+        declared = provider_interface_pin(provider, registration.registration.interface_id)
+        if declared is None or declared.target != registration.registration.identity:
+            raise BlueprintInstantiationError(
+                "cruxible.blueprint.provider_interface_mismatch",
+                "Provider does not declare the slot's named interface",
+                slot=slot_name,
+            )
+        matches = tuple(
+            row
+            for row in provider.implementations
+            if row.interface_id == registration.registration.interface_id
+            and row.interface_digest == interface_definition_digest(registration.registration)
+        )
+        if len(matches) != 1:
+            raise BlueprintInstantiationError(
+                "cruxible.blueprint.provider_interface_mismatch",
+                "Slot requires exactly one fitting implementation",
+                slot=slot_name,
+            )
+    data = blueprint.definition.model_dump(mode="json", by_alias=True)
+    data["name"] = name
+    data["pin_slots"] = []
+    for node in data["nodes"]:
+        for occurrence in (node, *node.get("body", ())):
+            ref = occurrence.get("provider")
+            if isinstance(ref, dict) and "slot_name" in ref:
+                occurrence["provider"] = {
+                    "target": providers[ref["slot_name"]].provider.identity.model_dump(mode="json")
+                }
+    definition = NamedProcedureDefinition.model_validate(data)
+    if definition.source is not None:
+        source = definition.source
+        bindings = dict(source.bindings)
+        for slot_name in declarations:
+            selected = bindings[slot_name]
+            assert isinstance(selected, NamedSourceSlotBinding)
+            bindings[slot_name] = NamedSourceProviderBinding.model_validate(
+                dict(
+                    provider=providers[slot_name].provider.identity.name,
+                    interface=selected.interface,
+                    effect_class=selected.effect_class,
+                    operation=selected.operation,
+                )
+            )
+        owned = {c.identity: c for c in blueprint.owned_contracts}
+
+        def root(ref: Any) -> SourceContract:
+            c = owned[ref.target]
+            return SourceContract(name=c.identity.name, schema=c.contract_schema)
+
+        compiled = compile_source(
+            source.model_copy(update={"bindings": bindings}),
+            name=name,
+            input=root(definition.contract_in),
+            output=root(definition.contract_out),
+            budget=definition.budget,
+            hard_caps=definition.hard_caps,
+            terminal_capability=definition.terminal_capability,
+            description=definition.description,
+        ).definition
+        assert isinstance(compiled, NamedProcedureDefinition)
+        definition = compiled
+    return NamedProcedureArtifact.model_validate(
+        dict(
+            identity=ArtifactIdentity(kind="Procedure", name=name),
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest(definition).tagged,
+            owned_contracts=blueprint.owned_contracts,
+            activation_policy=activation_policy or blueprint.activation_policy,
+            lifecycle=lifecycle or ArtifactLifecycle(),
+            blueprint=NamedBlueprintOrigin(
+                blueprint=ArtifactNameRef(target=blueprint.identity),
+                bindings=tuple(
+                    NamedBlueprintBinding(
+                        slot_name=slot,
+                        provider=ArtifactNameRef(target=providers[slot].provider.identity),
+                    )
+                    for slot in sorted(providers)
+                ),
+            ),
+        )
+    )
 
 
 __all__ = [

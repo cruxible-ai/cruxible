@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -67,7 +68,7 @@ def _condition_query(*, only_subject: str | None = None) -> QueryDefinition:
             value_type="string",
         )
     )
-    return QueryDefinition(
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
         entry=QueryEntry(
             binding="item",
@@ -102,8 +103,21 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
     _seed_claim_surface(instance, owner)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     status_type = ClaimType.model_validate_json(tree[claim_type_path(STATUS)])
-    procedure = _artifact(_definition(terminal_capability=3))
+    from cruxible_client.contracts.procedures.names import name_procedure
+
     query = _condition_query(only_subject=only_subject)
+    procedure = name_procedure(
+        _artifact(
+            _definition(
+                terminal_capability=3,
+                query=ArtifactPin(
+                    role="query",
+                    target=query.identity,
+                    artifact_digest=query_definition_digest(query).tagged,
+                ),
+            )
+        )
+    )
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
         procedure=ArtifactPin(

@@ -593,11 +593,13 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
         "prediction.anchor_retry": ["Trigger:prediction-anchor-retry"],
     }
 
-    sweep = action_trigger("evidence-sweep", action="evidence.sweep", interval_seconds=86400)
-    retry = action_trigger(
-        "prediction-anchor-retry", action="prediction.anchor_retry", interval_seconds=3600
-    )
+    from cruxible_client.contracts.triggers import parse_trigger, trigger_path
+
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    sweep = parse_trigger(tree[trigger_path("evidence-sweep")], path=trigger_path("evidence-sweep"))
+    retry = parse_trigger(
+        tree[trigger_path("prediction-anchor-retry")], path=trigger_path("prediction-anchor-retry")
+    )
     tree.update(
         trigger_members(
             successor(sweep, schedule=CadenceSchedule(interval_seconds=600)),

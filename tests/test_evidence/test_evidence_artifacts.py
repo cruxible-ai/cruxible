@@ -23,9 +23,9 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.core_support._p2b1_support import accepted_interface
 from tests.core_support._support import client_material, initialize_local
 from tests.support.provider_builds import capture_provider_build
+from tests.support.provider_builds import capture_provider_interface as accepted_interface
 from tests.test_claims.test_claims import _claim_type
 from tests.test_integration.test_acquisition_policies import _policy
 from tests.test_ledger.test_activation import _sign

@@ -33,7 +33,10 @@ from typing_extensions import TypeAliasType
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinitionSpec,
+    QueryDefinitionSpec,
+)
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
 from cruxible_client.contracts.read_values import (
@@ -312,7 +315,7 @@ class QueryRequest(BaseModel):
     )
     limit: int = Field(default=QUERY_DEFAULT_LIMIT, ge=1, le=QUERY_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=512)
-    spec: QueryDefinitionSpec | None = None
+    spec: QueryDefinitionSpec | NamedQueryDefinitionSpec | None = None
     name: str | None = Field(default=None, max_length=256)
     params: dict[str, QueryParameterValue] | None = None
     budgets: QueryBudgets | None = Field(

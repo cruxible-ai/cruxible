@@ -37,6 +37,8 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
+from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
     CasError,
@@ -55,6 +57,7 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
+from cruxible_client.contracts.provider_interfaces import interface_definition_digest
 from cruxible_client.contracts.semantic import (
     ContentSpan,
     SemanticAddress,
@@ -302,7 +305,7 @@ class ArtifactEnvelopeRow:
 class PinRow:
     source_identity: str
     target_identity: str
-    target_digest: str
+    target_digest: str | None
     # The pin's role, which every dependency edge carries.
     role: str
 
@@ -476,13 +479,32 @@ def _whole_semantic_mapping(
     )
 
 
+_PROCEDURE_WIRE_NODES: ParseMemo[dict[str, dict[str, Any]]] = ParseMemo(
+    capacity=32, max_bytes=4 * 1024 * 1024
+)
+
+
+def _procedure_wire_nodes(content: bytes) -> dict[str, dict[str, Any]]:
+    return _PROCEDURE_WIRE_NODES.parse(
+        content,
+        "procedure-wire-nodes",
+        CURRENT_ARTIFACT_CODEC,
+        lambda: {node["id"]: node for node in json.loads(content)["definition"]["nodes"]},
+    )
+
+
 def _procedure_node_span(
     content: bytes,
     node: BaseModel,
     *,
     content_digest: str,
+    wire_node: dict[str, Any] | None = None,
 ) -> ContentSpan:
     payload = node.model_dump(mode="json", by_alias=True)
+    # v3 has single ids and compact predicates. The source mapping covers the
+    # exact retained node, including its omitted fallthrough edges.
+    if wire_node is not None:
+        payload = wire_node
     compact = canonical_bytes(payload)
     pretty = pretty_canonical_bytes(payload).removesuffix(b"\n").replace(b"\n", b"\n      ")
     matches = [
@@ -601,6 +623,7 @@ def parse_projection_tree(
     verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     selected_member_history: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     carry_members: bool = False,
+    by_name: bool = False,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream.
 
@@ -608,6 +631,12 @@ def parse_projection_tree(
     know which artifact kinds a given tree's compiler admits.
     """
 
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    by_name = by_name or (
+        coordinate is not None
+        and coordinate.compiler_digest == LIGHT_ARTIFACTS_COMPILER.rule_digest
+    )
     from cruxible_client.contracts.captures import (
         CaptureFormatError,
         capture_contract_digest,
@@ -781,10 +810,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in blueprint.pins
+                    for pin in dependency_pins(blueprint, by_name=by_name)
                 )
                 continue
             if kind == "subject-kind":
@@ -849,10 +878,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in trigger.pins
+                    for pin in dependency_pins(trigger, by_name=by_name)
                 )
                 continue
             if kind == "resolution-contract":
@@ -1087,7 +1116,7 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
                     for pin in subject_shell.pins
@@ -1225,10 +1254,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in claim_type.pins
+                    for pin in dependency_pins(claim_type, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
@@ -1346,10 +1375,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in provider.pins
+                    for pin in dependency_pins(provider, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
@@ -1486,10 +1515,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in registration.pins
+                    for pin in dependency_pins(registration, by_name=by_name)
                 )
                 registration_fact = ProjectionFact(
                     schema_id="cruxible.provider_interface.registration",
@@ -1499,7 +1528,7 @@ def parse_projection_tree(
                     value={
                         "artifact_digest": {"$digest": artifact_digest},
                         "effect_class": registration.effect_class,
-                        "interface_digest": {"$digest": registration.interface_digest},
+                        "interface_digest": {"$digest": interface_definition_digest(registration)},
                         "lifecycle": registration.lifecycle.model_dump(mode="json"),
                     },
                 )
@@ -1578,7 +1607,7 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
                     for pin in getattr(acquisition_policy, "pins", ())
@@ -1653,7 +1682,7 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
                     for pin in procedure_mandate.pins
@@ -1746,10 +1775,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in procedure.pins
+                    for pin in dependency_pins(procedure, by_name=by_name)
                 )
                 graph = analyze_procedure(procedure.definition)
                 node_digests = compute_procedure_node_digests(procedure.definition)
@@ -1764,11 +1793,17 @@ def parse_projection_tree(
                         ),
                     )
                 ]
+                wire_nodes: dict[str, dict[str, Any]] = (
+                    _procedure_wire_nodes(content)
+                    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3"
+                    else {}
+                )
                 for node in procedure.definition.nodes:
                     span = _procedure_node_span(
                         content,
                         node,
                         content_digest=input_digest,
+                        wire_node=wire_nodes.get(node.node_id),
                     )
                     mappings.append(
                         (
@@ -1971,10 +2006,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in line.pins
+                    for pin in dependency_pins(line, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
@@ -2081,10 +2116,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in query.pins
+                    for pin in dependency_pins(query, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
@@ -2127,7 +2162,10 @@ def parse_projection_tree(
                             fact_key="declared",
                             value={
                                 "lifecycle": query.lifecycle.model_dump(mode="json"),
-                                "pins": [pin.model_dump(mode="json") for pin in query.pins],
+                                "pins": [
+                                    pin.model_dump(mode="json")
+                                    for pin in dependency_pins(query, by_name=by_name)
+                                ],
                             },
                         ),
                     )
@@ -2189,7 +2227,7 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
                     for pin in promotion.pins
@@ -2310,10 +2348,10 @@ def parse_projection_tree(
                     PinRow(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
-                        target_digest=pin.artifact_digest,
+                        target_digest=getattr(pin, "artifact_digest", None),
                         role=pin.role,
                     )
-                    for pin in capture_contract.pins
+                    for pin in dependency_pins(capture_contract, by_name=by_name)
                 )
                 semantic_facts.extend(
                     (
@@ -2338,7 +2376,8 @@ def parse_projection_tree(
                             fact_key="declared",
                             value={
                                 "pins": [
-                                    pin.model_dump(mode="json") for pin in capture_contract.pins
+                                    pin.model_dump(mode="json")
+                                    for pin in dependency_pins(capture_contract, by_name=by_name)
                                 ]
                             },
                         ),
@@ -2483,7 +2522,7 @@ def parse_projection_tree(
                 f"registered artifact failed strict validation: {path}"
             ) from exc
 
-    pin_dependencies: dict[tuple[str, str, str], PinRow] = {}
+    pin_dependencies: dict[tuple[str, str, str | None], PinRow] = {}
     for pin in pins:
         # A Claim's capture-contract pins are provenance: evidence captured under
         # two versions of one contract pins both versions, so they key by version.
@@ -2510,7 +2549,7 @@ def parse_projection_tree(
                 key=lambda item: (
                     item.source_identity.encode("utf-8"),
                     item.target_identity.encode("utf-8"),
-                    item.target_digest.encode("ascii"),
+                    (item.target_digest or "").encode("ascii"),
                 ),
             )
         ),

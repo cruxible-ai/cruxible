@@ -10,9 +10,8 @@ from cruxible_client.contracts.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT as DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-)
-from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -48,31 +47,65 @@ from tests.test_server.test_playbill_line_run_refusals import (
     _served_line,
 )
 
+TRIGGER_CONTRACT = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+
 SELECTOR = CaptureEventSelector(
-    capture_contract_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-    capture_contract_digest=capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
+    capture_contract_identity=TRIGGER_CONTRACT.identity,
+    capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
 )
 
 
 TRIGGER = "trigger-test-trigger"
 
 
-def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
+def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historical=False):
     """An accepted Line and the Trigger aimed at it on `schedule`.
 
     `triggers` replaces the one default Trigger with several (or none).
     """
 
-    instance, owner, contract = contract_world(tmp_path)
-    accepted = _slotless_procedure("trigger-method")
+    instance, owner, contract = contract_world(tmp_path, historical=historical)
+    accepted = _slotless_procedure("trigger-method", historical=historical)
     procedure = accepted.procedure
     policy = _acquisition_policy("trigger-policy")
-    line = _served_line("trigger-test", accepted=accepted, policy=policy)
+    profile = TRIGGER_CONTRACT
+    if historical:
+        from cruxible_client.contracts.acquisition_policies import (
+            IndependentCoherence,
+            InputAcquisitionRule,
+            SourceAcquisitionPolicyV1,
+        )
+        from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+
+        profile = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        policy = SourceAcquisitionPolicyV1(
+            identity=policy.identity,
+            inputs=(
+                InputAcquisitionRule(
+                    input_name="unused",
+                    requirement="required",
+                    permitted_replayability=("exact",),
+                    max_age=policy.max_age,
+                    on_unavailable="refuse",
+                    on_stale="refuse",
+                    on_oversized="refuse",
+                    on_conflict="preserve",
+                ),
+            ),
+            coherence=IndependentCoherence(),
+        )
+        data = schedule.model_dump(mode="json")
+        if data["kind"] == "capture_landing":
+            data["event"]["capture_contract_digest"] = capture_contract_digest(profile).tagged
+        if data["kind"] == "window_close" and data["window"]["kind"] == "capture_event":
+            data["window"]["event"]["capture_contract_digest"] = capture_contract_digest(
+                profile
+            ).tagged
+        schedule = type(schedule).model_validate(data)
+    line = _served_line("trigger-test", accepted=accepted, policy=policy, historical=historical)
     mandate = _line_mandate(accepted)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-    )
+    tree[capture_contract_path(profile.identity.name)] = render_capture_contract(profile)
     tree.update(
         {
             accepted.path: render_procedure(procedure),
@@ -81,7 +114,14 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
             line_spec_path(line.identity.name): render_line_spec(line),
             **trigger_members(
                 *(
-                    (line_trigger(TRIGGER, line=line.identity.name, schedule=schedule),)
+                    (
+                        line_trigger(
+                            TRIGGER,
+                            line=line.identity.name,
+                            schedule=schedule,
+                            named=not historical,
+                        ),
+                    )
                     if triggers is None
                     else triggers
                 )
@@ -100,10 +140,19 @@ def capture(
     *,
     at=READ_TIME,
     partition="run:anchor",
-    digest=SELECTOR.capture_contract_digest,
+    digest=None,
     observed_at="2000-01-01T00:00:00Z",
     capture_digest=None,
 ):
+    if digest is None:
+        from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+        digest = capture_contract_digest(
+            TRIGGER_CONTRACT
+            if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+            else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        ).tagged
     journal, _ = _journal(instance)
     stream = _stream(instance)
     _activate_writer(journal, stream, partition)

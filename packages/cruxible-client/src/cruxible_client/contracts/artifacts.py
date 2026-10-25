@@ -106,6 +106,16 @@ class ArtifactRef(_StrictArtifactModel):
         return value
 
 
+class ArtifactNameRef(_StrictArtifactModel):
+    """A field-typed reference resolved at the selected accepted coordinate.
+
+    The containing field supplies the role. Only historical pins and evidence
+    carry a digest; an authored dependency names the governed identity.
+    """
+
+    target: ArtifactIdentity
+
+
 class ArtifactLifecycle(_StrictArtifactModel):
     state: Literal["live", "retired"] = "live"
     predecessor_digest: str | None = None

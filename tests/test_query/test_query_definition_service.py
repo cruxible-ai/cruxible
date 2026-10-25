@@ -24,6 +24,7 @@ from tests.core_support._knowledge_loop_support import (
     TIMESTAMP,
     accept_proposal,
     seed_claims,
+    seed_claims_into,
     work_item_query,
 )
 
@@ -51,7 +52,7 @@ def test_accepted_query_definition_reads_back_at_its_accepted_coordinate(tmp_pat
     assert view.path == query_definition_path(QUERY_NAME)
     assert view.artifact_digest == query_definition_digest(work_item_query()).tagged
     assert view.coordinate.git_oid == instance.accepted_coordinate().git_oid
-    assert view.envelope["artifact_format"] == "playbill-query-definition-v1"
+    assert view.envelope["artifact_format"] == "cruxible-query-definition-v3"
 
 
 def test_absent_query_definition_is_refused_rather_than_returned_empty(tmp_path: Path) -> None:
@@ -62,8 +63,11 @@ def test_absent_query_definition_is_refused_rather_than_returned_empty(tmp_path:
 
 
 def test_claim_type_pin_that_does_not_resolve_at_the_base_is_refused(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    stale = work_item_query().model_copy(
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, owner = initialize_legacy_local(tmp_path)
+    seed_claims_into(instance, owner)
+    stale = work_item_query(named=False).model_copy(
         update={
             "pins": (
                 ArtifactPin(
@@ -126,3 +130,13 @@ def test_query_definition_reads_only_selected_accepted_sources(
     with pytest.raises(ClaimNotFoundError):
         service_get_playbill_query_definition(instance, name="project.absent_query")
     assert reads == []
+
+
+def test_current_population_query_helpers_use_pinless_owner_models():
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+    from tests.core_support._adoption_fixture import _claim_type, _query_definition
+    from tests.test_scale._worlds import _condition
+
+    for query in (work_item_query(), _query_definition(0, _claim_type(0)), _condition()):
+        assert isinstance(query, NamedQueryDefinition)
+        assert "pins" not in query.model_dump(mode="json")

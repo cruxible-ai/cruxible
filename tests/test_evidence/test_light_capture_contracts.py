@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     lower_capture_contract_input,
@@ -426,7 +427,13 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
         PROVIDER_BUILDS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
     )
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.proposals.proposals import (
+        AuthenticatedActor,
+        ProposalAdmissionRequest,
+        _validate_identity_evidence_policy_format,
+    )
+    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._pc_c_support import capture_contract as frozen_contract
     from tests.core_support.legacy_capture_builders import initialize_legacy_local
     from tests.test_claims.test_claims import TIMESTAMP, _claim_type
 
@@ -473,10 +480,18 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
             "evidence_admission_policy": policy,
         }
     )
+    contract = (
+        record_contract(name="test.capture")
+        if revision == 36
+        else frozen_contract().model_copy(
+            update={"identity": ArtifactIdentity(kind="CaptureContract", name="test.capture")}
+        )
+    )
     base = instance.accepted_coordinate()
     tree = {
         **instance.tree_at(base.git_oid),
         claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
     }
 
     def submit():
@@ -491,7 +506,12 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
 
     if (revision == 36) != (policy_version == 4):
         with pytest.raises(FormatError, match="upgrade the compiler"):
-            submit()
+            _validate_identity_evidence_policy_format(claim_type, compiler)
+        result = submit()
+        assert result.candidate is None
+        (diagnostic,) = result.evaluation.diagnostics
+        assert diagnostic.code == "cruxible.claim_type.format_invalid"
+        assert "upgrade the compiler" in diagnostic.message
     else:
         result = submit()
         assert result.candidate is not None, result.evaluation.diagnostics
@@ -562,3 +582,33 @@ def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
         identity_rules=True,
     )
     assert isinstance(result.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)
+
+
+@pytest.mark.parametrize("named", [True, False])
+def test_parsed_components_and_retention_views_are_reused_without_changing_stored_bytes(named):
+    from cruxible_client.contracts.captures import capture_components, capture_retention_policy
+
+    contract = (
+        lower_capture_contract_input(
+            CaptureContractInputRecord(name="memo.capture", shape="http_response"), named=True
+        )
+        if named
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    wire = render_capture_contract(contract)
+    parsed = parse_capture_contract(wire, path=capture_contract_path(contract.identity.name))
+    components = capture_components(parsed)
+    retention = capture_retention_policy(parsed)
+    assert capture_components(parsed) is components
+    assert capture_retention_policy(parsed) is retention
+    assert render_capture_contract(parsed) == wire
+    # A caller's edited copy is a new value and must derive its own view.
+    edited = parsed.model_copy(
+        update={
+            "selection_budget": parsed.selection_budget.model_copy(
+                update={"max_bytes": parsed.selection_budget.max_bytes + 1}
+            )
+        }
+    )
+    assert capture_components(edited) == components
+    assert render_capture_contract(edited) != wire

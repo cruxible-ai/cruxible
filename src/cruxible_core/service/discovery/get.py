@@ -135,6 +135,7 @@ from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRul
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.providers import ProviderV2
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
@@ -1676,12 +1677,8 @@ def _provider_interface_card(
         output=row.output,
         effect=row.effect,
         providers=tuple(
-            GetProviderInterfaceProvider(
-                provider=item.provider, implementation_digest=item.implementation_digest
-            )
-            for item in row.providers
+            GetProviderInterfaceProvider(provider=item.provider) for item in row.providers
         ),
-        interface_digest=row.interface_digest,
         next=(_render_get(surface, resolved.display, "proof"),),
     )
 
@@ -1769,7 +1766,10 @@ def _procedure_card(
         promoted = projection.typed.facts(
             "cruxible.procedure.track_record", identity=resolved.identity
         )
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
     return GetProcedureCard(
+        authored=decompile_procedure(readiness.artifact),
         measurement_reviews=_procedure_reviews(instance, coordinate, resolved),
         procedure=_name(resolved.identity),
         description=definition.description,
@@ -1823,8 +1823,17 @@ def _query_card(
 ) -> GetQueryCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         query = cast(QueryDefinition, projection.typed.source(resolved.identity))
+    from cruxible_client.contracts.query.authored import QuerySpecInput, query_spec_from_definition
+
+    definition: QuerySpecInput | QueryDefinition | None = None
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
+        try:
+            definition = query_spec_from_definition(query)
+        except ValueError:
+            definition = query
     return GetQueryCard(
         query=query.identity.name,
+        definition=definition,
         description=query.description,
         params=tuple(
             GetQueryParameter(name=item.name, type=str(item.value_type), required=item.required)
@@ -1844,9 +1853,7 @@ def _blueprint_card(
     from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
     from cruxible_client.contracts.procedures.blueprints import (
         blueprint_slot_interface,
-        fitting_implementation,
     )
-    from cruxible_client.contracts.providers import AcceptedProvider
 
     with instance.bind_accepted_projection(coordinate) as projection:
         blueprint = cast(BlueprintArtifact, projection.typed.source(resolved.identity))
@@ -1859,19 +1866,33 @@ def _blueprint_card(
             for (identity,) in projection.typed.connection.execute(
                 "SELECT DISTINCT p.source_identity FROM main.provider_interfaces i "
                 "JOIN main.pins p ON p.target_identity=i.identity "
-                "AND p.target_digest=i.artifact_digest AND p.edge_kind='required_pin' "
+                "AND p.edge_kind='required_pin' "
                 "JOIN main.providers r ON r.identity=p.source_identity "
-                "WHERE i.interface_digest=? AND r.lifecycle='live' ORDER BY p.source_identity",
-                (slot.interface_digest,),
+                "WHERE i.identity=? AND i.lifecycle='live' AND r.lifecycle='live' "
+                "ORDER BY p.source_identity",
+                (getattr(blueprint_slot_interface(blueprint, slot), "target").qualified,),
             ):
                 row = projection.typed.envelope(str(identity))
                 provider = projection.typed.source(str(identity))
                 if row is None or provider is None:
                     continue
-                accepted = AcceptedProvider(
-                    path=row.path, provider=provider, artifact_digest=row.artifact_digest
+                interface_ref = blueprint_slot_interface(blueprint, slot)
+                assert interface_ref is not None
+                registration = projection.typed.source(interface_ref.target.qualified)
+                from cruxible_client.contracts.provider_interfaces import (
+                    interface_definition_digest,
                 )
-                if fitting_implementation(accepted, slot) is not None:
+
+                if (
+                    registration is not None
+                    and isinstance(provider, ProviderV2)
+                    and sum(
+                        row.interface_id == registration.interface_id
+                        and row.interface_digest == interface_definition_digest(registration)
+                        for row in provider.implementations
+                    )
+                    == 1
+                ):
                     candidates.append(provider.identity.name)
             fits[slot.slot_name] = _fitting_names(projection, tuple(candidates))
     inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}

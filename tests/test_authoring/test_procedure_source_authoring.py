@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import procedure
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
@@ -67,6 +69,9 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
     assert inspected.source == preview.definition.source
     assert len(inspected.return_paths) == 2
     assert all(path.kind == "pure" for path in inspected.return_paths)
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+
+    assert all(isinstance(path.contract, ArtifactNameRef) for path in inspected.return_paths)
     assert inspected.branch_values[0].kind == "guard"
     assert inspected.nodes[-1].kind == "return"
     assert (
@@ -367,7 +372,8 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
             resolve_indexed_source(_field_request(), selected)
 
 
-def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
+@pytest.mark.parametrize("historical", [True, False])
+def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path, historical):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.authoring.models import (
         ChangeSetAuthoringPayload,
@@ -382,14 +388,15 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
     from tests.test_authoring.test_authoring_procedures import _change_set_query
     from tests.test_claims.test_claims import _claim_type
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    claim_type, query = _claim_type(), _change_set_query()
+    claim_type, query = _claim_type(), _change_set_query(named=not historical)
     request = _field_request()
     # Use a governed query and a field read in the same source; neither yet exists.
     request = request.model_copy(
@@ -433,10 +440,22 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
         path = procedure_path(request.name)
         procedure = parse_procedure(lowered.proposed_tree[path], path=path)
         source = procedure.definition.source
-        assert (
-            source.claim_types[claim_type.predicate].version == claim_type_digest(claim_type).tagged
-        )
-        assert source.bindings["items"].version == query_definition_digest(query).tagged
+        if historical:
+            assert (
+                source.claim_types[claim_type.predicate].version
+                == claim_type_digest(claim_type).tagged
+            )
+            assert source.bindings["items"].version == query_definition_digest(query).tagged
+        else:
+            assert source.claim_types[claim_type.predicate].version is None
+            assert (
+                source.claim_types[claim_type.predicate].structure.predicate == claim_type.predicate
+            )
+            assert source.bindings["items"].version is None
+            assert source.bindings["items"].definition.identity == query.identity
+            assert query_definition_digest(
+                source.bindings["items"].definition
+            ) == query_definition_digest(query)
         _accept_tree(
             instance,
             owner,

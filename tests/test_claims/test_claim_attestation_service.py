@@ -18,6 +18,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     parse_capture_envelope,
@@ -60,6 +61,8 @@ from cruxible_core.service.evidence.claim_attestations import (
 from tests.core_support._next_support import unfolded_next
 from tests.test_authoring.test_authoring_existing_capture import _activate, shared_capture_world
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 
 RECORDED_AT = datetime(2026, 8, 28, 15, tzinfo=UTC)
 
@@ -407,6 +410,7 @@ def test_examined_existing_semantics_refuse_nonbacking_and_copy_only(
 def _coordinator_new_capture(instance, claim_id: str):  # type: ignore[no-untyped-def]
     return build_coordinator_self_source_capture(
         store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
         actor_id="owner",
         claim_id=claim_id,
         body=b"new exact Claim-bound observation\n",
@@ -582,8 +586,8 @@ def test_new_capture_refuses_contract_not_live_at_referent(tmp_path: Path) -> No
             access=BodyAccessContext(principal_id="test", can_read_body=True),
         )
     )
-    old_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
-    retired = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
+    old_digest = capture_contract_digest(SELF_SOURCE).tagged
+    retired = SELF_SOURCE.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(
                 state="retired",
@@ -643,6 +647,7 @@ def test_next_reads_one_exact_evidence_head(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
         actor_id="owner",
         claim_id=claim_id,
         body=b"new supporting observation\n",
@@ -849,6 +854,7 @@ def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_tim
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
         actor_id="owner",
         claim_id=claim_id,
         body=b"contradicting observation\n",

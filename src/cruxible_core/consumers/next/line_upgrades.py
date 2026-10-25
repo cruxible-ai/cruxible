@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
@@ -58,6 +59,12 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                 if raw is None:
                     raise ValueError(f"accepted Line bytes unavailable: {version.identity}")
                 line = parse_carry_line(raw, path=version.path)
+                by_name = generation.compiler_digest == LIGHT_ARTIFACTS_COMPILER.rule_digest
+                procedure_reference = (
+                    line.procedure.target.qualified
+                    if by_name
+                    else getattr(line.procedure, "artifact_digest")
+                )
                 old = connection.execute(
                     "SELECT digest,procedure FROM lines WHERE identity=?", (version.identity,)
                 ).fetchone()
@@ -91,9 +98,10 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                 if line.lifecycle.state == "retired":
                     connection.execute("DELETE FROM disabled WHERE identity=?", (version.identity,))
                 elif (
-                    old is not None
+                    not by_name
+                    and old is not None
                     and old[0] == line.lifecycle.predecessor_digest
-                    and old[1] != line.procedure.artifact_digest
+                    and old[1] != procedure_reference
                 ):
                     connection.execute(
                         "INSERT OR REPLACE INTO disabled VALUES(?,?,?,?)",
@@ -101,12 +109,12 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                             version.identity,
                             line_id,
                             version.artifact_digest,
-                            line.procedure.artifact_digest,
+                            procedure_reference,
                         ),
                     )
                 connection.execute(
                     "INSERT OR REPLACE INTO lines VALUES(?,?,?)",
-                    (version.identity, version.artifact_digest, line.procedure.artifact_digest),
+                    (version.identity, version.artifact_digest, procedure_reference),
                 )
         connection.execute("UPDATE progress SET generation=?", (end,))
 

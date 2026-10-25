@@ -941,8 +941,42 @@ LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 
+NAMED_REFERENCE_FORMATS = {
+    "capture-contract": "cruxible-capture-contract-v3",
+    "procedure": "cruxible-procedure-v3",
+    "blueprint": "cruxible-blueprint-v2",
+    "query-definition": "cruxible-query-definition-v3",
+    "trigger": "cruxible-trigger-v2",
+    "line": "cruxible-line-v7",
+    "provider": "cruxible-provider-v5",
+}
+NAMED_REFERENCE_LAWS = tuple(
+    InstalledAcceptanceLaw(
+        coordinate=_artifact_law_coordinate(f"cruxible.{kind}.named.v1", tag, semantic_revision=1),
+        artifact_kind=kind,
+        artifact_tag=tag,
+    )
+    for kind, tag in NAMED_REFERENCE_FORMATS.items()
+)
+
+# Public names refer to the one current named-law entry for each v3 tag.
+LIGHT_PROCEDURE_LAW = next(law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "procedure")
+QUERY_DEFINITION_V3_ACCEPTANCE_LAW = next(
+    law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "query-definition"
+)
+
+NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.provider-identity.v2", "cruxible-provider-identity-v2", semantic_revision=1
+    ),
+    artifact_kind="provider",
+    artifact_tag="cruxible-provider-identity-v2",
+)
+
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        *NAMED_REFERENCE_LAWS,
+        NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         LIGHT_ACQUISITION_POLICY_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,

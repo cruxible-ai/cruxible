@@ -130,3 +130,39 @@ def test_the_upgrade_names_what_it_cannot_find(world: _V7World) -> None:
     assert [item.claim_type for item in result.refused] == [  # type: ignore[attr-defined]
         "ClaimType:project.work_item.missing"
     ]
+
+
+def test_upgrade_keeps_named_query_and_trigger_bytes_while_carrying_exact_claims(world):
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_path,
+        render_query_definition,
+    )
+    from cruxible_client.contracts.triggers import CadenceSchedule, render_trigger, trigger_path
+    from tests.core_support._adoption_fixture import _query_definition
+    from tests.support.lines import action_trigger
+
+    world.seed(_v6_type())
+    claim_id = world.say(b"status: ready")
+    query = _query_definition(1, world.claim_type())
+    trigger = action_trigger(
+        "named-upgrade-trigger",
+        action="curation.detect",
+        schedule=CadenceSchedule(interval_seconds=60),
+    )
+    tree = world.tree()
+    paths = {
+        query_definition_path(query.identity.name): render_query_definition(query),
+        trigger_path(trigger.identity.name): render_trigger(trigger),
+    }
+    tree.update(paths)
+    world.accept(tree, name=world.name("named-dependents"))
+    result = _upgrade(world, dry_run=False)
+    assert result.status == "proposed", result
+    assert result.carried_claims == 1
+    world.activate_proposal(result.proposal_id)
+    after = world.tree()
+    assert all(after[path] == content for path, content in paths.items())
+    assert (
+        world.claim(claim_id).statement.claim_type_digest
+        == claim_type_digest(world.claim_type()).tagged
+    )

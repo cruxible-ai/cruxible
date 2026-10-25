@@ -45,12 +45,14 @@ from cruxible_client.contracts.merkle import (
     ROOT_PREFIX,
     build_merkle_manifest,
 )
+from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
     QueryDefinition,
     query_definition_digest,
     render_query_definition,
@@ -148,12 +150,22 @@ def _update_query_golden() -> None:
             _query_claim_type("project.work_item.status")
         ).tagged,
     }
-    for pin in raw["pins"]:
+    for pin in raw.get("pins", []):
         pin["artifact_digest"] = digests[pin["target"]["name"]]
-    definition = QueryDefinition.model_validate(raw)
+    # The fixture stores the expanded typed declaration; its wire is rendered
+    # by the current owner codec below, not parsed as already-canonical bytes.
+    definition = (
+        NamedQueryDefinition.model_validate(raw)
+        if raw.get("artifact_format") == "cruxible-query-definition-v3"
+        else name_query(QueryDefinition.model_validate(raw))
+    )
+    fixture["historical_v1"] = _read(ROOT / "tests/fixtures/query-definition-v1.json")
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged
+    v3 = definition.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+    fixture["canonical_v3_wire"] = render_query_definition(v3).decode("utf-8")
+    fixture["v3_artifact_digest"] = query_definition_digest(v3).tagged
     _write(path, fixture)
 
 

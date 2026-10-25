@@ -16,6 +16,7 @@ from cruxible_client.contracts.builtin_claim_types import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
     capture_contract_path,
     render_capture_contract,
 )
@@ -99,7 +100,9 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     query = _query_definition(0, claim_type)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+        render_capture_contract(
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+        )
     )
     tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
     tree[query_definition_path(query.identity.name)] = render_query_definition(query)
@@ -196,7 +199,9 @@ def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) ->
     claim_type = _claim_type(0)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+        render_capture_contract(
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+        )
     )
     tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
     _accept_tree(

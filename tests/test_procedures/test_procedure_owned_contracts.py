@@ -374,7 +374,7 @@ def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp:
         candidate_tree=tree,
         timestamp=timestamp,
     )
-    assert result.candidate is not None
+    assert result.candidate is not None, result.evaluation.diagnostics
     assert result.evaluation.evaluated_tree_oid is not None
     bundle = instance.prepare_generation(
         base=base,

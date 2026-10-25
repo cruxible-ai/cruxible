@@ -54,7 +54,12 @@ TRIGGER = "trigger-source-trigger"
 
 def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources=(), **kwargs):
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
-    contract = kwargs.get("contract", capture_contract())
+    if kwargs.get("historical"):
+        from tests.core_support._pc_c_support import capture_contract as frozen_contract
+
+        contract = kwargs.get("contract", frozen_contract())
+    else:
+        contract = kwargs.get("contract", capture_contract())
     selector = CaptureEventSelector(
         capture_contract_identity=contract.identity,
         capture_contract_digest=capture_contract_digest(contract).tagged,
@@ -68,26 +73,40 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         schedule = WindowCloseSchedule(
             window=CaptureEventWindow(event=selector, duration_seconds=60)
         )
-    line = LineSpec.model_validate(
-        {
-            **original.model_dump(mode="python"),
-            "trigger_input": SOURCE_ALIAS,
-            "trigger_event": selector,
-            "pins": tuple(
-                sorted(
-                    (
-                        *original.pins,
-                        ArtifactPin(
-                            role="trigger-capture-contract",
-                            target=selector.capture_contract_identity,
-                            artifact_digest=selector.capture_contract_digest,
+    values = {
+        **original.model_dump(mode="python"),
+        "trigger_input": SOURCE_ALIAS,
+        "trigger_event": selector,
+    }
+    from cruxible_client.contracts.procedures.line_specs import NamedLineSpec
+    from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+
+    if isinstance(original, NamedLineSpec):
+        values["trigger_event"] = NamedCaptureEventSelector(
+            capture_contract_identity=contract.identity, logical_sources=sources
+        )
+        line = NamedLineSpec.model_validate(values)
+    else:
+        line = LineSpec.model_validate(
+            {
+                **original.model_dump(mode="python"),
+                "trigger_input": SOURCE_ALIAS,
+                "trigger_event": selector,
+                "pins": tuple(
+                    sorted(
+                        (
+                            *original.pins,
+                            ArtifactPin(
+                                role="trigger-capture-contract",
+                                target=selector.capture_contract_identity,
+                                artifact_digest=selector.capture_contract_digest,
+                            ),
                         ),
-                    ),
-                    key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-                )
-            ),
-        }
-    )
+                        key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
+                    )
+                ),
+            }
+        )
     if line_budget is not None:
         line = line.model_copy(
             update={"budgets": {**line.budgets, "max_capture_bytes": line_budget}}
@@ -105,7 +124,14 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         {
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
-            **trigger_members(line_trigger(TRIGGER, line=line.identity.name, schedule=schedule)),
+            **trigger_members(
+                line_trigger(
+                    TRIGGER,
+                    line=line.identity.name,
+                    schedule=schedule,
+                    named=not kwargs.get("historical", False),
+                )
+            ),
         },
         name="trigger-source-line",
     )
@@ -295,7 +321,10 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         from tests.test_procedures.test_procedure_source_runs import _policy
 
         accepted = _accepted_procedure(
-            instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
+            instance,
+            coordinate=instance.accepted_coordinate(),
+            name=line.procedure.target.name,
+            bind_references=True,
         )
         contract = capture_contract()
         with pytest.raises(ExecutionError, match="bound read budget") as error:
@@ -341,7 +370,8 @@ def test_late_event_window_consumes_its_anchor_capture(tmp_path):
     )
 
 
-def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
+@pytest.mark.parametrize("historical", [True, False])
+def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path, historical):
     from pydantic import ValidationError
 
     from cruxible_client.contracts.authoring.models import LineAuthoringPayload
@@ -359,7 +389,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
-    instance, _, line = world(tmp_path)
+    instance, _, line = world(tmp_path, historical=historical)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     # Authoring declares the event the trigger input accepts, read from its Source.
     payload = LineAuthoringPayload(
@@ -369,19 +399,26 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         max_authority="observe",
         trigger_input=SOURCE_ALIAS,
     )
-    path, raw, _ = _render_line_member(payload, tree=tree)
+    path, raw, _ = _render_line_member(payload, tree=tree, light=not historical)
     authored = parse_line_spec(raw, path=path)
     assert isinstance(authored, LineSpec) and authored.trigger_input == SOURCE_ALIAS
     assert authored.trigger_event == line.trigger_event
-    with pytest.raises(ValidationError, match="trigger_event come together"):
-        LineSpec.model_validate({**line.model_dump(mode="python"), "trigger_event": None})
+    with pytest.raises(
+        ValidationError,
+        match=("trigger_event come together" if historical else "accepted event come together"),
+    ):
+        type(line).model_validate({**line.model_dump(mode="python"), "trigger_event": None})
     accepted = _accepted_procedure(
-        instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        name=line.procedure.target.name,
+        bind_references=True,
     )
-    wrong = line.trigger_event.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
-    for bad in (
-        line.model_copy(update={"trigger_input": "result"}),
-        LineSpec.model_validate(
+    if historical:
+        wrong = line.trigger_event.model_copy(
+            update={"capture_contract_digest": "sha256:" + "b" * 64}
+        )
+        bad_event = LineSpec.model_validate(
             {
                 **line.model_dump(mode="python"),
                 "trigger_event": wrong,
@@ -399,8 +436,19 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
                     )
                 ),
             }
-        ),
-    ):
+        )
+    else:
+        from cruxible_client.contracts.artifacts import ArtifactIdentity
+
+        wrong = line.trigger_event.model_copy(
+            update={
+                "capture_contract_identity": ArtifactIdentity(
+                    kind="CaptureContract", name="wrong-contract"
+                )
+            }
+        )
+        bad_event = line.model_copy(update={"trigger_event": wrong})
+    for bad in (line.model_copy(update={"trigger_input": "result"}), bad_event):
         verdict = evaluate_line_spec_law(
             bad,
             path=line_spec_path(bad.identity.name),
@@ -409,7 +457,10 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         )
         assert verdict.verdict == "refused"
         assert verdict.diagnostics[0].code == "cruxible.line.trigger_input_mismatch"
-    with pytest.raises(ProjectionFormatError, match="Line v6 requires compiler revision 32"):
+    with pytest.raises(
+        ProjectionFormatError,
+        match="Line v6 requires compiler revision 32",
+    ):
         parse_projection_tree(
             {line_spec_path(line.identity.name): render_line_spec(line)},
             registry=projection_registry_for_compiler(AUTHORITY_VERBS_COMPILER),
@@ -652,7 +703,10 @@ def test_a_line_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tmp
     instance, _, line = world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     accepted = _accepted_procedure(
-        instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        name=line.procedure.target.name,
+        bind_references=True,
     )
     capability = accepted.procedure.definition.terminal_capability
     path, raw, _ = _render_line_member(

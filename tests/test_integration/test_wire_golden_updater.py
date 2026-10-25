@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,9 @@ def _snapshot(root: Path) -> dict[str, bytes]:
 
 
 def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> None:
+    query = json.loads((ROOT / "tests/goldens/playbill/query-definition-v1.json").read_bytes())
+    assert query["query_definition"]["artifact_format"] == "cruxible-query-definition-v3"
+    assert "pins" not in query["query_definition"]
     checkout = tmp_path / "checkout"
     (checkout / "scripts").mkdir(parents=True)
     (checkout / "tests/goldens/playbill").mkdir(parents=True)
@@ -47,6 +51,12 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
     shutil.copytree(
         ROOT / "benchmarks/playbill_taubench/seed-example",
         checkout / "benchmarks/playbill_taubench/seed-example",
+    )
+    # The unified golden derives its frozen section from this independent input.
+    (checkout / "tests/fixtures").mkdir()
+    shutil.copy2(
+        ROOT / "tests/fixtures/query-definition-v1.json",
+        checkout / "tests/fixtures/query-definition-v1.json",
     )
     before = _snapshot(checkout)
 

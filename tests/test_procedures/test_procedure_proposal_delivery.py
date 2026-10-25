@@ -262,6 +262,8 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
     tmp_path: Path,
 ) -> None:
     instance, owner, root, line, procedure = proposal_world(tmp_path)
+    assert procedure.artifact_format == "cruxible-procedure-v3"
+    assert line.artifact_format == "cruxible-line-v7"
     base = instance.accepted_coordinate()
 
     state = run_line(instance, root, line)

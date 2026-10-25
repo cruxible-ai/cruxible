@@ -170,6 +170,8 @@ def _source_fixture(
     capture_budget: int | None = None,
     contract=None,
     terminal_contract=None,
+    historical_provider=None,
+    historical_interface=None,
 ) -> tuple[
     AcceptedProcedure,
     PreparedProcedureRunV9,
@@ -178,10 +180,20 @@ def _source_fixture(
     object,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.
+    if rule is not None and historical_provider is None:
+        from tests.core_support._p2b1_support import provider_v2
+        from tests.support.provider_builds import accepted_build
+
+        historical_provider = accepted_build(provider_v2())
     provider_accepted = _accepted_one_provider(
-        wall_clock=RUN_WALL_CLOCK, max_wall_clock=MAX_WALL_CLOCK
+        wall_clock=RUN_WALL_CLOCK,
+        max_wall_clock=MAX_WALL_CLOCK,
+        provider=historical_provider,
+        interface=historical_interface,
     )
-    provider_prepared, fixture = _prepared_acquisition_run(provider_accepted, tmp_path)
+    provider_prepared, fixture = _prepared_acquisition_run(
+        provider_accepted, tmp_path, provider=historical_provider, interface=historical_interface
+    )
     provider_node = provider_accepted.procedure.definition.nodes[0]
     assert isinstance(provider_node, CallNode)
     contract = capture_contract() if contract is None else contract
@@ -241,9 +253,14 @@ def _source_fixture(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "artifact_format": "playbill-procedure-v2",
             "pins": pins,
         }
     )
+    if rule is None:
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        procedure = name_procedure(procedure)
     accepted = AcceptedProcedure(
         path=provider_accepted.path,
         procedure=procedure,
@@ -287,6 +304,20 @@ def _source_fixture(
             "artifact_digest": procedure_artifact_digest(procedure).tagged,
         }
     )
+    if rule is None:
+        from cruxible_core.procedures.reference_binding import bind_procedure_references
+        from tests.core_support._p2b1_support import accepted_interface, accepted_provider
+
+        provider = accepted_provider()
+        interface = accepted_interface()
+        targets = {
+            provider.provider.identity: (provider.provider, provider.artifact_digest),
+            interface.registration.identity: (interface.registration, interface.artifact_digest),
+            contract.identity: (contract, contract_pin.artifact_digest),
+            terminal_contract.identity: (terminal_contract, terminal_pin.artifact_digest),
+            policy.identity: (policy, acquisition_policy_digest(policy).tagged),
+        }
+        accepted = bind_procedure_references(accepted, lookup=targets.get)
     policy_digest = acquisition_policy_digest(policy).tagged
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]
@@ -562,7 +593,21 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
     accepted_path = tmp_path / "accepted.json"
     prepared_path = tmp_path / "prepared.json"
     marker_path = tmp_path / "invoker-constructed"
-    accepted_path.write_text(accepted.model_dump_json(), encoding="utf-8")
+    from cruxible_core.procedures.reference_binding import authored_procedure
+    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
+
+    authored = AcceptedProcedure(
+        path=accepted.path,
+        procedure=authored_procedure(accepted),
+        artifact_digest=accepted.artifact_digest,
+    )
+    accepted_path.write_text(authored.model_dump_json(), encoding="utf-8")
+    (tmp_path / "binding-provider.json").write_text(accepted_provider().provider.model_dump_json())
+    (tmp_path / "binding-interface.json").write_text(
+        accepted_interface().registration.model_dump_json()
+    )
+    (tmp_path / "binding-contract.json").write_text(contract.model_dump_json())
+    (tmp_path / "binding-policy.json").write_text(policy.model_dump_json())
     prepared_path.write_text(prepared.model_dump_json(), encoding="utf-8")
     fixture.run_index.close()
     script = textwrap.dedent(
@@ -582,6 +627,31 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         root, accepted_path, prepared_path, marker_path = map(Path, sys.argv[1:])
         accepted = AcceptedProcedure.model_validate_json(accepted_path.read_text())
         prepared = PreparedProcedureRunV9.model_validate_json(prepared_path.read_text())
+        from cruxible_client.contracts.providers import ProviderV2, provider_digest
+        from cruxible_client.contracts.provider_interfaces import (
+            ProviderInterfaceRegistrationV1, provider_interface_digest,
+        )
+        from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
+        from cruxible_client.contracts.acquisition_policies import (
+            SourceAcquisitionPolicy, acquisition_policy_digest,
+        )
+        from cruxible_core.procedures.reference_binding import replay_procedure_references
+
+        material = {}
+        for name, model, digest in (
+            ("provider", ProviderV2, provider_digest),
+            ("interface", ProviderInterfaceRegistrationV1, provider_interface_digest),
+            ("contract", CaptureContractV1, capture_contract_digest),
+            ("policy", SourceAcquisitionPolicy, acquisition_policy_digest),
+        ):
+            artifact = model.model_validate_json((root / ("binding-" + name + ".json")).read_text())
+            material[(artifact.identity, digest(artifact).tagged)] = artifact
+        accepted = replay_procedure_references(
+            accepted, pins=prepared.admission.full_pins,
+            lookup_exact=lambda identity, digest: (
+                (material[(identity, digest)], digest) if (identity, digest) in material else None
+            ),
+        )
 
         def construct_invoker():
             marker_path.write_text("constructed")

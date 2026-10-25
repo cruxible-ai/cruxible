@@ -226,3 +226,25 @@ def test_write_schema_compaction_preserves_constraints_and_title_property():
         "properties": {"title": {"type": "string", "minLength": 1}},
     }
     assert schema["title"] == "Example"
+
+
+def test_generated_read_only_metadata_does_not_enter_the_authored_input_schema():
+    class Generated(BaseModel):
+        protocol: Literal["playbill-provider-result-to-external-capture-v1"]
+
+    class Authored(BaseModel):
+        name: str = Field(pattern="^[a-z]+$")
+        retained: Generated | None = Field(default=None, json_schema_extra={"readOnly": True})
+
+    advertised = hide_wire_tags(Authored.model_json_schema())
+    assert "retained" not in advertised["properties"]
+    assert advertised["properties"]["name"]["pattern"] == "^[a-z]+$"
+    assert exposed_wire_tags(advertised) == []
+    assert "Generated" not in advertised.get("$defs", {})
+    # Typed backend validation of supplied retained metadata stays strict.
+    assert (
+        Authored(
+            name="test", retained={"protocol": "playbill-provider-result-to-external-capture-v1"}
+        ).retained
+        is not None
+    )

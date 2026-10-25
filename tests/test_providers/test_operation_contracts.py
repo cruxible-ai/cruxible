@@ -129,6 +129,7 @@ def test_specialization_and_interface_schemas_match_before_execution(case):
         AcceptedProviderInterfaceRegistration,
         ProviderInterfaceContract,
         ProviderInterfaceDefinition,
+        interface_definition_digest,
         provider_interface_contract,
         provider_interface_digest,
         provider_interface_path,
@@ -174,7 +175,7 @@ def test_specialization_and_interface_schemas_match_before_execution(case):
                 target=registration.identity,
                 artifact_digest=interface.artifact_digest,
             ),
-            "interface_digest": registration.interface_digest,
+            "interface_digest": interface_definition_digest(registration),
         }
     )
     if case in {"source", "mutation"}:
@@ -264,5 +265,7 @@ def test_the_core_owned_web_interface_reads_its_operation_contract():
     from cruxible_core.providers.web_fetch import web_fetch_interface_registration
 
     registration = web_fetch_interface_registration()
-    contract = read_provider_operation_contract(registration.interface_bytes_hex)
+    from cruxible_client.contracts.provider_interfaces import interface_definition_bytes
+
+    contract = read_provider_operation_contract(interface_definition_bytes(registration).hex())
     assert contract.output == "playbill-provider-result-to-external-capture-v1"

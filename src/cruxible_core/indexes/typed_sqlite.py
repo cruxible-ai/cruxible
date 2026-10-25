@@ -160,6 +160,8 @@ def parse_static_owners(
         path: None if is_candidate_card_path(path) else kinds.resolve_path(path) for path in sources
     }
     documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
     parsed = parse_projection_tree(
         {path: body for path, body in sources.items() if path not in documents},
         registry=projection_registry_for_compiler(accepted.compiler),
@@ -168,6 +170,7 @@ def parse_static_owners(
         verified_change_sets=verified_change_sets,
         selected_member_history=selected_member_history,
         carry_members=True,
+        by_name=accepted.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     envelopes = list(parsed.envelopes)
     # Keyed exactly as parse_projection_tree keys them: a Claim's capture-contract

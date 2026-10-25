@@ -304,6 +304,15 @@ def test_query_binds_request_parameters_and_types_the_result():
     assert compiled.definition.nodes[0].kind == "state_tap"
     assert compiled.definition.nodes[0].parameters == {"status": "ready"}
 
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    named = name_procedure(accepted(compiled).procedure)
+    verify_source_graph(named)
+    binding = named.definition.source.bindings["work"].model_dump(mode="json")
+    assert "version" not in binding
+    assert "pins" not in binding["definition"]
+
 
 def test_capture_terminal_has_declared_result_and_requires_material_schema():
     from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
@@ -362,6 +371,15 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
     )
     assert result.definition.nodes[0].as_ == "observation"
     assert result.definition.nodes[-1].result == {"value": "$steps.observation.retrieved.final_url"}
+
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    named = name_procedure(accepted(result).procedure)
+    verify_source_graph(named)
+    binding = named.definition.source.bindings["fetch"].model_dump(mode="json")
+    assert set(binding) == {"kind", "provider", "interface", "effect_class", "operation"}
+    assert named.definition.source.capture_contracts == ("http", "registered")
     missing = program.model_copy(
         update={
             "bindings": {
@@ -580,3 +598,83 @@ def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp
         type(compiled.definition).model_validate(
             {**compiled.definition.model_dump(), "returns": "invented"}
         )
+
+
+def test_named_retained_source_reproduces_without_digest_selections():
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+
+    compiled = compile("""
+        def example(request):
+            return Output.value(value='named')
+    """)
+    historical = accepted(compiled).procedure
+    named = name_procedure(historical)
+    verify_source_graph(historical)
+    verify_source_graph(named)
+    source = named.definition.source.model_dump(mode="json")
+    assert source["rules"] == "cruxible.procedure-source.v3"
+    assert source["syntax_rules"] == "cruxible.procedure-source.v1"
+    assert "artifact_digest" not in str(source)
+    assert "interface_digest" not in str(source)
+    assert "implementation_digest" not in str(source)
+
+
+def test_named_retained_source_matches_compact_candidate_graph():
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_core.authoring.procedure_source import verify_source_bindings
+
+    compiled = compile("""
+        def example(request):
+            return Output.value(value='named')
+    """)
+    original = name_procedure(accepted(compiled).procedure)
+    verify_source_bindings(original, lookup=lambda identity: None, claim_types=(), by_name=True)
+    assert original.definition.graph_format == 7
+
+
+def test_named_claim_reads_keep_the_shared_claim_view_schema():
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
+    from cruxible_client.contracts.procedures.source_program import (
+        NamedProcedureSourceProgram,
+        NamedSourceClaimType,
+    )
+    from cruxible_client.contracts.procedures.source_views import claim_view_schema
+
+    shape = ClaimTypeStructure(
+        predicate="security.asset.internet_facing",
+        allowed_subject_kinds=("security.asset",),
+        object_kind="literal",
+        literal_schema={"type": "boolean"},
+        cardinality="one",
+        permitted_roles=("observation",),
+    )
+    program = NamedProcedureSourceProgram(
+        text=textwrap.dedent("""
+        def example(request, world):
+            exposed = world.security.asset['app'].internet_facing.one()
+            if exposed.value:
+                return Output.value(value='public')
+            return Output.value(value='private')
+        """),
+        filename="named-claim.py",
+        function="example",
+        contracts={"Output": OUTPUT},
+        subject_kinds=("security.asset",),
+        claim_types={shape.predicate: NamedSourceClaimType(structure=shape)},
+    )
+    compiled = compile_source(
+        program,
+        name="example",
+        input=INPUT,
+        output=OUTPUT,
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+    )
+    node = compiled.definition.nodes[0]
+    assert compiled.definition.graph_format == 7
+    assert isinstance(node.claim_type, ArtifactNameRef)
+    assert node.claim_type.target.qualified == "ClaimType:" + shape.predicate
+    assert claim_view_schema(shape).fields["value"].json_schema == shape.literal_schema
+    assert "artifact_digest" not in node.claim_type.model_dump()

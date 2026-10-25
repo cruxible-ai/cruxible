@@ -233,12 +233,18 @@ def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
 
     # A source adapter reads the observation an earlier acquire actually landed.
     # Its recorded observation time stays intact when the adapter serves it later.
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+    from cruxible_client.contracts.named_references import name_provider
+    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
     registration = _acquisition_registration()
-    adapter = capture_provider_build(source.capture_contract())
+    adapter = capture_provider_build(source.capture_contract(), named=False)
     manifest = adapter.runtime_artifact.manifest.model_copy(
         update={
             "implementations": tuple(
-                item.model_copy(update={"interface_digest": registration.interface_digest})
+                item.model_copy(
+                    update={"interface_digest": interface_definition_digest(registration)}
+                )
                 for item in adapter.runtime_artifact.manifest.implementations
             ),
         }
@@ -274,16 +280,15 @@ def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
             ),
         }
     )
+    adapter = name_provider(adapter)
     provider_pin = ArtifactPin(
         role="provider", target=adapter.identity, artifact_digest=provider_digest(adapter).tagged
     )
     read, shape = procedure.definition.nodes
     read = read.model_copy(
         update={
-            "provider": provider_pin,
-            "interface": interface_pin,
-            "interface_digest": registration.interface_digest,
-            "implementation_digest": adapter.implementations[0].implementation_digest,
+            "provider": ArtifactNameRef(target=adapter.identity),
+            "interface": ArtifactNameRef(target=registration.identity),
             "request": {"capture_digest": retained_digest},
         }
     )

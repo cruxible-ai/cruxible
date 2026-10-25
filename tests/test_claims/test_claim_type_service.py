@@ -34,7 +34,16 @@ def test_accepted_claim_type_reads_back_at_its_accepted_coordinate(tmp_path: Pat
     assert view.predicate == PREDICATE
     assert view.identity == f"ClaimType:{PREDICATE}"
     assert view.path == claim_type_path(PREDICATE)
-    claim_type_pin = next(pin for pin in work_item_query().pins if pin.role == "claim-type")
+    from cruxible_client.contracts.claim_types import parse_claim_type
+
+    path = claim_type_path(PREDICATE)
+    source_type = parse_claim_type(instance.blob_at(accepted.git_oid, path), path=path)
+    claim_type_pin = next(
+        pin
+        for pin in work_item_query(claim_type=source_type, named=False).pins
+        if pin.role == "claim-type"
+    )
+    assert work_item_query(claim_type=source_type).referenced_predicates == (PREDICATE,)
     assert view.artifact_digest == claim_type_pin.artifact_digest
     assert view.envelope["artifact_format"] == "playbill-claim-type-v1"
 

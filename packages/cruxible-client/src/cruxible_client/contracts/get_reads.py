@@ -33,7 +33,10 @@ from cruxible_client.contracts.operational_reads import (
     LiveView,
     RunRow,
 )
+from cruxible_client.contracts.procedures.authored import ProcedureSpec
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
+from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
@@ -391,6 +394,7 @@ class GetProcedureNode(_StrictGetModel):
 
 
 class GetProcedureCard(_StrictGetModel):
+    authored: ProcedureSpec | None = Field(default=None, exclude_if=lambda value: value is None)
     measurement_reviews: tuple[ProcedureMeasurementReview, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
@@ -417,6 +421,7 @@ class GetQueryParameter(_StrictGetModel):
 
 class GetQueryCard(_StrictGetModel):
     query: str
+    definition: QuerySpecInput | QueryDefinition | None = Field(default=None, exclude_if=_omit_none)
     description: str | None = Field(default=None, exclude_if=_omit_none)
     params: tuple[GetQueryParameter, ...] = ()
     next: tuple[str, ...] = ()
@@ -577,7 +582,6 @@ class GetProviderCard(_StrictGetModel):
 
 class GetProviderInterfaceProvider(_StrictGetModel):
     provider: str
-    implementation_digest: str
 
 
 class GetProviderInterfaceCard(_StrictGetModel):
@@ -594,7 +598,6 @@ class GetProviderInterfaceCard(_StrictGetModel):
     output: tuple[str, ...] = ()
     effect: Literal["pure", "external_read", "external_mutation"]
     providers: tuple[GetProviderInterfaceProvider, ...] = ()
-    interface_digest: str
     next: tuple[str, ...] = ()
 
 

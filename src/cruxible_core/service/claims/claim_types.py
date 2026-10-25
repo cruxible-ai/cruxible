@@ -21,6 +21,7 @@ from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
     ClaimTypeInputRecord,
     identity_rules_supported,
+    install_builtin_capture_dependencies,
     lint_claim_type_input,
     lower_claim_type_input,
 )
@@ -29,6 +30,7 @@ from cruxible_core.claims.claim_type_migrations import (
     build_claim_type_migration_candidate,
     claim_type_migration_inventory,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.governance.actor_context import TransportCapability
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
@@ -106,6 +108,8 @@ def service_propose_playbill_claim_type(
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    if proposed_base.compiler == LIGHT_ARTIFACTS_COMPILER:
+        install_builtin_capture_dependencies(claim_type, candidate_tree)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type")
     return admit_proposal(
         instance,
@@ -184,7 +188,11 @@ def service_propose_playbill_claim_type_input(
     )
     path = claim_type_path(claim_type.predicate)
     inventory = (
-        claim_type_migration_inventory(tree, root=claim_type.identity) if path in tree else ()
+        claim_type_migration_inventory(
+            tree, root=claim_type.identity, by_name=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
+        if path in tree
+        else ()
     )
     candidate_tree: Mapping[str, bytes]
     if inventory:
@@ -206,6 +214,12 @@ def service_propose_playbill_claim_type_input(
         forked = tree.fork()
         forked[path] = render_claim_type(claim_type)
         candidate_tree = forked
+    if coordinate.compiler == LIGHT_ARTIFACTS_COMPILER:
+        from cruxible_core.derived.derived_state import fork_tree
+
+        with_dependencies = fork_tree(candidate_tree)
+        install_builtin_capture_dependencies(claim_type, with_dependencies)
+        candidate_tree = with_dependencies
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
     inspection = admit_proposal(
         instance,

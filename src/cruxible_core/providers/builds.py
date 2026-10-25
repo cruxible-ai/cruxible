@@ -142,7 +142,6 @@ def indexed_move_pinners(
         "LEFT JOIN main.blueprints bp ON bp.identity=p.source_identity "
         "JOIN main.providers b INDEXED BY sqlite_autoindex_providers_1 "
         "ON b.identity=p.target_identity "
-        "AND b.artifact_digest=p.target_digest "
         "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
     )
     if procedures_only:
@@ -188,9 +187,9 @@ def live_pinners(
         for row in connection.execute(
             "SELECT DISTINCT p.source_identity FROM main.pins p "
             "JOIN main.artifact_lookup a ON a.identity=p.source_identity "
-            "WHERE p.target_identity=? AND p.target_digest=? AND p.edge_kind='required_pin' "
+            "WHERE p.target_identity=? AND p.edge_kind='required_pin' "
             "AND a.lifecycle='live' ORDER BY p.source_identity",
-            (identity, artifact_digest),
+            (identity,),
         )
     )
 

@@ -10,7 +10,7 @@ schema is supplied -- so the envelope law holds without per-test bookkeeping.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -115,8 +115,14 @@ def procedure_artifact(
     extra_pins: Iterable[ArtifactPin] = (),
     activation_policy: str = "abort",
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "playbill-procedure-v2",
 ) -> ProcedureArtifact:
-    """One v2 envelope over a graph-v6 definition, its Contracts carried."""
+    """One current envelope over a graph-v6 definition, its Contracts carried.
+
+    Historical fixtures name artifact_format="playbill-procedure-v2" explicitly.
+    """
 
     resolved, owned = carried_definition(definition, contracts=contracts)
     pins = {
@@ -126,13 +132,37 @@ def procedure_artifact(
             *extra_pins,
         )
     }
+    if artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.artifacts import ArtifactNameRef
+        from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+        from cruxible_client.contracts.procedures.names import named_graph
+
+        named = NamedProcedureDefinition.model_validate(
+            named_graph(resolved.model_dump(mode="json", by_alias=True))
+        )
+        referenced = {
+            binding.target
+            for binding in iter_pin_bindings(named)
+            if isinstance(binding, ArtifactNameRef)
+        }
+        return NamedProcedureArtifact(
+            identity=ArtifactIdentity(kind="Procedure", name=named.name),
+            definition=named,
+            definition_digest=compute_procedure_definition_digest(named).tagged,
+            owned_contracts=tuple(
+                contract for contract in owned if contract.identity in referenced
+            ),
+            activation_policy=activation_policy,
+            lifecycle=lifecycle or ArtifactLifecycle(),
+        )
     return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=resolved.name),
         definition=resolved,
         definition_digest=compute_procedure_definition_digest(resolved).tagged,
         pins=tuple(pins[key] for key in sorted(pins)),
         owned_contracts=owned,
-        activation_policy=activation_policy,  # type: ignore[arg-type]
+        activation_policy=activation_policy,
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
 
@@ -144,6 +174,9 @@ def accepted_procedure(
     extra_pins: Iterable[ArtifactPin] = (),
     activation_policy: str = "abort",
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "playbill-procedure-v2",
 ) -> AcceptedProcedure:
     procedure = procedure_artifact(
         definition,
@@ -151,6 +184,7 @@ def accepted_procedure(
         extra_pins=extra_pins,
         activation_policy=activation_policy,
         lifecycle=lifecycle,
+        artifact_format=artifact_format,
     )
     return AcceptedProcedure(
         path=procedure_path(procedure.identity.name),

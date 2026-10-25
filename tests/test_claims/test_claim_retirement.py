@@ -678,12 +678,12 @@ def test_retire_refuses_an_extra_dependent(tmp_path: Path) -> None:
 
 
 def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
-    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=True)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
     type_path = claim_type_path(_claim_type().predicate)
     claim_type = parse_claim_type(tree[type_path], path=type_path)
-    query = _query_definition(1, claim_type)
+    query = _query_definition(1, claim_type, named=False)
     query = query.model_copy(
         update={
             "pins": tuple(

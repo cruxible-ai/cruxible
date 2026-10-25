@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -105,11 +106,17 @@ def _definition(query: ArtifactPin | ProcedurePinSlotRef) -> ProcedureDefinition
     )
 
 
-def _accepted_procedure() -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, str]]:
+def _accepted_procedure(
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "cruxible-procedure-v3",
+) -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, str]]:
     """The exact Procedure: its state tap pins the query it reads."""
 
     query_pin = _pin("query", "QueryDefinition", "claims-by-status")
-    accepted = accepted_procedure(_definition(query_pin), activation_policy="drain")
+    accepted = accepted_procedure(
+        _definition(query_pin), activation_policy="drain", artifact_format=artifact_format
+    )
     return accepted, query_pin, {"query": _digest("query-interface")}
 
 
@@ -118,8 +125,11 @@ def _line(
     epoch: int = 1,
     predecessor_digest: str | None = None,
     requested_rung: int = 2,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "cruxible-procedure-v3",
 ) -> tuple[LineSpec, AcceptedProcedure, Mapping[str, str]]:
-    accepted, _query_pin, interfaces = _accepted_procedure()
+    accepted, _query_pin, interfaces = _accepted_procedure(artifact_format)
     procedure_pin = _pin(
         "procedure",
         "Procedure",
@@ -145,12 +155,16 @@ def _line(
     return line, accepted, interfaces
 
 
-def test_line_spec_round_trip_and_digest_golden() -> None:
-    line, accepted, _interfaces = _line()
+@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
+def test_line_spec_round_trip_and_digest_golden(artifact_format) -> None:
+    line, accepted, _interfaces = _line(artifact_format=artifact_format)
 
-    assert line_spec_digest(line).tagged == (
+    expected = (
         "sha256:df53d6b78589e4a43408c423247c09cdc611d48ad801535e5950dba766995ef6"
+        if artifact_format == "playbill-procedure-v2"
+        else "sha256:6ea04222d7604d1766d45d49fa4810cf2dba90bbb3d6644b5bed603225071547"
     )
+    assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line
     assert (

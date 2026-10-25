@@ -545,6 +545,7 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
 
     world = _World(tmp_path)
     query = _query()
+    assert query.artifact_format == "cruxible-query-definition-v3"
     claim_type = _corroborated_type(query_definition_digest(query).tagged)
     _seed_vocabulary(
         world.instance,
@@ -839,6 +840,19 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
     }
 
 
+def _frozen_pinning_contract():
+    """The expanded v2 component grammar could carry arbitrary exact pins."""
+    from cruxible_client.contracts.capture_contract_inputs import (
+        CaptureContractInputRecord,
+        lower_capture_contract_input,
+    )
+
+    return lower_capture_contract_input(
+        CaptureContractInputRecord(name=IDENTITY.name, shape="foreign_span", replay="attested"),
+        named=False,
+    )
+
+
 def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
     from cruxible_client.contracts.kits import KitBuildRequest
     from cruxible_core.service.kits import build_kit
@@ -857,13 +871,14 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
         target=identity_type.identity,
         artifact_digest=claim_type_digest(identity_type).tagged,
     )
-    pinning = ORIGINAL.model_copy(
+    original = _frozen_pinning_contract()
+    pinning = original.model_copy(
         update={
-            "components": ORIGINAL.components.model_copy(
+            "components": original.components.model_copy(
                 update={
                     "pins": tuple(
                         sorted(
-                            (*ORIGINAL.pins, extra_pin),
+                            (*original.components.pins, extra_pin),
                             key=lambda pin: (pin.role, pin.target.qualified),
                         )
                     )
@@ -897,13 +912,14 @@ def test_a_release_diff_starting_at_the_contract_sees_no_cycle() -> None:
         target=identity_type.identity,
         artifact_digest=claim_type_digest(identity_type).tagged,
     )
-    pinning = ORIGINAL.model_copy(
+    original = _frozen_pinning_contract()
+    pinning = original.model_copy(
         update={
-            "components": ORIGINAL.components.model_copy(
+            "components": original.components.model_copy(
                 update={
                     "pins": tuple(
                         sorted(
-                            (*ORIGINAL.pins, extra_pin),
+                            (*original.components.pins, extra_pin),
                             key=lambda pin: (pin.role, pin.target.qualified),
                         )
                     )

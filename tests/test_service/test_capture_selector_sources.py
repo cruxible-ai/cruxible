@@ -204,6 +204,11 @@ def test_v6_index_migration_preserves_rows_and_progress_without_backfill(tmp_pat
     with index.connection() as conn:
         identity = conn.execute("SELECT identity FROM index_identity").fetchone()[0]
         progress = tuple(conn.execute("SELECT * FROM capture_progress").fetchone())
+        # Remove every v8-only object before simulating the actual v6 schema.
+        conn.execute("DROP INDEX capture_name")
+        conn.execute("DROP TABLE capture_contract_names")
+        conn.execute("DROP TABLE capture_name_progress")
+        conn.execute("ALTER TABLE capture_selectors DROP COLUMN contract_identity")
         conn.execute("DROP INDEX capture_contract_source")
         conn.execute("ALTER TABLE capture_selectors DROP COLUMN logical_source")
         conn.execute("PRAGMA user_version=6")

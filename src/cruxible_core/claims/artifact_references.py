@@ -15,10 +15,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import (
     BlueprintArtifact,
     BlueprintOrigin,
+    NamedBlueprintArtifact,
+    NamedBlueprintOrigin,
+    NamedProcedureArtifact,
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
@@ -29,6 +32,12 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.source_program import (
+    NamedProcedureSourceProgram,
+    NamedSourceClaimType,
+    NamedSourceProcedureBinding,
+    NamedSourceProviderBinding,
+    NamedSourceQueryBinding,
+    NamedSourceSlotBinding,
     ProcedureSourceProgram,
     SourceClaimType,
     SourceProcedureBinding,
@@ -151,16 +160,26 @@ def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str,
 _GRAPH_FAMILIES = ("blueprints/", "procedures/")
 
 
-def _graph_model(path: str) -> type[ProcedureArtifact] | type[BlueprintArtifact] | None:
+def _graph_model(
+    path: str, payload: Mapping[str, Any] | None = None
+) -> type[ProcedureArtifact] | type[BlueprintArtifact] | None:
     if path.startswith("procedures/"):
-        return ProcedureArtifact
+        return (
+            NamedProcedureArtifact
+            if payload and payload.get("artifact_format") == "cruxible-procedure-v3"
+            else ProcedureArtifact
+        )
     if path.startswith("blueprints/"):
-        return BlueprintArtifact
+        return (
+            NamedBlueprintArtifact
+            if payload and payload.get("artifact_format") == "cruxible-blueprint-v2"
+            else BlueprintArtifact
+        )
     return None
 
 
 def _source_versions(source: ProcedureSourceProgram | None) -> Iterator[str]:
-    if source is None:
+    if source is None or isinstance(source, NamedProcedureSourceProgram):
         return
     for binding in source.bindings.values():
         if isinstance(binding, SourceProviderBinding):
@@ -194,13 +213,14 @@ class ProviderBuildMove:
     contract, and to the registration the new build binds for it.
     """
 
-    source: ArtifactPin
+    source: ArtifactPin | ArtifactNameRef
     target: ArtifactPin
     #: Old implementation digest -> the new build's implementation of the same
     #: interface id and interface digest.
     implementations: Mapping[str, str] = field(default_factory=dict)
     #: Old registration artifact digest -> the registration pin the new build binds.
     interfaces: Mapping[str, ArtifactPin] = field(default_factory=dict)
+    interface_names: Mapping[str, ArtifactNameRef] = field(default_factory=dict)
 
 
 def _moved_occurrence(value: Any, move: ProviderBuildMove) -> dict[str, Any]:
@@ -236,10 +256,19 @@ def _moved_binding(value: SourceProviderBinding, move: ProviderBuildMove) -> dic
 
 
 def _build_move(pin: Any, builds: Mapping[str, ProviderBuildMove]) -> ProviderBuildMove | None:
-    if not isinstance(pin, ArtifactPin):
+    if not isinstance(pin, ArtifactPin | ArtifactNameRef):
         return None
     move = builds.get(pin.target.qualified)
-    return move if move is not None and move.source.artifact_digest == pin.artifact_digest else None
+    return (
+        move
+        if move is not None
+        and (
+            isinstance(pin, ArtifactNameRef)
+            or isinstance(move.source, ArtifactNameRef)
+            or move.source.artifact_digest == pin.artifact_digest
+        )
+        else None
+    )
 
 
 def _moved(
@@ -253,6 +282,9 @@ def _moved(
     def move(digest: str) -> str:
         return remap.get(digest, digest)
 
+    if isinstance(value, ArtifactNameRef):
+        selected = None if builds is None else builds.get(value.target.qualified)
+        return value if selected is None else ArtifactNameRef(target=selected.target.target)
     if isinstance(value, ArtifactPin):
         moved = move(value.artifact_digest)
         return (
@@ -260,10 +292,47 @@ def _moved(
             if moved == value.artifact_digest
             else value.model_copy(update={"artifact_digest": moved})
         )
-    if isinstance(value, BlueprintOrigin):
+    if isinstance(value, BlueprintOrigin | NamedBlueprintOrigin):
+        return value
+    if isinstance(value, NamedSourceProviderBinding):
+        selected = None if builds is None else builds.get("Provider:" + value.provider)
+        if selected is None:
+            return value
+        interface = selected.interface_names.get("ProviderInterface:" + value.interface)
+        if interface is None:
+            raise ProviderBuildMoveRefused("Target build does not serve the named source interface")
+        return value.model_copy(
+            update={"provider": selected.target.target.name, "interface": interface.target.name}
+        )
+    if isinstance(
+        value,
+        NamedSourceSlotBinding
+        | NamedSourceQueryBinding
+        | NamedSourceProcedureBinding
+        | NamedSourceClaimType,
+    ):
         return value
     updates: dict[str, Any] = {}
-    if builds and isinstance(value, SourceNode | CallNode | RepeatBodyNode):
+    if (
+        builds
+        and isinstance(value, SourceNode | CallNode | RepeatBodyNode)
+        and isinstance(value.provider, ArtifactNameRef)
+    ):
+        selected = builds.get(value.provider.target.qualified)
+        if selected is not None:
+            assert value.interface is not None
+            interface = selected.interface_names.get(value.interface.target.qualified)
+            if interface is None:
+                raise ProviderBuildMoveRefused("Target build does not serve the named interface")
+            updates = {
+                "provider": ArtifactNameRef(target=selected.target.target),
+                "interface": interface,
+            }
+    if (
+        builds
+        and isinstance(value, SourceNode | CallNode | RepeatBodyNode)
+        and not isinstance(value.provider, ArtifactNameRef)
+    ):
         occurrence_move = _build_move(value.provider, builds)
         if occurrence_move is not None:
             updates = _moved_occurrence(value, occurrence_move)
@@ -276,6 +345,7 @@ def _moved(
                     item
                     for item in builds.values()
                     if item.source.target.name == value.provider
+                    and isinstance(item.source, ArtifactPin)
                     and item.source.artifact_digest == value.provider_version
                 ),
                 None,
@@ -293,7 +363,9 @@ def _moved(
         updates = {"interface_version": move(value.interface_version)}
     elif isinstance(value, SourceQueryBinding | SourceProcedureBinding | SourceClaimType):
         updates = {"version": move(value.version)}
-    elif isinstance(value, ProcedureSourceProgram):
+    elif isinstance(value, ProcedureSourceProgram) and not isinstance(
+        value, NamedProcedureSourceProgram
+    ):
         updates = {
             "capture_contracts": {
                 name: move(digest) for name, digest in value.capture_contracts.items()
@@ -323,7 +395,7 @@ def _moved(
 
 
 def _graph_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
-    model = _graph_model(path)
+    model = _graph_model(path, payload)
     assert model is not None
     graph = model.model_validate(payload)
     for pin in graph.pins:
@@ -340,10 +412,23 @@ def _move_graph(
     remap: Mapping[str, str],
     builds: Mapping[str, ProviderBuildMove] | None = None,
 ) -> dict[str, Any]:
-    model = _graph_model(path)
+    model = _graph_model(path, payload)
     assert model is not None
     graph = model.model_validate(payload)
     definition = _moved(graph.definition, remap, builds)
+    if isinstance(graph, NamedProcedureArtifact | NamedBlueprintArtifact):
+        moved = model.model_validate(
+            {
+                **graph.model_dump(mode="json", by_alias=True),
+                "definition": definition.model_dump(mode="json", by_alias=True),
+                "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            }
+        )
+        if isinstance(moved, NamedProcedureArtifact):
+            from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+            return dict(compact_procedure(moved))
+        return moved.model_dump(mode="json", by_alias=True)
     moved_pins = [_moved(pin, remap) for pin in graph.pins]
     if builds and definition is not graph.definition:
         # The Provider and interface pins are exactly the ones the occurrences

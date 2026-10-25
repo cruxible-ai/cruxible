@@ -377,7 +377,9 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
 
 @pytest.mark.parametrize("retire_at_head", [False, True])
 def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_at_head) -> None:
-    instance, owner = initialize_local(tmp_path)
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, owner = initialize_legacy_local(tmp_path)
     # The mandate the adapter is handed must be one accepted state carries: the
     # door re-establishes it against the head tree before any ref moves.
     (tmp_path / "shape").mkdir()

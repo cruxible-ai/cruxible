@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from typing import Annotated, Any, Literal, cast
 
 from pydantic import (
@@ -1212,3 +1212,34 @@ __all__ = [
     "lint_description",
     "lower_claim_type_input",
 ]
+
+
+def install_builtin_capture_dependencies(
+    claim_type: ClaimType, tree: MutableMapping[str, bytes]
+) -> set[str]:
+    """Install compiler-owned profiles first named by this authored type."""
+    from cruxible_client.contracts.captures import (
+        FOREIGN_SOURCE_CONTRACT_PREFIX,
+        builtin_contract_for_write,
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.dependencies import dependency_pins
+
+    installed: set[str] = set()
+    for pin in dependency_pins(claim_type):
+        if pin.target.kind != "CaptureContract":
+            continue
+        path = capture_contract_path(pin.target.name)
+        if path in tree:
+            continue
+        if pin.target == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity:
+            contract = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+        elif pin.target.name.startswith(FOREIGN_SOURCE_CONTRACT_PREFIX):
+            source = pin.target.name.removeprefix(FOREIGN_SOURCE_CONTRACT_PREFIX)
+            contract = foreign_source_capture_contract(source)
+        else:
+            continue
+        tree[path] = render_capture_contract(contract)
+        installed.add(path)
+    return installed

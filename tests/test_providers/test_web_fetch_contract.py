@@ -17,6 +17,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
     evaluate_provider_interface_law,
+    interface_definition_digest,
     parse_provider_interface,
     provider_external_interface_definition_digest,
     provider_interface_digest,
@@ -54,11 +55,11 @@ def test_core_owns_one_registration_per_web_fetch_definition() -> None:
         WEB_FETCH_INTERFACE_V2_DIGEST,
         WEB_FETCH_INTERFACE_DIGEST,
     }
-    assert (v2.interface_digest, v3.interface_digest) == (
+    assert (interface_definition_digest(v2), interface_definition_digest(v3)) == (
         WEB_FETCH_INTERFACE_V2_DIGEST,
         WEB_FETCH_INTERFACE_DIGEST,
     )
-    assert v3.interface_digest == provider_external_interface_definition_digest(
+    assert interface_definition_digest(v3) == provider_external_interface_definition_digest(
         canonical_bytes(WEB_FETCH_INTERFACE_DEFINITION).hex(), domain="cruxible.interface.stub.v1"
     )
     assert v2.model_dump(exclude={"identity", "interface"}) == v3.model_dump(
@@ -90,7 +91,7 @@ def test_core_owns_one_registration_per_web_fetch_definition() -> None:
         )
         assert (
             provider_interface_digest(legacy).tagged
-            == REGISTRATION_ARTIFACT_DIGESTS[registration.interface_digest]
+            == REGISTRATION_ARTIFACT_DIGESTS[interface_definition_digest(registration)]
         )
         assert render_provider_interface(legacy) == content.read_bytes()
 

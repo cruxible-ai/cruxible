@@ -122,20 +122,12 @@ category" query:
 ~~~yaml
 kind: query_definition
 query_definition:
-  identity: {kind: QueryDefinition, name: catalog.parts_in_category}
+  query: catalog.parts_in_category
   description: The parts in one category.
-  parameters: [{name: category, value_type: string}]
-  entry: {binding: part, subject_kinds: [catalog.part]}
-  where:
-    kind: comparison
-    left: {kind: claim_value, binding: part, predicate: catalog.part.category}
-    operator: eq
-    right: {kind: parameter, parameter: category}
-    value_type: string
-  projection:
-    fields:
-      - {name: title, value: {kind: claim_value, binding: part, predicate: catalog.part.title}}
-  result_binding: part
+  params: {category: string}
+  from: {part: catalog.part}
+  where: part.category == $category
+  fields: [part.title]
 ~~~
 
 ~~~text
@@ -148,12 +140,45 @@ catalog.part/bp-1142  Front brake pads          -
 catalog.part/bp-2210  Ceramic front brake pads  -
 ~~~
 
-The `entry` names the kind the rows are about, `where` filters them (here
-against the `category` parameter), `projection` picks the columns, and
-`result_binding` says which binding a row is. Everything else takes the usual
-defaults: one row per Subject, supported and current values only, and a
-bounded number of rows. A query that follows edges adds a `traversal`;
-`cruxible authoring example query-claims-by-type` prints a fuller template.
+`from` names the entry binding and its Subject kind. `where` filters values,
+`params` declares parameters, and `fields` selects columns. A field can be
+renamed, for example `{part_title: part.title}`; `role(part.category)` reads a
+Claim's role. Predicate names may be short within their binding's kind or
+written in full.
+
+Filters support `==`, `!=`, `<`, `<=`, `>`, `>=`, `in (value, value)`,
+`exists binding.predicate`, parentheses, and `not`, `and`, `or` in that order of
+precedence. Quote text literals; `$name` references a declared parameter and
+`now` references the query's evaluation time.
+
+A relation hop adds a binding:
+
+~~~yaml
+hops:
+  - vehicle: part.fits!
+  - owner: vehicle.owned_by
+fields: [part.title, vehicle, {owner_name: owner.name}]
+order: [part.title, -owner.name]
+include: {categories: part.category}
+~~~
+
+`!` makes a hop required; otherwise a missing relation keeps the row with an
+empty binding. Prefix the source with `<` for a reverse hop, such as
+`matching_part: <vehicle.catalog.part.fits!`. A hop may end with `where FILTER`.
+Its target kind follows from the relation when there is one; state
+`: kind_a|kind_b` to select kinds explicitly. An include attaches up to 500
+predicate values without expanding the primary rows. Numeric text can be
+ordered as decimal with `{field: binding.predicate, type: decimal}`.
+
+Queries with hops return paths; those without return Subjects. Both default
+to supported, current values and 200 results. `visible: held` also admits
+stale verdicts and stale evidence. `limit`, `paths_per_result`, and
+`max: {results: 2000, paths_per_result: 1000}` state result budgets. The SDK
+accepts this same declaration as `QuerySpecInput` inside
+`QueryDefinitionInput`; CLI and MCP use the same authoring input.
+`get QueryDefinition:<name>` shows the authored declaration for these queries.
+Explicit typed definitions remain available for artifact selectors and query
+policies or shapes outside this grammar.
 
 ## Definitions are queryable too
 

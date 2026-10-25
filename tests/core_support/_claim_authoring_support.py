@@ -30,8 +30,10 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     DirectClaimSelection,
     DirectForeignSourceSelection,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -250,6 +252,13 @@ def _payload(
         return ClaimAuthoringPayloadV1(**base)
     claim_type = authoring.claim_type_artifact
     if claim_type is not None and source is None:
+        from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+        profile = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+            if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+            else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        )
         claim_type = claim_type.model_copy(
             update={
                 "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
@@ -261,11 +270,7 @@ def _payload(
                                 for role in claim_type.permitted_roles
                                 if role in {"normative", "observation", "derivation"}
                             ),
-                            capture_contract_digests=(
-                                capture_contract_digest(
-                                    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-                                ).tagged,
-                            ),
+                            capture_contract_digests=(capture_contract_digest(profile).tagged,),
                             evidence_kinds=("self_asserted",),
                             admission="direct",
                             subject_binding="exact_claim_subject",

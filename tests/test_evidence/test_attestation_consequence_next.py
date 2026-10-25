@@ -129,6 +129,10 @@ def threshold_world(
         if frozen
         else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     )
+    if not frozen:
+        from cruxible_client.contracts.captures import builtin_contract_for_write
+
+        contract = builtin_contract_for_write(contract, None)
     base_type = _claim_type(contract=contract)
     claim_type = base_type.model_copy(
         update={

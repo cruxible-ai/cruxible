@@ -64,6 +64,8 @@ from cruxible_client.contracts.laws import (
     LIGHT_ARTIFACTS_UPGRADE_LAW,
     LIGHT_CAPTURE_CONTRACT_LAW,
     LINE_V6_ACCEPTANCE_LAW,
+    NAMED_PROVIDER_IDENTITY_LAW,
+    NAMED_REFERENCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
@@ -636,6 +638,66 @@ HISTORICAL_LAW_COORDINATES += (
         "playbill-compiler-upgrade-v1",
         14,
         "sha256:41eb6a707ac97304b06e68329ed4f5badde5936a6213fbda6a524555b28c1be4",
+    ),
+)
+
+
+LAW_COORDINATES += (
+    (
+        NAMED_REFERENCE_LAWS[0],
+        "cruxible.capture-contract.named.v1",
+        "cruxible-capture-contract-v3",
+        1,
+        "sha256:6555affa65a4c90224a03b0b3305fad1c89ef4f61d15bbee153a24c04b61dcc1",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[1],
+        "cruxible.procedure.named.v1",
+        "cruxible-procedure-v3",
+        1,
+        "sha256:43266f5543258472166c75b9c7ab202e48104873eded063bf95ee1b84fcffef7",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[2],
+        "cruxible.blueprint.named.v1",
+        "cruxible-blueprint-v2",
+        1,
+        "sha256:3889731324fd852ea59a7a1454d5c8d8e09eb2f8886a142a5a646d13077aee56",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[3],
+        "cruxible.query-definition.named.v1",
+        "cruxible-query-definition-v3",
+        1,
+        "sha256:f39c88c44f5fe5cf49a61413d7c754790229050de06b21b1e831c28d52a90562",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[4],
+        "cruxible.trigger.named.v1",
+        "cruxible-trigger-v2",
+        1,
+        "sha256:b3ec92b76ee0ccb89e8c3c22f67f6cd5f2faa2ba77a597fc2f274f4f149f15fe",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[5],
+        "cruxible.line.named.v1",
+        "cruxible-line-v7",
+        1,
+        "sha256:d6a72b7dfec98a41a8e6426b1c6dec8f3b50d5e3b4bbbfd44fc91aa414c5b228",
+    ),
+    (
+        NAMED_REFERENCE_LAWS[6],
+        "cruxible.provider.named.v1",
+        "cruxible-provider-v5",
+        1,
+        "sha256:0fcc69f58a8c570104923c6caa30428c4ff9696861da3abf7bff4a07c95598cc",
+    ),
+    (
+        NAMED_PROVIDER_IDENTITY_LAW,
+        "cruxible.provider-identity.v2",
+        "cruxible-provider-identity-v2",
+        1,
+        "sha256:3ef8ade6a36a4046d3d50fcf3f3812fc1858df9fe9ab50c5483a1082a1a79ea5",
     ),
 )
 

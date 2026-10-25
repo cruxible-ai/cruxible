@@ -95,7 +95,33 @@ def _pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
 
 
 def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    from cruxible_client.contracts.procedures.named_models import NamedCallNode
+
     source, shape = procedure.definition.nodes
+    if isinstance(procedure, NamedProcedureArtifact):
+        definition = procedure.definition.model_copy(
+            update={
+                "nodes": (
+                    source.model_copy(update={"node_id": "export", "next": "records"}),
+                    NamedCallNode(
+                        node_id="records",
+                        provider=source.provider,
+                        interface=source.interface,
+                        input={},
+                        **{"as": "records"},
+                        next="shape",
+                    ),
+                    shape,
+                )
+            }
+        )
+        return procedure.model_copy(
+            update={
+                "definition": definition,
+                "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            }
+        )
     assert isinstance(source, SourceNode) and isinstance(shape, ProjectNode)
     records_in, records_out = _call_contracts()
     contract_in, contract_out = _pin("contract-in", records_in), _pin("contract-out", records_out)

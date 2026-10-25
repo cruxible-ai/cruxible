@@ -1327,6 +1327,7 @@ def service_measure_playbill_procedure(
     public_observation = AcceptedCoordinate.from_internal(observation)
     tree = ClaimVerdictReadContext(instance, observation).tree
 
+    reading_procedure = accepted
     grain: ProcedureRunGrainRecordV1 | None = None
     if request.run_id is not None:
         grain = load_playbill_procedure_run_grain(instance, run_id=request.run_id)
@@ -1337,6 +1338,30 @@ def service_measure_playbill_procedure(
                 run_procedure_artifact_digest=grain.state.procedure_artifact_digest,
                 measured_procedure_artifact_digest=accepted.artifact_digest,
             )
+
+        from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+        from cruxible_core.service.procedures.procedure_runs import (
+            _accepted_procedure as bound_procedure,
+        )
+        from cruxible_core.service.procedures.procedure_runs import (
+            _resolve_coordinate,
+        )
+
+        if (
+            isinstance(accepted.procedure, NamedProcedureArtifact)
+            and grain.state.receipt is not None
+        ):
+            # Names resolve at this run's immutable admission coordinate, never
+            # at the measurement/head coordinate. One plan per request is shared
+            # by every credited grain; the receipt authenticates its exact pins.
+            reading_procedure = bound_procedure(
+                instance,
+                name=name,
+                coordinate=_resolve_coordinate(instance, grain.state.bound_coordinate),
+                bind_references=True,
+            )
+            if reading_procedure.procedure.pins != grain.state.receipt.validated_pins:
+                raise FormatError("run receipt pins do not reproduce its admission coordinate")
 
     journal, stream = _journal(instance)
     reading_partition = procedure_reading_partition_id(accepted)
@@ -1495,7 +1520,7 @@ def service_measure_playbill_procedure(
                     else:
                         reading_status, reading_summary = _credit_reading(
                             instance,
-                            accepted=accepted,
+                            accepted=reading_procedure,
                             activation=activation,
                             resolution=state.latest,
                             book=state.book,

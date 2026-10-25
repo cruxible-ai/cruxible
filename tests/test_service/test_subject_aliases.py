@@ -303,6 +303,9 @@ def test_an_instance_created_before_the_builtin_adopts_it(
         proposal_name="builtin-semantic-alias",
         timestamp="2026-10-09T12:00:00.000000Z",
     )
+    assert inspection.proposal.proposal.candidate is not None, (
+        inspection.proposal.proposal.evaluation.diagnostics
+    )
     proposal_id = inspection.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=proposal_id, activated_by="owner"
@@ -334,6 +337,9 @@ def test_an_instance_seeded_with_the_alias_alone_adopts_distinct_from(
         actor_id="owner",
         proposal_name="builtin-semantic-distinct-from",
         timestamp="2026-10-09T12:00:00.000000Z",
+    )
+    assert inspection.proposal.proposal.candidate is not None, (
+        inspection.proposal.proposal.evaluation.diagnostics
     )
     proposal_id = inspection.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
     receipt = service_activate_playbill_proposal(

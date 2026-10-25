@@ -11,6 +11,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
     render_capture_contract,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -46,7 +47,9 @@ def service_propose_capture_contract(
     path = capture_contract_path(input.name)
     previous_bytes = tree.get(path)
     previous = None if previous_bytes is None else parse_capture_contract(previous_bytes, path=path)
-    contract = lower_capture_contract_input(input, predecessor=previous)
+    contract = lower_capture_contract_input(
+        input, predecessor=previous, named=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     candidate = tree.fork()
     candidate[path] = render_capture_contract(contract)
     name = canonical_playbill_proposal_name(proposal_name, family="capture contract")

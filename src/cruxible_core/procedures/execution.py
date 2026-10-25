@@ -12,6 +12,8 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable, Literal, Protocol, TypeVar, cast, overload
 
+from cruxible_client.contracts.captures import capture_retention_policy
+
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
 
@@ -27,7 +29,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
@@ -1577,17 +1579,32 @@ def _source_capture_association_fields(
 def verify_line_admission_spec(
     admission: ProcedureRunAdmissionV3,
     accepted_line: AcceptedLineSpec,
+    *,
+    procedure_binding: ArtifactPin | None = None,
+    acquisition_policy_binding: ArtifactPin | None = None,
 ) -> None:
-    """Bind a V3 admission to the exact accepted LineSpec that placed it."""
+    """Bind admission to exact Line bytes and its coordinate-resolved references."""
 
     if (
         admission.line_identity != accepted_line.line.identity
         or admission.line_spec_digest != accepted_line.artifact_digest
     ):
         raise ExecutionError("Line admission names another accepted LineSpec")
-    if admission.procedure_artifact_digest != accepted_line.line.procedure.artifact_digest:
+    procedure = accepted_line.line.procedure
+    if isinstance(procedure, ArtifactNameRef):
+        if procedure_binding is None or procedure_binding.target != procedure.target:
+            raise ExecutionError("Line Procedure name requires a coordinate-resolved binding")
+        procedure = procedure_binding
+    if (
+        admission.procedure_identity != procedure.target
+        or admission.procedure_artifact_digest != procedure.artifact_digest
+    ):
         raise ExecutionError("Line admission names another Procedure artifact")
     policy = accepted_line.line.acquisition_policy
+    if isinstance(policy, ArtifactNameRef):
+        if acquisition_policy_binding is None or acquisition_policy_binding.target != policy.target:
+            raise ExecutionError("Line policy name requires a coordinate-resolved binding")
+        policy = acquisition_policy_binding
     # A Source-free Line pins no acquisition policy; its admission binds the
     # accepted runtime policy digest instead, which the admission digest seals.
     if policy is not None and admission.acquisition_policy_digest != policy.artifact_digest:
@@ -2105,11 +2122,15 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+def _exact_pin(
+    binding: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef, *, label: str
+) -> ArtifactPin:
     """An accepted Procedure pins every dependency exactly; only a Blueprint has slots."""
 
     if isinstance(binding, ProcedurePinSlotRef):
         raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
+    if isinstance(binding, ArtifactNameRef):
+        raise ExecutionError(f"{label} has not been resolved at admission")
     return binding
 
 
@@ -2306,7 +2327,9 @@ def prepare_direct_procedure_run(
     procedure = accepted.procedure
     if procedure.definition.open_slots:
         raise ExecutionError("a Blueprint's open slots cannot run; instantiate it first")
-    if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
         raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
     materials = list(
@@ -2544,10 +2567,11 @@ class _InternalFailure(Exception):
 
 
 class _Halted(Exception):
-    def __init__(self, *, node_id: str, reason: str | None) -> None:
+    def __init__(self, *, node_id: str, reason: str | None, message: str | None = None) -> None:
         super().__init__("Procedure halted")
         self.node_id = node_id
         self.reason = reason
+        self.message = message
 
 
 class _TransformInputInvalid(ExecutionError):
@@ -2924,6 +2948,7 @@ class ProcedureExecutor:
                 {
                     "node_id": exc.node_id,
                     "reason": exc.reason,
+                    **({"message": exc.message} if exc.message is not None else {}),
                 }
             )
         except _BudgetExceeded as exc:
@@ -3120,7 +3145,15 @@ class ProcedureExecutor:
                     matches
                     or contract is None
                     or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
-                    or supplied.capture_contract_digest != contract_pin.artifact_digest
+                    or (
+                        captured_contract := self.capture_contracts.get(
+                            supplied.capture_contract_digest
+                        )
+                    )
+                    is None
+                    or captured_contract.identity != contract_pin.target
+                    or capture_contract_digest(captured_contract).tagged
+                    != supplied.capture_contract_digest
                     or self._acquisition_rule(node.as_) is None
                     or selected is None
                     or selected.disposition != "selected"
@@ -3238,7 +3271,7 @@ class ProcedureExecutor:
             contract = self.capture_contracts.get(landed.input.capture_contract_digest)
             state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
                 selector_privacy=(
-                    contract.retention_erasure_policy.selector_privacy
+                    capture_retention_policy(contract).selector_privacy
                     if contract is not None
                     else "direct_allowed"
                 ),
@@ -3603,7 +3636,7 @@ class ProcedureExecutor:
                     {"node_id": node.node_id, "kind": node.kind, "verdict": "succeeded"},
                 )
                 if isinstance(node, HaltNode):
-                    raise _Halted(node_id=node.node_id, reason=node.reason)
+                    raise _Halted(node_id=node.node_id, reason=node.reason, message=node.message)
             except _RunRefusal:
                 self._append_event(
                     admission,
@@ -3633,9 +3666,9 @@ class ProcedureExecutor:
                 if isinstance(node, GuardNode):
                     raise _RunRefusal(
                         "guard_refused",
-                        node.message,
+                        node.message or "Procedure guard refused.",
                         node_id=node.node_id,
-                        detail_code=node.refusal_code,
+                        detail_code=node.refusal_code or "guard_refused",
                     )
                 raise _RunRefusal(
                     "guard_refused",

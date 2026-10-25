@@ -27,14 +27,16 @@ from cruxible_client.contracts.captures import (
     CaptureRunCoordinateV1,
     CaptureSelectionBudget,
     SourceEffectiveTime,
+    capture_components,
     capture_contract_digest,
     capture_digest,
+    capture_retention_policy,
     contract_materialization_modes,
     contract_source_kinds,
     render_capture_envelope,
 )
 from cruxible_client.contracts.errors import FormatError
-from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.providers import ProviderV1, provider_declares_capture_contract
 from cruxible_client.contracts.source_references import (
     EvidenceCommitment,
     ExternalSourceReference,
@@ -121,7 +123,6 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
 
     @model_validator(mode="after")
     def _binding(self) -> "ExternalSourceReadRequestV1":
-        contract_digest = capture_contract_digest(self.contract).tagged
         if self.binding.provider != self.provider.identity:
             raise ValueError("producer binding names a different Provider")
         if (
@@ -129,8 +130,8 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
             and self.binding.logical_source_identity not in self.contract.logical_source_identities
         ):
             raise ValueError("producer binding source is absent from its CaptureContract")
-        if contract_digest not in self.provider.capture_contract_digests:
-            raise ValueError("Provider does not declare the exact CaptureContract")
+        if not provider_declares_capture_contract(self.provider, self.contract.identity):
+            raise ValueError("Provider does not declare this CaptureContract")
         if self.materialization not in contract_materialization_modes(self.contract):
             raise ValueError("requested materialization is absent from the CaptureContract")
         if "external" not in contract_source_kinds(self.contract):
@@ -144,8 +145,12 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
             or self.resource_budget.max_items > self.contract.selection_budget.max_items
         ):
             raise ValueError("runtime resource budget cannot widen the CaptureContract")
-        coordinate_types = {pin.target.name for pin in self.contract.coordinate_schema_pins}
-        selector_types = {pin.target.name for pin in self.contract.selector_schema_pins}
+        coordinate_types = {
+            pin.target.name for pin in capture_components(self.contract).coordinate_schema_pins
+        }
+        selector_types = {
+            pin.target.name for pin in capture_components(self.contract).selector_schema_pins
+        }
         if self.coordinate_type not in coordinate_types:
             raise ValueError("external coordinate type is not pinned by the CaptureContract")
         if self.selector_type not in selector_types:
@@ -159,7 +164,7 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
             selector=self.selector,
             replayability=("attested_only" if self.materialization == "none" else "exact"),
         )
-        privacy = self.contract.retention_erasure_policy.selector_privacy
+        privacy = capture_retention_policy(self.contract).selector_privacy
         if privacy == "pseudonymous_required" and not self.selector_type.startswith(
             "pseudonymous-"
         ):

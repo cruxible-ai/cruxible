@@ -60,7 +60,6 @@ from cruxible_client.contracts.procedures.results import procedure_acquisition_p
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    provider_interface_definition_digest,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
@@ -107,7 +106,6 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import (
     accepted_interface,
-    interface_registration,
     provider_v2,
 )
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
@@ -335,6 +333,8 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         lock_digest=_sha256_file(lock),
         materialization_digest=materialization_digest,
     )
+    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
     base = provider_v2()
     assert base.runtime_artifact.local_env is not None
     payload = base.runtime_artifact.model_copy(
@@ -452,7 +452,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         protocol_version="1.0",
         run_id="RUN-daemon-operator",
         interface_id=interface.registration.interface_id,
-        interface_digest=interface.registration.interface_digest,
+        interface_digest=interface_definition_digest(interface.registration),
         implementation_digest=implementation.implementation_digest,
         entrypoint=admitted_binding.entrypoint,
         input={"value": "served"},
@@ -799,26 +799,24 @@ _SERVED_PROVIDER_OUTPUT = ProcedureOwnedContract(
 def _served_operation_interface() -> AcceptedProviderInterfaceRegistration:
     """The demo interface declaring the operation contracts a call node is checked against."""
 
-    base = interface_registration()
-    preimage = canonical_bytes(
-        {
-            "name": base.interface_id,
-            "version": 1,
-            "effect_class": base.effect_class,
-            "contracts": {
-                "input": _SERVED_PROVIDER_INPUT.contract_schema.model_dump(mode="json"),
-                "output": _SERVED_PROVIDER_OUTPUT.contract_schema.model_dump(mode="json"),
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceDefinition,
+        provider_interface_contract,
+    )
+
+    registration = provider_interface_contract(
+        interface=ProviderInterfaceDefinition(
+            interface_id="demo.interface",
+            version=1,
+            effect_class="external_read",
+            contracts={
+                "input": _SERVED_PROVIDER_INPUT.contract_schema,
+                "output": _SERVED_PROVIDER_OUTPUT.contract_schema,
             },
-        }
-    ).hex()
-    registration = base.model_copy(
-        update={
-            "interface_bytes_hex": preimage,
-            "interface_digest": provider_interface_definition_digest(preimage),
-        }
+        )
     )
     return AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.interface_id),
+        path=provider_interface_path(registration.identity.name),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
     )
@@ -829,6 +827,8 @@ def _provider_line_procedure(
     interface,  # type: ignore[no-untyped-def]
 ) -> AcceptedProcedure:
     """One accepted Procedure whose single node invokes the demo Provider."""
+
+    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
 
     run_input = _SERVED_RUN_INPUT
     provider_input = _SERVED_PROVIDER_INPUT
@@ -868,7 +868,7 @@ def _provider_line_procedure(
                 node_id="ask",
                 provider=provider_pin,
                 interface=interface_pin,
-                interface_digest=interface.registration.interface_digest,
+                interface_digest=interface_definition_digest(interface.registration),
                 implementation_digest=implementation.implementation_digest,
                 contract_in=provider_input_pin,
                 contract_out=provider_output_pin,
@@ -961,10 +961,12 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     # A call node is checked against its interface's declared operation
     # contracts, so the demo Provider implements an interface that declares them.
     interface = _served_operation_interface()
-    base = provider_v2()
+    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
+    base = provider_v2(registration=interface.registration)
     assert base.runtime_artifact.local_env is not None
     manifest = base.runtime_artifact.manifest
-    interface_digest = interface.registration.interface_digest
+    interface_digest = interface_definition_digest(interface.registration)
     manifest = manifest.model_copy(
         update={
             "implementations": tuple(
@@ -1067,7 +1069,21 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     # existed; dropping the cache is that daemon restarting, not a double.
     get_playbill_manager().clear()
 
+    from cruxible_client.contracts.named_references import name_line, name_provider
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    provider = name_provider(accepted_provider.provider)
+    accepted_provider = accepted_provider.model_copy(
+        update={"provider": provider, "artifact_digest": provider_digest(provider).tagged}
+    )
     accepted = _provider_line_procedure(accepted_provider, interface)
+    procedure = name_procedure(accepted.procedure)
+    accepted = accepted.model_copy(
+        update={
+            "procedure": procedure,
+            "artifact_digest": procedure_artifact_digest(procedure).tagged,
+        }
+    )
     policy = _acquisition_policy("served-provider-inputs")
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -1101,6 +1117,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             )
         ),
     )
+    line = name_line(line)
     mandate = ProcedureMandateV1(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-provider-mandate"),
         procedure=procedure_pin,

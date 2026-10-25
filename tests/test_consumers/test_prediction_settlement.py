@@ -10,6 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
+    capture_contract_digest,
+)
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence,
     PredictionEqualityRule,
@@ -40,9 +45,10 @@ from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.p2b5 import test_served_predictions as served
 
+ANCHOR_CONTRACT = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 SELECTOR = CaptureEventSelector(
-    capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
-    capture_contract_digest="sha256:" + "a" * 64,
+    capture_contract_identity=ANCHOR_CONTRACT.identity,
+    capture_contract_digest=capture_contract_digest(ANCHOR_CONTRACT).tagged,
 )
 #: The fixed prediction's window: [12:01, 13:01] on the served test's day.
 FIXED_CLOSES = served.PREDICTED_AT + timedelta(hours=1)

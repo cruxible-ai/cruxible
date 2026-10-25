@@ -35,8 +35,8 @@ from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 
-def contract_world(tmp_path: Path):
-    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+def contract_world(tmp_path: Path, *, historical=False):
+    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=historical)
     at = instance.accepted_coordinate()
     path = claim_path(claim_id)
     claim = parse_claim(instance.blob_at(at.git_oid, path), path=path)
@@ -380,10 +380,9 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     instance, owner, contract = contract_world(tmp_path)
     accept_contract(instance, owner, contract)
     procedure = _slotless_procedure("capture-anchor").procedure
-    selector = CaptureEventSelector(
-        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
-        capture_contract_digest="sha256:" + "a" * 64,
-    )
+    from tests.test_procedures.test_line_triggers import SELECTOR
+
+    selector = SELECTOR
     journal, _ = _journal_for_write(instance)
     stream = _stream(instance)
     _activate_writer(journal, stream, "run:anchor")
