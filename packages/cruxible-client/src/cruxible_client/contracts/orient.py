@@ -303,11 +303,10 @@ class OrientInterface(_StrictOrientModel):
     ``name: type`` (``?`` when optional); an acquisition interface's output is
     the named external-capture contract instead. ``effect`` is the interface's
     governed effect class: an ``external_mutation`` call needs an effect policy
-    on its node. ``providers`` are the live Providers implementing it, each
-    with the implementation digest a Procedure node pins; one with none has
-    nothing to run it yet. ``interface_digest`` and ``operation_contract`` are
-    what a node pins the interface by; ``get("ProviderInterface:<name>")``
-    reads the whole accepted entry.
+    on its node. ``providers`` names the live Providers implementing it; one
+    with none has nothing to run it yet. ``operation_contract`` describes the
+    node's input and output. ``get("ProviderInterface:<name>")`` reads the
+    whole accepted entry. Admission records the exact versions selected by name.
     """
 
     name: str

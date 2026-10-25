@@ -39813,7 +39813,7 @@
           },
           "OrientInterface": {
             "additionalProperties": false,
-            "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` are the live Providers implementing it, each\nwith the implementation digest a Procedure node pins; one with none has\nnothing to run it yet. ``interface_digest`` and ``operation_contract`` are\nwhat a node pins the interface by; ``get(\"ProviderInterface:<name>\")``\nreads the whole accepted entry.",
+            "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` names the live Providers implementing it; one\nwith none has nothing to run it yet. ``operation_contract`` describes the\nnode's input and output. ``get(\"ProviderInterface:<name>\")`` reads the\nwhole accepted entry. Admission records the exact versions selected by name.",
             "properties": {
               "description": {
                 "anyOf": [
