@@ -475,7 +475,10 @@ def test_legacy_dependency_edges_keep_exact_versions_before_compiler_36():
 
     line, _, _ = _line()
     trigger = line_trigger(
-        "triage-clock", line=line.identity.name, schedule=CadenceSchedule(interval_seconds=60)
+        "triage-clock",
+        line=line.identity.name,
+        schedule=CadenceSchedule(interval_seconds=60),
+        named=False,
     )
     # Frozen Trigger v1 omits the target Line from its pins. Its old semantic
     # root must keep that omission; compiler 36 indexes the explicit name.
