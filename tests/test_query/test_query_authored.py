@@ -613,3 +613,28 @@ def test_immutable_vocabulary_metadata_is_parsed_once_at_two_sizes(
     second = candidate_query_vocabulary(metadata, paths=paths)
     assert second == first
     assert calls == []
+
+
+def test_get_keeps_unconstrained_hop_targets_in_the_typed_definition(resolver):
+    query = lower_query_spec(simple(hops=[{"vulnerability": "incident.vulnerability!"}]), resolver)
+    step = query.traversal[0].model_copy(update={"target_subject_kinds": ()})
+    query = query.model_copy(update={"traversal": (step,)})
+    with pytest.raises(ValueError, match="explicit typed definition"):
+        query_spec_from_definition(query)
+
+
+@pytest.mark.parametrize("kind", ["literal", "parameter"])
+def test_get_keeps_non_reference_order_keys_in_the_typed_definition(kind, resolver):
+    from cruxible_client.contracts.query.grammar import (
+        QueryLiteralRef,
+        QueryOrdering,
+        QueryParameterRef,
+    )
+
+    query = lower_query_spec(simple(params={"name": "string"}), resolver)
+    key = (
+        QueryLiteralRef(value="fixed") if kind == "literal" else QueryParameterRef(parameter="name")
+    )
+    query = query.model_copy(update={"orderings": (QueryOrdering(key=key, value_type="string"),)})
+    with pytest.raises(ValueError, match="explicit typed definition"):
+        query_spec_from_definition(query)

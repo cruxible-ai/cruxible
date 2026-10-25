@@ -732,6 +732,8 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
     )
     hops = []
     for step in query.traversal:
+        if not step.target_subject_kinds:
+            raise ValueError("unconstrained hop targets require the explicit typed definition")
         text = (
             ("<" if step.direction == "reverse" else "")
             + f"{step.from_binding}.{step.predicate}"
@@ -752,6 +754,14 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
             item.orderings,
         ) != ("forward", True, 500, "included_" + item.name, None, ()):
             raise ValueError("include requires the explicit typed definition")
+    if any(
+        not isinstance(
+            item.key,
+            (QueryClaimValueRef, QueryClaimFieldRef, QuerySubjectFieldRef, QueryEvaluationTimeRef),
+        )
+        for item in query.orderings
+    ):
+        raise ValueError("ordering constants and parameters require the explicit typed definition")
     return QuerySpecInput(
         query=query.identity.name,
         description=query.description,
