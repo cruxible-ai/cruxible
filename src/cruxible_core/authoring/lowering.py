@@ -3415,6 +3415,14 @@ def _render_non_procedure_member(
                     )
                 pins[key] = pin
             body = query.model_dump(mode="json")
+            if light:
+                # Exact temporary pins validate vocabulary before the current
+                # named writer emits the governed bytes.
+                body["artifact_format"] = (
+                    "playbill-query-definition-v2"
+                    if query.result_shape == "artifact_definition"
+                    else "playbill-query-definition-v1"
+                )
             body["pins"] = [
                 p.model_dump(mode="json")
                 for p in sorted(

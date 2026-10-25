@@ -777,7 +777,7 @@ orient(
 ) -> api.OrientResult
 ```
 
-Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs and the predicates that point at it (`incoming`). `section` pages one family: `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, `principals` or `policies`, or an operational one (`runs`, `running`, `lines`, `captures`, `capture_contracts`, `predictions`, `mandates`). An `interfaces` row carries `interface_digest`, `providers` (`[{provider, implementation_digest}]`) and `operation_contract`; read one in full with `get("ProviderInterface:<name>")`. When the workspace holds an exported floor, `floor` says its coordinate and how many generations it is behind; a connection without a workspace reports no floor.
+Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs and the predicates that point at it (`incoming`). `section` pages one family: `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, `principals` or `policies`, or an operational one (`runs`, `running`, `lines`, `captures`, `capture_contracts`, `predictions`, `mandates`). An `interfaces` row carries provider names, build selection metadata and `operation_contract`; read one in full with `get("ProviderInterface:<name>")`. When the workspace holds an exported floor, `floor` says its coordinate and how many generations it is behind; a connection without a workspace reports no floor.
 
 There is no cross-kind name search: grep the exported floor under `.cruxible/floor/`, then `get` the reference you found.
 
@@ -3838,9 +3838,7 @@ Import: `cruxible_client.authoring.procedures.ProviderBinding`. [Source](src/cru
 |---|---|---|
 | `provider` | `str` | `Required` |
 | `interface` | `str` | `Required` |
-| `interface_digest` | `str` | `Required` |
-| `implementation_digest` | `str` | `Required` |
-| `effect_class` | `Literal['none', 'external_read', 'external_mutation'] \| None` | `None` |
+| `effect_class` | `Literal['pure', 'external_read', 'external_mutation'] \| None` | `None` |
 | `operation_contract` | `ProviderOperationContract \| None` | `None` |
 | `coordinate` | `AcceptedCoordinate \| None` | `None` |
 

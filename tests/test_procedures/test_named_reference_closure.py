@@ -1,5 +1,9 @@
 """Name references survive target revisions and recheck only live referrers."""
 
+from collections.abc import Mapping
+
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claim_types import render_claim_type
 from cruxible_client.contracts.named_references import name_query
@@ -206,3 +210,40 @@ def test_procedure_revision_rechecks_unchanged_line_parameters(tmp_path):
         for d in result.diagnostics
     ), result.diagnostics
     assert parent[path] == render_line_spec(line)
+
+
+@pytest.mark.parametrize("unrelated_count", [10, 100])
+def test_name_index_update_reads_only_changed_bytes_at_two_instance_sizes(unrelated_count):
+    query, _, parent = world()
+    for n in range(unrelated_count):
+        other = query.model_copy(
+            update={"identity": ArtifactIdentity(kind="QueryDefinition", name=f"unrelated-{n}")}
+        )
+        parent[f"query-definitions/unrelated-{n}.json"] = render_query_definition(other)
+    index = build_dependency_index(parent, by_name=True)
+    successor = query.model_copy(
+        update={
+            "description": "Compatible revision",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    candidate = {**parent, QPATH: render_query_definition(successor)}
+    reads = []
+
+    class ChangedBytes(Mapping):
+        def __getitem__(self, key):
+            reads.append(key)
+            return candidate[key]
+
+        def __iter__(self):
+            raise AssertionError("A warm dependency update must not scan the tree")
+
+        def __len__(self):
+            raise AssertionError("A warm dependency update must not count the tree")
+
+    after = update_dependency_index(index, tree=ChangedBytes(), changed=(QPATH,))
+    assert reads == [QPATH]
+    assert [e.source_path for e in after.edges_by_target[QPATH]] == [PPATH]
+    assert after.edge_root == build_dependency_index(candidate, by_name=True).edge_root

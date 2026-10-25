@@ -7199,6 +7199,189 @@
             "title": "MandateScopeAuthoring",
             "type": "object"
           },
+          "NamedQueryDefinition": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntry"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicy"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryInclude"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrdering"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclaration"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStep"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "NamedQueryDefinition",
+            "type": "object"
+          },
           "ProcedureHardCaps": {
             "additionalProperties": false,
             "properties": {
@@ -8234,6 +8417,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryDefinition"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedQueryDefinition"
                   }
                 ],
                 "title": "Query Definition"
@@ -39658,10 +39844,6 @@
                 "title": "Input",
                 "type": "array"
               },
-              "interface_digest": {
-                "title": "Interface Digest",
-                "type": "string"
-              },
               "name": {
                 "title": "Name",
                 "type": "string"
@@ -39696,8 +39878,7 @@
             },
             "required": [
               "name",
-              "effect",
-              "interface_digest"
+              "effect"
             ],
             "title": "OrientInterface",
             "type": "object"
@@ -39706,18 +39887,13 @@
             "additionalProperties": false,
             "description": "One live Provider implementing an interface, and the implementation it pins.",
             "properties": {
-              "implementation_digest": {
-                "title": "Implementation Digest",
-                "type": "string"
-              },
               "provider": {
                 "title": "Provider",
                 "type": "string"
               }
             },
             "required": [
-              "provider",
-              "implementation_digest"
+              "provider"
             ],
             "title": "OrientInterfaceProvider",
             "type": "object"
@@ -39989,7 +40165,7 @@
           },
           "OrientPin": {
             "additionalProperties": false,
-            "description": "One required pin of a live definition: ``source`` pins ``target`` as ``role``.\n\n``target_digest`` is the exact version pinned; ``current`` says whether\nthat is the target's accepted version at the coordinate (absent when the\ntarget is not an indexed artifact). Read in reverse, the rows name who\nuses a contract, a ClaimType or a Procedure: the Procedures that capture\nunder a contract (role ``capture-contract``), the Lines on a Procedure,\nthe mandates that settle a ClaimType.",
+            "description": "One dependency of a live definition, identified by source, field and target.\n\n``current`` says whether the reference resolves to a live target.\nRead in reverse, the rows name who\nuses a contract, a ClaimType or a Procedure: the Procedures that capture\nunder a contract (role ``capture-contract``), the Lines on a Procedure,\nthe mandates that settle a ClaimType.",
             "properties": {
               "current": {
                 "anyOf": [
@@ -40014,17 +40190,12 @@
               "target": {
                 "title": "Target",
                 "type": "string"
-              },
-              "target_digest": {
-                "title": "Target Digest",
-                "type": "string"
               }
             },
             "required": [
               "source",
               "role",
-              "target",
-              "target_digest"
+              "target"
             ],
             "title": "OrientPin",
             "type": "object"
@@ -81064,16 +81235,6 @@
             "type": "string"
           }
         },
-        "interface_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "interface_digest",
-          "required": true,
-          "schema": {
-            "title": "Interface Digest",
-            "type": "string"
-          }
-        },
         "operation_contract": {
           "default": null,
           "default_json_serializable": true,
@@ -81294,10 +81455,6 @@
           "ProviderInterfaceImplementation": {
             "additionalProperties": false,
             "properties": {
-              "implementation_digest": {
-                "title": "Implementation Digest",
-                "type": "string"
-              },
               "newest": {
                 "default": true,
                 "title": "Newest",
@@ -81328,8 +81485,7 @@
             },
             "required": [
               "provider_identity",
-              "provider_artifact_digest",
-              "implementation_digest"
+              "provider_artifact_digest"
             ],
             "title": "ProviderInterfaceImplementation",
             "type": "object"
@@ -81401,10 +81557,6 @@
             "title": "Interface Basis",
             "type": "string"
           },
-          "interface_digest": {
-            "title": "Interface Digest",
-            "type": "string"
-          },
           "operation_contract": {
             "anyOf": [
               {
@@ -81440,7 +81592,6 @@
           "artifact_digest",
           "artifact_kind",
           "pin_role",
-          "interface_digest",
           "effect_class",
           "interface_basis"
         ],
@@ -81453,23 +81604,12 @@
         "effect_class",
         "identity",
         "interface_basis",
-        "interface_digest",
         "pin_role",
         "tag"
       ]
     },
     "ProviderInterfaceImplementation": {
       "fields": {
-        "implementation_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "implementation_digest",
-          "required": true,
-          "schema": {
-            "title": "Implementation Digest",
-            "type": "string"
-          }
-        },
         "newest": {
           "default": true,
           "default_json_serializable": true,
@@ -81537,10 +81677,6 @@
       "json_schema": {
         "additionalProperties": false,
         "properties": {
-          "implementation_digest": {
-            "title": "Implementation Digest",
-            "type": "string"
-          },
           "newest": {
             "default": true,
             "title": "Newest",
@@ -81571,14 +81707,12 @@
         },
         "required": [
           "provider_identity",
-          "provider_artifact_digest",
-          "implementation_digest"
+          "provider_artifact_digest"
         ],
         "title": "ProviderInterfaceImplementation",
         "type": "object"
       },
       "required_fields": [
-        "implementation_digest",
         "provider_artifact_digest",
         "provider_identity"
       ]

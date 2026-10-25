@@ -8,8 +8,8 @@ governance, discovery, and the `Sequence` composition frontend. Reserved or
 unsupported forms are identified explicitly below.
 
 Agents select names and typed handles. The daemon resolves exact dependency
-versions, computes digests, and retains the bindings in the accepted graph and
-run receipts. Digest fields exposed for inspection are not authoring inputs.
+versions at run admission and records those exact bindings in run receipts.
+Governed definitions retain names; compatible target revisions do not rewrite referrers. Digest fields exposed for inspection are not authoring inputs.
 
 The main addition is retained Python source for authoring Procedures. The source
 is compiled into a governed graph; the daemon does not run an arbitrary Python
@@ -104,7 +104,7 @@ schema-checked value shapes. They do not authorize arbitrary Python classes.
 | `ClaimValue[P]` | Value admitted by the selected predicate `P`: its typed scalar/enum, structured literal record, Subject reference, or exact-content value. Predicate ownership and existing object-kind rules remain authoritative. |
 | `Record[S]` | Immutable host value constructed under exact schema `S`. Inside compiled source the corresponding constructor produces `Value[Record[S]]`. Schema identity accompanies authoring checks; wire values retain their existing canonical encoding. |
 | `QueryParameters[P]` | A record from the QueryDefinition's parameter declarations, including required/default/type rules. |
-| `ProviderBinding` | Existing discovery result: Provider and interface identities, exact interface/implementation digests, and declared effect class. The typed handle resolves the selected interface's input/output schemas at the same context. |
+| `ProviderBinding` | Existing discovery result: Provider and interface names and declared effect class. The typed handle resolves the selected interface's input/output schemas at the same context. |
 | `QueryRef`, `ProcedureRef`, `SubjectRef`, `ClaimTypeRef`, `CaptureRef` | Existing typed references with their identity/version/coordinate assertions. |
 | `BindingValue` | `ProviderBinding \| QueryRef \| ProcedureRef`. Each slot has one required reference kind determined by its use. |
 | `BindingSlot[T]` | Symbolic `bindings.<name>` reference whose selected host binding must have type `T`; not an object the author constructs inside the body. |
@@ -247,8 +247,8 @@ and accepted generation remain different records. No wrapper converts one into
 another.
 
 `cx.line(name).run(...)` runs one manual occurrence under the Line's lane authority.
-Line parameters are validated against the pinned Procedure input contract when
-authored/admitted; they are not replaced by arbitrary invocation input supplied
+Line parameters are validated against the named Procedure input contract when
+authored/admitted and when that Procedure is revised; they are not replaced by arbitrary invocation input supplied
 to `run`. The returned run resolves `O` from that exact admitted Procedure.
 
 ## Lifecycle and execution boundary
@@ -270,8 +270,10 @@ provider availability. Definitions are resolved at the authoring base, including
 already staged non-Procedure definitions in the same change set. A child Procedure must already be accepted;
 a sibling Procedure is not an invocation target in that change set. Execution
 binds the admitted run context. These are different coordinates with different
-purposes. The accepted definition and its pins cannot drift to newer provider,
-query, or child Procedure definitions merely because they exist at run time.
+purposes. Governed references resolve by name at the accepted coordinate. A revision
+lists its live referrers and rechecks their laws against the candidate, refusing each
+broken referrer. Run admission freezes the actual versions it resolved; replay uses
+those recorded versions, including for child Procedures, rather than a later head.
 
 ## Procedure declaration
 
@@ -982,7 +984,7 @@ receipt while sharing the parent's admitted authority and remaining budget.
 
 | Property | Required behavior |
 |---|---|
-| Version | Exact child pin; a newer child never silently replaces it. |
+| Version | The child name resolves at admission; that run and its replay retain the exact resolved child version. |
 | State | Child state taps use the parent admission context. |
 | Authority | Inherited/constrained by the admitted actor and run lane. No grant from nesting. |
 | Budgets | Child work consumes shared effective limits; it cannot reset the budget by invoking again. |
@@ -1182,7 +1184,7 @@ heavy-engine execution is not part of that integration test.
 | `security.http_response` CaptureContract | Permits the fixture HTTP source/logical source `security.feed`, records acquisition provenance and retained response bytes under explicit byte/retention rules. |
 | `security.registered_http_observation` CaptureContract | Permits registration of the verified acquisition result and preserves its original evidence binding. |
 | `security.feed_reads` acquisition policy | Permits the configured feed acquisition and its declared Source aliases under effective limits. The parent/child admission includes the child's policy/effects. |
-| Capture/proposal Lines | Manually triggered accepted Lines, pinned to the relevant Procedures with parameters below. Capture Lines observe; proposal Lines propose under an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
+| Capture/proposal Lines | Manually triggered accepted Lines, naming the relevant Procedures with parameters below. Capture Lines observe; proposal Lines propose under an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
 
 Scalar state fields used with `.one()` each have exactly one live Claim in this
 fixture. Its verdict checks are explicit below. Claims and relationships were

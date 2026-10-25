@@ -173,6 +173,11 @@ def test_install_before_compiler_36_keeps_a_frozen_v3_registration():
         {provider_interface_path(legacy.identity.name): original}, document, named=False
     ) == ((legacy, True),)
     assert render_provider_interface(legacy) == original
+    # Retain the original exact-byte/digest assertions for the frozen wrapper;
+    # the current-format test above checks its replacement typed-JSON surface.
+    parsed, value = legacy, definition()
+    assert bytes.fromhex(parsed.interface_bytes_hex) == canonical_bytes(value)
+    assert parsed.interface_digest == package_document(value).interfaces[0].interface_digest
 
 
 def test_v4_law_freezes_definition_and_allows_explicit_retirement():

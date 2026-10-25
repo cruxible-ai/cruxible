@@ -425,6 +425,27 @@ def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
         assert current() == old()
 
 
+def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface():
+    from cruxible_client.contracts.authoring.inputs import (
+        QueryDefinitionInput,
+        lower_authoring_input,
+    )
+    from cruxible_client.contracts.named_references import name_query
+    from cruxible_client.contracts.query.definitions import render_query_definition
+    from cruxible_core.authoring.lowering import _render_non_procedure_member
+    from tests.test_procedures.test_named_reference_closure import world
+
+    named, _, tree = world()
+    input_ = QueryDefinitionInput.model_validate(
+        {"kind": "query_definition", "query_definition": named.model_dump(mode="json")}
+    )
+    payload = lower_authoring_input(input_)
+    assert name_query(payload.query_definition) == named
+    path, content, _ = _render_non_procedure_member(payload, tree=tree, light=True)
+    assert path == "query-definitions/claims-by-status.json"
+    assert content == render_query_definition(named)
+
+
 def test_frozen_provider_runtime_and_trigger_event_checks_stay_exact():
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.procedures.windows import CaptureEventSelector
