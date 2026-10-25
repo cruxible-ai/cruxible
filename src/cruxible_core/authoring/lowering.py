@@ -2762,6 +2762,17 @@ def _lower_procedure(
     if not payload.retire:
         _refuse_unserved_procedure(payload.definition)
     if payload.definition.get("graph_format") == 7:
+        if isinstance(payload, BlueprintAuthoringPayload):
+            _refuse(
+                "cruxible.authoring.blueprint_graph_unsupported",
+                "$.definition.graph_format",
+                "Graph-7 Blueprints are not supported.",
+                repair_kind="replace_definition",
+                repair_description=(
+                    "author graph 6 or a ProcedureSpec; "
+                    "Blueprints fold into slotted Procedures next"
+                ),
+            )
         return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
@@ -3198,14 +3209,6 @@ def _procedure_lowered(
     if base.compiler == LIGHT_ARTIFACTS_COMPILER and int(procedure.definition.graph_format) != 7:
         procedure = name_procedure(procedure)
     candidate_tree = fork_tree(base_tree)
-    if isinstance(procedure, ProcedureArtifact):
-        procedure = procedure.model_copy(
-            update={
-                "artifact_format": "cruxible-procedure-v3"
-                if base.compiler == LIGHT_ARTIFACTS_COMPILER
-                else "playbill-procedure-v2"
-            }
-        )
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor
         procedure_bytes = base_tree[path]

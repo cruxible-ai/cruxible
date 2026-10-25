@@ -690,3 +690,36 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
     )
     with pytest.raises(ValidationError, match="pins"):
         validate_query_definition({**query.model_dump(mode="json"), "pins": []})
+
+
+def test_graph7_blueprint_refuses_before_writing_a_procedure(tmp_path):
+    from cruxible_client.contracts.authoring.models import BlueprintAuthoringPayload
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import AuthoringLoweringError, lower_authoring
+    from cruxible_core.authoring.store import AuthoringIntentStore
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._support import initialize_local
+
+    instance, _ = initialize_local(tmp_path)
+    before = instance.accepted_coordinate()
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
+    )
+    view = coordinator.create(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=BlueprintAuthoringPayload(
+            definition={"name": "test.blueprint", "graph_format": 7},
+            activation_policy="snapshot",
+            owned_contracts=(),
+        ),
+        canonical_timestamp="2026-10-25T12:00:00.000000Z",
+    )
+    with pytest.raises(AuthoringLoweringError) as caught:
+        lower_authoring(instance, intent=view.intent, actor_id="owner")
+    assert caught.value.code == "cruxible.authoring.blueprint_graph_unsupported"
+    assert caught.value.repairs[0].description == (
+        "author graph 6 or a ProcedureSpec; Blueprints fold into slotted Procedures next"
+    )
+    assert instance.accepted_coordinate() == before
+    assert "procedures/test.blueprint.json" not in instance.tree_at(before.git_oid)
