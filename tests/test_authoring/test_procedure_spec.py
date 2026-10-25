@@ -534,9 +534,7 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
                 "nodes": (
                     base.nodes[0],
                     guard,
-                    base.nodes[1].model_copy(
-                        update={"fields": {"rows": "$steps.rows.result.rows"}}
-                    ),
+                        base.nodes[1],
                     HaltNode(node_id="stop", reason="no"),
                 )
             }

@@ -46,6 +46,10 @@ def _name(pin: Any) -> str:
 def _short(value: Any, tap_aliases: frozenset[str]) -> Any:
     if isinstance(value, str) and value.startswith("$steps."):
         alias = value[len("$steps.") :].partition(".")[0]
+        if alias in tap_aliases and value == "$steps." + alias:
+            # A whole runtime tap value is not the generated {rows,truncated}
+            # view. Keep its explicit reference so resubmission preserves it.
+            return value
         if alias in {"input", "item", "params", "steps"}:
             return value
         return "$" + value[len("$steps.") :]
