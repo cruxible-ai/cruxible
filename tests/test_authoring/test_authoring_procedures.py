@@ -401,10 +401,12 @@ def _submit_approve_activate(
 
 def _world_holding_a_document(
     tmp_path: Path,
+    *,
+    historical: bool = False,
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
     """One instance whose accepted tree governs a single Document."""
 
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
     body = instance.store_document_body(b"# Accepted design\n")
     shell = DocumentShell(
         identity="document:design",
