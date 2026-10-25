@@ -52,10 +52,9 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
     QueryDefinition,
-    parse_query_definition,
     query_definition_digest,
-    query_definition_path,
     render_query_definition,
 )
 from cruxible_client.contracts.source_references import SourceHandle, source_handle_digest
@@ -153,12 +152,14 @@ def _update_query_golden() -> None:
     }
     for pin in raw.get("pins", []):
         pin["artifact_digest"] = digests[pin["target"]["name"]]
-    definition = name_query(
-        parse_query_definition(
-            json.dumps(raw, indent=2, sort_keys=True).encode() + b"\n",
-            path=query_definition_path(raw["identity"]["name"]),
-        )
+    # The fixture stores the expanded typed declaration; its wire is rendered
+    # by the current owner codec below, not parsed as already-canonical bytes.
+    definition = (
+        NamedQueryDefinition.model_validate(raw)
+        if raw.get("artifact_format") == "cruxible-query-definition-v3"
+        else name_query(QueryDefinition.model_validate(raw))
     )
+    fixture["historical_v1"] = _read(ROOT / "tests/fixtures/query-definition-v1.json")
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged

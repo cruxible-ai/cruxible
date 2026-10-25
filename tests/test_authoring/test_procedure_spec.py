@@ -8,7 +8,9 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifact,
+    NamedProcedureArtifact as ProcedureArtifact,
+)
+from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
     render_procedure,
@@ -20,7 +22,18 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
-from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_pin_bindings
+from cruxible_client.contracts.procedures.models import iter_pin_bindings
+from cruxible_client.contracts.procedures.named_models import (
+    NamedProcedureDefinition as ProcedureDefinition,
+)
+
+
+def _artifact(definition):
+    from tests.support.procedures import procedure_artifact
+
+    return procedure_artifact(
+        definition, activation_policy="drain", artifact_format="cruxible-procedure-v3"
+    )
 
 
 def spec(**changes):
@@ -139,7 +152,7 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
             if hasattr(node, "contract_out") and node.contract_out
             else None
         )
-        if node.kind == "source":
+        if node.kind in {"source", "call"}:
             from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 
             operations = json.loads(
@@ -150,15 +163,13 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
             operation = ProviderOperationContract.model_validate(
                 operations[node.interface.target.name]
             )
-            output = operation.material or (
+            output = (operation.material if node.kind == "source" else None) or (
                 operation.output if isinstance(operation.output, ContractSchema) else None
             )
         return {
             "bindings": {
-                key: getattr(node, key).model_dump(mode="json")
-                if hasattr(getattr(node, key), "model_dump")
-                else getattr(node, key)
-                for key in ("provider", "interface", "interface_digest", "implementation_digest")
+                key: {"target": getattr(node, key).target.model_dump(mode="json")}
+                for key in ("provider", "interface")
             },
             "output": output.fields
             if output
@@ -233,7 +244,12 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
 
 
 def test_historical_v2_bytes_and_digest_do_not_change():
-    for filename, document in CORPUS.items():
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+
+    historical = json.loads(
+        (Path(__file__).parents[1] / "fixtures/procedures/security-p1-v2.json").read_text()
+    )
+    for filename, document in historical.items():
         original = ProcedureArtifact.model_validate(document)
         from cruxible_client.contracts.canonical import (
             ArtifactDigest,
@@ -250,11 +266,14 @@ def test_historical_v2_bytes_and_digest_do_not_change():
 def _inventory_import_worked_example():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     call = next(node for node in original.definition.nodes if node.kind == "call")
-    call_schema = next(
-        c.contract_schema
-        for c in original.owned_contracts
-        if c.identity == call.contract_out.target
+    from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+
+    operations = json.loads(
+        (Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json").read_text()
     )
+    call_schema = ProviderOperationContract.model_validate(
+        operations[call.interface.target.name]
+    ).output
     authored = spec(
         procedure="security.inventory-import",
         description=original.definition.description,
@@ -329,10 +348,8 @@ def _inventory_import_worked_example():
         )
         return {
             "bindings": {
-                key: getattr(node, key).model_dump(mode="json")
-                if hasattr(getattr(node, key), "model_dump")
-                else getattr(node, key)
-                for key in ("provider", "interface", "interface_digest", "implementation_digest")
+                key: {"target": getattr(node, key).target.model_dump(mode="json")}
+                for key in ("provider", "interface")
             },
             "request_defaults": node.request if node.kind == "source" else {},
             "output": call_schema.fields
@@ -503,7 +520,7 @@ def test_decompile_inventory_recognizes_return_and_halt_patterns():
 def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predicate_shape):
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
-    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+    from tests.test_procedures.test_procedure_artifacts import _definition
     from tests.test_procedures.test_procedure_execution import _repeat_transform_procedure
 
     leaf = GuardPredicate(
@@ -540,6 +557,11 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
             }
         )
         original = _artifact(definition)
+    from cruxible_client.contracts.procedures.names import named_graph
+
+    definition = ProcedureDefinition.model_validate(
+        named_graph(definition.model_dump(mode="json", by_alias=True))
+    )
     original = original.model_copy(update={"definition": definition})
     authored = decompile_procedure(original)
     explicit = next(step.explicit for step in authored.steps if hasattr(step, "explicit"))
@@ -695,11 +717,13 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
 
     instance, owner = initialize_local(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    from cruxible_client.contracts.procedures.names import name_procedure
+
     capture = foreign_source_capture_contract("security.inventory").model_copy(
         update={"identity": ArtifactIdentity(kind="CaptureContract", name="security.inventory")}
     )
     tree[capture_contract_path(capture.identity.name)] = render_capture_contract(capture)
-    procedure = _slotless_procedure("stored.proc").procedure
+    procedure = name_procedure(_slotless_procedure("stored.proc").procedure)
     tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
 
@@ -780,7 +804,7 @@ def test_spec_dump_preserves_else_with_and_without_aliases():
 
 
 def test_decompile_does_not_fold_a_halt_with_a_shared_explicit_edge():
-    from tests.test_procedures.test_procedure_artifacts import _artifact, _layout_definition
+    from tests.test_procedures.test_procedure_artifacts import _layout_definition
 
     definition = _layout_definition(halt_before_return=False)
     definition = definition.model_copy(
@@ -829,7 +853,7 @@ def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
 
 def test_v3_retains_the_transform_spec_union_discriminator():
     from cruxible_client.contracts.procedures.models import TransformAdapterSpec, TransformNode
-    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+    from tests.test_procedures.test_procedure_artifacts import _definition
 
     definition = _definition()
     transform = TransformNode(
@@ -870,7 +894,7 @@ def test_literal_null_is_new_in_v3_and_old_writes_keep_the_frozen_refusal():
             )
         }
     )
-    current = procedure_artifact(definition)
+    current = procedure_artifact(definition, artifact_format="cruxible-procedure-v3")
     assert (
         parse_procedure(
             render_procedure(current), path="procedures/" + current.identity.name + ".json"
@@ -899,7 +923,7 @@ def test_old_envelopes_keep_their_frozen_guard_and_halt_grammar(change):
             )
         }
     )
-    current = procedure_artifact(definition)
+    current = procedure_artifact(definition, artifact_format="cruxible-procedure-v3")
     assert (
         parse_procedure(
             render_procedure(current), path="procedures/" + current.identity.name + ".json"
@@ -958,7 +982,7 @@ def test_measurement_node_coordinates_are_not_graph_node_ids():
         ProcedureMeasurementDeclaration,
         ProcedureMeasurementExpectation,
     )
-    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+    from tests.test_procedures.test_procedure_artifacts import _definition
 
     definition = _definition()
     read = next(node for node in definition.nodes if node.kind == "state_tap")

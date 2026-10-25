@@ -54,12 +54,12 @@ def test_all_kit_queries_lower_to_exact_typed_tree(case, resolver, tree):
     spec = QuerySpecInput.model_validate(case["authored"])
     query = lower_query_spec(spec, resolver)
     body = query.model_dump(mode="json")
-    body.pop("pins")
+    body.pop("pins", None)
     assert hashlib.sha256(canonical_bytes(body)).hexdigest() == case["tree_sha256"]
     payload = lower_authoring_input(
         QueryDefinitionInput(kind="query_definition", query_definition=spec)
     )
-    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light=True)
     stored = parse_query_definition(wire, path=path)
     assert stored.artifact_format == "cruxible-query-definition-v3"
     assert query_definition_digest(stored).tagged == digest
@@ -144,7 +144,7 @@ def test_model_is_closed():
 
 
 def test_v3_never_changes_frozen_wire_or_digests(tree, resolver):
-    query = lower_query_spec(simple(), resolver)
+    query = lower_query_spec(simple(), resolver, named=False)
     payload = lower_authoring_input(
         QueryDefinitionInput(kind="query_definition", query_definition=query)
     )
@@ -153,7 +153,9 @@ def test_v3_never_changes_frozen_wire_or_digests(tree, resolver):
     assert old.artifact_format == "playbill-query-definition-v1"
     assert render_query_definition(old) == wire
     assert query_definition_digest(old).tagged == digest
-    new = old.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+    from cruxible_client.contracts.named_references import name_query
+
+    new = name_query(old)
     assert query_definition_digest(new).tagged != digest
     assert len(render_query_definition(new)) < len(wire)
 
@@ -183,7 +185,7 @@ def test_authored_errors_are_mapped_through_authoring_refusals(tree):
         )
     )
     with pytest.raises(AuthoringLoweringError) as caught:
-        _render_non_procedure_member(payload, tree=tree, light_query=True)
+        _render_non_procedure_member(payload, tree=tree, light=True)
     assert caught.value.code == "cruxible.query.filter_invalid"
     assert caught.value.offending_element == "$.where"
     assert "$.where" in str(caught.value)
@@ -220,13 +222,14 @@ def test_new_query_formats_are_gated_by_compiler_revision(light, format, tree, r
         QueryDefinitionInput(kind="query_definition", query_definition=simple())
     )
     path, wire, _ = _render_non_procedure_member(
-        payload, tree=tree, light_query=format == "cruxible-query-definition-v3"
+        payload, tree=tree, light=format == "cruxible-query-definition-v3"
     )
     verdict = _query_definition_member(
         SimpleNamespace(
             content=wire,
             path=path,
             historical_law_coordinate=None,
+            rechecking=False,
             current=SimpleNamespace(
                 compiler=LIGHT_ARTIFACTS_COMPILER if light else CLAIM_REBIND_COMPILER
             ),
@@ -309,7 +312,7 @@ def test_v3_artifact_entry_restores_its_default_binding(tree):
     from cruxible_client.authoring.examples import query_ontology_example
 
     payload = lower_authoring_input(query_ontology_example())
-    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light=True)
     body = json.loads(wire)
     assert "binding" not in body["entry"]
     assert "result_binding" not in body
@@ -326,7 +329,7 @@ def test_kit_snapshot_and_carried_successor_use_the_query_codec(tree):
     payload = lower_authoring_input(
         QueryDefinitionInput(kind="query_definition", query_definition=simple())
     )
-    path, wire, _ = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    path, wire, _ = _render_non_procedure_member(payload, tree=tree, light=True)
     body = json.loads(wire)
     body["lifecycle"] = {"state": "live", "predecessor_digest": None}
     snapshot, digest = _render(path, body)
@@ -405,7 +408,7 @@ def test_authored_structural_refusal_stays_typed_and_scopes_to_its_member(tree):
         QueryDefinitionInput(kind="query_definition", query_definition=spec)
     )
     with pytest.raises(AuthoringLoweringError) as caught:
-        _render_non_procedure_member(payload, tree=tree, light_query=True)
+        _render_non_procedure_member(payload, tree=tree, light=True)
     assert caught.value.code == "cruxible.authoring.query_definition_invalid"
     error = AuthoringLoweringError(
         code="cruxible.query.unknown_field",
@@ -465,9 +468,9 @@ def test_authored_query_repetition_is_a_noop_and_revisions_bind_the_predecessor(
     payload = lower_authoring_input(
         QueryDefinitionInput(kind="query_definition", query_definition=simple())
     )
-    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light=True)
     accepted = {**tree, path: wire}
-    assert _render_non_procedure_member(payload, tree=accepted, light_query=True) == (
+    assert _render_non_procedure_member(payload, tree=accepted, light=True) == (
         path,
         wire,
         digest,
@@ -477,9 +480,7 @@ def test_authored_query_repetition_is_a_noop_and_revisions_bind_the_predecessor(
             kind="query_definition", query_definition=simple(description="Revised query.")
         )
     )
-    _, updated, updated_digest = _render_non_procedure_member(
-        revised, tree=accepted, light_query=True
-    )
+    _, updated, updated_digest = _render_non_procedure_member(revised, tree=accepted, light=True)
     assert updated_digest != digest
     assert parse_query_definition(updated, path=path).lifecycle.predecessor_digest == digest
     retired = parse_query_definition(updated, path=path).model_copy(
@@ -487,7 +488,7 @@ def test_authored_query_repetition_is_a_noop_and_revisions_bind_the_predecessor(
     )
     with pytest.raises(AuthoringLoweringError) as caught:
         _render_non_procedure_member(
-            payload, tree={**tree, path: render_query_definition(retired)}, light_query=True
+            payload, tree={**tree, path: render_query_definition(retired)}, light=True
         )
     assert caught.value.code == "cruxible.query_definition.lifecycle_invalid"
 

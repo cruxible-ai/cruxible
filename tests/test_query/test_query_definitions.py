@@ -25,6 +25,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.projection_extensions import runtime_extension_registry
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
+    NamedQueryDefinition,
     QueryDefinition,
     QueryDefinitionFormatError,
     QueryEvaluationPolicy,
@@ -191,6 +192,9 @@ def active_work_query(**overrides: object) -> QueryDefinition:
         ),
     }
     fields.update(overrides)
+    if fields.get("artifact_format") == "cruxible-query-definition-v3":
+        fields.pop("pins", None)
+        return NamedQueryDefinition.model_validate(fields)
     return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 
@@ -227,6 +231,9 @@ def single_status_query(**overrides: object) -> QueryDefinition:
         "pins": (claim_type_pin(STATUS_PREDICATE),),
     }
     fields.update(overrides)
+    if fields.get("artifact_format") == "cruxible-query-definition-v3":
+        fields.pop("pins", None)
+        return NamedQueryDefinition.model_validate(fields)
     return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 
@@ -242,7 +249,7 @@ def accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
 
 
 def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> None:
-    fixture = json.loads(GOLDEN.read_bytes())
+    fixture = json.loads(GOLDEN.read_bytes())["historical_v1"]
     query = QueryDefinition.model_validate(fixture["query_definition"])
 
     assert query == active_work_query()
@@ -255,8 +262,8 @@ def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> 
 
 def test_query_definition_v3_is_compact_without_moving_frozen_v1() -> None:
     fixture = json.loads(GOLDEN.read_bytes())
-    v1 = QueryDefinition.model_validate(fixture["query_definition"])
-    v3 = v1.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+    v1 = QueryDefinition.model_validate(fixture["historical_v1"]["query_definition"])
+    v3 = NamedQueryDefinition.model_validate(fixture["query_definition"])
     wire = render_query_definition(v3)
     assert wire.decode() == fixture["canonical_v3_wire"]
     assert query_definition_digest(v3).tagged == fixture["v3_artifact_digest"]
@@ -966,7 +973,7 @@ def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path:
     assert set(members) == {STATUS_CLAIM_TYPE_PATH, query_path}
     member = members[query_path]
     assert member.artifact_kind == "query-definition"
-    assert member.law_identifier == "cruxible.query-definition.v3"
+    assert member.law_identifier == "cruxible.query-definition.named.v1"
     assert QUERY_DEFINITION_ACCEPTANCE_LAW.coordinate.identifier == "playbill.query-definition.v1"
     assert member.candidate_artifact_digest == query_definition_digest(query).tagged
     law_result = next(
@@ -1148,7 +1155,10 @@ def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> N
 
 @pytest.mark.parametrize("format", ["playbill-query-definition-v1", "cruxible-query-definition-v3"])
 def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
-    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_client.contracts.query.definitions import (
+        NamedQueryDefinitionSpec,
+        QueryDefinitionSpec,
+    )
 
     explicit = active_work_query(
         artifact_format=format,
@@ -1160,7 +1170,12 @@ def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
     stated = explicit.model_dump(mode="json")
     stated.pop("result_shape")
     stated.pop("dedupe")
-    defaulted = QueryDefinitionSpec.model_validate(stated)
+    model = (
+        NamedQueryDefinitionSpec
+        if format == "cruxible-query-definition-v3"
+        else QueryDefinitionSpec
+    )
+    defaulted = model.model_validate(stated)
     assert defaulted.result_shape == "subject"
     assert defaulted.dedupe == "subject"
     assert defaulted.model_dump(mode="json") == explicit.model_dump(mode="json")
