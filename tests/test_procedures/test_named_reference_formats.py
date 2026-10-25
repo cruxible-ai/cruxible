@@ -806,3 +806,34 @@ def test_named_trigger_noop_keeps_accepted_bytes():
         content,
         digest,
     )
+
+
+def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carriers():
+    from cruxible_client.contracts import ProcedureReadiness
+    from cruxible_client.contracts.authoring.models import CaptureContractAuthoringPayload
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.core_support._light_capture_support import record_contract
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    artifact = name_procedure(_artifact(_definition()))
+    # The SDK receives expanded typed artifacts from readiness, rather than stored compact bytes.
+    from tests.test_procedures.test_procedure_execution import _coordinate
+
+    readiness = ProcedureReadiness.model_validate(
+        {
+            "coordinate": _coordinate().model_dump(mode="json"),
+            "procedure_identity": artifact.identity.model_dump(mode="json"),
+            "artifact_digest": "sha256:" + "a" * 64,
+            "definition_digest": artifact.definition_digest,
+            "artifact": artifact.model_dump(mode="json"),
+            "runnable": "direct",
+            "unsupported_nodes": [],
+            "next_operation": {"kind": "run"},
+        }
+    )
+    assert readiness.artifact == artifact
+    assert readiness.artifact.definition.graph_format == 7
+    payload = CaptureContractAuthoringPayload(capture_contract=record_contract())
+    assert (
+        CaptureContractAuthoringPayload.model_validate(payload.model_dump(mode="json")) == payload
+    )

@@ -38,7 +38,11 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
-from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
+from cruxible_client.contracts.captures import (
+    CaptureContract,
+    NamedCaptureContract,
+    capture_contract_path,
+)
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
@@ -1004,7 +1008,7 @@ class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
         "playbill-capture-contract-authoring-payload-v1"
     )
-    capture_contract: CaptureContract | CaptureContractInputRecord
+    capture_contract: CaptureContract | NamedCaptureContract | CaptureContractInputRecord
 
 
 class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
