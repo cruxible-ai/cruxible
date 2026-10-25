@@ -4742,6 +4742,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedQueryProcedureMeasurement": {
+            "additionalProperties": false,
+            "description": "Evaluate one exact accepted QueryDefinition with fixed options.",
+            "properties": {
+              "execution_options": {
+                "title": "Execution Options"
+              },
+              "expect": {
+                "$ref": "#/$defs/ProcedureMeasurementExpectation"
+              },
+              "kind": {
+                "const": "accepted_query",
+                "default": "accepted_query",
+                "title": "Kind",
+                "type": "string"
+              },
+              "parameters": {
+                "title": "Parameters"
+              },
+              "query": {
+                "$ref": "#/$defs/ArtifactPin"
+              },
+              "tag": {
+                "const": "playbill-procedure-accepted-query-measurement-v1",
+                "default": "playbill-procedure-accepted-query-measurement-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "query",
+              "expect"
+            ],
+            "title": "AcceptedQueryProcedureMeasurement",
+            "type": "object"
+          },
           "AcquisitionPolicyInput": {
             "additionalProperties": false,
             "description": "One SourceAcquisitionPolicy: how a Line's Source inputs may be acquired.",
@@ -4851,6 +4887,20 @@
               }
             },
             "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "ArtifactNameRef": {
+            "additionalProperties": false,
+            "description": "A field-typed reference resolved at the selected accepted coordinate.\n\nThe containing field supplies the role. Only historical pins and evidence\ncarry a digest; an authored dependency names the governed identity.",
+            "properties": {
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "title": "ArtifactNameRef",
             "type": "object"
           },
           "ArtifactPin": {
@@ -5025,6 +5075,79 @@
               "interval_seconds"
             ],
             "title": "CadenceSchedule",
+            "type": "object"
+          },
+          "CallStep": {
+            "additionalProperties": false,
+            "properties": {
+              "call": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Call",
+                "type": "string"
+              },
+              "effect_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effect Policy"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "input": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Provider"
+              }
+            },
+            "required": [
+              "call",
+              "interface",
+              "input"
+            ],
+            "title": "CallStep",
             "type": "object"
           },
           "CanonicalDuration": {
@@ -5388,6 +5511,54 @@
               "minimum_independent_control_components"
             ],
             "title": "ClaimAttestationConsequenceRule",
+            "type": "object"
+          },
+          "ClaimAttestationProcedureMeasurement": {
+            "additionalProperties": false,
+            "description": "Count exact-subject ClaimAttestations with declared stances.",
+            "properties": {
+              "claim_statement": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "claim_statement_digest": {
+                "title": "Claim Statement Digest",
+                "type": "string"
+              },
+              "expect": {
+                "$ref": "#/$defs/ProcedureMeasurementExpectation"
+              },
+              "kind": {
+                "const": "claim_attestation",
+                "default": "claim_attestation",
+                "title": "Kind",
+                "type": "string"
+              },
+              "stances": {
+                "items": {
+                  "enum": [
+                    "support",
+                    "contradict",
+                    "unsure"
+                  ],
+                  "type": "string"
+                },
+                "title": "Stances",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-claim-attestation-measurement-v1",
+                "default": "playbill-procedure-claim-attestation-measurement-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_statement",
+              "claim_statement_digest",
+              "stances",
+              "expect"
+            ],
+            "title": "ClaimAttestationProcedureMeasurement",
             "type": "object"
           },
           "ClaimDispositionInput": {
@@ -6325,6 +6496,126 @@
             "title": "ClaimRetirementInput",
             "type": "object"
           },
+          "ClaimStatementProcedureMeasurement": {
+            "additionalProperties": false,
+            "description": "Test one exact accepted Claim statement's evidence-relative verdict.",
+            "properties": {
+              "acceptable_verdicts": {
+                "items": {
+                  "enum": [
+                    "supported",
+                    "uncovered",
+                    "stale",
+                    "contradicted",
+                    "unresolved"
+                  ],
+                  "type": "string"
+                },
+                "title": "Acceptable Verdicts",
+                "type": "array"
+              },
+              "claim_statement": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "claim_statement_digest": {
+                "title": "Claim Statement Digest",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_statement",
+                "default": "claim_statement",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-claim-statement-measurement-v1",
+                "default": "playbill-procedure-claim-statement-measurement-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_statement",
+              "claim_statement_digest",
+              "acceptable_verdicts"
+            ],
+            "title": "ClaimStatementProcedureMeasurement",
+            "type": "object"
+          },
+          "ClaimStep": {
+            "additionalProperties": false,
+            "properties": {
+              "all": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "All"
+              },
+              "claim": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "subject": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "subject_kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject Kind"
+              }
+            },
+            "required": [
+              "claim",
+              "claim_type",
+              "subject"
+            ],
+            "title": "ClaimStep",
+            "type": "object"
+          },
           "ClaimType": {
             "additionalProperties": false,
             "properties": {
@@ -6671,6 +6962,92 @@
             "title": "ClaimTypeMemberDescription",
             "type": "object"
           },
+          "ClaimTypeStructure": {
+            "additionalProperties": false,
+            "description": "Policy-free ClaimType shape; deliberately not a governed artifact format.",
+            "properties": {
+              "allowed_object_subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Allowed Object Subject Kinds",
+                "type": "array"
+              },
+              "allowed_subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Allowed Subject Kinds",
+                "type": "array"
+              },
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "literal_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Literal Schema"
+              },
+              "object_kind": {
+                "enum": [
+                  "literal",
+                  "subject",
+                  "exact_content"
+                ],
+                "title": "Object Kind",
+                "type": "string"
+              },
+              "permitted_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Permitted Roles",
+                "type": "array"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "referent_sensitivity": {
+                "default": "identity",
+                "enum": [
+                  "identity",
+                  "shell"
+                ],
+                "title": "Referent Sensitivity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "predicate",
+              "allowed_subject_kinds",
+              "object_kind",
+              "cardinality",
+              "permitted_roles"
+            ],
+            "title": "ClaimTypeStructure",
+            "type": "object"
+          },
           "ClaimTypeSuccessionDependent": {
             "additionalProperties": false,
             "description": "What one member of a succession's closure becomes in the same generation.\n\nThe vocabulary is the standalone migration route's own, so an author who\nknows one road knows the other: `successor` carries the dependent to the\nsuccessor type by re-pinning it, `retire` tombstones it -- with\n`claim_retirement_reason` `was-rescinded` that is a rescission, with any\nother reason and an optional `claim_effective_until` it is an ordinary\nattributed retirement.\n\n`re_author` is the disposition only a change set can offer: the dependent's\nsuccessor is a sibling Claim member of the same intent, named by\n`successor_claim_id` -- the Claim ID that member revises, which is this\ndependent's own. That sibling is lowered under the successor type, so it may\nsay under the new vocabulary what the predecessor could not say -- and it\nkeeps the dependent's identity, its subject and its predicate, and its exact\npredecessor digest, which is what makes it a re-authoring of that Claim\nrather than a new one. There is no second spelling by member index: an index\ncould only ever name the member this Claim ID already names.",
@@ -6777,6 +7154,40 @@
             "title": "ClaimTypeSuccessionInput",
             "type": "object"
           },
+          "ContractSchema": {
+            "description": "Typed input or output schema carried inside one Procedure-v2 envelope.",
+            "properties": {
+              "allow_extra": {
+                "default": false,
+                "title": "Allow Extra",
+                "type": "boolean"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/PropertySchema"
+                },
+                "title": "Fields",
+                "type": "object"
+              }
+            },
+            "required": [
+              "fields"
+            ],
+            "title": "ContractSchema",
+            "type": "object"
+          },
           "CorroborationRequirement": {
             "additionalProperties": false,
             "properties": {
@@ -6833,6 +7244,53 @@
               "expression"
             ],
             "title": "CronSchedule",
+            "type": "object"
+          },
+          "EmitStep": {
+            "additionalProperties": false,
+            "properties": {
+              "emit": {
+                "title": "Emit",
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "input": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "result": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "required": [
+              "emit",
+              "input",
+              "result"
+            ],
+            "title": "EmitStep",
             "type": "object"
           },
           "ExactContentObjectInput": {
@@ -6893,6 +7351,99 @@
               "capture_digest"
             ],
             "title": "ExistingCaptureInput",
+            "type": "object"
+          },
+          "ExplicitStep": {
+            "additionalProperties": false,
+            "description": "Lossless fallback for a stored graph outside the recognized patterns.",
+            "properties": {
+              "explicit": {
+                "discriminator": {
+                  "mapping": {
+                    "call": "#/$defs/NamedCallNode",
+                    "constant": "#/$defs/NamedConstantNode",
+                    "emit_capture": "#/$defs/NamedCaptureEgressNode",
+                    "exhaust_tap": "#/$defs/NamedExhaustTapNode",
+                    "guard": "#/$defs/GuardNode",
+                    "halt": "#/$defs/HaltNode",
+                    "invoke": "#/$defs/NamedInvokeNode",
+                    "post_inbox": "#/$defs/InboxEgressNode",
+                    "project": "#/$defs/NamedProjectNode",
+                    "propose_change_set": "#/$defs/NamedProposeChangeSetNode",
+                    "repeat": "#/$defs/NamedRepeatNode",
+                    "return": "#/$defs/NamedReturnNode",
+                    "select": "#/$defs/NamedSelectNode",
+                    "settle_change_set": "#/$defs/NamedSettleChangeSetNode",
+                    "source": "#/$defs/NamedSourceNode",
+                    "state_claim": "#/$defs/NamedClaimTapNode",
+                    "state_tap": "#/$defs/NamedStateTapNode",
+                    "transform": "#/$defs/NamedTransformNode"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/NamedInvokeNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedClaimTapNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedStateTapNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedSourceNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedExhaustTapNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedCallNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedTransformNode"
+                  },
+                  {
+                    "$ref": "#/$defs/GuardNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedProjectNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedRepeatNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedCaptureEgressNode"
+                  },
+                  {
+                    "$ref": "#/$defs/InboxEgressNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedProposeChangeSetNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedSettleChangeSetNode"
+                  },
+                  {
+                    "$ref": "#/$defs/HaltNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedSelectNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedReturnNode"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedConstantNode"
+                  }
+                ],
+                "title": "Explicit"
+              }
+            },
+            "required": [
+              "explicit"
+            ],
+            "title": "ExplicitStep",
             "type": "object"
           },
           "FixedWindow": {
@@ -6985,6 +7536,509 @@
             "title": "GenerationAcceptedSchedule",
             "type": "object"
           },
+          "GuardNode": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "guard",
+                "default": "guard",
+                "title": "Kind",
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "on_false": {
+                "default": "$abort",
+                "title": "On False",
+                "type": "string"
+              },
+              "on_true": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "On True"
+              },
+              "predicate": {
+                "$ref": "#/$defs/GuardPredicate"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              }
+            },
+            "required": [
+              "node_id",
+              "predicate"
+            ],
+            "title": "GuardNode",
+            "type": "object"
+          },
+          "GuardPredicate": {
+            "additionalProperties": false,
+            "description": "Closed predicate: exactly one comparison or connective.",
+            "properties": {
+              "all_of": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/GuardPredicate"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "All Of"
+              },
+              "any_of": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/GuardPredicate"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Any Of"
+              },
+              "left": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PredicateOperand"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "not_of": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GuardPredicate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "operator": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "eq",
+                      "ne",
+                      "gt",
+                      "gte",
+                      "lt",
+                      "lte",
+                      "before",
+                      "on_or_before",
+                      "after",
+                      "on_or_after"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Operator"
+              },
+              "right": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PredicateOperand"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "playbill-guard-predicate-v1",
+                "default": "playbill-guard-predicate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "GuardPredicate",
+            "type": "object"
+          },
+          "GuardStep": {
+            "additionalProperties": false,
+            "properties": {
+              "else": {
+                "default": "abort(guard_refused, \"Procedure guard refused.\")",
+                "title": "Else",
+                "type": "string"
+              },
+              "else_id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Else Id"
+              },
+              "guard": {
+                "maxLength": 16384,
+                "title": "Guard",
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Then"
+              }
+            },
+            "required": [
+              "guard"
+            ],
+            "title": "GuardStep",
+            "type": "object"
+          },
+          "HaltNode": {
+            "additionalProperties": false,
+            "description": "A successful graph leaf that deliberately produces no result.",
+            "properties": {
+              "kind": {
+                "const": "halt",
+                "default": "halt",
+                "title": "Kind",
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              }
+            },
+            "required": [
+              "node_id"
+            ],
+            "title": "HaltNode",
+            "type": "object"
+          },
+          "HaltStep": {
+            "additionalProperties": false,
+            "properties": {
+              "halt": {
+                "title": "Halt",
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              }
+            },
+            "required": [
+              "halt"
+            ],
+            "title": "HaltStep",
+            "type": "object"
+          },
+          "InboxEgressNode": {
+            "additionalProperties": false,
+            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
+            "properties": {
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "post_inbox",
+                "default": "post_inbox",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "input"
+            ],
+            "title": "InboxEgressNode",
+            "type": "object"
+          },
+          "InboxStep": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "inbox": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              }
+            },
+            "required": [
+              "inbox"
+            ],
+            "title": "InboxStep",
+            "type": "object"
+          },
+          "InvokeStep": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "As"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "input": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "invoke": {
+                "title": "Invoke",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              }
+            },
+            "required": [
+              "invoke",
+              "input"
+            ],
+            "title": "InvokeStep",
+            "type": "object"
+          },
+          "JsonValue": {},
           "LineInput": {
             "additionalProperties": false,
             "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line runs when run explicitly (`line run`, one manual occurrence),\nor, once it is enabled (`line enable`), when a Trigger aimed at it fires; a\nTrigger aimed at a Line that is not enabled does nothing. Enabling needs\ngoverned write even for an observe-only Line. A Line that proposes or\nsettles also needs a live ProcedureMandate covering its Procedure before it\ncan run or be enabled; an observe-only Line needs none.",
@@ -7199,6 +8253,545 @@
             "title": "MandateScopeAuthoring",
             "type": "object"
           },
+          "NamedCallNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "effect_policy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effect Policy"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "interface": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "kind": {
+                "const": "call",
+                "default": "call",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Provider"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider",
+              "interface",
+              "input",
+              "as"
+            ],
+            "title": "NamedCallNode",
+            "type": "object"
+          },
+          "NamedCaptureEgressNode": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Capture Contract"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "emit_capture",
+                "default": "emit_capture",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "capture_contract",
+              "input",
+              "result"
+            ],
+            "title": "NamedCaptureEgressNode",
+            "type": "object"
+          },
+          "NamedClaimTapNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "cardinality": {
+                "default": "one",
+                "enum": [
+                  "one",
+                  "all"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "claim_type": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "kind": {
+                "const": "state_claim",
+                "default": "state_claim",
+                "title": "Kind",
+                "type": "string"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "subject_id": {
+                "title": "Subject Id"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "claim_type",
+              "subject_kind",
+              "subject_id",
+              "as"
+            ],
+            "title": "NamedClaimTapNode",
+            "type": "object"
+          },
+          "NamedConstantNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract Out"
+              },
+              "fields": {
+                "title": "Fields"
+              },
+              "kind": {
+                "const": "constant",
+                "default": "constant",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "fields",
+              "contract_out",
+              "as"
+            ],
+            "title": "NamedConstantNode",
+            "type": "object"
+          },
+          "NamedExhaustTapNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "journal_identity": {
+                "title": "Journal Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "exhaust_tap",
+                "default": "exhaust_tap",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "reducer_or_query": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Reducer Or Query"
+              }
+            },
+            "required": [
+              "node_id",
+              "reducer_or_query",
+              "journal_identity",
+              "as"
+            ],
+            "title": "NamedExhaustTapNode",
+            "type": "object"
+          },
+          "NamedInvokeNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "input": {
+                "title": "Input"
+              },
+              "kind": {
+                "const": "invoke",
+                "default": "invoke",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "procedure": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              }
+            },
+            "required": [
+              "node_id",
+              "procedure",
+              "input",
+              "as"
+            ],
+            "title": "NamedInvokeNode",
+            "type": "object"
+          },
+          "NamedProcedureSourceProgram": {
+            "additionalProperties": false,
+            "properties": {
+              "bindings": {
+                "additionalProperties": {
+                  "discriminator": {
+                    "mapping": {
+                      "procedure": "#/$defs/NamedSourceProcedureBinding",
+                      "provider": "#/$defs/NamedSourceProviderBinding",
+                      "query": "#/$defs/NamedSourceQueryBinding",
+                      "slot": "#/$defs/NamedSourceSlotBinding"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/NamedSourceProviderBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/NamedSourceSlotBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/NamedSourceQueryBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/NamedSourceProcedureBinding"
+                    }
+                  ]
+                },
+                "title": "Bindings",
+                "type": "object"
+              },
+              "capture_contracts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_types": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/NamedSourceClaimType"
+                },
+                "title": "Claim Types",
+                "type": "object"
+              },
+              "contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceContract"
+                },
+                "title": "Contracts",
+                "type": "object"
+              },
+              "filename": {
+                "title": "Filename",
+                "type": "string"
+              },
+              "first_line": {
+                "default": 1,
+                "minimum": 1,
+                "title": "First Line",
+                "type": "integer"
+              },
+              "function": {
+                "title": "Function",
+                "type": "string"
+              },
+              "rules": {
+                "const": "cruxible.procedure-source.v3",
+                "default": "cruxible.procedure-source.v3",
+                "title": "Rules",
+                "type": "string"
+              },
+              "subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "syntax_rules": {
+                "default": "cruxible.procedure-source.v2",
+                "enum": [
+                  "cruxible.procedure-source.v1",
+                  "cruxible.procedure-source.v2"
+                ],
+                "title": "Syntax Rules",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "filename",
+              "function"
+            ],
+            "title": "NamedProcedureSourceProgram",
+            "type": "object"
+          },
+          "NamedProjectNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract Out"
+              },
+              "fields": {
+                "title": "Fields"
+              },
+              "kind": {
+                "const": "project",
+                "default": "project",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "fields",
+              "contract_out",
+              "as"
+            ],
+            "title": "NamedProjectNode",
+            "type": "object"
+          },
+          "NamedProposeChangeSetNode": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate_templates": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/$defs/ProposalItemsFanOut"
+                  }
+                ],
+                "title": "Candidate Templates"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactNameRef"
+                },
+                "title": "Claim Types",
+                "type": "array"
+              },
+              "kind": {
+                "const": "propose_change_set",
+                "default": "propose_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates",
+              "result"
+            ],
+            "title": "NamedProposeChangeSetNode",
+            "type": "object"
+          },
           "NamedQueryDefinition": {
             "additionalProperties": false,
             "properties": {
@@ -7382,6 +8975,1170 @@
             "title": "NamedQueryDefinition",
             "type": "object"
           },
+          "NamedQueryDefinitionSpec": {
+            "additionalProperties": false,
+            "description": "The pin-less typed authoring form with the same stated defaults.",
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntry"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicy"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryInclude"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrdering"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclaration"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStep"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding"
+            ],
+            "title": "NamedQueryDefinitionSpec",
+            "type": "object"
+          },
+          "NamedRepeatBodyNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_in": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract In"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Out"
+              },
+              "effect_policy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effect Policy"
+              },
+              "interface": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "operation": {
+                "enum": [
+                  "call",
+                  "transform"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Provider"
+              },
+              "spec": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-transform-adapter-spec-v1": "#/$defs/TransformAdapterSpec",
+                        "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
+                        "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
+                        "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
+                        "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
+                        "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/TransformAdapterSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformShapeItemsSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformFilterItemsSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformDedupeItemsSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformJoinItemsSpec"
+                      },
+                      {
+                        "$ref": "#/$defs/TransformAggregateItemsSpec"
+                      }
+                    ]
+                  },
+                  {}
+                ],
+                "title": "Spec"
+              },
+              "transform_kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "shape_items",
+                      "join_items",
+                      "filter_items",
+                      "aggregate_items",
+                      "dedupe_items",
+                      "adapter"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Transform Kind"
+              }
+            },
+            "required": [
+              "node_id",
+              "operation",
+              "spec",
+              "as"
+            ],
+            "title": "NamedRepeatBodyNode",
+            "type": "object"
+          },
+          "NamedRepeatNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "body": {
+                "items": {
+                  "$ref": "#/$defs/NamedRepeatBodyNode"
+                },
+                "title": "Body",
+                "type": "array"
+              },
+              "kind": {
+                "const": "repeat",
+                "default": "repeat",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_attempts": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "until": {
+                "$ref": "#/$defs/GuardPredicate"
+              }
+            },
+            "required": [
+              "node_id",
+              "max_attempts",
+              "body",
+              "until",
+              "as"
+            ],
+            "title": "NamedRepeatNode",
+            "type": "object"
+          },
+          "NamedReturnNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract Out"
+              },
+              "fields": {
+                "title": "Fields"
+              },
+              "kind": {
+                "const": "return",
+                "default": "return",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "fields",
+              "contract_out",
+              "as"
+            ],
+            "title": "NamedReturnNode",
+            "type": "object"
+          },
+          "NamedSelectNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract Out"
+              },
+              "kind": {
+                "const": "select",
+                "default": "select",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sources",
+                "type": "array"
+              }
+            },
+            "required": [
+              "node_id",
+              "sources",
+              "contract_out",
+              "as"
+            ],
+            "title": "NamedSelectNode",
+            "type": "object"
+          },
+          "NamedSettleChangeSetNode": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate_templates": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/$defs/ProposalItemsFanOut"
+                  }
+                ],
+                "title": "Candidate Templates"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactNameRef"
+                },
+                "title": "Claim Types",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates",
+              "result"
+            ],
+            "title": "NamedSettleChangeSetNode",
+            "type": "object"
+          },
+          "NamedSourceClaimType": {
+            "additionalProperties": false,
+            "properties": {
+              "structure": {
+                "$ref": "#/$defs/ClaimTypeStructure"
+              }
+            },
+            "required": [
+              "structure"
+            ],
+            "title": "NamedSourceClaimType",
+            "type": "object"
+          },
+          "NamedSourceNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "capture_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Capture Contract"
+              },
+              "interface": {
+                "$ref": "#/$defs/ArtifactNameRef"
+              },
+              "kind": {
+                "const": "source",
+                "default": "source",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Provider"
+              },
+              "request": {
+                "title": "Request"
+              }
+            },
+            "required": [
+              "node_id",
+              "capture_contract",
+              "provider",
+              "interface",
+              "request",
+              "as"
+            ],
+            "title": "NamedSourceNode",
+            "type": "object"
+          },
+          "NamedSourceProcedureBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_terminal": {
+                "default": false,
+                "title": "Capture Terminal",
+                "type": "boolean"
+              },
+              "input": {
+                "$ref": "#/$defs/ContractSchema"
+              },
+              "kind": {
+                "const": "procedure",
+                "default": "procedure",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "output": {
+                "$ref": "#/$defs/ContractSchema"
+              },
+              "required_terminal_rung": {
+                "default": 0,
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Terminal Rung",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "input",
+              "output"
+            ],
+            "title": "NamedSourceProcedureBinding",
+            "type": "object"
+          },
+          "NamedSourceProviderBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "kind": {
+                "const": "provider",
+                "default": "provider",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operation": {
+                "$ref": "#/$defs/ProviderOperationContract"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "interface",
+              "effect_class",
+              "operation"
+            ],
+            "title": "NamedSourceProviderBinding",
+            "type": "object"
+          },
+          "NamedSourceQueryBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/NamedQueryDefinition"
+              },
+              "kind": {
+                "const": "query",
+                "default": "query",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "definition"
+            ],
+            "title": "NamedSourceQueryBinding",
+            "type": "object"
+          },
+          "NamedSourceSlotBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "kind": {
+                "const": "slot",
+                "default": "slot",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operation": {
+                "$ref": "#/$defs/ProviderOperationContract"
+              }
+            },
+            "required": [
+              "interface",
+              "effect_class",
+              "operation"
+            ],
+            "title": "NamedSourceSlotBinding",
+            "type": "object"
+          },
+          "NamedStateTapNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "budgets": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryBudgets"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "kind": {
+                "const": "state_tap",
+                "default": "state_tap",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "parameters": {
+                "title": "Parameters"
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Query"
+              },
+              "view": {
+                "const": "typed_query",
+                "default": "typed_query",
+                "title": "View",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "query",
+              "as"
+            ],
+            "title": "NamedStateTapNode",
+            "type": "object"
+          },
+          "NamedTransformNode": {
+            "additionalProperties": false,
+            "properties": {
+              "as": {
+                "title": "As",
+                "type": "string"
+              },
+              "contract_in": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract In"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ArtifactNameRef"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedurePinSlotRef"
+                  }
+                ],
+                "title": "Contract Out"
+              },
+              "kind": {
+                "const": "transform",
+                "default": "transform",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "spec": {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-transform-adapter-spec-v1": "#/$defs/TransformAdapterSpec",
+                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
+                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
+                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
+                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
+                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/TransformAdapterSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformShapeItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformFilterItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformDedupeItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformJoinItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformAggregateItemsSpec"
+                  }
+                ],
+                "title": "Spec"
+              },
+              "transform_kind": {
+                "enum": [
+                  "shape_items",
+                  "join_items",
+                  "filter_items",
+                  "aggregate_items",
+                  "dedupe_items",
+                  "adapter"
+                ],
+                "title": "Transform Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "transform_kind",
+              "contract_in",
+              "contract_out",
+              "spec",
+              "as"
+            ],
+            "title": "NamedTransformNode",
+            "type": "object"
+          },
+          "PredicateOperand": {
+            "additionalProperties": false,
+            "description": "One operand in the closed predicate grammar.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "input_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input Name"
+              },
+              "kind": {
+                "enum": [
+                  "literal",
+                  "input",
+                  "step",
+                  "parameter",
+                  "count",
+                  "exists",
+                  "truncated"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "parameter_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parameter Name"
+              },
+              "path": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Path",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-predicate-operand-v1",
+                "default": "playbill-predicate-operand-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Value"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "PredicateOperand",
+            "type": "object"
+          },
+          "ProcedureField": {
+            "additionalProperties": false,
+            "description": "Strict authored schema; retained PropertySchema encodings stay frozen.",
+            "properties": {
+              "default": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "enum": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum"
+              },
+              "enum_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum Ref"
+              },
+              "indexed": {
+                "default": false,
+                "title": "Indexed",
+                "type": "boolean"
+              },
+              "item_fields": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/PropertySchema"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Fields"
+              },
+              "json_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Json Schema"
+              },
+              "optional": {
+                "default": false,
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "primary_key": {
+                "default": false,
+                "title": "Primary Key",
+                "type": "boolean"
+              },
+              "required": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Required"
+              },
+              "type": {
+                "default": "string",
+                "enum": [
+                  "string",
+                  "int",
+                  "integer",
+                  "float",
+                  "number",
+                  "bool",
+                  "date",
+                  "datetime",
+                  "json",
+                  "list"
+                ],
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "title": "ProcedureField",
+            "type": "object"
+          },
           "ProcedureHardCaps": {
             "additionalProperties": false,
             "properties": {
@@ -7458,6 +10215,7 @@
                 "title": "Acquisition Policy"
               },
               "activation_policy": {
+                "default": "snapshot",
                 "enum": [
                   "drain",
                   "abort",
@@ -7489,14 +10247,86 @@
                 "default": false,
                 "title": "Retire",
                 "type": "boolean"
+              },
+              "spec": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureSpec"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
-              "kind",
-              "definition",
-              "activation_policy"
+              "kind"
             ],
             "title": "ProcedureInput",
+            "type": "object"
+          },
+          "ProcedureLimits": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "default": 1048576,
+                "title": "Capture Bytes"
+              },
+              "items": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Items"
+              },
+              "provider_calls": {
+                "default": 100,
+                "minimum": 0,
+                "title": "Provider Calls",
+                "type": "integer"
+              },
+              "repeat_attempts": {
+                "default": 1,
+                "minimum": 1,
+                "title": "Repeat Attempts",
+                "type": "integer"
+              },
+              "result_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Result Bytes"
+              },
+              "wall_clock": {
+                "default": "PT1M",
+                "title": "Wall Clock",
+                "type": "string"
+              }
+            },
+            "title": "ProcedureLimits",
             "type": "object"
           },
           "ProcedureMandateInput": {
@@ -7617,6 +10447,313 @@
             "title": "ProcedureMandateInput",
             "type": "object"
           },
+          "ProcedureMeasurementDeclaration": {
+            "additionalProperties": false,
+            "description": "One digest-covered declaration from which PC-E1 may derive activation.",
+            "properties": {
+              "arm_label": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on_true",
+                      "on_false"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm Label"
+              },
+              "check_after": {
+                "$ref": "#/$defs/CanonicalDuration"
+              },
+              "expires_after": {
+                "$ref": "#/$defs/CanonicalDuration"
+              },
+              "from_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "From Node Id"
+              },
+              "measurement": {
+                "discriminator": {
+                  "mapping": {
+                    "accepted_query": "#/$defs/AcceptedQueryProcedureMeasurement",
+                    "claim_attestation": "#/$defs/ClaimAttestationProcedureMeasurement",
+                    "claim_statement": "#/$defs/ClaimStatementProcedureMeasurement"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AcceptedQueryProcedureMeasurement"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimAttestationProcedureMeasurement"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimStatementProcedureMeasurement"
+                  }
+                ],
+                "title": "Measurement"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "review_when": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProcedureMeasurementReviewTrigger"
+                },
+                "title": "Review When",
+                "type": "array"
+              },
+              "situation_shape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureMeasurementSituationShape"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "subject_grain": {
+                "enum": [
+                  "procedure_unit",
+                  "node",
+                  "arm"
+                ],
+                "title": "Subject Grain",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-declaration-v1",
+                "default": "playbill-procedure-measurement-declaration-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "subject_grain",
+              "measurement",
+              "check_after",
+              "expires_after"
+            ],
+            "title": "ProcedureMeasurementDeclaration",
+            "type": "object"
+          },
+          "ProcedureMeasurementExpectation": {
+            "additionalProperties": false,
+            "description": "Closed point-in-time count and property-equality expectation.",
+            "properties": {
+              "condition": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Condition"
+              },
+              "condition_scope": {
+                "default": "all",
+                "enum": [
+                  "any",
+                  "all"
+                ],
+                "title": "Condition Scope",
+                "type": "string"
+              },
+              "max_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Count"
+              },
+              "min_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Count"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-expectation-v1",
+                "default": "playbill-procedure-measurement-expectation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ProcedureMeasurementExpectation",
+            "type": "object"
+          },
+          "ProcedureMeasurementReviewTrigger": {
+            "additionalProperties": false,
+            "description": "A deterministic threshold that can later request calibration review.",
+            "properties": {
+              "metric": {
+                "enum": [
+                  "contradicted_rate",
+                  "satisfied_rate",
+                  "arm_contrast"
+                ],
+                "title": "Metric",
+                "type": "string"
+              },
+              "min_readings": {
+                "minimum": 1,
+                "title": "Min Readings",
+                "type": "integer"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "operator": {
+                "enum": [
+                  "eq",
+                  "ne",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-review-trigger-v1",
+                "default": "playbill-procedure-measurement-review-trigger-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "threshold": {
+                "title": "Threshold"
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDuration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "name",
+              "metric",
+              "operator",
+              "threshold",
+              "min_readings"
+            ],
+            "title": "ProcedureMeasurementReviewTrigger",
+            "type": "object"
+          },
+          "ProcedureMeasurementSituationShape": {
+            "additionalProperties": false,
+            "description": "Coarse reproducible context, excluding task IDs and answer content.",
+            "properties": {
+              "subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-measurement-situation-shape-v1",
+                "default": "playbill-procedure-measurement-situation-shape-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tags": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tags",
+                "type": "array"
+              },
+              "task_category": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Task Category"
+              }
+            },
+            "title": "ProcedureMeasurementSituationShape",
+            "type": "object"
+          },
+          "ProcedurePinSlotRef": {
+            "additionalProperties": false,
+            "properties": {
+              "slot_name": {
+                "title": "Slot Name",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-pin-slot-ref-v1",
+                "default": "playbill-procedure-pin-slot-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "slot_name"
+            ],
+            "title": "ProcedurePinSlotRef",
+            "type": "object"
+          },
           "ProcedureRuntimePolicy": {
             "additionalProperties": false,
             "properties": {
@@ -7681,6 +10818,521 @@
               "procedure_runtime_policy"
             ],
             "title": "ProcedureRuntimePolicyInput",
+            "type": "object"
+          },
+          "ProcedureSourceProgram": {
+            "additionalProperties": false,
+            "description": "Source plus explicit data dependencies; no closures or executable imports.",
+            "properties": {
+              "bindings": {
+                "additionalProperties": {
+                  "discriminator": {
+                    "mapping": {
+                      "procedure": "#/$defs/SourceProcedureBinding",
+                      "provider": "#/$defs/SourceProviderBinding",
+                      "query": "#/$defs/SourceQueryBinding",
+                      "slot": "#/$defs/SourceSlotBinding"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/SourceProviderBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/SourceSlotBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/SourceQueryBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/SourceProcedureBinding"
+                    }
+                  ]
+                },
+                "title": "Bindings",
+                "type": "object"
+              },
+              "capture_contracts": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Capture Contracts",
+                "type": "object"
+              },
+              "claim_types": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceClaimType"
+                },
+                "title": "Claim Types",
+                "type": "object"
+              },
+              "contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceContract"
+                },
+                "title": "Contracts",
+                "type": "object"
+              },
+              "filename": {
+                "title": "Filename",
+                "type": "string"
+              },
+              "first_line": {
+                "default": 1,
+                "minimum": 1,
+                "title": "First Line",
+                "type": "integer"
+              },
+              "function": {
+                "title": "Function",
+                "type": "string"
+              },
+              "rules": {
+                "default": "cruxible.procedure-source.v1",
+                "enum": [
+                  "cruxible.procedure-source.v1",
+                  "cruxible.procedure-source.v2"
+                ],
+                "title": "Rules",
+                "type": "string"
+              },
+              "subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "filename",
+              "function"
+            ],
+            "title": "ProcedureSourceProgram",
+            "type": "object"
+          },
+          "ProcedureSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "acquisition_policy": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acquisition Policy"
+              },
+              "activation": {
+                "default": "snapshot",
+                "enum": [
+                  "drain",
+                  "abort",
+                  "snapshot",
+                  "epoch-check"
+                ],
+                "title": "Activation",
+                "type": "string"
+              },
+              "annotations": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "budget": {
+                "$ref": "#/$defs/ProcedureLimits",
+                "default": {
+                  "capture_bytes": 1048576,
+                  "items": null,
+                  "provider_calls": 100,
+                  "repeat_attempts": 1,
+                  "result_bytes": null,
+                  "wall_clock": "PT1M"
+                }
+              },
+              "caps": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureLimits"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ContractSchema"
+                },
+                "title": "Contracts",
+                "type": "object"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "halt_order": {
+                "default": [],
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                  "type": "string"
+                },
+                "title": "Halt Order",
+                "type": "array"
+              },
+              "input": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "string",
+                        "int",
+                        "integer",
+                        "float",
+                        "number",
+                        "bool",
+                        "date",
+                        "datetime",
+                        "json",
+                        "list"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/ProcedureField"
+                    }
+                  ]
+                },
+                "title": "Input",
+                "type": "object"
+              },
+              "input_contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input Contract"
+              },
+              "measurements": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProcedureMeasurementDeclaration"
+                },
+                "title": "Measurements",
+                "type": "array"
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "string",
+                            "int",
+                            "integer",
+                            "float",
+                            "number",
+                            "bool",
+                            "date",
+                            "datetime",
+                            "json",
+                            "list"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "$ref": "#/$defs/ProcedureField"
+                        }
+                      ]
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Output"
+              },
+              "output_contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Output Contract"
+              },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parameter Contract"
+              },
+              "params": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "string",
+                        "int",
+                        "integer",
+                        "float",
+                        "number",
+                        "bool",
+                        "date",
+                        "datetime",
+                        "json",
+                        "list"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/ProcedureField"
+                    }
+                  ]
+                },
+                "title": "Params",
+                "type": "object"
+              },
+              "procedure": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,255}$",
+                "title": "Procedure",
+                "type": "string"
+              },
+              "returns": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ReturnFrom"
+                  },
+                  {
+                    "$ref": "#/$defs/ReturnFields"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Returns"
+              },
+              "slots": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Slots",
+                "type": "object"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NamedProcedureSourceProgram"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureSourceProgram"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Retained AST provenance; revise it through source authoring.",
+                "readOnly": true,
+                "title": "Source"
+              },
+              "steps": {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/SourceStep"
+                    },
+                    {
+                      "$ref": "#/$defs/TapStep"
+                    },
+                    {
+                      "$ref": "#/$defs/ClaimStep"
+                    },
+                    {
+                      "$ref": "#/$defs/CallStep"
+                    },
+                    {
+                      "$ref": "#/$defs/ProjectStep"
+                    },
+                    {
+                      "$ref": "#/$defs/TransformStep"
+                    },
+                    {
+                      "$ref": "#/$defs/GuardStep"
+                    },
+                    {
+                      "$ref": "#/$defs/InboxStep"
+                    },
+                    {
+                      "$ref": "#/$defs/ProposeStep"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleStep"
+                    },
+                    {
+                      "$ref": "#/$defs/EmitStep"
+                    },
+                    {
+                      "$ref": "#/$defs/InvokeStep"
+                    },
+                    {
+                      "$ref": "#/$defs/SelectStep"
+                    },
+                    {
+                      "$ref": "#/$defs/RepeatStep"
+                    },
+                    {
+                      "$ref": "#/$defs/HaltStep"
+                    },
+                    {
+                      "$ref": "#/$defs/ExplicitStep"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "procedure",
+              "input",
+              "steps"
+            ],
+            "title": "ProcedureSpec",
+            "type": "object"
+          },
+          "ProjectStep": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "title": "Fields",
+                "type": "object"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "string",
+                            "int",
+                            "integer",
+                            "float",
+                            "number",
+                            "bool",
+                            "date",
+                            "datetime",
+                            "json",
+                            "list"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "$ref": "#/$defs/ProcedureField"
+                        }
+                      ]
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Output"
+              },
+              "project": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Project",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project",
+              "fields"
+            ],
+            "title": "ProjectStep",
             "type": "object"
           },
           "PropertySchema": {
@@ -7807,6 +11459,110 @@
               }
             },
             "title": "PropertySchema",
+            "type": "object"
+          },
+          "ProposalItemsFanOut": {
+            "additionalProperties": false,
+            "description": "Candidates from data: each element of ``items`` is one Claim proposal item.\n\n``items`` resolves at run time (typically ``$steps.<alias>.items``, a list a\nprovider, Source or transform produced); every element becomes one item of\nthe one proposal, with its own dependency closure and evidence, exactly as\nthe capture and inbox terminals fan out ``{\"items\": ...}``.",
+            "properties": {
+              "items": {
+                "title": "Items"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "title": "ProposalItemsFanOut",
+            "type": "object"
+          },
+          "ProposeStep": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "propose": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Propose"
+              },
+              "result": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              }
+            },
+            "required": [
+              "propose"
+            ],
+            "title": "ProposeStep",
+            "type": "object"
+          },
+          "ProviderOperationContract": {
+            "additionalProperties": false,
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/ContractSchema"
+              },
+              "material": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractSchema"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractSchema"
+                  },
+                  {
+                    "const": "playbill-provider-result-to-external-capture-v1",
+                    "type": "string"
+                  }
+                ],
+                "title": "Output"
+              }
+            },
+            "required": [
+              "input",
+              "output"
+            ],
+            "title": "ProviderOperationContract",
             "type": "object"
           },
           "QueryArtifactsEntry": {
@@ -8215,8 +11971,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -8423,6 +12178,9 @@
                     "$ref": "#/$defs/QueryDefinition"
                   },
                   {
+                    "$ref": "#/$defs/NamedQueryDefinitionSpec"
+                  },
+                  {
                     "$ref": "#/$defs/NamedQueryDefinition"
                   }
                 ],
@@ -8444,8 +12202,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -9667,6 +13424,213 @@
             "title": "QueryTraversalStep",
             "type": "object"
           },
+          "RepeatStep": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "items": {
+                  "$ref": "#/$defs/NamedRepeatBodyNode"
+                },
+                "title": "Body",
+                "type": "array"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "max_attempts": {
+                "minimum": 1,
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "repeat": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Repeat",
+                "type": "string"
+              },
+              "until": {
+                "maxLength": 16384,
+                "title": "Until",
+                "type": "string"
+              }
+            },
+            "required": [
+              "repeat",
+              "max_attempts",
+              "body",
+              "until"
+            ],
+            "title": "RepeatStep",
+            "type": "object"
+          },
+          "ReturnFields": {
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "title": "Fields",
+                "type": "object"
+              },
+              "id": {
+                "default": "summary",
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "fields"
+            ],
+            "title": "ReturnFields",
+            "type": "object"
+          },
+          "ReturnFrom": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "From",
+                "type": "string"
+              },
+              "id": {
+                "default": "summary",
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Id",
+                "type": "string"
+              },
+              "omit": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Omit",
+                "type": "array"
+              }
+            },
+            "required": [
+              "from"
+            ],
+            "title": "ReturnFrom",
+            "type": "object"
+          },
+          "SelectStep": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "string",
+                            "int",
+                            "integer",
+                            "float",
+                            "number",
+                            "bool",
+                            "date",
+                            "datetime",
+                            "json",
+                            "list"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "$ref": "#/$defs/ProcedureField"
+                        }
+                      ]
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Output"
+              },
+              "select": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Select",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                  "type": "string"
+                },
+                "title": "Sources",
+                "type": "array"
+              }
+            },
+            "required": [
+              "select",
+              "sources"
+            ],
+            "title": "SelectStep",
+            "type": "object"
+          },
           "SelfSourceInput": {
             "additionalProperties": false,
             "properties": {
@@ -9731,6 +13695,59 @@
             "title": "SemanticSelector",
             "type": "object"
           },
+          "SettleStep": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "result": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "settle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "$ref": "#/$defs/JsonValue"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Settle"
+              }
+            },
+            "required": [
+              "settle"
+            ],
+            "title": "SettleStep",
+            "type": "object"
+          },
           "SourceAcquisitionPolicy": {
             "additionalProperties": false,
             "description": "One instance-wide age bound and only the aliases that differ.",
@@ -9787,6 +13804,288 @@
               "identity"
             ],
             "title": "SourceAcquisitionPolicy",
+            "type": "object"
+          },
+          "SourceClaimType": {
+            "additionalProperties": false,
+            "properties": {
+              "structure": {
+                "$ref": "#/$defs/ClaimTypeStructure"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "version",
+              "structure"
+            ],
+            "title": "SourceClaimType",
+            "type": "object"
+          },
+          "SourceContract": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/$defs/ContractSchema"
+              }
+            },
+            "required": [
+              "name",
+              "schema"
+            ],
+            "title": "SourceContract",
+            "type": "object"
+          },
+          "SourceProcedureBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_terminal": {
+                "default": false,
+                "title": "Capture Terminal",
+                "type": "boolean"
+              },
+              "input": {
+                "$ref": "#/$defs/ContractSchema"
+              },
+              "kind": {
+                "const": "procedure",
+                "default": "procedure",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "output": {
+                "$ref": "#/$defs/ContractSchema"
+              },
+              "required_terminal_rung": {
+                "default": 0,
+                "maximum": 3,
+                "minimum": 0,
+                "title": "Required Terminal Rung",
+                "type": "integer"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "input",
+              "output"
+            ],
+            "title": "SourceProcedureBinding",
+            "type": "object"
+          },
+          "SourceProviderBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation",
+                  "none"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "interface_version": {
+                "title": "Interface Version",
+                "type": "string"
+              },
+              "kind": {
+                "const": "provider",
+                "default": "provider",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operation": {
+                "$ref": "#/$defs/ProviderOperationContract"
+              },
+              "provider": {
+                "title": "Provider",
+                "type": "string"
+              },
+              "provider_version": {
+                "title": "Provider Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "provider_version",
+              "interface",
+              "interface_version",
+              "interface_digest",
+              "implementation_digest",
+              "effect_class",
+              "operation"
+            ],
+            "title": "SourceProviderBinding",
+            "type": "object"
+          },
+          "SourceQueryBinding": {
+            "additionalProperties": false,
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/QueryDefinition"
+              },
+              "kind": {
+                "const": "query",
+                "default": "query",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "definition"
+            ],
+            "title": "SourceQueryBinding",
+            "type": "object"
+          },
+          "SourceSlotBinding": {
+            "additionalProperties": false,
+            "description": "An open Provider slot: the interface it needs, no implementation chosen.\n\nSource that uses one compiles to a Blueprint; instantiating the Blueprint\nreplaces it with a ``SourceProviderBinding`` and compiles again.",
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "pure",
+                  "external_read",
+                  "external_mutation",
+                  "none"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "interface_version": {
+                "title": "Interface Version",
+                "type": "string"
+              },
+              "kind": {
+                "const": "slot",
+                "default": "slot",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operation": {
+                "$ref": "#/$defs/ProviderOperationContract"
+              }
+            },
+            "required": [
+              "interface",
+              "interface_version",
+              "interface_digest",
+              "effect_class",
+              "operation"
+            ],
+            "title": "SourceSlotBinding",
+            "type": "object"
+          },
+          "SourceStep": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "interface": {
+                "title": "Interface",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Provider"
+              },
+              "request": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "source": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "contract",
+              "interface",
+              "request"
+            ],
+            "title": "SourceStep",
             "type": "object"
           },
           "SubjectAssignment": {
@@ -10115,6 +14414,383 @@
               "subject"
             ],
             "title": "SubjectSuccessionInput",
+            "type": "object"
+          },
+          "TapStep": {
+            "additionalProperties": false,
+            "properties": {
+              "budgets": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "params": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "tap": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Tap",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tap",
+              "query"
+            ],
+            "title": "TapStep",
+            "type": "object"
+          },
+          "TransformAdapterSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-transform-adapter-spec-v1",
+                "default": "playbill-transform-adapter-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "TransformAdapterSpec",
+            "type": "object"
+          },
+          "TransformAggregateItemsSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "title": "Items"
+              },
+              "tag": {
+                "const": "playbill-transform-aggregate-items-spec-v1",
+                "default": "playbill-transform-aggregate-items-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "title": "TransformAggregateItemsSpec",
+            "type": "object"
+          },
+          "TransformDedupeItemsSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "title": "Items"
+              },
+              "keys": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Keys",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-transform-dedupe-items-spec-v1",
+                "default": "playbill-transform-dedupe-items-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "items",
+              "keys"
+            ],
+            "title": "TransformDedupeItemsSpec",
+            "type": "object"
+          },
+          "TransformFilterItemsSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "title": "Items"
+              },
+              "tag": {
+                "const": "playbill-transform-filter-items-spec-v1",
+                "default": "playbill-transform-filter-items-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "where": {
+                "additionalProperties": true,
+                "title": "Where",
+                "type": "object"
+              }
+            },
+            "required": [
+              "items",
+              "where"
+            ],
+            "title": "TransformFilterItemsSpec",
+            "type": "object"
+          },
+          "TransformJoinItemsSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "additionalProperties": true,
+                "title": "Fields",
+                "type": "object"
+              },
+              "left_items": {
+                "title": "Left Items"
+              },
+              "left_key": {
+                "title": "Left Key",
+                "type": "string"
+              },
+              "right_items": {
+                "title": "Right Items"
+              },
+              "right_key": {
+                "title": "Right Key",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-transform-join-items-spec-v1",
+                "default": "playbill-transform-join-items-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "left_items",
+              "right_items",
+              "left_key",
+              "right_key",
+              "fields"
+            ],
+            "title": "TransformJoinItemsSpec",
+            "type": "object"
+          },
+          "TransformShapeItemsSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "additionalProperties": true,
+                "title": "Fields",
+                "type": "object"
+              },
+              "include_input": {
+                "default": false,
+                "title": "Include Input",
+                "type": "boolean"
+              },
+              "items": {
+                "title": "Items"
+              },
+              "tag": {
+                "const": "playbill-transform-shape-items-spec-v1",
+                "default": "playbill-transform-shape-items-spec-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "items",
+              "fields"
+            ],
+            "title": "TransformShapeItemsSpec",
+            "type": "object"
+          },
+          "TransformStep": {
+            "additionalProperties": false,
+            "properties": {
+              "contract_in": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract In"
+              },
+              "contract_out": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contract Out"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "input": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "string",
+                        "int",
+                        "integer",
+                        "float",
+                        "number",
+                        "bool",
+                        "date",
+                        "datetime",
+                        "json",
+                        "list"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/ProcedureField"
+                    }
+                  ]
+                },
+                "title": "Input",
+                "type": "object"
+              },
+              "kind": {
+                "enum": [
+                  "shape_items",
+                  "join_items",
+                  "filter_items",
+                  "aggregate_items",
+                  "dedupe_items",
+                  "adapter"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "output": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "string",
+                        "int",
+                        "integer",
+                        "float",
+                        "number",
+                        "bool",
+                        "date",
+                        "datetime",
+                        "json",
+                        "list"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/ProcedureField"
+                    }
+                  ]
+                },
+                "title": "Output",
+                "type": "object"
+              },
+              "spec": {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-transform-adapter-spec-v1": "#/$defs/TransformAdapterSpec",
+                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
+                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
+                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
+                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
+                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/TransformAdapterSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformShapeItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformFilterItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformDedupeItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformJoinItemsSpec"
+                  },
+                  {
+                    "$ref": "#/$defs/TransformAggregateItemsSpec"
+                  }
+                ],
+                "title": "Spec"
+              },
+              "transform": {
+                "pattern": "^[a-z][a-z0-9_]{0,127}$",
+                "title": "Transform",
+                "type": "string"
+              }
+            },
+            "required": [
+              "transform",
+              "kind",
+              "spec",
+              "input",
+              "output"
+            ],
+            "title": "TransformStep",
             "type": "object"
           },
           "TriggerInput": {
@@ -48641,8 +53317,16 @@
                 "type": "string"
               },
               "message": {
-                "title": "Message",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -48669,15 +53353,21 @@
                 "$ref": "#/$defs/GuardPredicate"
               },
               "refusal_code": {
-                "title": "Refusal Code",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
               }
             },
             "required": [
               "node_id",
-              "predicate",
-              "refusal_code",
-              "message"
+              "predicate"
             ],
             "title": "GuardNode",
             "type": "object"
@@ -48792,6 +53482,18 @@
                 "default": "halt",
                 "title": "Kind",
                 "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -50623,8 +55325,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -56757,6 +61458,18 @@
                 ],
                 "default": null
               },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
               "node_id": {
                 "title": "Node Id",
                 "type": "string"
@@ -59459,6 +64172,18 @@
                 ],
                 "default": null
               },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
               "node_id": {
                 "title": "Node Id",
                 "type": "string"
@@ -61603,6 +66328,18 @@
                   }
                 ],
                 "default": null
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -64080,6 +68817,18 @@
                   }
                 ],
                 "default": null
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -66662,6 +71411,18 @@
                   }
                 ],
                 "default": null
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -69526,6 +74287,18 @@
                   }
                 ],
                 "default": null
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -87209,8 +91982,16 @@
                 "type": "string"
               },
               "message": {
-                "title": "Message",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -87237,15 +92018,21 @@
                 "$ref": "#/$defs/GuardPredicate"
               },
               "refusal_code": {
-                "title": "Refusal Code",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
               }
             },
             "required": [
               "node_id",
-              "predicate",
-              "refusal_code",
-              "message"
+              "predicate"
             ],
             "title": "GuardNode",
             "type": "object"
@@ -87360,6 +92147,18 @@
                 "default": "halt",
                 "title": "Kind",
                 "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -89339,8 +94138,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -93043,8 +97841,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -97027,8 +101824,16 @@
                 "type": "string"
               },
               "message": {
-                "title": "Message",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -97055,15 +101860,21 @@
                 "$ref": "#/$defs/GuardPredicate"
               },
               "refusal_code": {
-                "title": "Refusal Code",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
               }
             },
             "required": [
               "node_id",
-              "predicate",
-              "refusal_code",
-              "message"
+              "predicate"
             ],
             "title": "GuardNode",
             "type": "object"
@@ -97178,6 +101989,18 @@
                 "default": "halt",
                 "title": "Kind",
                 "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
               },
               "node_id": {
                 "title": "Node Id",
@@ -99324,8 +104147,7 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2",
-                  "cruxible-query-definition-v3"
+                  "playbill-query-definition-v2"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
