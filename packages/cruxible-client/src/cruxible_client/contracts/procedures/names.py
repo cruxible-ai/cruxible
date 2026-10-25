@@ -89,6 +89,8 @@ def named_graph(value: Mapping[str, Any]) -> dict[str, Any]:
         source.setdefault("syntax_rules", source["rules"])
         source["rules"] = "cruxible.procedure-source.v3"
         for binding in source["bindings"].values():
+            if binding.get("effect_class") == "none":
+                binding["effect_class"] = "pure"
             for name in (
                 "provider_version",
                 "interface_version",

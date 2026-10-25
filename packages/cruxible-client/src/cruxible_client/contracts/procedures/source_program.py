@@ -142,6 +142,7 @@ class SourceDiagnostic(_Closed):
 
 
 class NamedSourceProviderBinding(SourceProviderBinding):
+    effect_class: Literal["pure", "external_read", "external_mutation"]
     provider_version: ClassVar[None] = None  # type: ignore[misc, assignment]
     interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
     interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
@@ -149,6 +150,7 @@ class NamedSourceProviderBinding(SourceProviderBinding):
 
 
 class NamedSourceSlotBinding(SourceSlotBinding):
+    effect_class: Literal["pure", "external_read", "external_mutation"]
     interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
     interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
 
