@@ -934,10 +934,13 @@ def test_reference_moves_and_kit_lifecycle_updates_keep_the_recorded_wire_format
     import json
 
     from cruxible_client.contracts.canonical import pretty_canonical_bytes
+    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.claims.artifact_references import move_references
     from cruxible_core.service.kits import _render
 
-    procedure = _concrete().model_copy(update={"artifact_format": artifact_format})
+    procedure = _concrete()
+    if artifact_format == "cruxible-procedure-v3":
+        procedure = name_procedure(procedure)
     path = procedure_path(procedure.identity.name)
     content = render_procedure(procedure)
     moved = move_references(path, json.loads(content), {})
