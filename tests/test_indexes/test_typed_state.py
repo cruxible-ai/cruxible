@@ -152,10 +152,24 @@ def test_line_identity_lookup_and_role_sensitive_dependency_read(tmp_path):
             == line.identity.qualified
         )
         selected = reader.dependency_state(line.identity.qualified)
-        assert selected.pins == line.pins
+        from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+        from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+        from cruxible_core.claims.closure import parse_dependency_artifact
+
+        assert (
+            selected.pins
+            == parse_dependency_artifact(
+                line_spec_path(line.identity.name), render_line_spec(line)
+            ).pins
+        )
         assert selected.identity == line.identity
         selected_procedure = reader.dependency_state(procedure.identity.qualified)
-        assert selected_procedure.pins == procedure.pins
+        assert (
+            selected_procedure.pins
+            == parse_dependency_artifact(
+                procedure_path(procedure.identity.name), render_procedure(procedure)
+            ).pins
+        )
         assert reader.dependency_state("Procedure:missing") is None
         assert [
             (row.identity, row.path, row.lifecycle, row.runnable)
@@ -298,6 +312,7 @@ STORAGE_SCHEMA_DIGESTS = {
     19: "e48e494cb19d088844d60fdeacbc7b28dedde68fa2be3fffc73fd72aeb97a87a",
     20: "e8023a3fdf5b200a87c08377045698ac13f50e688e673abfadc777e871556528",
     21: "38b8959e7944c74e04c489622bfa17fb2011da2425b7ef9fb55fd1fdd6b843a2",
+    22: "254e56902a6bfdde8b2a15b4c269fd5518afcdb097e47a941223429ced38ac7b",
 }
 
 
