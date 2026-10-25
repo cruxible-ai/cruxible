@@ -372,7 +372,7 @@ def instantiate_blueprint(
     lifecycle: ArtifactLifecycle | None = None,
     artifact_format: Literal[
         "playbill-procedure-v2", "cruxible-procedure-v3"
-    ] = "cruxible-procedure-v3",
+    ] = "playbill-procedure-v2",
 ) -> ProcedureArtifact:
     """Bind one accepted Provider per slot and return the ordinary Procedure it yields.
 
@@ -497,8 +497,8 @@ def instantiate_blueprint(
             "cruxible.blueprint.binding_closure_failed",
             "Instantiation produced pins outside the Blueprint's exact closure.",
         )
-    return ProcedureArtifact(
-        artifact_format=artifact_format,
+    result = ProcedureArtifact(
+        artifact_format="playbill-procedure-v2",
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -518,6 +518,14 @@ def instantiate_blueprint(
             bindings=tuple(bindings),
         ),
     )
+
+    if artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        named = name_procedure(result)
+        assert isinstance(named, NamedProcedureArtifact)
+        return named
+    return result
 
 
 def _bind_graph(

@@ -601,3 +601,29 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
         assert body["artifact_format"] == expected
         if not historical:
             assert "pins" not in body
+
+
+def test_frozen_blueprint_instantiation_chooses_frozen_or_unified_procedure_models():
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        instantiate_blueprint,
+    )
+    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
+    from tests.test_procedures.test_blueprints import _blueprint
+
+    blueprint = _blueprint()
+    interface = accepted_interface()
+    arguments = dict(
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="test.instance",
+        providers={"lookup": accepted_provider()},
+        interface_registrations={interface.registration.identity.qualified: interface},
+    )
+    frozen = instantiate_blueprint(blueprint, **arguments)
+    current = instantiate_blueprint(blueprint, artifact_format="cruxible-procedure-v3", **arguments)
+    assert frozen.artifact_format == "playbill-procedure-v2"
+    assert frozen.definition.graph_format == 6
+    assert isinstance(current, NamedProcedureArtifact)
+    assert current.definition.graph_format == 7
+    assert "pins" not in current.model_dump()
