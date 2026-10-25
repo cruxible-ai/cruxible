@@ -135,8 +135,9 @@ def test_json_gives_the_full_structured_answer(stub: _StubClient) -> None:
     assert stub.requests[0].kind is None and stub.requests[0].contains == "OSS v1"
 
 
+@pytest.mark.parametrize("named", [True, False])
 def test_named_and_spec_modes_forward_params_and_the_spec(
-    stub: _StubClient, tmp_path: Path
+    stub: _StubClient, tmp_path: Path, named
 ) -> None:
     from tests.core_support._knowledge_loop_support import work_item_query
 
@@ -147,7 +148,9 @@ def test_named_and_spec_modes_forward_params_and_the_spec(
     assert stub.requests[0].params == {"limit": 3, "who": "ops"}
 
     spec = tmp_path / "spec.json"
-    spec.write_text(json.dumps(work_item_query().model_dump(mode="json")), encoding="utf-8")
+    spec.write_text(
+        json.dumps(work_item_query(named=named).model_dump(mode="json")), encoding="utf-8"
+    )
     assert _run("--spec", str(spec)).exit_code == 0
     assert stub.requests[1].spec is not None
 

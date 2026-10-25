@@ -7037,10 +7037,15 @@ def query_group(
             params[key] = _query_param_value(raw)
     spec: object = None
     if spec_path is not None:
-        from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+        from cruxible_client.contracts.query.definitions import (
+            NamedQueryDefinitionSpec,
+            QueryDefinitionSpec,
+        )
 
         try:
-            spec = QueryDefinitionSpec.model_validate(_read_mapping(spec_path))
+            spec = TypeAdapter(QueryDefinitionSpec | NamedQueryDefinitionSpec).validate_python(
+                _read_mapping(spec_path)
+            )
         except ValidationError as exc:
             raise click.ClickException(
                 f"{spec_path} is not a QueryDefinitionSpec: {_validation_problems(exc)}"
