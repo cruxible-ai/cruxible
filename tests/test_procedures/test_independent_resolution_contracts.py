@@ -35,8 +35,8 @@ from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 
-def contract_world(tmp_path: Path):
-    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+def contract_world(tmp_path: Path, *, historical=False):
+    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=historical)
     at = instance.accepted_coordinate()
     path = claim_path(claim_id)
     claim = parse_claim(instance.blob_at(at.git_oid, path), path=path)

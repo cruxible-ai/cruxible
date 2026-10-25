@@ -287,8 +287,8 @@ def _claim_type_path(claim_type: ClaimType) -> str:
     return f"claim-types/{namespace}/{leaf}.json"
 
 
-def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
-    return NamedQueryDefinition(
+def _query_definition(index: int, claim_type: ClaimType, *, named: bool = True) -> QueryDefinition:
+    query = NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=f"project.reading_{index:04d}"),
         entry=QueryEntry(
             binding="item",
@@ -315,6 +315,20 @@ def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+    )
+    if named:
+        return query
+    return QueryDefinition.model_validate(
+        {
+            **query.model_dump(mode="json", exclude={"artifact_format"}),
+            "pins": [
+                ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                )
+            ],
+        }
     )
 
 

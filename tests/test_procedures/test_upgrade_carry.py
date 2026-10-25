@@ -35,9 +35,19 @@ from cruxible_core.service.procedures.line_dispatch import (
 )
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_line_arming import LOCAL, _admissions
-from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+from tests.test_procedures.test_line_triggers import (
+    SELECTOR,
+    capture,
+)
+from tests.test_procedures.test_line_triggers import (
+    line_world as _current_line_world,
+)
 from tests.test_procedures.test_procedure_mandates_v2 import _accepted_query, _query, _settle
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
+
+
+def line_world(*args, **kwargs):
+    return _current_line_world(*args, **kwargs, historical=True)
 
 
 def _changed(procedure):
@@ -50,6 +60,8 @@ def _changed(procedure):
 
 
 def _settled(instance, procedure, writes=None):
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -59,6 +71,7 @@ def _settled(instance, procedure, writes=None):
             if writes is None
             else writes,
             connection=projection.typed.connection,
+            by_name=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
     assert not result.refused, result.refused
     return tree, result
@@ -240,7 +253,7 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
     instance, line, procedure, owner = line_world(
         tmp_path, CadenceSchedule(interval_seconds=2), with_owner=True
     )
-    unrelated_procedure = _slotless_procedure("unrelated").procedure
+    unrelated_procedure = _slotless_procedure("unrelated", historical=True).procedure
     pin = line.procedure.model_copy(
         update={
             "target": unrelated_procedure.identity,
