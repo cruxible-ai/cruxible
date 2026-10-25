@@ -246,7 +246,8 @@ def work_item_query(
     """Return one many-cardinality Subject read over every accepted work item."""
 
     if claim_type is None:
-        contract = foreign_source_capture_contract("fixture.work-items")
+        factory = foreign_source_capture_contract if named else foreign_source_capture_contract_v1
+        contract = factory("fixture.work-items")
         claim_type = _claim_type().model_copy(
             update={
                 "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(

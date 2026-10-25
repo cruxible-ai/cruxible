@@ -28,6 +28,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     CaptureContractAny,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -83,7 +84,7 @@ def _seed_claim_surface(
 
     if contract is None:
         contract = (
-            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
             if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
             else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
         )

@@ -67,6 +67,7 @@ def claim_type_input_from_artifact(claim_type, *, source_ids=()):
     """Translate historical test fixtures into fresh, identity-based authoring input."""
     from cruxible_client.contracts.captures import (
         COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         capture_contract_digest,
     )
@@ -78,11 +79,16 @@ def claim_type_input_from_artifact(claim_type, *, source_ids=()):
     for name in ("evidence_requirement", "revision_evidence", "canonical_form"):
         if value.get(name) is None:
             value.pop(name, None)
-    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT, COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT]
+    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT, *COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS]
     contracts.extend(foreign_source_capture_contract(source) for source in source_ids)
     identities = {
         capture_contract_digest(item).tagged: item.identity.qualified for item in contracts
     }
+    # The historical direct-value profile is read-only; fresh own-words fixtures
+    # use the coordinator's retained-body profile instead.
+    identities[capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged] = (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified
+    )
     for rule in value["evidence_admission_policy"]["rules"]:
         rule.pop("evidence_kinds", None)
         rule.pop("tag", None)
