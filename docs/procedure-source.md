@@ -1812,7 +1812,10 @@ source-v1 records continue to reproduce under their original compilation rules.
 
 CLI and MCP authoring accept a `procedure` input with a typed `spec`; the same
 `ProcedureSpec` is available from `cruxible_client.authoring.procedures`.
-`Sequence.build()` emits this shared authored form. The Python `@procedure`
+`Sequence.build()` emits this shared authored form. A bare spec (starting with
+`procedure`, without the `kind`/`spec` wrapper) is accepted too, including as a
+change-set member. Default CLI `get` prints the complete authored JSON.
+The Python `@procedure`
 compiler retains its existing AST compilation path.
 
 ```json

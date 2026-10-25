@@ -5958,6 +5958,9 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     )
         else:
             for key, value in card.items():
+                if key == "authored" and result.kind == "procedure" and value is not None:
+                    click.echo(json.dumps(value, ensure_ascii=False, indent=2))
+                    continue
                 if value in (None, [], {}):
                     continue
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):
