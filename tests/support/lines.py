@@ -11,6 +11,7 @@ from cruxible_client.contracts.triggers import (
     ActionTarget,
     CadenceSchedule,
     LineTarget,
+    NamedTrigger,
     Trigger,
     TriggerSchedule,
     render_trigger,
@@ -29,6 +30,22 @@ def line_trigger(
     named: bool = True,
 ) -> Trigger:
     """A Trigger that runs the named Line on `schedule`."""
+
+    if named:
+        data = schedule.model_dump(mode="json")
+        if data["kind"] == "capture_landing":
+            data["event"].pop("capture_contract_digest", None)
+        if data["kind"] == "window_close" and data["window"]["kind"] == "capture_event":
+            data["window"]["event"].pop("capture_contract_digest", None)
+        return NamedTrigger(
+            identity=ArtifactIdentity(kind="Trigger", name=name),
+            schedule=data,
+            target={
+                "kind": "line",
+                "line": {"target": {"kind": "Line", "name": line.removeprefix("Line:")}},
+            },
+            lifecycle=lifecycle or ArtifactLifecycle(),
+        )
 
     trigger = Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
