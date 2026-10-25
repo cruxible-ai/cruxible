@@ -149,8 +149,9 @@ _SYMBOLS = {
 
 
 class _FilterParser:
-    def __init__(self, text: str, path: str):
+    def __init__(self, text: str, path: str, column_offset: int = 0):
         self.text, self.path, self.index = text, path, 0
+        self.column_offset = column_offset
         self.tokens: list[tuple[str, int]] = []
         offset = 0
         while offset < len(text.rstrip()):
@@ -169,9 +170,14 @@ class _FilterParser:
             "cruxible.query.filter_invalid",
             message,
             path=self.path,
-            column=column
-            or (
-                self.tokens[self.index][1] if self.index < len(self.tokens) else len(self.text) + 1
+            column=self.column_offset
+            + (
+                column
+                or (
+                    self.tokens[self.index][1]
+                    if self.index < len(self.tokens)
+                    else len(self.text) + 1
+                )
             ),
         )
 
@@ -259,8 +265,10 @@ class _FilterParser:
         )
 
 
-def parse_filter(expression: str, *, path: str = "$.where") -> FilterExpression:
-    parser = _FilterParser(expression, path)
+def parse_filter(
+    expression: str, *, path: str = "$.where", column_offset: int = 0
+) -> FilterExpression:
+    parser = _FilterParser(expression, path, column_offset)
     result = parser.expression()
     if parser.peek():
         parser.fail("expected end of filter")
@@ -395,7 +403,7 @@ class _LowerQuery:
             )
         return QueryLiteralRef(value=value)
 
-    def filter(self, text: str, path: str) -> QueryFilter:
+    def filter(self, text: str, path: str, *, column_offset: int = 0) -> QueryFilter:
         def lower(expr: FilterExpression) -> QueryFilter:
             if expr.kind in {"and", "or"}:
                 filters = _canonical([lower(child) for child in expr.children])
@@ -452,7 +460,7 @@ class _LowerQuery:
                 value_type=value_type,
             )
 
-        return lower(parse_filter(text, path=path))
+        return lower(parse_filter(text, path=path, column_offset=column_offset))
 
     def lower(self) -> QueryDefinitionSpec:
         binding, entry_text = next(iter(self.spec.from_.items()))
@@ -539,7 +547,11 @@ class _LowerQuery:
                     direction="reverse" if reverse else "forward",
                     required=relation.endswith("!"),
                     target_subject_kinds=targets,
-                    where=self.filter(condition, path) if filter_separator else None,
+                    where=self.filter(
+                        condition, path, column_offset=len(expression) - len(condition)
+                    )
+                    if filter_separator
+                    else None,
                 )
             )
         fields = []

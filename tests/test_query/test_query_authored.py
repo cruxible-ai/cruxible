@@ -716,3 +716,16 @@ def test_candidate_vocabulary_metadata_caches_evict_at_a_finite_capacity(family,
         assert cache.cache_info().currsize == capacity
     finally:
         cache.cache_clear()
+
+
+@pytest.mark.parametrize("separator", [" where ", "   where   ", "\twhere\t"])
+def test_hop_filter_refusals_count_columns_in_the_entire_hop(separator, resolver):
+    expression = (
+        "incident.vulnerability!: security.vulnerability" + separator + "vulnerability.cve_id >> 0"
+    )
+    with pytest.raises(QuerySpecError) as caught:
+        lower_query_spec(simple(hops=[{"vulnerability": expression}]), resolver)
+    assert caught.value.error_code == "cruxible.query.filter_invalid"
+    assert caught.value.field_path == "$.hops[0]"
+    assert caught.value.column == expression.index(">>") + 2
+    assert f"column {expression.index('>>') + 2}:" in str(caught.value)
