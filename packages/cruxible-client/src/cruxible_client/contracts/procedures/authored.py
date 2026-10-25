@@ -422,16 +422,17 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     )
     input_fields, param_fields = _fields(spec.input), _fields(spec.params)
 
-    def lookup_ref(text: str, path: str) -> PropertySchema | None:
+    def lookup_ref(text: str, path: str, *, parameter: bool = False) -> PropertySchema | None:
         fields: dict[str, PropertySchema] | None
         parts = text.removeprefix("$").split(".")
         explicit_step = parts[0] == "steps"
+        collection = False
         if explicit_step:
             parts = parts[1:]
-        if not explicit_step and parts[0] == "input":
+        if parameter:
+            fields, rest = param_fields, parts
+        elif not explicit_step and parts[0] == "input":
             fields, rest = input_fields, parts[1:]
-        elif not explicit_step and parts[0] in {"params", "param"}:
-            fields, rest = param_fields, parts[1:]
         elif not explicit_step and parts[0] == "item":
             return None  # the typed item transform validates this scoped reference
         else:
@@ -444,13 +445,14 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     f"Step {parts[0]!r} has no output before this step",
                 )
             fields, rest = schemas[parts[0]], parts[1:]
+            collection = parts[0] in collection_aliases
         if fields is None:
             return None
         if not rest:
-            if parts[0] in collection_aliases:
+            if collection:
                 return PropertySchema(type="list", item_fields=fields)
             return PropertySchema(type="json", json_schema={"type": "object"})
-        if parts[0] in collection_aliases:
+        if collection:
             raise ProcedureSpecError(
                 "procedure_ref_unknown",
                 path,
@@ -997,9 +999,11 @@ def _check_predicate(predicate: GuardPredicate, path: str, lookup: Any) -> None:
             return _template_type(operand.value, path, lookup)
         if operand.kind == "parameter":
             return cast(
-                PropertySchema | None, lookup("$params." + str(operand.parameter_name), path)
+                PropertySchema | None, lookup(str(operand.parameter_name), path, parameter=True)
             )
-        root = "$input." + operand.input_name if operand.input_name else "$" + str(operand.alias)
+        root = (
+            "$input." + operand.input_name if operand.input_name else "$steps." + str(operand.alias)
+        )
         value = lookup(root + ("." + ".".join(operand.path) if operand.path else ""), path)
         if operand.kind in {"count", "truncated", "exists"}:
             if operand.kind == "count" and value is not None and value.type not in {"list", "json"}:

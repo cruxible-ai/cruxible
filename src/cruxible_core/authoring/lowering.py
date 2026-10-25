@@ -3007,7 +3007,13 @@ def _lower_procedure(
     try:
         envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
         format_arguments: dict[str, Any] = (
-            {} if is_blueprint else {"artifact_format": "playbill-procedure-v2"}
+            {}
+            if is_blueprint
+            else {
+                "artifact_format": "cruxible-procedure-v3"
+                if base.compiler == LIGHT_ARTIFACTS_COMPILER
+                else "playbill-procedure-v2"
+            }
         )
         procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
             **format_arguments,

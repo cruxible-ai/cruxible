@@ -553,3 +553,103 @@ def test_v3_retains_the_transform_spec_union_discriminator():
     assert (
         parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact
     )
+
+
+def test_literal_null_is_new_in_v3_and_old_writes_keep_the_frozen_refusal():
+    from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
+    from tests.support.procedures import procedure_artifact
+    from tests.test_procedures.test_procedure_artifacts import _layout_definition
+
+    definition = _layout_definition(halt_before_return=False)
+    predicate = GuardPredicate(
+        left=PredicateOperand(kind="literal", value=None),
+        operator="eq",
+        right=PredicateOperand(kind="literal", value=None),
+    )
+    definition = definition.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"predicate": predicate}) if node.kind == "guard" else node
+                for node in definition.nodes
+            )
+        }
+    )
+    current = procedure_artifact(definition)
+    assert (
+        parse_procedure(
+            render_procedure(current), path="procedures/" + current.identity.name + ".json"
+        )
+        == current
+    )
+    with pytest.raises(ValidationError, match="literal null operands require Procedure v3"):
+        procedure_artifact(definition, artifact_format="playbill-procedure-v2")
+
+
+@pytest.mark.parametrize("change", ["guard_diagnostics", "halt_message"])
+def test_old_envelopes_keep_their_frozen_guard_and_halt_grammar(change):
+    from tests.support.procedures import procedure_artifact
+    from tests.test_procedures.test_procedure_artifacts import _layout_definition
+
+    definition = _layout_definition(halt_before_return=False)
+    definition = definition.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"refusal_code": None, "message": None})
+                if change == "guard_diagnostics" and node.kind == "guard"
+                else node.model_copy(update={"message": "Nothing remains"})
+                if change == "halt_message" and node.kind == "halt"
+                else node
+                for node in definition.nodes
+            )
+        }
+    )
+    current = procedure_artifact(definition)
+    assert (
+        parse_procedure(
+            render_procedure(current), path="procedures/" + current.identity.name + ".json"
+        )
+        == current
+    )
+    with pytest.raises(ValidationError, match="require Procedure v3"):
+        procedure_artifact(definition, artifact_format="playbill-procedure-v2")
+
+
+def test_parameter_operands_and_reserved_looking_step_ids_have_distinct_scopes():
+    authored = spec(
+        params={"limit": "integer"},
+        steps=[
+            {"project": "params", "fields": {"value": "$input.value"}},
+            {"guard": "params.value >= param.limit", "else": "halt(below_limit)"},
+            {"project": "result", "fields": {"value": "$params.value"}},
+        ],
+    )
+    lowered = lower_procedure_spec(authored)
+    assert lowered.definition["nodes"][2]["fields"]["value"] == "$steps.params.value"
+    assert lowered.definition["nodes"][1]["predicate"]["left"]["alias"] == "params"
+    assert lowered.definition["nodes"][1]["predicate"]["right"]["parameter_name"] == "limit"
+
+
+def test_parameter_name_can_match_a_collection_step_alias():
+    authored = spec(
+        input={"subject": "string"},
+        params={"limit": "integer"},
+        steps=[
+            {
+                "claim": "limit",
+                "claim_type": "catalog.entry.value",
+                "subject": "$input.subject",
+                "all": 10,
+            },
+            {"guard": "param.limit > 0", "else": "halt(empty)"},
+            {"project": "result", "fields": {"ok": True}},
+        ],
+    )
+    lowered = lower_procedure_spec(
+        authored,
+        resolve=lambda kind, step: {
+            "output": {"value": PropertySchema(type="integer")},
+            "subject_kind": "catalog.entry",
+        },
+    )
+    assert lowered.definition["nodes"][1]["predicate"]["left"]["parameter_name"] == "limit"
+    assert lowered.definition["nodes"][0]["cardinality"] == "all"

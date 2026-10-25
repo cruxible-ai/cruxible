@@ -171,6 +171,42 @@ class _GraphEnvelope(_StrictProcedureArtifactModel):
         return value
 
     def _check_envelope(self, kind: str) -> None:
+        if getattr(self, "artifact_format", None) != "cruxible-procedure-v3":
+            # The frozen v2/v1 validators refused literal-null operands. The
+            # newly usable arm belongs to v3; old receipts keep that boundary.
+            for node in self.definition.nodes:
+                if node.kind == "guard" and (
+                    getattr(node, "refusal_code", None) is None
+                    or getattr(node, "message", None) is None
+                ):
+                    raise ValueError(
+                        "omitted guard diagnostics require Procedure v3; upgrade the compiler"
+                    )
+                if node.kind == "halt" and getattr(node, "message", None) is not None:
+                    raise ValueError("halt messages require Procedure v3; upgrade the compiler")
+                pending = [
+                    predicate
+                    for predicate in (
+                        getattr(node, "predicate", None),
+                        getattr(node, "until", None),
+                    )
+                    if predicate is not None
+                ]
+                while pending:
+                    predicate = pending.pop()
+                    if any(
+                        operand is not None and operand.kind == "literal" and operand.value is None
+                        for operand in (predicate.left, predicate.right)
+                    ):
+                        raise ValueError(
+                            "literal null operands require Procedure v3; upgrade the compiler"
+                        )
+                    pending.extend(
+                        predicate.all_of
+                        or predicate.any_of
+                        or ((predicate.not_of,) if predicate.not_of else ())
+                    )
+
         if self.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(self.identity.name):
             raise ValueError(f"{kind} identity must be path-addressable")
         if self.definition.name != self.identity.name:
