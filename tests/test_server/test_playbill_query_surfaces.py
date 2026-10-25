@@ -227,14 +227,14 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
 def test_the_spec_tool_answers_with_the_same_evaluation(
     served: tuple[CruxibleClient, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
     from cruxible_core.mcp import handlers
     from cruxible_core.mcp.curation import PROFILE_DEFAULT, ToolCuration, advertised_tool_names
     from tests.core_support._knowledge_loop_support import work_item_query
 
     client, instance_id = served
-    spec = QueryDefinitionSpec.model_validate(
-        {**work_item_query("project.adhoc").model_dump(mode="json"), "pins": []}
+    spec = NamedQueryDefinitionSpec.model_validate(
+        work_item_query("project.adhoc").model_dump(mode="json")
     )
     through_sdk = client.query(
         instance_id,

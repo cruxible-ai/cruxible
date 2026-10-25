@@ -21,7 +21,7 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectCard,
 )
 from cruxible_client.contracts.orient import ORIENT_KIND_FIELDS
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -451,7 +451,7 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
     spec = {
         row["subject"]: row
         for row in _exact_query(
-            instance, spec=QueryDefinitionSpec.model_validate({**declared, "pins": []})
+            instance, spec=NamedQueryDefinitionSpec.model_validate(declared)
         ).rows
     }
     for seeded_claim, shown in ((ruling, text), (long_ruling, cut), (binary, marker)):
@@ -549,8 +549,8 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
     assert rows["wi-44"]["status"] == cut and rows["wi-42"]["status"] == "ready"
     (found,) = _exact_query(instance, contains="long literal note").rows
     assert found["value"] == cut
-    spec = QueryDefinitionSpec.model_validate(
-        {**work_item_query("project.notes").model_dump(mode="json"), "pins": []}
+    spec = NamedQueryDefinitionSpec.model_validate(
+        work_item_query("project.notes").model_dump(mode="json")
     )
     by_id = {row["item_id"]: row for row in _exact_query(instance, spec=spec).rows}
     assert by_id["wi-44"]["status"] == cut
@@ -579,7 +579,7 @@ def test_projected_exact_content_follows_the_engines_visibility_policy(
     declared = work_item_query("project.exact.contradicted").model_dump(mode="json")
     declared["evaluation_policy"]["visible_verdicts"] = ["contradicted"]
     rows = _exact_query(
-        instance, spec=QueryDefinitionSpec.model_validate({**declared, "pins": []})
+        instance, spec=NamedQueryDefinitionSpec.model_validate(declared)
     ).rows
 
     assert {row["item_id"]: row["status"] for row in rows} == {
@@ -716,7 +716,7 @@ def _one_result_spec(conflict_behavior: str) -> QueryDefinitionSpec:
     declared["default_budgets"]["max_results"] = 1
     declared["maximum_budgets"]["max_results"] = 1
     declared["evaluation_policy"]["conflict_behavior"] = conflict_behavior
-    return QueryDefinitionSpec.model_validate({**declared, "pins": []})
+    return NamedQueryDefinitionSpec.model_validate(declared)
 
 
 @pytest.mark.parametrize("conflict_behavior", ["surface_conflicts", "refuse_on_conflict"])
@@ -937,7 +937,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
 
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
     from cruxible_client.contracts.policies import ClaimResolutionPolicy
-    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
     from cruxible_client.contracts.read_values import ExactContentRef
     from tests.core_support import _exact_content_support as support
     from tests.core_support._candidate_support import submit_query_definition_candidate
@@ -991,7 +991,7 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
     compact = by_subject(
         _exact_query(instance, kind=support.EXACT_KIND, select=["status"]).rows, "status"
     )
-    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    spec = NamedQueryDefinitionSpec.model_validate(query.model_dump(mode="json"))
     projected = _exact_query(instance, spec=spec)
     named = _exact_query(instance, name="project.exact.many")
     (status_column,) = (item for item in projected.columns if item.name == "status")
@@ -1138,7 +1138,7 @@ def test_only_subject_references_lose_their_prefix_in_a_projection(tmp_path: Pat
     compact = row_of(kind=KIND, select=["notes", "governs"])
     assert sorted(compact["notes"]) == ["Subject:literal data", "plain"]
     assert sorted(compact["governs"]) == [f"{KIND}/wi-2", f"{KIND}/wi-3"]
-    spec = QueryDefinitionSpec.model_validate({**query.model_dump(mode="json"), "pins": []})
+    spec = NamedQueryDefinitionSpec.model_validate(query.model_dump(mode="json"))
     for projected in (row_of(spec=spec), row_of(name="project.notes-and-governs")):
         assert sorted(projected["notes"]) == sorted(compact["notes"])
         assert sorted(projected["governs"]) == sorted(compact["governs"])

@@ -19,6 +19,8 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.declared_blocks import projection_query_semantic_result_digest
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
+    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
     parse_query_definition,
@@ -34,6 +36,7 @@ from cruxible_core.query.engine import claim_query_result_digest
 from cruxible_core.service.discovery.query import service_run_playbill_query
 from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal, work_item_query
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
 NOW = datetime(2026, 9, 16, tzinfo=UTC)
@@ -48,7 +51,12 @@ def definition(
     max_results=100,
     artifact_format="cruxible-query-definition-v3",
 ):
-    return QueryDefinition(
+    model = (
+        NamedQueryDefinition
+        if artifact_format == "cruxible-query-definition-v3"
+        else QueryDefinition
+    )
+    return model(
         artifact_format=artifact_format,
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryArtifactsEntry(
@@ -110,7 +118,9 @@ def test_invalid_scope_is_not_a_broad_read(entry):
 
 
 def test_v1_definition_and_result_encoding_stay_frozen():
-    old = work_item_query().model_copy(update={"artifact_format": "playbill-query-definition-v1"})
+    old = work_item_query(named=False).model_copy(
+        update={"artifact_format": "playbill-query-definition-v1"}
+    )
     assert (
         parse_query_definition(
             render_query_definition(old), path=query_definition_path(old.identity.name)
@@ -221,9 +231,8 @@ def test_limits_and_bad_parameters_are_explicit(tmp_path):
 def test_changeset_resolves_query_vocabulary_without_manual_pins(tmp_path):
     instance, _ = initialize_local(tmp_path)
     payload = work_item_query().model_dump(mode="json")
-    payload["pins"] = []
     draft = QueryDefinitionInput(
-        kind="query_definition", query_definition=QueryDefinitionSpec.model_validate(payload)
+        kind="query_definition", query_definition=NamedQueryDefinitionSpec.model_validate(payload)
     )
     members = (
         ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.status")),
@@ -433,7 +442,7 @@ def test_old_compiler_cannot_reinterpret_artifact_query_format():
 
 @pytest.mark.parametrize("failure", ["absent", "retired", "explicit_mismatch"])
 def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, failure):
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     claim_type = _predicate_type("project.work_item.status")
     if failure != "absent":
         accept(instance, owner, claim_type)
@@ -449,7 +458,7 @@ def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, 
                 }
             ),
         )
-    body = work_item_query().model_dump(mode="json")
+    body = work_item_query(named=False).model_dump(mode="json")
     if failure == "explicit_mismatch":
         body["pins"][0]["artifact_digest"] = "sha256:" + "0" * 64
     else:
