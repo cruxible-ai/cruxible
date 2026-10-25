@@ -237,7 +237,9 @@ def test_create_and_compile_refuse_working_selection_with_bind_repair(
 
 
 def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, _owner = initialize_legacy_local(tmp_path)
     coordinator = _coordinator(instance)
     definition = _triage_definition()
 

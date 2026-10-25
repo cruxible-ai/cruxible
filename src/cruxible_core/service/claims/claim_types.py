@@ -21,6 +21,7 @@ from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
     ClaimTypeInputRecord,
     identity_rules_supported,
+    install_builtin_capture_dependencies,
     lint_claim_type_input,
     lower_claim_type_input,
 )
@@ -211,6 +212,12 @@ def service_propose_playbill_claim_type_input(
         forked = tree.fork()
         forked[path] = render_claim_type(claim_type)
         candidate_tree = forked
+    if coordinate.compiler == LIGHT_ARTIFACTS_COMPILER:
+        from cruxible_core.derived.derived_state import fork_tree
+
+        with_dependencies = fork_tree(candidate_tree)
+        install_builtin_capture_dependencies(claim_type, with_dependencies)
+        candidate_tree = with_dependencies
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
     inspection = admit_proposal(
         instance,
