@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     ValidationError,
@@ -97,6 +98,15 @@ _SUBJECT_SHORTHAND_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
     r"(?P<id>[^/\\\x00-\x1f\x7f]{1,1024})$"
 )
+
+
+def _authored_procedure_input_shape(value: object) -> object:
+    """The declared bare spec is also an authoring input, including in sets."""
+    if isinstance(value, ProcedureSpec):
+        return {"kind": "procedure", "spec": value}
+    if isinstance(value, dict) and "kind" not in value and "procedure" in value:
+        return {"kind": "procedure", **value}
+    return value
 
 
 class _StrictInputModel(BaseModel):
@@ -535,6 +545,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | BlueprintInstanceInput
     | ProcedureInput,
     Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
 ]
 
 
@@ -570,6 +581,7 @@ AuthoringInput: TypeAlias = Annotated[
     | SubjectKindInput
     | ChangeSetInput,
     Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
 ]
 
 

@@ -79,6 +79,13 @@ def test_shared_authoring_envelope():
         {"kind": "procedure", **authored.model_dump(mode="json", by_alias=True)}
     )
     assert flat == wrapped
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput, ChangeSetInput
+
+    bare = authored.model_dump(mode="json", by_alias=True)
+    assert TypeAdapter(AuthoringInput).validate_python(bare) == wrapped
+    assert ChangeSetInput(kind="change_set", members=(bare,)).members == (wrapped,)
     payload = lower_authoring_input(wrapped)
     assert payload.definition["procedure_spec"]["procedure"] == authored.procedure
 
