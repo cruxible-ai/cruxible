@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     ProviderInterfaceRegistrationV1,
+    interface_definition_digest,
     provider_interface_definition_digest,
     render_provider_interface,
 )
@@ -68,7 +69,7 @@ def _definition() -> tuple[ProcedureDefinition, ArtifactPin, ArtifactPin]:
     interface_pin = pin(
         "provider-interface",
         "ProviderInterface",
-        "demo.interface",
+        interface.registration.identity.name,
         value=interface.artifact_digest,
     )
     contract_in = pin("contract-in", "Contract", "provider-input")
@@ -83,7 +84,7 @@ def _definition() -> tuple[ProcedureDefinition, ArtifactPin, ArtifactPin]:
                 node_id="direct",
                 provider=provider_pin,
                 interface=interface_pin,
-                interface_digest=interface.registration.interface_digest,
+                interface_digest=interface_definition_digest(interface.registration),
                 implementation_digest=implementation_digest,
                 contract_in=contract_in,
                 contract_out=contract_out,
@@ -239,10 +240,30 @@ def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     monkeypatch,
     contracted_demo: None,
 ) -> None:
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceDefinition,
+        provider_interface_contract,
+    )
+
+    registration = provider_interface_contract(
+        interface=ProviderInterfaceDefinition(
+            interface_id="demo.interface",
+            version=1,
+            effect_class="external_read",
+            contracts={
+                "input": PERMISSIVE_CONTRACT.model_dump(mode="json"),
+                "output": PERMISSIVE_CONTRACT.model_dump(mode="json"),
+            },
+        )
+    )
+    monkeypatch.setattr(p2b1_support, "interface_registration", lambda: registration)
     monkeypatch.setattr(
         __name__ + ".accepted_provider",
         lambda: accepted_build(p2b1_support.provider_v2()),
     )
+    from cruxible_client.contracts.named_references import name_line, name_provider
+    from cruxible_client.contracts.procedures.names import name_procedure
+
     instance, _owner = initialize_local(tmp_path)
     interface = accepted_interface()
     provider = accepted_provider()
@@ -250,9 +271,9 @@ def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     line = _line()
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[interface.path] = render_provider_interface(interface.registration)
-    tree[provider.path] = render_provider(provider.provider)
-    tree[procedure.path] = render_procedure(procedure.procedure)
-    tree[line_spec_path(line.identity.name)] = render_line_spec(line)
+    tree[provider.path] = render_provider(name_provider(provider.provider))
+    tree[procedure.path] = render_procedure(name_procedure(procedure.procedure))
+    tree[line_spec_path(line.identity.name)] = render_line_spec(name_line(line))
 
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
