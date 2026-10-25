@@ -242,6 +242,8 @@ def _measurements(
 def _procedure(
     query_digest: str,
     declarations: tuple[ProcedureMeasurementDeclaration, ...],
+    *,
+    named: bool = True,
 ) -> ProcedureArtifact:
     input_contract = _contract("empty-input", {})
     output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
@@ -330,7 +332,7 @@ def _procedure(
             ),
         )
     )
-    return ProcedureArtifact(
+    artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -345,6 +347,12 @@ def _procedure(
         ),
         activation_policy="abort",
     )
+
+    if named:
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        return name_procedure(artifact)
+    return artifact
 
 
 OTHER_QUERY_NAME = "project.other_items"
@@ -424,7 +432,13 @@ def _world_on(
             statement_digest=statement_digest,
             query_options=query_options,
         )
-    procedure = _procedure(accepted_query_digest, declarations)
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    procedure = _procedure(
+        accepted_query_digest,
+        declarations,
+        named=instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER,
+    )
     _activate_procedure(instance, owner, procedure, sequence=4, timestamp=ACCEPT_STAMP)
     return instance, owner, procedure
 
@@ -537,6 +551,29 @@ def test_all_kinds_and_grains_resolve_from_real_evidence_and_credit_the_run(
     assert unit.reading.run_id == run.run_id
     assert unit.reading.run_receipt_digest == run.receipt_digest
     assert unit.reading.grade == "contract"
+    from cruxible_core.exhaust import parse_journal_payload
+    from cruxible_core.procedures.execution import accepted_procedure_pin_set_digest
+    from cruxible_core.procedures.readings import ProcedureReadingV1
+    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    assert run.receipt is not None
+    bound = _accepted_procedure(
+        instance,
+        name=procedure.identity.name,
+        coordinate=instance.accepted_coordinate(),
+        bind_references=True,
+    )
+    assert bound.procedure.pins == run.receipt.validated_pins
+    for stored in _reading_records(instance, procedure):
+        payload = parse_journal_payload(
+            instance.body_store().read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        reading = ProcedureReadingV1.model_validate(payload)
+        assert reading.pin_set_digest == accepted_procedure_pin_set_digest(bound)
     assert unit.reading.observed_at == OBSERVE_AT
 
     node = rows["hot-claim"]
@@ -1357,6 +1394,9 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             sorted((procedure_pin, policy_pin), key=lambda pin: (pin.role, pin.target.qualified))
         ),
     )
+    from cruxible_client.contracts.named_references import name_line
+
+    line = name_line(line)
     mandate = ProcedureMandateV1(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="measured-line-mandate"),
         procedure=procedure_pin,
