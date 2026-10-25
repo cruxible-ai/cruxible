@@ -1579,17 +1579,32 @@ def _source_capture_association_fields(
 def verify_line_admission_spec(
     admission: ProcedureRunAdmissionV3,
     accepted_line: AcceptedLineSpec,
+    *,
+    procedure_binding: ArtifactPin | None = None,
+    acquisition_policy_binding: ArtifactPin | None = None,
 ) -> None:
-    """Bind a V3 admission to the exact accepted LineSpec that placed it."""
+    """Bind admission to exact Line bytes and its coordinate-resolved references."""
 
     if (
         admission.line_identity != accepted_line.line.identity
         or admission.line_spec_digest != accepted_line.artifact_digest
     ):
         raise ExecutionError("Line admission names another accepted LineSpec")
-    if admission.procedure_artifact_digest != accepted_line.line.procedure.artifact_digest:
+    procedure = accepted_line.line.procedure
+    if isinstance(procedure, ArtifactNameRef):
+        if procedure_binding is None or procedure_binding.target != procedure.target:
+            raise ExecutionError("Line Procedure name requires a coordinate-resolved binding")
+        procedure = procedure_binding
+    if (
+        admission.procedure_identity != procedure.target
+        or admission.procedure_artifact_digest != procedure.artifact_digest
+    ):
         raise ExecutionError("Line admission names another Procedure artifact")
     policy = accepted_line.line.acquisition_policy
+    if isinstance(policy, ArtifactNameRef):
+        if acquisition_policy_binding is None or acquisition_policy_binding.target != policy.target:
+            raise ExecutionError("Line policy name requires a coordinate-resolved binding")
+        policy = acquisition_policy_binding
     # A Source-free Line pins no acquisition policy; its admission binds the
     # accepted runtime policy digest instead, which the admission digest seals.
     if policy is not None and admission.acquisition_policy_digest != policy.artifact_digest:

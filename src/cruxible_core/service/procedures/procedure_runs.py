@@ -5120,7 +5120,33 @@ def service_prepare_playbill_line_admission(
         )
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
-        verify_line_admission_spec(bound, accepted_line)
+        procedure_binding = None
+        if isinstance(accepted_line.line.procedure, ArtifactNameRef):
+            procedure = _accepted_procedure(
+                instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+            )
+            procedure_binding = ArtifactPin(
+                role="procedure",
+                target=procedure.procedure.identity,
+                artifact_digest=procedure.artifact_digest,
+            )
+        policy_binding = None
+        if isinstance(accepted_line.line.acquisition_policy, ArtifactNameRef):
+            policies = _accepted_acquisition_policies(
+                instance, coordinate, pin=accepted_line.line.acquisition_policy
+            )
+            if not policies:
+                raise ExecutionError("Line acquisition policy is unavailable at admission")
+            digest, acquisition = policies[0]
+            policy_binding = ArtifactPin(
+                role="acquisition-policy", target=acquisition.identity, artifact_digest=digest
+            )
+        verify_line_admission_spec(
+            bound,
+            accepted_line,
+            procedure_binding=procedure_binding,
+            acquisition_policy_binding=policy_binding,
+        )
     except ExecutionError as exc:
         return ProcedureAdmissionRefusal(
             code="artifact_binding_mismatch",

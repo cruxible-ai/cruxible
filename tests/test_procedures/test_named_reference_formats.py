@@ -744,3 +744,47 @@ def test_frozen_v1_erasure_authorization_keeps_its_exact_rule_pin():
         == authorized
     )
     assert render_capture_contract(contract) == original
+
+
+def test_named_line_admission_checks_exact_coordinate_bindings(tmp_path):
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.errors import ExecutionError
+    from cruxible_client.contracts.named_references import name_line
+    from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
+    from cruxible_core.procedures.execution import verify_line_admission_spec
+    from tests.test_procedures.test_procedure_execution import (
+        _accepted_line_for_admission,
+        _fixture,
+        _line_admission,
+        _state_procedure,
+    )
+
+    procedure = _state_procedure()
+    admission = _line_admission(procedure, _fixture(tmp_path))
+    old = _accepted_line_for_admission(admission, procedure)
+    line = name_line(old.line)
+    named = AcceptedLineSpec(
+        path=old.path, line=line, artifact_digest=line_spec_digest(line).tagged
+    )
+    admission = admission.model_copy(update={"line_spec_digest": named.artifact_digest})
+    binding = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
+    policy = old.line.acquisition_policy
+    verify_line_admission_spec(
+        admission,
+        named,
+        procedure_binding=binding,
+        acquisition_policy_binding=policy,
+    )
+    with pytest.raises(ExecutionError, match="coordinate-resolved"):
+        verify_line_admission_spec(admission, named)
+    with pytest.raises(ExecutionError, match="another Procedure"):
+        verify_line_admission_spec(
+            admission,
+            named,
+            procedure_binding=binding.model_copy(update={"artifact_digest": "sha256:" + "f" * 64}),
+            acquisition_policy_binding=policy,
+        )
