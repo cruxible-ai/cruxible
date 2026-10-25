@@ -77,7 +77,7 @@ def _served_line(
         target=policy.identity,
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
-    return LineSpec(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -98,6 +98,10 @@ def _served_line(
             )
         ),
     )
+
+    from cruxible_client.contracts.named_references import name_line
+
+    return name_line(line)
 
 
 def _line_mandate(accepted: AcceptedProcedure) -> ProcedureMandateV1:

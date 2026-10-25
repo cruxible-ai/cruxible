@@ -351,6 +351,9 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
         ),
         activation_policy="drain",
     )
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    procedure = name_procedure(procedure)
     return AcceptedProcedure(
         path=procedure_path(name),
         procedure=procedure,
@@ -364,7 +367,7 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
         target=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
     )
-    return LineSpec(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -379,6 +382,10 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),
     )
+
+    from cruxible_client.contracts.named_references import name_line
+
+    return name_line(line)
 
 
 def _accepted_trigger(trigger: Trigger) -> AcceptedTrigger:
@@ -697,7 +704,11 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         timestamp=TIMESTAMP,
     )
     accept_proposal(instance, owner, inspection)
-    procedure = _accepted_query_procedure(query_definition_digest(query).tagged).procedure
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    procedure = name_procedure(
+        _accepted_query_procedure(query_definition_digest(query).tagged).procedure
+    )
     _activate_procedure(
         instance,
         owner,
@@ -721,7 +732,12 @@ def _actor(instance) -> GovernedActorContext:  # type: ignore[no-untyped-def]
 
 def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-untyped-def]
     old_output_pin = procedure.definition.contract_out
-    assert isinstance(old_output_pin, ArtifactPin)
+    from cruxible_client.contracts.artifacts import ArtifactNameRef
+
+    if procedure.artifact_format == "playbill-procedure-v2":
+        assert isinstance(old_output_pin, ArtifactPin)
+    else:
+        assert isinstance(old_output_pin, ArtifactNameRef)
     project = procedure.definition.nodes[-1]
     list_output = _contract(
         "query-rows-list",
@@ -757,7 +773,7 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
             "budget": procedure.definition.budget.model_copy(update={"max_items": max_items}),
         }
     )
-    return procedure.model_copy(
+    successor = procedure.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
@@ -785,6 +801,12 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
             ),
         }
     )
+
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        return name_procedure(successor)
+    return successor
 
 
 def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Path) -> None:
@@ -1281,6 +1303,9 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             ),
         }
     )
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    pipeline = name_procedure(pipeline)
     _activate_procedure(
         instance,
         owner,
