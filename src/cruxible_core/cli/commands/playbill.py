@@ -5908,7 +5908,7 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     """
 
     if result.card is not None:
-        card = result.card.model_dump(mode="json")
+        card = result.card.model_dump(mode="json", by_alias=result.kind == "procedure")
         if isinstance(card.get("evidence"), list):
             card["evidence"] = [_public_name(str(name)) for name in card["evidence"]]
         for rule in card.get("evidence_rules") or ():

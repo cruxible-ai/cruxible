@@ -31,7 +31,9 @@ _ROLE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 
 class _StrictProcedureModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True, json_schema_mode_override="validation"
+    )
 
 
 def _canonical_identifier(value: str, pattern: re.Pattern[str], *, label: str) -> str:

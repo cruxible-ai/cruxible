@@ -266,6 +266,8 @@ class ProcedureInput(_StrictInputModel):
 
     @model_validator(mode="after")
     def _one_form(self) -> "ProcedureInput":
+        if self.spec is None and not self.definition:
+            raise ValueError("a Procedure input requires spec or definition")
         if self.spec is not None and (self.definition or self.contracts):
             raise ValueError("use either spec or definition/contracts")
         return self

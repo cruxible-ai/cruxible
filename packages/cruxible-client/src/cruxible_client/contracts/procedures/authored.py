@@ -70,7 +70,11 @@ Template: TypeAlias = JsonValue
 
 class _Model(BaseModel):
     model_config = ConfigDict(
-        extra="forbid", frozen=True, populate_by_name=True, json_schema_mode_override="validation"
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+        serialize_by_alias=True,
+        json_schema_mode_override="validation",
     )
 
 
@@ -277,7 +281,11 @@ class ProcedureSpec(_Model):
     output: dict[str, FieldType] | None = None
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     halt_order: tuple[NodeId, ...] = ()
-    source: ProcedureSourceProgram | None = None
+    source: ProcedureSourceProgram | None = Field(
+        default=None,
+        json_schema_extra={"readOnly": True},
+        description="Retained AST provenance; revise it through source authoring.",
+    )
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
     annotations: JsonValue = Field(default_factory=dict)
 

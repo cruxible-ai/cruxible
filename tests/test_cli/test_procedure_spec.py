@@ -13,9 +13,10 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
         {
             "procedure": "readable",
             "input": {},
-            "returns": "last",
+            "returns": {"from": "last"},
             "steps": [
                 {"project": "first", "fields": {"value": literal}},
+                {"guard": 'first.value != ""', "else": "halt(empty)"},
                 {"project": "last", "fields": {"value": "$first.value"}},
             ],
         }
@@ -27,3 +28,5 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
     assert '"project": "first"' in shown
     assert '"project": "last"' in shown
     assert '"value": "$first.value"' in shown
+    assert '"else": "halt(empty)"' in shown
+    assert '"from": "last"' in shown
