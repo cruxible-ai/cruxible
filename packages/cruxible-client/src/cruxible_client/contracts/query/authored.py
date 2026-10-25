@@ -10,12 +10,13 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, NoReturn, Protocol, TypeVar, cast
+from typing import Literal, NoReturn, Protocol, TypeVar, cast
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryDefinitionSpec,
@@ -103,7 +104,7 @@ class QuerySpecInput(_AuthoredModel):
         return ArtifactIdentity(kind="QueryDefinition", name=self.query)
 
 
-class QuerySpecError(ValueError):
+class QuerySpecError(FormatError):
     """A local authored refusal, retaining the source path and token column."""
 
     def __init__(self, code: str, message: str, *, path: str, column: int | None = None):
@@ -115,8 +116,8 @@ class QuerySpecError(ValueError):
 
 @dataclass(frozen=True)
 class FilterOperand:
-    kind: Literal["reference", "parameter", "literal", "name"]
-    value: Any
+    kind: Literal["reference", "parameter", "literal", "name", "decimal"]
+    value: str | int | bool | None
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,8 @@ class _FilterParser:
             or token in {"true", "false", "null"}
             or re.fullmatch(r"-?\d+(?:\.\d+)?", token)
         ):
+            if re.fullmatch(r"-?\d+\.\d+", token):
+                return FilterOperand("decimal", token)
             try:
                 value = json.loads(token)
             except ValueError:
@@ -319,7 +322,7 @@ class _LowerQuery:
         if operand.kind == "reference" or (
             operand.kind == "name" and operand.value in self.bindings
         ):
-            ref, actual = self.ref(operand.value, path)
+            ref, actual = self.ref(str(operand.value), path)
             if actual != value_type:
                 raise QuerySpecError(
                     "cruxible.query.value_type_mismatch",
@@ -328,7 +331,7 @@ class _LowerQuery:
                 )
             return ref
         if operand.kind == "parameter":
-            declared = self.spec.params.get(operand.value)
+            declared = self.spec.params.get(str(operand.value))
             if declared is None:
                 raise QuerySpecError(
                     "cruxible.query.parameter_undeclared",
@@ -342,8 +345,14 @@ class _LowerQuery:
                     f"parameter is {declared}, predicate is {value_type}",
                     path=path,
                 )
-            return QueryParameterRef(parameter=operand.value)
-        value = operand.value
+            return QueryParameterRef(parameter=str(operand.value))
+        value: object = operand.value
+        if operand.kind == "decimal" and value_type != "decimal":
+            raise QuerySpecError(
+                "cruxible.query.value_type_mismatch",
+                f"decimal literal cannot compare with {value_type}",
+                path=path,
+            )
         if isinstance(left, QueryClaimValueRef):
             value = self.resolver.literal(left.predicate, operator, value, path=path)
         return QueryLiteralRef(value=value)
@@ -363,7 +372,7 @@ class _LowerQuery:
                 if isinstance(child, QueryClaimPresenceFilter):
                     return child.model_copy(update={"negated": not child.negated})
                 return QueryNegationFilter(operand=child)
-            left, value_type = self.ref(expr.operands[0].value, path)
+            left, value_type = self.ref(str(expr.operands[0].value), path)
             if expr.kind == "presence":
                 if not isinstance(left, QueryClaimValueRef):
                     raise QuerySpecError(

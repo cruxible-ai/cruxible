@@ -237,3 +237,27 @@ def test_new_query_formats_are_gated_by_compiler_revision(light, format, tree, r
     ]
     assert "upgrade the compiler" in verdict.diagnostics[0].message
     assert parse_query_definition(wire, path=path).artifact_format == format
+
+
+def test_decimal_filter_preserves_its_exact_spelling(resolver):
+    from dataclasses import replace
+
+    from cruxible_core.service.discovery.query_vocabulary import QueryVocabulary
+
+    info = resolver.vocabulary.predicates["security.incident.name"]
+    numeric = replace(
+        info,
+        value_type="decimal",
+        claim_type=info.claim_type.model_copy(
+            update={"literal_schema": {"type": "number"}, "canonical_form": ()}
+        ),
+    )
+    vocabulary = QueryVocabulary(
+        predicates={numeric.predicate: numeric}, kinds=("security.incident",)
+    )
+    query = lower_query_spec(
+        simple(where="incident.name > 0.100"), AuthoredQueryResolver(vocabulary)
+    )
+    assert query.where.value_type == "decimal"
+    assert query.where.right.value == "0.100"
+    assert parse_filter("incident.name > 0.100").operands[1].kind == "decimal"
