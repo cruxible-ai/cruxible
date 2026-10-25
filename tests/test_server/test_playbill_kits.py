@@ -2250,3 +2250,24 @@ def test_a_release_with_inert_files_installs_as_the_same_release(
     consumer.settle(proposed)
     (installed,) = transport.kit_status(consumer.instance_id).kits
     assert installed.content_digest == built.bundle.manifest.content_digest
+
+
+def test_a_kit_carries_a_named_policy_without_pinning_its_versions(worlds):
+    publisher, consumer = worlds
+    name = "acme.reader.count"
+    path = f"procedures/{name}.json"
+    _author_policy(publisher, 1)
+    _author_counting_procedure(publisher, name=name)
+    release = publisher.build("1.0.0", owns=("acme.reader.",))
+    assert set(release.contents()) == {path, POLICY_PATH}
+    procedure = parse_procedure(release.contents()[path], path=path)
+    assert procedure.acquisition_policy == POLICY
+    assert not any(pin.role == "acquisition-policy" for pin in procedure.pins)
+    assert consumer.add(release).status == "accepted"
+    before = consumer.tree()[path]
+    _author_policy(publisher, 2)
+    upgraded = consumer.add(publisher.build("1.1.0", owns=("acme.reader.",)))
+    assert upgraded.status == "accepted"
+    assert consumer.tree()[path] == before
+    assert _live_policy(consumer).max_age == CanonicalDuration(microseconds=120_000_000)
+    assert consumer.pb.accepted_procedure(name).run().status == "succeeded"

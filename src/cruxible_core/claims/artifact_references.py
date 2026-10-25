@@ -84,8 +84,8 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     # A ProviderInterface is carried as its package registers it; its pins are
     # its only references (its other digests are its own content).
     "provider-interfaces/": (("pins", *_PIN),),
-    # A policy's coherence digests name built-in capture components, and its
-    # rules' digests are values: only its pins are references.
+    # Only historical v1 policies carry pins; age-only v2 policies have no
+    # digest references. Coherence and rule digests were values, not references.
     "source-acquisition-policies/": (("pins", *_PIN),),
     "claims/": (
         ("statement", "claim_type_digest"),
@@ -115,6 +115,10 @@ def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tup
             continue
         for steps in fields:
             yield from _identities_at(payload, steps)
+    if path.startswith("procedures/"):
+        policy = payload.get("acquisition_policy")
+        if isinstance(policy, str):
+            yield "SourceAcquisitionPolicy", policy
     if path.startswith("subject-kinds/"):
         # A keyed SubjectKind names its key ClaimTypes by predicate.
         rule = payload.get("identity_rule")
