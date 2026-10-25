@@ -474,14 +474,18 @@ def verify_source_bindings(
             )
         }
     )
-    if by_name or getattr(definition, "graph_format") == 7:
+    if by_name or definition.graph_format == 7:
+        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
         from cruxible_client.contracts.procedures.names import named_graph
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        expected_graph = named_graph(expected.model_dump(mode="json", by_alias=True))
-        actual_graph = named_graph(compiled.definition.model_dump(mode="json", by_alias=True))
-        expected_graph.pop("source", None)
-        actual_graph.pop("source", None)
-        if actual_graph != expected_graph:
-            raise ValueError("Procedure source bindings violate the candidate graph contract")
-    elif compiled.definition != expected:
+        def comparable(value: ProcedureDefinition) -> object:
+            body = named_graph(value.model_dump(mode="json", by_alias=True))
+            body.pop("source", None)
+            return compact_procedure(NamedProcedureDefinition.model_validate(body))
+
+        matches = comparable(compiled.definition) == comparable(expected)
+    else:
+        matches = compiled.definition == expected
+    if not matches:
         raise ValueError("Procedure source bindings differ from their accepted definitions")

@@ -618,3 +618,16 @@ def test_named_retained_source_reproduces_without_digest_selections():
     assert "artifact_digest" not in str(source)
     assert "interface_digest" not in str(source)
     assert "implementation_digest" not in str(source)
+
+
+def test_named_retained_source_matches_compact_candidate_graph():
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_core.authoring.procedure_source import verify_source_bindings
+
+    compiled = compile("""
+        def example(request):
+            return Output.value(value='named')
+    """)
+    original = name_procedure(accepted(compiled).procedure)
+    verify_source_bindings(original, lookup=lambda identity: None, claim_types=(), by_name=True)
+    assert original.definition.graph_format == 7
