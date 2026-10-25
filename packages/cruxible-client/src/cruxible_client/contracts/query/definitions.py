@@ -13,7 +13,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -497,7 +497,10 @@ class QueryDefinitionSpec(QueryDefinition):
     @model_validator(mode="before")
     @classmethod
     def _defaults(cls, data: Any) -> Any:
-        return query_spec_defaults(data) if isinstance(data, Mapping) else data
+        if isinstance(data, Mapping):
+            data = QueryDefinition._v3_defaults(data)
+            return query_spec_defaults(data)
+        return data
 
     def _validate_pins(self) -> None:
         referenced = set(self.referenced_predicates)
@@ -543,15 +546,9 @@ def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
     if query.artifact_format != "cruxible-query-definition-v3":
         return query.model_dump(mode="json")
 
-    def compact(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: compact(item) for key, item in value.items() if key != "tag"}
-        if isinstance(value, list):
-            return [compact(item) for item in value]
-        return value
-
-    # Real union discriminators are semantic even when their models default them.
-    def kinds(model: BaseModel, output: dict[str, Any]) -> None:
+    def compact(model: BaseModel, output: dict[str, Any]) -> None:
+        # Tags belong to declared model positions, never to opaque JSON data.
+        output.pop("tag", None)
         if "kind" in type(model).model_fields:
             output["kind"] = getattr(model, "kind")
         for name in type(model).model_fields:
@@ -559,14 +556,14 @@ def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
             if name not in output:
                 continue
             if isinstance(child, BaseModel) and isinstance(output[name], dict):
-                kinds(child, output[name])
+                compact(child, output[name])
             elif isinstance(child, tuple) and isinstance(output[name], list):
                 for source, target in zip(child, output[name], strict=True):
                     if isinstance(source, BaseModel) and isinstance(target, dict):
-                        kinds(source, target)
+                        compact(source, target)
 
-    body = cast(dict[str, Any], compact(query.model_dump(mode="json", exclude_defaults=True)))
-    kinds(query, body)
+    body = query.model_dump(mode="json", exclude_defaults=True)
+    compact(query, body)
     body["artifact_format"] = query.artifact_format
     if query.result_binding == query.entry.binding:
         body.pop("result_binding", None)

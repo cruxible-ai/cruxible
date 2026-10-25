@@ -261,3 +261,45 @@ def test_decimal_filter_preserves_its_exact_spelling(resolver):
     assert query.where.value_type == "decimal"
     assert query.where.right.value == "0.100"
     assert parse_filter("incident.name > 0.100").operands[1].kind == "decimal"
+
+
+def test_v3_preserves_opaque_literal_tags_and_kinds(tree, resolver):
+    from cruxible_client.contracts.query.grammar import (
+        QueryLiteralRef,
+        QueryProjection,
+        QueryProjectionField,
+    )
+
+    query = lower_query_spec(simple(), resolver).model_copy(
+        update={
+            "artifact_format": "cruxible-query-definition-v3",
+            "projection": QueryProjection(
+                fields=(
+                    QueryProjectionField(
+                        name="data",
+                        value=QueryLiteralRef(
+                            value={"tag": "user", "nested": [{"tag": "also-user", "kind": "data"}]}
+                        ),
+                    ),
+                )
+            ),
+        }
+    )
+    wire = render_query_definition(query)
+    restored = type(query).model_validate_json(wire)
+    assert restored.projection == query.projection
+    assert restored.projection.fields[0].value.value["tag"] == "user"
+    assert restored.projection.fields[0].value.value["nested"][0]["tag"] == "also-user"
+
+
+def test_compact_v3_input_restores_equal_budgets_before_spec_defaults(resolver):
+    from cruxible_client.contracts.authoring.models import QueryDefinitionAuthoringPayload
+
+    query = lower_query_spec(simple(limit=2000), resolver).model_copy(
+        update={"artifact_format": "cruxible-query-definition-v3"}
+    )
+    wire = json.loads(render_query_definition(query))
+    assert "default_budgets" not in wire
+    payload = QueryDefinitionAuthoringPayload.model_validate({"query_definition": wire})
+    assert payload.query_definition.default_budgets == query.maximum_budgets
+    assert payload.query_definition.maximum_budgets == query.maximum_budgets
