@@ -285,12 +285,14 @@ def resolve_source(
         else:
             child = require("Procedure", selected.name, ProcedureArtifact)
 
-            def contract(pin: ArtifactPin | ProcedurePinSlotRef) -> ContractSchema:
-                if isinstance(pin, ArtifactPin):
+            def contract(
+                pin: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef,
+            ) -> ContractSchema:
+                if isinstance(pin, ArtifactPin | ArtifactNameRef):
                     for contract in child.owned_contracts:
-                        if (
-                            contract.identity == pin.target
-                            and procedure_owned_contract_digest(contract).tagged
+                        if contract.identity == pin.target and (
+                            isinstance(pin, ArtifactNameRef)
+                            or procedure_owned_contract_digest(contract).tagged
                             == pin.artifact_digest
                         ):
                             return contract.contract_schema

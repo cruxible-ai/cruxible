@@ -2831,6 +2831,17 @@ def _lower_procedure(
                 acquisition_policy=payload.acquisition_policy,
                 retire=payload.retire,
             )
+            if base.compiler == LIGHT_ARTIFACTS_COMPILER and not isinstance(
+                payload, BlueprintAuthoringPayload
+            ):
+                from cruxible_client.contracts.procedures.names import named_graph
+
+                # The compiler's transient graph may retain a native Query.
+                # Select graph 7 before validating a serialized graph-6 model,
+                # whose frozen source bindings cannot contain v3 Queries.
+                payload = payload.model_copy(update={"definition": named_graph(payload.definition)})
+                _refuse_unserved_procedure(payload.definition)
+                return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
         except (SourceCompileError, ValueError) as exc:
             diagnostic = exc.diagnostic if isinstance(exc, SourceCompileError) else None
             _refuse(
