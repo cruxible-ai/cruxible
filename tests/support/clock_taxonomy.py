@@ -173,6 +173,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("CaptureLandingEvent", "landed_at"): "EVALUATION INSTANT",
     ("CaptureLandingEvent", "sequence"): "SETTLEMENT ORDER",
     ("CaptureRetentionErasurePolicy", "minimum_retention"): "VALIDITY WINDOW",
+    ("NamedCaptureRetentionPolicy", "minimum_retention"): "VALIDITY WINDOW",
     ("CaptureRunCoordinateV1", "bound_generation"): "SETTLEMENT ORDER",
     ("CaptureRunCoordinate", "bound_generation"): "SETTLEMENT ORDER",
     ("CaptureReobservationEvidence", "observed_at"): "ASSERTION TIME",
