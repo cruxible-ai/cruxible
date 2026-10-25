@@ -175,7 +175,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
-from cruxible_client.contracts.named_references import name_line, name_query, name_trigger
+from cruxible_client.contracts.named_references import name_line, name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -3506,6 +3506,7 @@ def _render_non_procedure_member(
                     AuthoredQueryResolver(
                         candidate_query_vocabulary(tree or {}, paths=query_paths)
                     ),
+                    named=light,
                 )
             except (QuerySpecError, ReadRefusalError) as exc:
                 _refuse(
@@ -3528,7 +3529,15 @@ def _render_non_procedure_member(
         else:
             query = source
         if light:
-            query = query.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+            from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+
+            if not isinstance(query, NamedQueryDefinition):
+                query = NamedQueryDefinition.model_validate(
+                    {
+                        **query.model_dump(mode="python", exclude={"pins", "artifact_format"}),
+                        "artifact_format": "cruxible-query-definition-v3",
+                    }
+                )
         previous_query: QueryDefinition | None = None
         previous_content = None
         if isinstance(source, QuerySpecInput) and tree is not None:
@@ -3553,7 +3562,7 @@ def _render_non_procedure_member(
                     }
                 )
         if tree is not None:
-            pins = {(pin.role, pin.target.qualified): pin for pin in query.pins}
+            pins = {} if light else {(pin.role, pin.target.qualified): pin for pin in query.pins}
             for predicate in query.referenced_predicates:
                 target_path = claim_type_path(predicate)
                 content = tree.get(target_path)
@@ -3566,6 +3575,16 @@ def _render_non_procedure_member(
                         repair_description="Add the ClaimType or correct the predicate.",
                     )
                 target = parse_claim_type(content, path=target_path)
+                if target.lifecycle.state != "live":
+                    _refuse(
+                        "cruxible.authoring.claim_type_missing",
+                        "query_definition",
+                        "Query predicates must reference live ClaimTypes.",
+                        repair_kind="replace_input",
+                        repair_description="Choose a live ClaimType.",
+                    )
+                if light:
+                    continue
                 pin = ArtifactPin(
                     role=CLAIM_TYPE_PIN_ROLE,
                     target=target.identity,
@@ -3580,33 +3599,16 @@ def _render_non_procedure_member(
                         repair_kind="replace_input",
                         repair_description="Use the accepted pin or omit it for base resolution.",
                     )
-                if target.lifecycle.state != "live":
-                    _refuse(
-                        "cruxible.authoring.claim_type_missing",
-                        "query_definition",
-                        "Query predicates must reference live ClaimTypes.",
-                        repair_kind="replace_input",
-                        repair_description="Choose a live ClaimType.",
-                    )
                 pins[key] = pin
-            body = query.model_dump(mode="json")
-            if light:
-                # Exact temporary pins validate vocabulary before the current
-                # named writer emits the governed bytes.
-                body["artifact_format"] = (
-                    "playbill-query-definition-v2"
-                    if query.result_shape == "artifact_definition"
-                    else "playbill-query-definition-v1"
-                )
-            body["pins"] = [
-                p.model_dump(mode="json")
-                for p in sorted(
-                    pins.values(), key=lambda p: (p.role, p.target.qualified, p.artifact_digest)
-                )
-            ]
-            query = QueryDefinition.model_validate(body)
-        if light:
-            query = name_query(query)
+            if not light:
+                body = query.model_dump(mode="json")
+                body["pins"] = [
+                    p.model_dump(mode="json")
+                    for p in sorted(
+                        pins.values(), key=lambda p: (p.role, p.target.qualified, p.artifact_digest)
+                    )
+                ]
+                query = QueryDefinition.model_validate(body)
         if previous_query is not None and _same_revision_content(query, previous_query):
             assert previous_content is not None
             return (

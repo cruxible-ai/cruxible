@@ -129,7 +129,6 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     artifact_format: Literal[
         "playbill-query-definition-v1",
         "playbill-query-definition-v2",
-        "cruxible-query-definition-v3",
     ] = "playbill-query-definition-v1"
     identity: ArtifactIdentity
     description: str | None = None

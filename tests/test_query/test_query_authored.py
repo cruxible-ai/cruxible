@@ -724,3 +724,13 @@ def test_hop_filter_refusals_count_columns_in_the_entire_hop(separator, resolver
     assert caught.value.field_path == "$.hops[0]"
     assert caught.value.column == expression.index(">>") + 2
     assert f"column {expression.index('>>') + 2}:" in str(caught.value)
+
+
+def test_authored_query_lowers_directly_to_a_pinless_v3_definition(resolver):
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+
+    query = lower_query_spec(simple(), resolver)
+    assert isinstance(query, NamedQueryDefinition)
+    assert query.artifact_format == "cruxible-query-definition-v3"
+    assert "pins" not in query.model_dump(mode="json")
+    assert query.referenced_predicates == ("security.incident.name",)
