@@ -296,7 +296,53 @@ def test_a_stopped_arm_line_card_is_bounded(tmp_path: Path) -> None:
     assert [arm.stop_reason for arm in card.enablements] == ["permission_insufficient"]
 
 
-def test_get_reads_every_policy_orient_lists_by_its_reference(line_world) -> None:  # type: ignore[no-untyped-def]
+@pytest.fixture(scope="module", params=("current", "historical"))
+def acquisition_policy_read_world(request, line_world, tmp_path_factory):  # type: ignore[no-untyped-def]
+    if request.param == "current":
+        return line_world[0]
+
+    from cruxible_client.contracts.acquisition_policies import (
+        IndependentCoherence,
+        InputAcquisitionRule,
+        SourceAcquisitionPolicyV1,
+        acquisition_policy_path,
+        render_acquisition_policy,
+    )
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_legacy_local(tmp_path_factory.mktemp("historical-policy-read"))
+    policy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="historical-read"),
+        inputs=(
+            InputAcquisitionRule(
+                input_name="source",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="preserve",
+            ),
+        ),
+        coherence=IndependentCoherence(),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp="2026-10-24T12:00:00.000000Z",
+        proposal_name="historical-policy-read",
+    )
+    return instance
+
+
+def test_get_reads_every_policy_orient_lists_by_its_reference(
+    acquisition_policy_read_world,
+) -> None:  # type: ignore[no-untyped-def]
     """orient --section policies names SourceAcquisitionPolicy and ProcedureRuntimePolicy
     rows; get resolves both references to typed cards, not only ApprovalPolicy."""
 
@@ -305,7 +351,7 @@ def test_get_reads_every_policy_orient_lists_by_its_reference(line_world) -> Non
         GetSourceAcquisitionPolicyCard,
     )
 
-    instance = line_world[0]
+    instance = acquisition_policy_read_world
     rows = service_playbill_orient(instance, section="policies", limit=500).policies or ()
     declared = {row.policy_kind: row for row in rows}
     runtime = declared["procedure_runtime_policy"]
@@ -321,10 +367,15 @@ def test_get_reads_every_policy_orient_lists_by_its_reference(line_world) -> Non
     assert card.kind == "source_acquisition_policy"
     assert card.ref == acquisition.declaring_artifact_identity
     assert isinstance(card.card, GetSourceAcquisitionPolicyCard)
-    assert [item.input for item in card.card.inputs] == [
-        rule["input_name"] for rule in acquisition.policy["inputs"]
-    ]
-    assert card.card.coherence == acquisition.policy["coherence"]["kind"]
+    if acquisition.policy["artifact_format"] == "playbill-source-acquisition-policy-v1":
+        assert [item.input for item in card.card.inputs] == [
+            rule["input_name"] for rule in acquisition.policy["inputs"]
+        ]
+        assert card.card.coherence == acquisition.policy["coherence"]["kind"]
+    else:
+        assert card.card.max_age is acquisition.policy["max_age"] is None
+        assert card.card.overrides == acquisition.policy["overrides"] == {}
+        assert card.card.inputs == () and card.card.coherence is None
     proof = _get(instance, acquisition.declaring_artifact_identity, detail="proof")
     assert proof.proof is not None and proof.proof["envelope"] == acquisition.policy
     with pytest.raises(ReadRefusalError) as refused:
