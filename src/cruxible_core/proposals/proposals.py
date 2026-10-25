@@ -5107,7 +5107,10 @@ def _evaluate_scoped_members(
                     paths.add(edge.source_path)
             referrers_by_target[changed_path] = paths
         referrers = {path for paths in referrers_by_target.values() for path in paths}
-        for referrer_path in () if replaying_accepted else sorted(referrers):
+        # A refused changed member already prevents acceptance. Rechecking
+        # unchanged referrers would only duplicate its domain-law repair.
+        refused_member = any(item.severity == "error" for item in diagnostics)
+        for referrer_path in () if replaying_accepted or refused_member else sorted(referrers):
             state = candidate_states.get(referrer_path)
             if state is None or state.lifecycle.state != "live":
                 continue

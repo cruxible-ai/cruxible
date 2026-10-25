@@ -841,6 +841,7 @@ def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carrier
 
 @pytest.mark.parametrize("named", [False, True])
 def test_noop_reference_move_keeps_the_owner_wire_form(named):
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.claims.artifact_references import move_references
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
@@ -850,3 +851,35 @@ def test_noop_reference_move_keeps_the_owner_wire_form(named):
         procedure = name_procedure(procedure)
     payload = json.loads(render_procedure(procedure))
     assert move_references("procedures/triage.json", payload, {}) == payload
+
+
+def test_native_trigger_missing_line_keeps_the_target_law_refusal(tmp_path):
+    from cruxible_client.contracts.triggers import NamedTrigger, render_trigger
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support._support import initialize_local
+
+    instance, _ = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    trigger = NamedTrigger.model_validate(
+        {
+            "identity": {"kind": "Trigger", "name": "test.missing-line"},
+            "target": {"kind": "line", "line": {"target": {"kind": "Line", "name": "absent"}}},
+            "schedule": {"kind": "cadence", "interval_seconds": 60},
+        }
+    )
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/native-missing-line",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            "triggers/test.missing-line.json": render_trigger(trigger),
+        },
+        timestamp="2026-10-25T12:00:00.000000Z",
+    )
+    assert proposed.candidate is None
+    assert [d.code for d in proposed.evaluation.diagnostics] == [
+        "cruxible.trigger.target_line_unavailable"
+    ]

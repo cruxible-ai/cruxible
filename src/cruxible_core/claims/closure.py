@@ -770,6 +770,17 @@ def _unresolved_pins_for(
 
     missing: list[UnresolvedArtifactPinV1] = []
     for pin in source.pins:
+        # The Trigger law owns target-Line presence/liveness and its typed
+        # refusal. Keep the edge for retirement/closure proofs; let that law
+        # judge a newly authored Trigger instead of masking its repair here.
+        if (
+            by_name
+            and source.artifact_kind == "trigger"
+            and isinstance(pin, ArtifactRef)
+            and pin.target.kind == "Line"
+            and pin.role == "line"
+        ):
+            continue
         if pin.target.kind in DEFERRED_PIN_TARGET_KINDS and (
             pin.target.kind != "QueryDefinition" or not by_name
         ):
