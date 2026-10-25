@@ -15796,6 +15796,27 @@
             "title": "DiagnosticFrontierLimits",
             "type": "object"
           },
+          "NamedCaptureEventSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              }
+            },
+            "required": [
+              "capture_contract_identity"
+            ],
+            "title": "NamedCaptureEventSelector",
+            "type": "object"
+          },
           "PreflightCertificate": {
             "additionalProperties": false,
             "properties": {
@@ -15996,7 +16017,15 @@
             "description": "The exact contract a Trigger resolved during this prepare or preview.",
             "properties": {
               "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CaptureEventSelector"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedCaptureEventSelector"
+                  }
+                ],
+                "title": "Event"
               },
               "trigger_name": {
                 "title": "Trigger Name",
@@ -17142,6 +17171,27 @@
             "title": "DiagnosticFrontierLimits",
             "type": "object"
           },
+          "NamedCaptureEventSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              }
+            },
+            "required": [
+              "capture_contract_identity"
+            ],
+            "title": "NamedCaptureEventSelector",
+            "type": "object"
+          },
           "PreflightCertificate": {
             "additionalProperties": false,
             "properties": {
@@ -17342,7 +17392,15 @@
             "description": "The exact contract a Trigger resolved during this prepare or preview.",
             "properties": {
               "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CaptureEventSelector"
+                  },
+                  {
+                    "$ref": "#/$defs/NamedCaptureEventSelector"
+                  }
+                ],
+                "title": "Event"
               },
               "trigger_name": {
                 "title": "Trigger Name",
@@ -111400,7 +111458,15 @@
           "json_name": "event",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/CaptureEventSelector"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureEventSelector"
+              },
+              {
+                "$ref": "#/$defs/NamedCaptureEventSelector"
+              }
+            ],
+            "title": "Event"
           }
         },
         "trigger_name": {
@@ -111462,13 +111528,42 @@
             ],
             "title": "CaptureEventSelector",
             "type": "object"
+          },
+          "NamedCaptureEventSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              }
+            },
+            "required": [
+              "capture_contract_identity"
+            ],
+            "title": "NamedCaptureEventSelector",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "description": "The exact contract a Trigger resolved during this prepare or preview.",
         "properties": {
           "event": {
-            "$ref": "#/$defs/CaptureEventSelector"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureEventSelector"
+              },
+              {
+                "$ref": "#/$defs/NamedCaptureEventSelector"
+              }
+            ],
+            "title": "Event"
           },
           "trigger_name": {
             "title": "Trigger Name",
