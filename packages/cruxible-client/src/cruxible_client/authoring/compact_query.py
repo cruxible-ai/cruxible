@@ -240,25 +240,46 @@ def render_query_table(page: QueryResultRecord) -> str:
 
 _IN_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s+in\s+(.+?)\s*$")
 _EXISTS_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s+(!?)exists\s*$")
-_OPERATOR_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s*(!=|<=|>=|=|<|>|~)\s*(.*?)\s*$")
-_SYMBOLS = {"=": "eq", "!=": "ne", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte", "~": "contains"}
+_OPERATOR_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s*(==|!=|<=|>=|=|<|>|~)\s*(.*?)\s*$")
+_SYMBOLS = {
+    "==": "eq",
+    "=": "eq",
+    "!=": "ne",
+    "<": "lt",
+    "<=": "lte",
+    ">": "gt",
+    ">=": "gte",
+    "~": "contains",
+}
 WHERE_SYNTAX = "'f=v', 'f!=v', 'f<v', 'f<=v', 'f>v', 'f>=v', 'f in a,b', 'f exists', 'f~text'"
 
 
 def parse_where(expression: str) -> QueryFilter:
-    """Read one CLI filter expression; values stay strings for the daemon to type."""
+    """The authored filter grammar's single-comparison case, with CLI spellings."""
+    from cruxible_client.contracts.query.authored import parse_filter
 
-    match = _IN_RE.fullmatch(expression)
-    if match is not None:
-        values = [item.strip() for item in match.group(2).split(",") if item.strip()]
-        if values:
-            return query_filter(match.group(1), "in", values)
     match = _EXISTS_RE.fullmatch(expression)
     if match is not None:
-        return query_filter(match.group(1), "exists", match.group(2) != "!")
+        parsed = parse_filter(("not " if match.group(2) else "") + "exists " + match.group(1))
+        return query_filter(match.group(1), "exists", parsed.kind != "not")
+    match = _IN_RE.fullmatch(expression)
+    if match is not None:
+        raw = match.group(2)
+        if raw.startswith("(") and raw.endswith(")"):
+            raw = raw[1:-1]
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        if values:
+            parse_filter(
+                match.group(1) + " in (" + ", ".join(json.dumps(value) for value in values) + ")"
+            )
+            return query_filter(match.group(1), "in", values)
     match = _OPERATOR_RE.fullmatch(expression)
     if match is not None and match.group(3):
-        return query_filter(match.group(1), _SYMBOLS[match.group(2)], match.group(3))
+        operator = _SYMBOLS[match.group(2)]
+        parsed = parse_filter(
+            match.group(1) + " " + match.group(2) + " " + json.dumps(match.group(3))
+        )
+        return query_filter(match.group(1), operator, parsed.operands[1].value)
     raise ValueError(
         f"cannot read the filter {expression!r}; write one of {WHERE_SYNTAX}, "
         "for example 'adoption_state=adopted'"

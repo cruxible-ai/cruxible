@@ -682,6 +682,13 @@ QUERY_DEFINITION_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="query-definition",
     artifact_tag="playbill-query-definition-v2",
 )
+QUERY_DEFINITION_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.query-definition.v3", "cruxible-query-definition-v3", semantic_revision=1
+    ),
+    artifact_kind="query-definition",
+    artifact_tag="cruxible-query-definition-v3",
+)
 EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=EXHAUST_PROMOTION_LAW,
     artifact_kind="exhaust-promotion",
@@ -1009,6 +1016,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
+        QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,

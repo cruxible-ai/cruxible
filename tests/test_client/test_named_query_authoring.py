@@ -79,3 +79,26 @@ def test_artifact_definition_rows_refuse_a_misbound_digest():
         QueryArtifactDefinition.model_validate(
             {**artifact, "artifact_digest": "sha256:" + "0" * 64}
         )
+
+
+def test_authored_query_drafts_use_the_shared_coordinator(tmp_path: Path):
+    from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    spec = QuerySpecInput.model_validate(
+        {
+            "query": "project.ready",
+            "from": {"item": "project.work_item"},
+            "where": 'item.status == "ready"',
+            "fields": ["item", "item.status"],
+        }
+    )
+    definition = QueryDefinitionInput(kind="query_definition", query_definition=spec)
+    draft = pb.query_definition(definition=definition)
+    assert draft.payload.query_definition == spec
+    assert draft.prepare().intent_id.startswith("AIT-")
+    assert client.compiled["payload"]["query_definition"]["from"] == {"item": "project.work_item"}
+    pb.changes(rationale="Save the ready query").query_definition(definition)

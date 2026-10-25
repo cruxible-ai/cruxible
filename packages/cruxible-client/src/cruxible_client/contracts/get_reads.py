@@ -34,6 +34,8 @@ from cruxible_client.contracts.operational_reads import (
     RunRow,
 )
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
+from cruxible_client.contracts.query.authored import QuerySpecInput
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
@@ -417,6 +419,7 @@ class GetQueryParameter(_StrictGetModel):
 
 class GetQueryCard(_StrictGetModel):
     query: str
+    definition: QuerySpecInput | QueryDefinition | None = Field(default=None, exclude_if=_omit_none)
     description: str | None = Field(default=None, exclude_if=_omit_none)
     params: tuple[GetQueryParameter, ...] = ()
     next: tuple[str, ...] = ()

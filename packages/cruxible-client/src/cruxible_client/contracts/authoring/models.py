@@ -75,6 +75,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
     validate_change_set_rationale,
 )
+from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
@@ -925,7 +926,7 @@ class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
         "playbill-query-definition-authoring-payload-v1"
     )
-    query_definition: QueryDefinitionSpec | QueryDefinition
+    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
 
 
 class ApprovalPolicyAuthoringPayload(_StrictAuthoringModel):

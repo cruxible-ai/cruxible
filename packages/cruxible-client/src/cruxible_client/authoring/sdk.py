@@ -4132,8 +4132,17 @@ class Cruxible:
                 for index, child in enumerate(value):
                     visit(child, f"{path}[{index}]", ref)
 
+        from cruxible_client.contracts.query.authored import QuerySpecInput
+
+        query_input = definition.query_definition
+        if isinstance(query_input, QuerySpecInput) and vocabulary:
+            raise ValueError(
+                "authored queries resolve vocabulary at the candidate coordinate; "
+                "omit vocabulary assertions"
+            )
         for ref in vocabulary:
-            if ref.address not in definition.query_definition.referenced_predicates:
+            assert not isinstance(query_input, QuerySpecInput)
+            if ref.address not in query_input.referenced_predicates:
                 raise ValueError("vocabulary reference is not used by this query")
             visit(definition.query_definition.model_dump(mode="json"), "query_definition", ref)
         return QueryDraft(

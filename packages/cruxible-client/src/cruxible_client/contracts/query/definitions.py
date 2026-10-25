@@ -13,7 +13,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -126,9 +126,11 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 class QueryDefinition(_StrictQueryDefinitionModel):
     """One governed, digest-pinned, Claim-native canonical query declaration."""
 
-    artifact_format: Literal["playbill-query-definition-v1", "playbill-query-definition-v2"] = (
-        "playbill-query-definition-v1"
-    )
+    artifact_format: Literal[
+        "playbill-query-definition-v1",
+        "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
+    ] = "playbill-query-definition-v1"
     identity: ArtifactIdentity
     description: str | None = None
     entry: QueryEntry | QueryArtifactsEntry
@@ -147,6 +149,23 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     maximum_budgets: QueryBudgets
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v3_defaults(cls, data: Any) -> Any:
+        if (
+            not isinstance(data, Mapping)
+            or data.get("artifact_format") != "cruxible-query-definition-v3"
+        ):
+            return data
+        stated = dict(data)
+        entry = stated.get("entry")
+        if isinstance(entry, Mapping):
+            stated.setdefault("result_binding", entry.get("binding"))
+        stated.setdefault("result_cardinality", "many")
+        if "default_budgets" not in stated and "maximum_budgets" in stated:
+            stated["default_budgets"] = stated["maximum_budgets"]
+        return stated
 
     @field_validator("description")
     @classmethod
@@ -194,7 +213,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
             )
         if isinstance(self.entry, QueryArtifactsEntry):
-            if self.artifact_format != "playbill-query-definition-v2":
+            if self.artifact_format not in {
+                "playbill-query-definition-v2",
+                "cruxible-query-definition-v3",
+            }:
                 raise ValueError("Artifact selection requires query definition v2")
             if (self.result_shape, self.result_cardinality, self.dedupe) != (
                 "artifact_definition",
@@ -222,9 +244,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
             if not self.default_budgets.within(self.maximum_budgets):
                 raise ValueError("default budgets exceed maximum budgets")
             return self
-        if self.artifact_format != "playbill-query-definition-v1" or (
-            self.result_shape == "artifact_definition" or self.dedupe == "artifact"
-        ):
+        if self.artifact_format not in {
+            "playbill-query-definition-v1",
+            "cruxible-query-definition-v3",
+        } or (self.result_shape == "artifact_definition" or self.dedupe == "artifact"):
             raise ValueError("Claim traversal requires the frozen v1 query grammar")
         self._validate_bindings()
         self._validate_reference_scopes()
@@ -419,10 +442,19 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     )
     if artifacts:
         stated.setdefault("artifact_format", "playbill-query-definition-v2")
-    shape = stated.setdefault("result_shape", "artifact_definition" if artifacts else "subject")
+    shape = stated.setdefault(
+        "result_shape",
+        "artifact_definition" if artifacts else ("path" if stated.get("traversal") else "subject"),
+    )
     stated.setdefault("result_cardinality", "many")
-    if shape in ("subject", "artifact_definition"):
-        stated.setdefault("dedupe", "artifact" if shape == "artifact_definition" else "subject")
+    stated.setdefault(
+        "dedupe",
+        "artifact"
+        if shape == "artifact_definition"
+        else "subject"
+        if shape == "subject"
+        else "path",
+    )
     stated.setdefault(
         "evaluation_policy",
         {
@@ -433,8 +465,17 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     )
     traversal = stated.get("traversal")
     depth = len(traversal) if isinstance(traversal, list | tuple) else 0
-    stated.setdefault("default_budgets", {"max_results": 100, "max_traversal_depth": depth})
-    stated.setdefault("maximum_budgets", {"max_results": 1000, "max_traversal_depth": depth})
+    path_fields = (
+        {"max_paths": 20000, "max_paths_per_result": 100}
+        if shape in {"path", "relation_claim"}
+        else {}
+    )
+    stated.setdefault(
+        "default_budgets", {"max_results": 100, "max_traversal_depth": depth, **path_fields}
+    )
+    stated.setdefault(
+        "maximum_budgets", {"max_results": 1000, "max_traversal_depth": depth, **path_fields}
+    )
     return stated
 
 
@@ -499,8 +540,46 @@ def validate_query_definition_path(
     return path
 
 
+def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
+    if query.artifact_format != "cruxible-query-definition-v3":
+        return query.model_dump(mode="json")
+
+    def compact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: compact(item) for key, item in value.items() if key != "tag"}
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        return value
+
+    # Real union discriminators are semantic even when their models default them.
+    def kinds(model: BaseModel, output: dict[str, Any]) -> None:
+        if "kind" in type(model).model_fields:
+            output["kind"] = getattr(model, "kind")
+        for name in type(model).model_fields:
+            child = getattr(model, name)
+            if name not in output:
+                continue
+            if isinstance(child, BaseModel) and isinstance(output[name], dict):
+                kinds(child, output[name])
+            elif isinstance(child, tuple) and isinstance(output[name], list):
+                for source, target in zip(child, output[name], strict=True):
+                    if isinstance(source, BaseModel) and isinstance(target, dict):
+                        kinds(source, target)
+
+    body = cast(dict[str, Any], compact(query.model_dump(mode="json", exclude_defaults=True)))
+    kinds(query, body)
+    body["artifact_format"] = query.artifact_format
+    if query.result_binding == query.entry.binding:
+        body.pop("result_binding", None)
+    if query.result_cardinality == "many":
+        body.pop("result_cardinality", None)
+    if query.default_budgets == query.maximum_budgets:
+        body.pop("default_budgets", None)
+    return body
+
+
 def render_query_definition(query: QueryDefinition) -> bytes:
-    return pretty_canonical_bytes(query.model_dump(mode="json"))
+    return pretty_canonical_bytes(query_definition_wire(query))
 
 
 def parse_query_definition(
@@ -516,6 +595,7 @@ def parse_query_definition(
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-query-definition-v1",
         "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
@@ -537,7 +617,7 @@ def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
-        query.model_dump(mode="json"),
+        query_definition_wire(query),
     )
 
 

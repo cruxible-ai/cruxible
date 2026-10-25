@@ -139,6 +139,10 @@ def submit_query_definition_candidate(
     base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
 ) -> ProposalInspection:
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER:
+        query = query.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
     return _submit_candidate(
         instance,
         path=query_definition_path(query.identity.name),

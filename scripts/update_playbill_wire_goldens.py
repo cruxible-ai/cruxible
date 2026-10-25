@@ -154,6 +154,9 @@ def _update_query_golden() -> None:
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged
+    v3 = definition.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+    fixture["canonical_v3_wire"] = render_query_definition(v3).decode("utf-8")
+    fixture["v3_artifact_digest"] = query_definition_digest(v3).tagged
     _write(path, fixture)
 
 

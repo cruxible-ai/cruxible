@@ -2615,6 +2615,22 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
 
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if context.historical_law_coordinate is None:
+        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        if light != (query.artifact_format == "cruxible-query-definition-v3"):
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.proposal.member_format_invalid",
+                        "new QueryDefinitions require v3 on compiler revision 36 "
+                        "and v1/v2 below it; "
+                        "upgrade the compiler or author the appropriate query format",
+                        context.path,
+                    ),
+                )
+            )
     predecessor: AcceptedQueryDefinition | None = None
     if context.parent_content is not None:
         previous = parse_query_definition(context.parent_content, path=context.path)
