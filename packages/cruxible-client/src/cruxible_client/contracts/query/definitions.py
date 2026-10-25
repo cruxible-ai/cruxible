@@ -13,9 +13,9 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, SerializeAsAny, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -598,6 +598,17 @@ def render_query_definition(query: QueryDefinition) -> bytes:
 
 def validate_query_definition(payload: Any) -> QueryDefinition:
     """Strictly select the stored owner model without changing the payload."""
+    if (
+        type(payload) is NamedQueryDefinition
+        and payload.artifact_format == "cruxible-query-definition-v3"
+    ) or (
+        type(payload) is QueryDefinition
+        and payload.artifact_format
+        in {"playbill-query-definition-v1", "playbill-query-definition-v2"}
+    ):
+        # Owner parsers already validated immutable objects; readers must not
+        # parse the same accepted artifact again just to put it in a carrier.
+        return payload
     if isinstance(payload, QueryDefinition):
         payload = payload.model_dump(mode="json")
     model = (
@@ -650,7 +661,10 @@ def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
 
 class AcceptedQueryDefinition(_StrictQueryDefinitionModel):
     path: str
-    query: SerializeAsAny[QueryDefinition]
+    query: Annotated[
+        SerializeAsAny[QueryDefinition | NamedQueryDefinition],
+        Field(discriminator="artifact_format"),
+    ]
     artifact_digest: str
 
     @field_validator("query", mode="before")

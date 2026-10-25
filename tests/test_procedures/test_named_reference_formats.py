@@ -680,10 +680,20 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
     from tests.test_procedures.test_named_reference_closure import authored_query
 
     query = authored_query("test.native-read")
+    assert validate_query_definition(query) is query
     accepted = _accepted(query)
     assert accepted.query == query
     assert accepted.artifact_digest == query_definition_digest(query).tagged
     assert AcceptedQueryDefinition.model_validate(accepted.model_dump(mode="json")) == accepted
+    assert set(
+        AcceptedQueryDefinition.model_json_schema()["properties"]["query"]["discriminator"][
+            "mapping"
+        ]
+    ) == {
+        "playbill-query-definition-v1",
+        "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
+    }
     assert (
         validate_query_definition(NamedQueryDefinitionSpec.model_validate(query.model_dump()))
         == query
