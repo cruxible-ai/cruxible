@@ -424,11 +424,10 @@ def _spec_schema(schema: dict[str, Any]) -> None:
 def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     """The spec with each omitted defaulted field stated.
 
-    - ``result_shape``: ``subject`` for a Subject entry, ``artifact_definition``
-      for an artifacts entry (which also takes ``artifact_format`` v2).
+    - ``result_shape``: ``path`` with traversal, otherwise ``subject`` for a
+      Subject entry; ``artifact_definition`` for an artifacts entry (v2).
     - ``result_cardinality``: ``many``.
-    - ``dedupe``: ``subject`` or ``artifact``, following the shape; a ``path`` or
-      ``relation_claim`` query states it.
+    - ``dedupe``: follows the result shape (``subject``, ``path`` or ``artifact``).
     - ``evaluation_policy``: supported, current Claims; conflicts surfaced.
     - budgets: 100 results by default, 1000 at most, the traversal's own depth.
 
