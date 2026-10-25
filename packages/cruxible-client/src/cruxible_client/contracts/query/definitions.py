@@ -149,11 +149,6 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _v3_defaults(cls, data: Any) -> Any:
-        return _query_v3_defaults(data)
-
     @field_validator("description")
     @classmethod
     def _description(cls, value: str | None) -> str | None:
@@ -392,6 +387,11 @@ class QueryDefinition(_StrictQueryDefinitionModel):
 class NamedQueryDefinition(QueryDefinition):
     artifact_format: Literal["cruxible-query-definition-v3"] = "cruxible-query-definition-v3"  # type: ignore[assignment]
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v3_defaults(cls, data: Any) -> Any:
+        return _query_v3_defaults(data)
 
     def _validate_pins(self) -> None:
         pass

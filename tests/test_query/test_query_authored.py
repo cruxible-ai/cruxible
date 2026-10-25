@@ -734,3 +734,19 @@ def test_authored_query_lowers_directly_to_a_pinless_v3_definition(resolver):
     assert query.artifact_format == "cruxible-query-definition-v3"
     assert "pins" not in query.model_dump(mode="json")
     assert query.referenced_predicates == ("security.incident.name",)
+
+
+def test_pinless_query_wire_restores_only_declared_defaults(resolver):
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+
+    query = lower_query_spec(simple(), resolver)
+    wire = render_query_definition(query)
+    body = json.loads(wire)
+    assert "pins" not in body
+    assert "result_binding" not in body and "result_cardinality" not in body
+    assert b'"tag"' not in wire
+    restored = parse_query_definition(wire, path="query-definitions/test.authored.json")
+    assert isinstance(restored, NamedQueryDefinition)
+    assert restored == query
+    assert render_query_definition(restored) == wire
+    assert query_definition_digest(restored) == query_definition_digest(query)
