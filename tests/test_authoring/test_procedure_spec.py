@@ -226,7 +226,7 @@ def test_historical_v2_bytes_and_digest_do_not_change():
         )
 
 
-def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values():
+def _inventory_import_worked_example():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     call = next(node for node in original.definition.nodes if node.kind == "call")
     call_schema = next(
@@ -236,7 +236,10 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
     )
     authored = spec(
         procedure="security.inventory-import",
+        description=original.definition.description,
         input={"scope": "string"},
+        input_contract="security-inventory-import-input",
+        output_contract="security-runtime-inventory-summary",
         returns={"from": "parse", "omit": ["items"]},
         activation="drain",
         budget={"wall_clock": "PT2M", "provider_calls": 2, "capture_bytes": "1MiB"},
@@ -250,8 +253,8 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
         steps=[
             {
                 "source": "inventory",
-                "contract": "security.file-erasable-v1",
-                "interface": "workspace.file@2",
+                "contract": "security.runtime-inventory-v1",
+                "interface": "workspace.file",
                 "request": {
                     "logical_source": "security.inventory",
                     "relative_path": "inventory.json",
@@ -274,12 +277,20 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
             },
             {
                 "call": "parse",
-                "interface": "security.runtime-inventory@1",
+                "interface": (
+                    "security.runtime-inventory/"
+                    "8853e9eed2307a0f1dcf5f2e2dc6ba120a554050b1f5e6b8fc6ccb7f3248ec71"
+                ),
                 "input": {
                     "inventory_text": "$inventory.content.text",
-                    "held": "$held",
-                    "runs": "$runs",
-                    "patches": "$patches",
+                    "held": "$held.result.rows",
+                    "runs": "$runs.result.rows",
+                    "patches": "$patches.result.rows",
+                    "truncated": {
+                        "held": "$held.truncated",
+                        "runs": "$runs.truncated",
+                        "patches": "$patches.truncated",
+                    },
                     "scope": "$input.scope",
                 },
             },
@@ -290,14 +301,104 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
     )
 
     def resolve(kind, step):
+        node = next(
+            node
+            for node in original.definition.nodes
+            if getattr(node, "as_", None) == getattr(step, "call", getattr(step, "source", None))
+        )
         return {
-            "bindings": {},
+            "bindings": {
+                key: getattr(node, key).model_dump(mode="json")
+                if hasattr(getattr(node, key), "model_dump")
+                else getattr(node, key)
+                for key in ("provider", "interface", "interface_digest", "implementation_digest")
+            },
+            "request_defaults": node.request if node.kind == "source" else {},
             "output": call_schema.fields
             if hasattr(step, "call")
             else {"content": PropertySchema(type="json")},
             "input": None,
         }
 
+    return original, authored, resolve
+
+
+def test_handwritten_inventory_import_matches_the_stored_definition_digest():
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import CallNode, GuardNode
+
+    original, authored, resolve = _inventory_import_worked_example()
+    lowered = lower_procedure_spec(authored, resolve=resolve)
+    pins = {(pin.role, pin.target.qualified): pin for pin in original.pins}
+
+    def rebind(value):
+        if isinstance(value, dict):
+            if value.get("kind") == "accepted":
+                return pins[value["role"], value["target"]].model_dump(mode="json")
+            if value.get("kind") == "carried_contract":
+                return pins[value["role"], "Contract:" + value["name"]].model_dump(mode="json")
+            return {key: rebind(member) for key, member in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [rebind(member) for member in value]
+        return value
+
+    contracts = {
+        contract.identity.name: contract.contract_schema for contract in original.owned_contracts
+    }
+    for contract in lowered.contracts:
+        assert (
+            ContractSchema(
+                fields=contract.fields,
+                description=contract.description,
+                allow_extra=contract.allow_extra,
+            )
+            == contracts[contract.name]
+        )
+    actual = ProcedureDefinition.model_validate(rebind(lowered.definition))
+    # Only the explicitly retired guard diagnostics and Call I/O mirrors differ.
+    # No decompiler or graph normalizer participates in the authored side.
+    expected = original.definition.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"refusal_code": None, "message": None})
+                if isinstance(node, GuardNode)
+                else node.model_copy(update={"contract_in": None, "contract_out": None})
+                if isinstance(node, CallNode)
+                else node
+                for node in original.definition.nodes
+            )
+        }
+    )
+    assert compute_procedure_definition_digest(actual) == compute_procedure_definition_digest(
+        expected
+    )
+
+
+def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values():
+    _original, authored, resolve = _inventory_import_worked_example()
+    # K1's provider build will consume the new tap view. Keep its lowering check
+    # separate from equality with the stored provider's row/truncation arguments.
+    call_index = next(i for i, step in enumerate(authored.steps) if hasattr(step, "call"))
+    authored = authored.model_copy(
+        update={
+            "steps": tuple(
+                step.model_copy(
+                    update={
+                        "input": {
+                            "inventory_text": "$inventory.content.text",
+                            "scope": "$input.scope",
+                            "held": "$held",
+                            "runs": "$runs",
+                            "patches": "$patches",
+                        }
+                    }
+                )
+                if i == call_index
+                else step
+                for i, step in enumerate(authored.steps)
+            )
+        }
+    )
     payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
     assert payload.definition["procedure_spec"]["procedure"] == "security.inventory-import"
     lowered = lower_procedure_spec(authored, resolve=resolve)
