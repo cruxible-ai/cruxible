@@ -26,6 +26,7 @@ from cruxible_client.contracts.capture_contract_inputs import (
 )
 from cruxible_client.contracts.captures import (
     CaptureContract,
+    capture_components,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -55,6 +56,7 @@ from cruxible_core.procedures.egress import (
     compute_effective_rung,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -136,8 +138,16 @@ def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # All producers and prepared runs pin the same current package build.
     def build_provider():
-        return accepted_build(p2b1_support.provider_v2())
+        from cruxible_client.contracts.named_references import name_provider
+        from cruxible_client.contracts.providers import provider_digest
 
+        accepted = accepted_build(p2b1_support.provider_v2())
+        provider = name_provider(accepted.provider)
+        return accepted.model_copy(
+            update={"provider": provider, "artifact_digest": provider_digest(provider).tagged}
+        )
+
+    monkeypatch.setattr(p2b1_support, "accepted_provider", build_provider)
     monkeypatch.setattr(__name__ + ".accepted_provider", build_provider)
     monkeypatch.setattr(
         "tests.test_providers.test_provider_invocation_journal.accepted_provider", build_provider
@@ -189,7 +199,8 @@ def run_capture_producers(
         lower_capture_contract_input(
             CaptureContractInputRecord(
                 name="test.procedure-output", shape="procedure_output", max_bytes=4096
-            )
+            ),
+            named=True,
         )
         if rule is None
         else legacy_capture_contract(name="test.procedure-output")
@@ -245,7 +256,7 @@ def run_capture_producers(
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[interface.path] = render_provider_interface(interface.registration)
     tree[provider_path(provider.provider.identity.name)] = render_provider(provider.provider)
-    tree[accepted.path] = render_procedure(accepted.procedure)
+    tree[accepted.path] = render_procedure(authored_procedure(accepted))
     tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
     _accept_tree(
         instance,
@@ -289,7 +300,7 @@ def run_capture_producers(
         contract_validator=_Contracts(),
         provider_runtime_invoker=_SourceInvoker(
             observed_at=prepared.admission.occurrence_evaluation_time,
-            coordinate_type=contract.coordinate_schema_pins[0].target.name,
+            coordinate_type=capture_components(contract).coordinate_schema_pins[0].target.name,
         ),
         capture_contracts={
             contract_digest: contract,

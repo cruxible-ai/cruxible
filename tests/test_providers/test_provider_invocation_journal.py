@@ -53,6 +53,7 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
 )
 from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.exhaust import parse_journal_payload
@@ -188,7 +189,7 @@ def _accepted_one_provider(
         node_id="direct",
         provider=provider_pin,
         interface=interface_pin,
-        interface_digest=interface.registration.interface_digest,
+        interface_digest=interface_definition_digest(interface.registration),
         implementation_digest=implementation_digest,
         contract_in=contract_in,
         contract_out=contract_out,
@@ -282,7 +283,7 @@ def _prepared_acquisition_run(
         provider_artifact_digest=provider.artifact_digest,
         interface_artifact_digest=interface.artifact_digest,
         interface_id=registration.interface_id,
-        interface_digest=registration.interface_digest,
+        interface_digest=interface_definition_digest(registration),
         implementation_digest=implementation_digest,
         deployment_digest=_digest("deployment-local"),
         materialization_digest=(
@@ -317,7 +318,7 @@ def _prepared_acquisition_run(
         provider_artifact_digest=provider.artifact_digest,
         interface_artifact_digest=interface.artifact_digest,
         interface_id=registration.interface_id,
-        interface_digest=registration.interface_digest,
+        interface_digest=interface_definition_digest(registration),
         implementation_digest=implementation_digest,
         effect_class=effect_class,  # type: ignore[arg-type]
         contract_input_digest=node.contract_in.artifact_digest,  # type: ignore[union-attr]
