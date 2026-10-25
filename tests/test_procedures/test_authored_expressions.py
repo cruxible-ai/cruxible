@@ -76,17 +76,16 @@ def test_excessive_nesting_has_a_typed_column_refusal(expression):
     assert parse_procedure_expression("not " * MAX_EXPRESSION_DEPTH + "true")
 
 
-def test_oversized_expression_refuses_before_tokenization(monkeypatch):
-    from cruxible_client.contracts.procedures import expressions
-
-    class NoTokenization:
-        def match(self, *args):
-            raise AssertionError("overlength input must not be tokenized")
-
-    monkeypatch.setattr(expressions, "_TOKEN", NoTokenization())
+def test_oversized_expression_refuses_before_tokenization():
+    # The first character is not a token; if the tokenizer ran first the
+    # refusal would name column 1, not the length bound.
+    oversized = "\u00a7" + "true or " * 150_000 + "true"
     with pytest.raises(ProcedureExpressionError, match="characters") as caught:
-        parse_procedure_expression("true or " * 150_000 + "true")
+        parse_procedure_expression(oversized)
     assert caught.value.column == MAX_EXPRESSION_LENGTH + 1
+    with pytest.raises(ProcedureExpressionError) as token_refusal:
+        parse_procedure_expression(oversized[:MAX_EXPRESSION_LENGTH])
+    assert token_refusal.value.column == 1
 
 
 def test_trailing_whitespace_and_many_flat_terms_remain_valid():
