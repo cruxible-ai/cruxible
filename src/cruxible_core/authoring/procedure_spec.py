@@ -16,7 +16,11 @@ from cruxible_client.contracts.procedures.authored import (
     lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.provider_interfaces import provider_operation_contract
+from cruxible_client.contracts.provider_interfaces import (
+    interface_definition_bytes,
+    interface_definition_digest,
+    provider_operation_contract,
+)
 from cruxible_core.authoring.procedure_source import accepted_build_resolver
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -28,6 +32,8 @@ def resolve_procedure_spec(
     tree: Mapping[str, bytes],
     spec: ProcedureSpec,
     candidate_paths: tuple[str, ...],
+    *,
+    named: bool = True,
 ) -> Any:
     """Resolve only named artifacts and the indexed providers fitting one interface."""
     with instance.bind_accepted_projection(base) as projection:
@@ -141,7 +147,7 @@ def resolve_procedure_spec(
                 interface_identity = binding_name(
                     "ProviderInterface", _interface_name(name), "$.slots"
                 )
-                return source(interface_identity, "$.slots").interface_digest
+                return interface_definition_digest(source(interface_identity, "$.slots"))
             step = name
             authored_path = step_paths.get(id(step), "$.steps")
             capture = (
@@ -166,7 +172,7 @@ def resolve_procedure_spec(
                 requested_version = int(interface_name.rpartition("/v")[2])
                 if (
                     legacy is not None
-                    and json.loads(bytes.fromhex(legacy.interface_bytes_hex)).get("version")
+                    and json.loads(interface_definition_bytes(legacy)).get("version")
                     == requested_version
                 ):
                     interface_identity = "ProviderInterface:workspace.file"
@@ -196,9 +202,16 @@ def resolve_procedure_spec(
                     "bindings": {
                         "provider": {"kind": "slot", "slot_name": provider_name},
                         "interface": _ref(
-                            "ProviderInterface", interface_identity, "provider-interface"
+                            "ProviderInterface",
+                            interface_identity,
+                            "provider-interface",
+                            named=named,
                         ),
-                        "interface_digest": interface.interface_digest,
+                        **(
+                            {}
+                            if named
+                            else {"interface_digest": interface_definition_digest(interface)}
+                        ),
                     },
                     "input": operation.input.fields,
                     "input_allow_extra": operation.input.allow_extra,
@@ -210,11 +223,11 @@ def resolve_procedure_spec(
                         "SELECT DISTINCT p.source_identity FROM "
                         f"{selected.table('provider_interfaces')} i "
                         f"JOIN {selected.table('pins')} p ON p.target_identity=i.identity "
-                        "AND p.target_digest=i.artifact_digest AND p.edge_kind='required_pin' "
+                        "AND p.edge_kind='required_pin' "
                         f"JOIN {selected.table('providers')} r ON r.identity=p.source_identity "
                         "WHERE i.interface_digest=? AND r.lifecycle='live' "
                         "ORDER BY p.source_identity",
-                        (interface.interface_digest,),
+                        (interface_definition_digest(interface),),
                     )
                 )
                 if len(candidates) != 1:
@@ -233,7 +246,7 @@ def resolve_procedure_spec(
             implementations = [
                 item
                 for item in getattr(provider, "implementations", ())
-                if item.interface_digest == interface.interface_digest
+                if item.interface_digest == interface_definition_digest(interface)
             ]
             if len(implementations) != 1:
                 raise ProcedureSpecError(
@@ -276,13 +289,18 @@ def resolve_procedure_spec(
             return {
                 "request_defaults": request_defaults,
                 "bindings": {
-                    "provider": _ref("Provider", provider_identity, "provider"),
+                    "provider": _ref("Provider", provider_identity, "provider", named=named),
                     "interface": _ref(
-                        "ProviderInterface", interface_identity, "provider-interface"
+                        "ProviderInterface", interface_identity, "provider-interface", named=named
                     ),
-                    # N1b owns these mirrors and their eventual removal.
-                    "interface_digest": interface.interface_digest,
-                    "implementation_digest": implementations[0].implementation_digest,
+                    **(
+                        {}
+                        if named
+                        else {
+                            "interface_digest": interface_definition_digest(interface),
+                            "implementation_digest": implementations[0].implementation_digest,
+                        }
+                    ),
                 },
                 "input": operation.input.fields,
                 "input_allow_extra": operation.input.allow_extra,
@@ -299,4 +317,4 @@ def resolve_procedure_spec(
                 else None,
             }
 
-        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve))
+        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve, named=named))

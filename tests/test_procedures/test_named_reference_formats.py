@@ -500,3 +500,24 @@ def test_each_v3_tag_has_one_named_law_object():
             )
             is entry
         )
+
+
+def test_authored_procedure_lowers_directly_to_the_named_graph():
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
+    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+
+    authored = ProcedureSpec(
+        procedure="test.native",
+        input={"value": "integer"},
+        returns="result",
+        steps=({"project": "result", "fields": {"value": "$input.value"}},),
+    )
+    lowered = lower_procedure_spec(authored)
+    definition = NamedProcedureDefinition.model_validate(lowered.definition)
+    assert definition.graph_format == 7
+    assert definition.contract_in.target.name == "test.native-input"
+    payload = lower_authoring_input(lowered)
+    assert payload.definition == lowered.definition
+    assert "artifact_digest" not in json.dumps(payload.definition)
+    assert "role" not in json.dumps(payload.definition)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
@@ -38,7 +38,7 @@ from cruxible_client.contracts.procedures.models import (
 
 
 def _name(pin: Any) -> str:
-    if not isinstance(pin, ArtifactPin):
+    if not isinstance(pin, (ArtifactNameRef, ArtifactPin)):
         raise ValueError("open binding needs an explicit step")
     return pin.target.name
 
@@ -127,7 +127,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     for index, node in enumerate(nodes):
         if (
             len(nodes) > 1
-            and type(node) is ProjectNode
+            and isinstance(node, ProjectNode)
             and node.node_id == node.as_ == returns
             and isinstance(node.fields, dict)
         ):
@@ -211,7 +211,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(tap=node.as_, query=_name(node.query), params=short(node.parameters))
                 if node.budgets is not None:
                     step["budgets"] = node.budgets.model_dump(mode="json")
-            elif type(node) is ProjectNode and isinstance(node.fields, dict):
+            elif isinstance(node, ProjectNode) and isinstance(node.fields, dict):
                 step = dict(
                     project=node.as_,
                     fields=short(node.fields),

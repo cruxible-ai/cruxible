@@ -117,7 +117,7 @@ def procedure_artifact(
     lifecycle: ArtifactLifecycle | None = None,
     artifact_format: Literal[
         "playbill-procedure-v2", "cruxible-procedure-v3"
-    ] = "cruxible-procedure-v3",
+    ] = "playbill-procedure-v2",
 ) -> ProcedureArtifact:
     """One current envelope over a graph-v6 definition, its Contracts carried.
 
@@ -132,8 +132,8 @@ def procedure_artifact(
             *extra_pins,
         )
     }
-    return ProcedureArtifact(
-        artifact_format=artifact_format,
+    result = ProcedureArtifact(
+        artifact_format="playbill-procedure-v2",
         identity=ArtifactIdentity(kind="Procedure", name=resolved.name),
         definition=resolved,
         definition_digest=compute_procedure_definition_digest(resolved).tagged,
@@ -142,6 +142,12 @@ def procedure_artifact(
         activation_policy=activation_policy,  # type: ignore[arg-type]
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
+
+    if artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        return name_procedure(result)
+    return result
 
 
 def accepted_procedure(
@@ -153,7 +159,7 @@ def accepted_procedure(
     lifecycle: ArtifactLifecycle | None = None,
     artifact_format: Literal[
         "playbill-procedure-v2", "cruxible-procedure-v3"
-    ] = "cruxible-procedure-v3",
+    ] = "playbill-procedure-v2",
 ) -> AcceptedProcedure:
     procedure = procedure_artifact(
         definition,

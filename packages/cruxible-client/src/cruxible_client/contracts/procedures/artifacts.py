@@ -288,9 +288,7 @@ class ProcedureArtifact(_GraphEnvelope):
     Provider bound to each slot; it is provenance, not a dependency.
     """
 
-    artifact_format: Literal["playbill-procedure-v2", "cruxible-procedure-v3"] = (
-        "cruxible-procedure-v3"
-    )
+    artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     acquisition_policy: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="before")

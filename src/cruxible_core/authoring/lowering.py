@@ -2734,7 +2734,14 @@ def _lower_procedure(
         try:
             spec = ProcedureSpec.model_validate(payload.definition["procedure_spec"])
             retiring = payload.retire
-            payload = resolve_procedure_spec(instance, base, base_tree, spec, candidate_paths)
+            payload = resolve_procedure_spec(
+                instance,
+                base,
+                base_tree,
+                spec,
+                candidate_paths,
+                named=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+            )
             payload = payload.model_copy(update={"retire": retiring})
         except ProcedureSpecError as exc:
             _refuse(
@@ -2754,6 +2761,8 @@ def _lower_procedure(
             )
     if not payload.retire:
         _refuse_unserved_procedure(payload.definition)
+    if payload.definition.get("graph_format") == 7:
+        return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
     candidate_artifacts: dict[str, tuple[str, str]] = {}
@@ -3079,13 +3088,7 @@ def _lower_procedure(
     try:
         envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
         format_arguments: dict[str, Any] = (
-            {}
-            if is_blueprint
-            else {
-                "artifact_format": "cruxible-procedure-v3"
-                if base.compiler == LIGHT_ARTIFACTS_COMPILER
-                else "playbill-procedure-v2"
-            }
+            {} if is_blueprint else {"artifact_format": "playbill-procedure-v2"}
         )
         procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
             **format_arguments,
@@ -3115,6 +3118,66 @@ def _lower_procedure(
     )
 
 
+def _lower_named_procedure(
+    instance: PlaybillInstance,
+    payload: ProcedureAuthoringPayload,
+    *,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+) -> LoweredAuthoring:
+    """Validate the authored named tree directly, without an exact-pin graph."""
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+
+    if base.compiler != LIGHT_ARTIFACTS_COMPILER:
+        _refuse(
+            "cruxible.authoring.procedure_definition_invalid",
+            "definition.graph_format",
+            "Named graph 7 requires compiler revision 36.",
+            repair_kind="upgrade_compiler",
+            repair_description="Upgrade the compiler.",
+        )
+    try:
+        definition = NamedProcedureDefinition.model_validate(payload.definition)
+        path = procedure_path(definition.name)
+        predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
+        if payload.acquisition_policy is not None:
+            policy_path = acquisition_policy_path(payload.acquisition_policy)
+            policy = parse_acquisition_policy(base_tree[policy_path], path=policy_path)
+            if policy.lifecycle.state != "live":
+                raise ValueError("The named acquisition policy must be live")
+        procedure = NamedProcedureArtifact(
+            identity=ArtifactIdentity(kind="Procedure", name=definition.name),
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest(definition).tagged,
+            owned_contracts=payload.owned_contracts,
+            activation_policy=payload.activation_policy,
+            acquisition_policy=payload.acquisition_policy,
+            lifecycle=ArtifactLifecycle(
+                state="retired" if payload.retire else "live",
+                predecessor_digest=None
+                if predecessor is None
+                else procedure_artifact_digest(predecessor).tagged,
+            ),
+        )
+    except (ValueError, KeyError) as exc:
+        _refuse(
+            "cruxible.authoring.procedure_definition_invalid",
+            "definition",
+            str(exc),
+            repair_kind="replace_definition",
+            repair_description="Repair the named Procedure definition.",
+        )
+    return _procedure_lowered(
+        instance,
+        procedure,
+        predecessor,
+        path=path,
+        base=base,
+        base_tree=base_tree,
+    )
+
+
 def _envelope_digest(envelope: ProcedureArtifact | BlueprintArtifact) -> str:
     if isinstance(envelope, BlueprintArtifact):
         return blueprint_digest(envelope).tagged
@@ -3130,7 +3193,7 @@ def _procedure_lowered(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    if base.compiler == LIGHT_ARTIFACTS_COMPILER:
+    if base.compiler == LIGHT_ARTIFACTS_COMPILER and procedure.definition.graph_format != 7:
         procedure = name_procedure(procedure)
     candidate_tree = fork_tree(base_tree)
     if isinstance(procedure, ProcedureArtifact):

@@ -40,13 +40,20 @@ from cruxible_client.contracts.procedures.measurements import ProcedureMeasureme
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
-    ProcedureNode,
     ProcedureTransformSpec,
-    RepeatBodyNode,
     TransformKind,
     derived_terminal_capability,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
+from cruxible_client.contracts.procedures.named_models import (
+    NamedProcedureNode as ProcedureNode,
+)
+from cruxible_client.contracts.procedures.named_models import (
+    NamedRepeatBodyNode as RepeatBodyNode,
+)
+from cruxible_client.contracts.procedures.source_program import (
+    NamedProcedureSourceProgram,
+    ProcedureSourceProgram,
+)
 
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")]
 StepId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")]
@@ -283,7 +290,7 @@ class ProcedureSpec(_Model):
     output: dict[str, FieldType] | None = None
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     halt_order: tuple[NodeId, ...] = ()
-    source: ProcedureSourceProgram | None = Field(
+    source: NamedProcedureSourceProgram | ProcedureSourceProgram | None = Field(
         default=None,
         json_schema_extra={"readOnly": True},
         description="Retained AST provenance; revise it through source authoring.",
@@ -382,12 +389,11 @@ def _fields(value: Mapping[str, FieldType]) -> dict[str, PropertySchema]:
     }
 
 
-def _ref(kind: str, name: str, role: str) -> dict[str, str]:
-    return {
-        "kind": "accepted",
-        "role": role,
-        "target": name if name.startswith(kind + ":") else kind + ":" + name,
-    }
+def _ref(kind: str, name: str, role: str, *, named: bool = True) -> dict[str, Any]:
+    bare = name.removeprefix(kind + ":")
+    if named:
+        return {"target": {"kind": kind, "name": bare}}
+    return {"kind": "accepted", "role": role, "target": kind + ":" + bare}
 
 
 def _duration(text: str) -> dict[str, Any]:
@@ -417,13 +423,18 @@ def _unknown(path: str, value: str, choices: Any) -> None:
     )
 
 
-def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None) -> Any:
+def lower_procedure_spec(
+    spec: ProcedureSpec, *, resolve: Resolver | None = None, named: bool = True
+) -> Any:
     """Produce the existing ProcedureInput, leaving accepted-name pinning to prepare.
 
     Without vocabulary, unresolved call output schemas are deferred to prepare.
     Parse/topology/input/parameter references are still checked offline.
     """
     from cruxible_client.contracts.authoring.inputs import CarriedContractInput, ProcedureInput
+
+    def ref(kind: str, name: str, role: str) -> dict[str, Any]:
+        return _ref(kind, name, role, named=named)
 
     contracts = dict(spec.contracts)
     schemas: dict[str, dict[str, PropertySchema] | None] = {}
@@ -440,7 +451,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     generated: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
 
-    def contract(name: str, fields: Mapping[str, PropertySchema], role: str) -> dict[str, str]:
+    def contract(name: str, fields: Mapping[str, PropertySchema], role: str) -> dict[str, Any]:
         schema = contracts.get(name, ContractSchema(fields=dict(fields)))
         if schema.fields != fields:
             raise ProcedureSpecError(
@@ -449,7 +460,11 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 "Conflicting contract fields",
             )
         contracts[name] = schema
-        return {"kind": "carried_contract", "name": name, "role": role}
+        return (
+            ref("Contract", name, role)
+            if named
+            else {"kind": "carried_contract", "name": name, "role": role}
+        )
 
     root_in = contract(
         spec.input_contract or spec.procedure + "-input", _fields(spec.input), "contract-in"
@@ -565,8 +580,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 raise ValueError("binding resolver must return binding details")
             node.update(
                 kind="call" if isinstance(step, CallStep) else "source",
-                provider=_ref("Provider", step.provider or "unbound", "provider"),
-                interface=_ref(
+                provider=ref("Provider", step.provider or "unbound", "provider"),
+                interface=ref(
                     "ProviderInterface", _interface_name(step.interface), "provider-interface"
                 ),
             )
@@ -577,9 +592,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if isinstance(step, CallStep):
                 node["input"] = template(step.input, path + ".input")
                 if step.effect_policy:
-                    node["effect_policy"] = _ref(
-                        "EffectPolicy", step.effect_policy, "effect-policy"
-                    )
+                    node["effect_policy"] = ref("EffectPolicy", step.effect_policy, "effect-policy")
                 _check_call_input(
                     step.input,
                     details.get("input"),
@@ -590,7 +603,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 alias = step.call
             else:
                 node.update(
-                    capture_contract=_ref("CaptureContract", step.contract, "capture-contract"),
+                    capture_contract=ref("CaptureContract", step.contract, "capture-contract"),
                     request=template(
                         {**details.get("request_defaults", {}), **step.request}
                         if isinstance(step.request, dict)
@@ -602,7 +615,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         elif isinstance(step, TapStep):
             node.update(
                 kind="state_tap",
-                query=_ref("QueryDefinition", step.query, "query"),
+                query=ref("QueryDefinition", step.query, "query"),
                 parameters=template(step.params, path + ".params"),
             )
             if step.budgets is not None:
@@ -618,7 +631,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             output = details.get("output")
             node.update(
                 kind="state_claim",
-                claim_type=_ref("ClaimType", step.claim_type, "claim-type"),
+                claim_type=ref("ClaimType", step.claim_type, "claim-type"),
                 subject_kind=details.get("subject_kind")
                 or step.subject_kind
                 or step.claim_type.rpartition(".")[0],
@@ -724,14 +737,14 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         elif isinstance(step, EmitStep):
             node.update(
                 kind="emit_capture",
-                capture_contract=_ref("CaptureContract", step.emit, "capture-contract"),
+                capture_contract=ref("CaptureContract", step.emit, "capture-contract"),
                 input=template(step.input, path + ".input"),
                 result=template(step.result, path + ".result"),
             )
         elif isinstance(step, InvokeStep):
             node.update(
                 kind="invoke",
-                procedure=_ref("Procedure", step.invoke, "procedure"),
+                procedure=ref("Procedure", step.invoke, "procedure"),
                 input=template(step.input, path + ".input"),
             )
             if resolve:
@@ -849,7 +862,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         order = {id_: i for i, id_ in enumerate(spec.halt_order)}
         generated.sort(key=lambda node: order.get(node["node_id"], len(order)))
     definition: dict[str, Any] = dict(
-        graph_format=6,
+        graph_format=7 if named else 6,
         name=spec.procedure,
         description=spec.description,
         contract_in=root_in,
@@ -887,9 +900,21 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             [
                 {
                     "slot_name": slot,
-                    "pin_role": "provider",
-                    "artifact_kind": "Provider",
-                    "interface_digest": resolve("slot", interface),
+                    **(
+                        {
+                            "interface": ref(
+                                "ProviderInterface",
+                                _interface_name(interface),
+                                "provider-interface",
+                            )
+                        }
+                        if named
+                        else {
+                            "pin_role": "provider",
+                            "artifact_kind": "Provider",
+                            "interface_digest": resolve("slot", interface),
+                        }
+                    ),
                 }
                 for slot, interface in sorted(spec.slots.items())
             ]
@@ -1150,6 +1175,9 @@ def _carried_names(value: Any) -> set[str]:
     if isinstance(value, dict):
         if value.get("kind") == "carried_contract":
             return {value["name"]}
+        target = value.get("target")
+        if isinstance(target, dict) and target.get("kind") == "Contract":
+            return {target["name"]}
         return set().union(*(_carried_names(v) for v in value.values()))
     if isinstance(value, (tuple, list)):
         return set().union(*(_carried_names(v) for v in value))
