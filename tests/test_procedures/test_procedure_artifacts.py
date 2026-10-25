@@ -508,3 +508,44 @@ def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
     runnable, (node,) = procedure_runnability(parsed.definition)
     assert runnable == "unsupported"
     assert node.kind == "exhaust_tap" and node.runs_on == "nowhere"
+
+
+def test_named_procedure_has_no_cross_reference_digests() -> None:
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    historical = _artifact(_definition())
+    original = render_procedure(historical)
+    named = name_procedure(historical)
+    payload = named.model_dump(mode="json", by_alias=True)
+    assert payload["artifact_format"] == "cruxible-procedure-v3"
+    assert payload["definition"]["graph_format"] == 7
+    assert "pins" not in payload
+    assert "artifact_digest" not in str(payload["definition"])
+    assert "role" not in str(payload["definition"])
+    assert parse_procedure(render_procedure(named), path=procedure_path("triage")) == named
+    assert render_procedure(historical) == original
+    assert parse_procedure(original, path=procedure_path("triage")) == historical
+
+
+def test_named_procedure_refuses_legacy_reference_fields() -> None:
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    payload = name_procedure(_artifact(_definition())).model_dump(mode="json", by_alias=True)
+    payload["pins"] = []
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        NamedProcedureArtifact.model_validate(payload)
+    payload.pop("pins")
+    payload["definition"]["nodes"][0]["query"]["role"] = "query"
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        NamedProcedureArtifact.model_validate(payload)
+
+
+def test_named_procedure_checks_owned_contract_names() -> None:
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    payload = name_procedure(_artifact(_definition())).model_dump(mode="json", by_alias=True)
+    payload["owned_contracts"] = []
+    with pytest.raises(ValidationError, match="every owned Contract"):
+        NamedProcedureArtifact.model_validate(payload)

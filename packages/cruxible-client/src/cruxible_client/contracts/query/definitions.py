@@ -13,7 +13,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -175,7 +175,7 @@ class QueryDefinition(_StrictQueryDefinitionModel):
         sorted_unique(tuple(item.name for item in value), label="QueryDefinition includes")
         return value
 
-    @field_validator("pins")
+    @field_validator("pins", check_fields=False)
     @classmethod
     def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
         if value != tuple(sorted(value, key=_pin_key)):
@@ -194,7 +194,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
             )
         if isinstance(self.entry, QueryArtifactsEntry):
-            if self.artifact_format != "playbill-query-definition-v2":
+            if self.artifact_format not in {
+                "playbill-query-definition-v2",
+                "cruxible-query-definition-v3",
+            }:
                 raise ValueError("Artifact selection requires query definition v2")
             if (self.result_shape, self.result_cardinality, self.dedupe) != (
                 "artifact_definition",
@@ -222,9 +225,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
             if not self.default_budgets.within(self.maximum_budgets):
                 raise ValueError("default budgets exceed maximum budgets")
             return self
-        if self.artifact_format != "playbill-query-definition-v1" or (
-            self.result_shape == "artifact_definition" or self.dedupe == "artifact"
-        ):
+        if self.artifact_format not in {
+            "playbill-query-definition-v1",
+            "cruxible-query-definition-v3",
+        } or (self.result_shape == "artifact_definition" or self.dedupe == "artifact"):
             raise ValueError("Claim traversal requires the frozen v1 query grammar")
         self._validate_bindings()
         self._validate_reference_scopes()
@@ -379,6 +383,14 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 raise ValueError("QueryDefinition contract pins must target Contract identities")
 
 
+class NamedQueryDefinition(QueryDefinition):
+    artifact_format: Literal["cruxible-query-definition-v3"] = "cruxible-query-definition-v3"  # type: ignore[assignment]
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    def _validate_pins(self) -> None:
+        pass
+
+
 #: Spec fields an author may leave out; the defaults are stated in the stored definition.
 SPEC_DEFAULTED_FIELDS = (
     "result_shape",
@@ -516,13 +528,18 @@ def parse_query_definition(
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-query-definition-v1",
         "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
             f"unsupported QueryDefinition artifact format: {declared!r}"
         )
     try:
-        query = QueryDefinition.model_validate(payload)
+        query = (
+            NamedQueryDefinition
+            if payload["artifact_format"] == "cruxible-query-definition-v3"
+            else QueryDefinition
+        ).model_validate(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
@@ -603,10 +620,18 @@ def evaluate_query_definition_law(
     if accepted_artifacts is not None:
         for pin in query.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
-            if accepted is None or accepted[1] != pin.artifact_digest:
+            if accepted is None:
                 return _refusal(
                     "cruxible.query_definition.pin_unresolved",
                     "A QueryDefinition pin does not resolve at the accepted parent coordinate.",
+                    path=path,
+                )
+    if accepted_artifacts is not None:
+        for predicate in query.referenced_predicates:
+            if accepted_artifacts.get(f"ClaimType:{predicate}") is None:
+                return _refusal(
+                    "cruxible.query_definition.pin_unresolved",
+                    f"Query predicate {predicate!r} names no accepted ClaimType.",
                     path=path,
                 )
     digest = query_definition_digest(query).tagged

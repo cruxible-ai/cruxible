@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -19,6 +19,7 @@ from pydantic import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -47,6 +48,7 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
@@ -141,7 +143,7 @@ class _GraphEnvelope(_StrictProcedureArtifactModel):
         ArtifactDigest.from_tagged(value)
         return value
 
-    @field_validator("pins")
+    @field_validator("pins", check_fields=False)
     @classmethod
     def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
         if value != tuple(sorted(value, key=_pin_key)):
@@ -294,6 +296,75 @@ class BlueprintArtifact(_GraphEnvelope):
         return self
 
 
+class NamedBlueprintBinding(_StrictProcedureArtifactModel):
+    slot_name: str
+    provider: ArtifactNameRef
+
+    @model_validator(mode="after")
+    def _kind(self) -> NamedBlueprintBinding:
+        if self.provider.target.kind != "Provider":
+            raise ValueError("a Blueprint binds a named Provider")
+        return self
+
+
+class NamedBlueprintOrigin(_StrictProcedureArtifactModel):
+    tag: Literal["cruxible-blueprint-origin-v2"] = "cruxible-blueprint-origin-v2"
+    blueprint: ArtifactNameRef
+    bindings: tuple[NamedBlueprintBinding, ...]
+
+    @model_validator(mode="after")
+    def _shape(self) -> NamedBlueprintOrigin:
+        if self.blueprint.target.kind != "Blueprint":
+            raise ValueError("a Blueprint origin names a Blueprint")
+        names = tuple(binding.slot_name for binding in self.bindings)
+        if not names or names != tuple(sorted(set(names))):
+            raise ValueError("Blueprint bindings must be nonempty, sorted and unique")
+        return self
+
+
+def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
+    if envelope.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(envelope.identity.name):
+        raise ValueError(f"{kind} identity must be path-addressable")
+    if envelope.definition.name != envelope.identity.name:
+        raise ValueError(f"{kind} definition name must match its identity")
+    if (
+        envelope.definition_digest
+        != compute_procedure_definition_digest(envelope.definition).tagged
+    ):
+        raise ValueError(f"{kind} definition digest does not reproduce")
+    contracts = {contract.identity for contract in envelope.owned_contracts}
+    referenced = {
+        binding.target
+        for binding in iter_pin_bindings(envelope.definition)
+        if isinstance(binding, ArtifactNameRef) and binding.target.kind == "Contract"
+    }
+    if referenced != contracts:
+        raise ValueError("every owned Contract must be referenced by name exactly within its owner")
+
+
+
+
+class NamedProcedureArtifact(ProcedureArtifact):
+    """Revision-36 writer: dependencies resolve at the accepted coordinate."""
+
+    artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"  # type: ignore[assignment]
+    definition: NamedProcedureDefinition
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+    blueprint: NamedBlueprintOrigin | None = Field(default=None, exclude_if=lambda v: v is None)  # type: ignore[assignment]
+
+    def _check_envelope(self, kind: str) -> None:
+        _check_named_envelope(self, kind)
+
+
+class NamedBlueprintArtifact(BlueprintArtifact):
+    artifact_format: Literal["cruxible-blueprint-v2"] = "cruxible-blueprint-v2"  # type: ignore[assignment]
+    definition: NamedProcedureDefinition
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    def _check_envelope(self, kind: str) -> None:
+        _check_named_envelope(self, kind)
+
+
 #: How an accepted Procedure can run: on its own (``procedure run``), only as a
 #: Line (its terminals act outward under a Line's authority), or not at all
 #: (an exhaust tap: no v1 path admits one).
@@ -359,7 +430,9 @@ def procedure_runnability(
     return ("line" if rows else "direct"), tuple(rows)
 
 
-_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(ProcedureArtifact)
+_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(
+    ProcedureArtifact | NamedProcedureArtifact
+)
 
 
 def procedure_path(name: str) -> str:

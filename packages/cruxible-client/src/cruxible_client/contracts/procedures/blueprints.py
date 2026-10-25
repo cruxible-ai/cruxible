@@ -32,6 +32,7 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import (
     BlueprintArtifact,
     BlueprintOrigin,
+    NamedBlueprintArtifact,
     ProcedureArtifact,
     check_provider_node_contract,
     procedure_owned_contract_digest,
@@ -84,7 +85,9 @@ def render_blueprint(blueprint: BlueprintArtifact) -> bytes:
     return pretty_canonical_bytes(blueprint.model_dump(mode="json", by_alias=True))
 
 
-_BLUEPRINT_ADAPTER: TypeAdapter[BlueprintArtifact] = TypeAdapter(BlueprintArtifact)
+_BLUEPRINT_ADAPTER: TypeAdapter[BlueprintArtifact] = TypeAdapter(
+    BlueprintArtifact | NamedBlueprintArtifact
+)
 
 
 def parse_blueprint(

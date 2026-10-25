@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
@@ -59,13 +59,17 @@ TRIGGER_WINDOW_POLICY = PinExpectation((("trigger-window-policy", "Policy"),))
 
 
 def validate_exact_pin_expectation(
-    pin: ArtifactPin,
+    pin: ArtifactPin | ArtifactNameRef,
     expectation: PinExpectation,
     *,
     location: str,
 ) -> None:
     """Refuse an exact pin whose nominal role/kind does not fit its field."""
 
+    if isinstance(pin, ArtifactNameRef):
+        if pin.target.kind not in {kind for _role, kind in expectation.allowed}:
+            raise ValueError(f"{location} requires {expectation.description}")
+        return
     actual = (pin.role, pin.target.kind)
     if actual not in expectation.allowed:
         raise ValueError(
@@ -81,7 +85,7 @@ def _validate_binding_expectation(
     location: str,
     slots: dict[str, ProcedurePinSlot],
 ) -> None:
-    if isinstance(binding, ArtifactPin):
+    if isinstance(binding, ArtifactPin | ArtifactNameRef):
         validate_exact_pin_expectation(binding, expectation, location=location)
         return
     if not isinstance(binding, ProcedurePinSlotRef):  # pragma: no cover - closed union
@@ -151,7 +155,11 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
             )
             if isinstance(node.provider, ProcedurePinSlotRef):
                 slot = slots[node.provider.slot_name]
-                if slot.interface_digest != node.interface_digest:
+                if (
+                    getattr(slot, "interface", None) != node.interface
+                    if definition.graph_format == 7
+                    else slot.interface_digest != node.interface_digest
+                ):
                     raise ValueError(
                         f"{prefix} interface_digest disagrees with Provider slot "
                         f"{node.provider.slot_name!r}"
@@ -173,7 +181,11 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
             )
             if isinstance(node.provider, ProcedurePinSlotRef):
                 slot = slots[node.provider.slot_name]
-                if slot.interface_digest != node.interface_digest:
+                if (
+                    getattr(slot, "interface", None) != node.interface
+                    if definition.graph_format == 7
+                    else slot.interface_digest != node.interface_digest
+                ):
                     raise ValueError(
                         f"{prefix} interface_digest disagrees with Provider slot "
                         f"{node.provider.slot_name!r}"
@@ -192,7 +204,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
                 if body.operation != "call":
                     continue
-                if body.interface is None or body.interface_digest is None:
+                if body.interface is None:
                     raise ValueError(f"{body_prefix} lacks its Provider interface")
                 validate_exact_pin_expectation(
                     body.interface,
@@ -201,7 +213,11 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 )
                 if isinstance(body.provider, ProcedurePinSlotRef):
                     slot = slots[body.provider.slot_name]
-                    if slot.interface_digest != body.interface_digest:
+                    if (
+                        getattr(slot, "interface", None) != body.interface
+                        if definition.graph_format == 7
+                        else slot.interface_digest != body.interface_digest
+                    ):
                         raise ValueError(
                             f"{body_prefix} interface_digest disagrees with Provider slot "
                             f"{body.provider.slot_name!r}"

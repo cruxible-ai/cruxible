@@ -14,7 +14,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
@@ -54,12 +54,12 @@ class ProcedurePinSlot(_StrictProcedureModel):
     def _slot_name(cls, value: str) -> str:
         return _canonical_identifier(value, _NAME_RE, label="Procedure slot_name")
 
-    @field_validator("pin_role")
+    @field_validator("pin_role", check_fields=False)
     @classmethod
     def _pin_role(cls, value: str) -> str:
         return _canonical_identifier(value, _ROLE_RE, label="Procedure slot pin_role")
 
-    @field_validator("artifact_kind")
+    @field_validator("artifact_kind", check_fields=False)
     @classmethod
     def _artifact_kind(cls, value: str) -> str:
         if unicodedata.normalize("NFC", value) != value or not re.fullmatch(
@@ -68,7 +68,7 @@ class ProcedurePinSlot(_StrictProcedureModel):
             raise ValueError("Procedure slot artifact_kind must be a canonical artifact kind")
         return value
 
-    @field_validator("interface_digest")
+    @field_validator("interface_digest", check_fields=False)
     @classmethod
     def _interface_digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -85,7 +85,7 @@ class ProcedurePinSlotRef(_StrictProcedureModel):
         return _canonical_identifier(value, _NAME_RE, label="Procedure slot reference")
 
 
-ProcedurePinBinding = ArtifactPin | ProcedurePinSlotRef
+ProcedurePinBinding = ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
 
 
 class ProcedureBudget(_StrictProcedureModel):
@@ -282,7 +282,7 @@ class SourceNode(_StrictProcedureModel):
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -331,7 +331,7 @@ class CallNode(_StrictProcedureModel):
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -521,7 +521,7 @@ class RepeatBodyNode(_StrictProcedureModel):
     spec: ProcedureTransformSpec | object
     as_: str = Field(alias="as")
 
-    _digests = field_validator("interface_digest", "implementation_digest")(
+    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
         lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
     )
 
@@ -982,7 +982,7 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
     found: list[ProcedurePinBinding] = []
 
     def visit(item: object) -> None:
-        if isinstance(item, ArtifactPin | ProcedurePinSlotRef):
+        if isinstance(item, ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef):
             found.append(item)
             return
         if isinstance(item, BaseModel):
