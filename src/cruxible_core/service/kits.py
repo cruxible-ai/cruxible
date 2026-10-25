@@ -424,9 +424,17 @@ def _bundled_provider_pins(
     """
 
     for pin in state.pins:
-        if pin.target.kind != "Provider" or _builtin(
-            "Provider", pin.target.name, getattr(pin, "artifact_digest", "")
-        ):
+        if pin.target.kind != "Provider":
+            continue
+        held = tree_providers.get(provider_path(pin.target.name))
+        digest = (
+            pin.artifact_digest
+            if isinstance(pin, ArtifactPin)
+            else ""
+            if held is None
+            else held.artifact_digest
+        )
+        if _builtin("Provider", pin.target.name, digest):
             continue
         name = parse_provider_build_name(pin.target.name).name
         package = bundled.get(name)

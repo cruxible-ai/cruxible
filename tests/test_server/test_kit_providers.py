@@ -233,7 +233,6 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
             "role": "provider-interface",
             "target": interface["identity"],
         },
-        "interface_digest": interface["interface_digest"],
     }
     if provider is None:
         node["provider"] = {"kind": "slot", "slot_name": "increment"}
@@ -249,7 +248,6 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
             "role": "provider",
             "target": row["provider_identity"],
         }
-        node["implementation_digest"] = row["implementation_digest"]
     example = procedure_example()
     definition = {
         **example.definition,
@@ -279,7 +277,6 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
                 "slot_name": "increment",
                 "pin_role": "provider",
                 "artifact_kind": "Provider",
-                "interface_digest": interface["interface_digest"],
             }
         ]
     schema = {"n": PropertySchema(type="int")}
@@ -433,22 +430,36 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         procedure = parse_procedure(
             tree[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
-        (provider_pin,) = (pin for pin in procedure.pins if pin.role == "provider")
+        from cruxible_client.contracts.artifacts import ArtifactPin
+        from cruxible_client.contracts.dependencies import dependency_pins
+        from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+
+        (provider_pin,) = (
+            pin for pin in dependency_pins(procedure, by_name=False) if pin.role == "provider"
+        )
         held_path = next(p for p in tree if p.startswith("providers/kit-call/"))
         here = parse_provider(tree[held_path], path=held_path)
-        assert provider_pin.artifact_digest == provider_digest(here).tagged
+        assert provider_pin.target == here.identity
         released = parse_procedure(
             release.contents()[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
-        assert provider_pin.artifact_digest != next(
-            pin.artifact_digest for pin in released.pins if pin.role == "provider"
-        )
+        if isinstance(provider_pin, ArtifactPin):
+            assert provider_pin.artifact_digest == provider_digest(here).tagged
+            assert provider_pin.artifact_digest != next(
+                pin.artifact_digest for pin in released.pins if pin.role == "provider"
+            )
+        else:
+            assert procedure_artifact_digest(procedure) == procedure_artifact_digest(released)
+            publisher_tree = _tree(publisher)
+            publisher_provider = parse_provider(publisher_tree[held_path], path=held_path)
+            assert provider_digest(here) != provider_digest(publisher_provider)
+            assert released.definition.nodes[0].provider.target == provider_pin.target
         (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
         assert [(item.provider_id, item.state) for item in status.providers] == [
             ("kit-call", "installed")
         ]
         again = _add(consumer, release, dry_run=False)
-        assert again.status == "unchanged", again
+        assert again.status == "unchanged", again.model_dump_json(indent=2)
         assert [step.action for step in again.providers] == ["unchanged"]
 
         # The kit's Procedure runs on the provider it bundled.
@@ -829,10 +840,10 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     whose slot takes workspace.file, travel without carrying, installing or remapping
     the built-ins; the consumer must hold the same frozen ones."""
 
-    from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.dependencies import dependency_pins
     from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-    from cruxible_client.contracts.procedures.models import ProcedureDefinition
     from cruxible_core.service.kits import _builtin, service_add_kit, service_build_kit
     from tests.core_support._candidate_support import submit_member_candidate
     from tests.core_support._knowledge_loop_support import accept_proposal
@@ -848,21 +859,20 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
         "tag": "playbill-procedure-pin-slot-ref-v1",
         "slot_name": "files",
     }
-    raw["nodes"][0]["implementation_digest"] = None
     raw["pin_slots"] = [
         {
             "slot_name": "files",
-            "pin_role": "provider",
-            "artifact_kind": "Provider",
-            "interface_digest": raw["nodes"][0]["interface_digest"],
+            "interface": raw["nodes"][0]["interface"],
         }
     ]
-    definition = ProcedureDefinition.model_validate(raw)
-    blueprint = BlueprintArtifact(
+    from cruxible_client.contracts.procedures.artifacts import NamedBlueprintArtifact
+    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+
+    definition = NamedProcedureDefinition.model_validate(raw)
+    blueprint = NamedBlueprintArtifact(
         identity={"kind": "Blueprint", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(pin for pin in procedure.pins if pin.role != "provider"),
         owned_contracts=procedure.owned_contracts,
         activation_policy="drain",
     )
@@ -889,10 +899,25 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
         release.contents()["procedures/acme.files.json"], path="procedures/acme.files.json"
     )
     builtins = [
-        pin for pin in released.pins if pin.target.kind in {"Provider", "ProviderInterface"}
+        pin
+        for pin in dependency_pins(released, by_name=False)
+        if pin.target.kind in {"Provider", "ProviderInterface"}
     ]
     assert len(builtins) == 2
-    assert all(_builtin(pin.target.kind, pin.target.name, pin.artifact_digest) for pin in builtins)
+    if all(isinstance(pin, ArtifactPin) for pin in builtins):
+        assert all(
+            _builtin(pin.target.kind, pin.target.name, pin.artifact_digest) for pin in builtins
+        )
+    else:
+        from cruxible_core.claims.closure import parse_dependency_artifact
+
+        publisher_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        for pin in builtins:
+            path = "providers/" if pin.target.kind == "Provider" else "provider-interfaces/"
+            path += pin.target.name + ".json"
+            state = parse_dependency_artifact(path, publisher_tree[path])
+            assert state is not None
+            assert _builtin(pin.target.kind, pin.target.name, state.artifact_digest)
 
     (tmp_path / "consumer").mkdir()
     consumer, _consumer_owner = initialize_local(tmp_path / "consumer")
