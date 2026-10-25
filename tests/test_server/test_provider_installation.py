@@ -147,8 +147,6 @@ def _run_call(
                     "role": "provider-interface",
                     "target": interface["identity"],
                 },
-                "interface_digest": interface["interface_digest"],
-                "implementation_digest": provider["implementation_digest"],
             }
         ],
         "budget": {
@@ -688,8 +686,6 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                 "capture_contract": accepted("capture-contract", contract.identity.qualified),
                 "provider": accepted("provider", provider["provider_identity"]),
                 "interface": accepted("provider-interface", interface["identity"]),
-                "interface_digest": interface["interface_digest"],
-                "implementation_digest": provider["implementation_digest"],
                 "request": {
                     "url": "https://fixture.invalid/api/v1/measurements.json",
                     "expected_format": "json",
