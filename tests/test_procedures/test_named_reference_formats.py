@@ -788,3 +788,21 @@ def test_named_line_admission_checks_exact_coordinate_bindings(tmp_path):
             procedure_binding=binding.model_copy(update={"artifact_digest": "sha256:" + "f" * 64}),
             acquisition_policy_binding=policy,
         )
+
+
+def test_named_trigger_noop_keeps_accepted_bytes():
+    from cruxible_client.contracts.authoring.models import TriggerAuthoringPayload
+    from cruxible_client.contracts.triggers import CadenceSchedule
+    from cruxible_core.authoring.lowering import _render_trigger_member
+
+    payload = TriggerAuthoringPayload(
+        name="test.noop",
+        action="evidence.sweep",
+        schedule=CadenceSchedule(interval_seconds=60),
+    )
+    path, content, digest = _render_trigger_member(payload, tree={}, light=True)
+    assert _render_trigger_member(payload, tree={path: content}, light=True) == (
+        path,
+        content,
+        digest,
+    )

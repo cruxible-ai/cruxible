@@ -3956,11 +3956,11 @@ def _render_trigger_member(
             predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
         ),
     )
+    if light:
+        trigger = name_trigger(trigger)
     if previous_content is not None and previous is not None:
         if _same_revision_content(trigger, previous):
             return path, previous_content, trigger_digest(previous).tagged
-    if light:
-        trigger = name_trigger(trigger)
     return path, render_trigger(trigger), trigger_digest(trigger).tagged
 
 
