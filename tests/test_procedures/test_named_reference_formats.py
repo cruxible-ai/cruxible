@@ -837,3 +837,16 @@ def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carrier
     assert (
         CaptureContractAuthoringPayload.model_validate(payload.model_dump(mode="json")) == payload
     )
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_noop_reference_move_keeps_the_owner_wire_form(named):
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_core.claims.artifact_references import move_references
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    procedure = _artifact(_definition())
+    if named:
+        procedure = name_procedure(procedure)
+    payload = json.loads(render_procedure(procedure))
+    assert move_references("procedures/triage.json", payload, {}) == payload

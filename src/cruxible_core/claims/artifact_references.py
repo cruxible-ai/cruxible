@@ -424,6 +424,10 @@ def _move_graph(
                 "definition_digest": compute_procedure_definition_digest(definition).tagged,
             }
         )
+        if isinstance(moved, NamedProcedureArtifact):
+            from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+            return compact_procedure(moved)
         return moved.model_dump(mode="json", by_alias=True)
     moved_pins = [_moved(pin, remap) for pin in graph.pins]
     if builds and definition is not graph.definition:
@@ -451,11 +455,6 @@ def _move_graph(
             "pins": [pin.model_dump(mode="json") for pin in pins],
         }
     )
-    if getattr(moved, "artifact_format", None) == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
-
-        compact: dict[str, Any] = compact_procedure(moved)
-        return compact
     result: dict[str, Any] = json.loads(json.dumps(moved.model_dump(mode="json", by_alias=True)))
     return result
 
