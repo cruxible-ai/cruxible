@@ -665,3 +665,28 @@ def test_named_authoring_keeps_legacy_reference_spellings_opaque_in_templates(li
     payload = lower_authoring_input(lowered)
     assert payload.definition["nodes"][0]["fields"]["data"] == literal
     assert payload.definition == lowered.definition
+
+
+def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins():
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.query.definitions import (
+        AcceptedQueryDefinition,
+        NamedQueryDefinitionSpec,
+        query_definition_digest,
+        validate_query_definition,
+    )
+    from cruxible_core.service.discovery.compact_query import _accepted
+    from tests.test_procedures.test_named_reference_closure import authored_query
+
+    query = authored_query("test.native-read")
+    accepted = _accepted(query)
+    assert accepted.query == query
+    assert accepted.artifact_digest == query_definition_digest(query).tagged
+    assert AcceptedQueryDefinition.model_validate(accepted.model_dump(mode="json")) == accepted
+    assert (
+        validate_query_definition(NamedQueryDefinitionSpec.model_validate(query.model_dump()))
+        == query
+    )
+    with pytest.raises(ValidationError, match="pins"):
+        validate_query_definition({**query.model_dump(mode="json"), "pins": []})

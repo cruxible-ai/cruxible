@@ -596,6 +596,19 @@ def render_query_definition(query: QueryDefinition) -> bytes:
     return pretty_canonical_bytes(query_definition_wire(query))
 
 
+def validate_query_definition(payload: Any) -> QueryDefinition:
+    """Strictly select the stored owner model without changing the payload."""
+    if isinstance(payload, QueryDefinition):
+        payload = payload.model_dump(mode="json")
+    model = (
+        NamedQueryDefinition
+        if isinstance(payload, Mapping)
+        and payload.get("artifact_format") == "cruxible-query-definition-v3"
+        else QueryDefinition
+    )
+    return model.model_validate(payload)
+
+
 def parse_query_definition(
     content: bytes,
     *,
@@ -616,11 +629,7 @@ def parse_query_definition(
             f"unsupported QueryDefinition artifact format: {declared!r}"
         )
     try:
-        query = (
-            NamedQueryDefinition
-            if payload["artifact_format"] == "cruxible-query-definition-v3"
-            else QueryDefinition
-        ).model_validate(payload)
+        query = validate_query_definition(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
@@ -643,6 +652,11 @@ class AcceptedQueryDefinition(_StrictQueryDefinitionModel):
     path: str
     query: SerializeAsAny[QueryDefinition]
     artifact_digest: str
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def _query_owner(cls, value: Any) -> QueryDefinition:
+        return validate_query_definition(value)
 
     @model_validator(mode="after")
     def _binding(self) -> "AcceptedQueryDefinition":

@@ -78,7 +78,7 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.query.definitions import QueryDefinition
+from cruxible_client.contracts.query.definitions import validate_query_definition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.subjects import SubjectShell
 
@@ -326,7 +326,7 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
         if kind == "document":
             return DocumentShell.model_validate(payload).identity
         if kind == "query_definition":
-            return QueryDefinition.model_validate(payload).identity.name
+            return validate_query_definition(payload).identity.name
         if kind == "procedure":
             procedure = ProcedureInput.model_validate(payload)
             return str(procedure.definition["name"])
