@@ -316,3 +316,31 @@ def test_v3_artifact_entry_restores_its_default_binding(tree):
     query = parse_query_definition(wire, path=path)
     assert query.result_binding == query.entry.binding == "definition"
     assert query_definition_digest(query).tagged == digest
+
+
+def test_kit_snapshot_and_carried_successor_use_the_query_codec(tree):
+    from cruxible_core.claims.claim_type_migrations import _canonical_successor_bytes
+    from cruxible_core.claims.closure import parse_dependency_artifact
+    from cruxible_core.service.kits import _render
+
+    payload = lower_authoring_input(
+        QueryDefinitionInput(kind="query_definition", query_definition=simple())
+    )
+    path, wire, _ = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    body = json.loads(wire)
+    body["lifecycle"] = {"state": "live", "predecessor_digest": None}
+    snapshot, digest = _render(path, body)
+    assert snapshot == wire
+    current = parse_dependency_artifact(path, snapshot)
+    assert current.artifact_digest == digest
+    successor = _canonical_successor_bytes(
+        current=current,
+        content=snapshot,
+        disposition="successor",
+        replacements={},
+        supplied=None,
+        successor_type=None,
+    )
+    parsed = parse_query_definition(successor, path=path)
+    assert parsed.lifecycle.predecessor_digest == digest
+    assert parsed.artifact_format == "cruxible-query-definition-v3"

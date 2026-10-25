@@ -83,6 +83,7 @@ from cruxible_client.contracts.laws import (
     QUERY_DEFINITION_ACCEPTANCE_LAW,
     QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
     QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
+    QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     RESOURCE_BUDGET_UPGRADE_LAW,
     SDK_SOURCE_PROCEDURE_LAW,
@@ -386,6 +387,13 @@ LAW_COORDINATES: tuple[
         "playbill-procedure-v2",
         6,
         "sha256:bcb271659f2952b6e655b90b38e478a433b4fcd41fd25f4b8a7dc2a0443aefe9",
+    ),
+    (
+        QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
+        "cruxible.query-definition.v3",
+        "cruxible-query-definition-v3",
+        1,
+        "sha256:0c19763aac9bc2c9ab5259767d83ea7348225061d5aac9916298d3b57f2b40ac",
     ),
     (
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,

@@ -686,9 +686,17 @@ def _canonical_successor_bytes(
     else:
         payload = supplied
     try:
-        candidate = (
-            supplied_content if supplied_content is not None else (pretty_canonical_bytes(payload))
-        )
+        if supplied_content is not None:
+            candidate = supplied_content
+        elif current.artifact_tag == "cruxible-query-definition-v3":
+            from cruxible_client.contracts.query.definitions import (
+                QueryDefinition,
+                render_query_definition,
+            )
+
+            candidate = render_query_definition(QueryDefinition.model_validate(payload))
+        else:
+            candidate = pretty_canonical_bytes(payload)
         parsed = parse_dependency_artifact(current.path, candidate)
     except (CruxibleError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(

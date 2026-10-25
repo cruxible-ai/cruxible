@@ -237,6 +237,7 @@ def _change_set_query() -> QueryDefinition:
     assert example.projection is not None
     return example.model_copy(
         update={
+            "artifact_format": "cruxible-query-definition-v3",
             "pins": (),
             "projection": QueryProjection(fields=(example.projection.fields[0],)),
         }
