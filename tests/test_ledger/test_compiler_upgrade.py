@@ -264,7 +264,7 @@ def test_upgrade_rebuild_and_new_query_preserve_old_receipts(tmp_path, monkeypat
     service_activate_playbill_proposal(
         instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
     )
-    query = definition()
+    query = definition(artifact_format="playbill-query-definition-v2")
     tree = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
     tree[query_definition_path(query.identity.name)] = render_query_definition(query)
     result = instance.proposal_service().submit(
