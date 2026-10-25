@@ -52,6 +52,12 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
         ROOT / "benchmarks/playbill_taubench/seed-example",
         checkout / "benchmarks/playbill_taubench/seed-example",
     )
+    # The unified golden derives its frozen section from this independent input.
+    (checkout / "tests/fixtures").mkdir()
+    shutil.copy2(
+        ROOT / "tests/fixtures/query-definition-v1.json",
+        checkout / "tests/fixtures/query-definition-v1.json",
+    )
     before = _snapshot(checkout)
 
     completed = subprocess.run(
