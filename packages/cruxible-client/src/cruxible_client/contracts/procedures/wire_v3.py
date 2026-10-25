@@ -33,13 +33,9 @@ def compact_procedure(value: Any) -> Any:
             if key not in dumped:
                 continue
             member = getattr(value, name)
-            # Transform specs are discriminated by tag in a real union. Other
-            # tags are fixed by position. ArtifactPin fields remain N1b-owned.
-            if name == "tag" and not (
-                value.__class__.__name__.startswith("Transform")
-                or value.__class__.__name__.endswith("Binding")
-                or value.__class__.__name__ == "ProcedurePinSlotRef"
-            ):
+            # Only transform specs discriminate a union by tag. Named
+            # references and slot bindings have no historical pin-tag branch.
+            if name == "tag" and not value.__class__.__name__.startswith("Transform"):
                 continue
             default = field.get_default(call_default_factory=True)
             if (

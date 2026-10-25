@@ -521,3 +521,24 @@ def test_authored_procedure_lowers_directly_to_the_named_graph():
     assert payload.definition == lowered.definition
     assert "artifact_digest" not in json.dumps(payload.definition)
     assert "role" not in json.dumps(payload.definition)
+
+
+def test_named_v3_wire_omits_pin_tags_defaults_and_duplicate_node_ids():
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure, render_procedure
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    original = name_procedure(_artifact(_definition()))
+    wire = json.loads(render_procedure(original))
+    node = wire["definition"]["nodes"][0]
+    assert node["id"] == original.definition.nodes[0].node_id
+    assert "node_id" not in node
+    assert node["as"] == original.definition.nodes[0].as_
+    assert "tag" not in wire["definition"]["contract_in"]
+    assert "pins" not in wire
+    assert (
+        parse_procedure(
+            render_procedure(original), path="procedures/" + original.identity.name + ".json"
+        )
+        == original
+    )

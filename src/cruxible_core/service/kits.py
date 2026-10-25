@@ -227,11 +227,11 @@ def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
 def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
     if path.startswith("procedures/") and payload.get("artifact_format") == "cruxible-procedure-v3":
         from cruxible_client.contracts.procedures.artifacts import (
-            ProcedureArtifact,
+            NamedProcedureArtifact,
             render_procedure,
         )
 
-        content = render_procedure(ProcedureArtifact.model_validate(payload))
+        content = render_procedure(NamedProcedureArtifact.model_validate(payload))
     elif (
         path.startswith("query-definitions/")
         and payload.get("artifact_format") == "cruxible-query-definition-v3"

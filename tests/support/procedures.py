@@ -132,22 +132,39 @@ def procedure_artifact(
             *extra_pins,
         )
     }
-    result = ProcedureArtifact(
-        artifact_format="playbill-procedure-v2",
+    if artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.artifacts import ArtifactNameRef
+        from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+        from cruxible_client.contracts.procedures.names import named_graph
+
+        named = NamedProcedureDefinition.model_validate(
+            named_graph(resolved.model_dump(mode="json", by_alias=True))
+        )
+        referenced = {
+            binding.target
+            for binding in iter_pin_bindings(named)
+            if isinstance(binding, ArtifactNameRef)
+        }
+        return NamedProcedureArtifact(
+            identity=ArtifactIdentity(kind="Procedure", name=named.name),
+            definition=named,
+            definition_digest=compute_procedure_definition_digest(named).tagged,
+            owned_contracts=tuple(
+                contract for contract in owned if contract.identity in referenced
+            ),
+            activation_policy=activation_policy,
+            lifecycle=lifecycle or ArtifactLifecycle(),
+        )
+    return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=resolved.name),
         definition=resolved,
         definition_digest=compute_procedure_definition_digest(resolved).tagged,
         pins=tuple(pins[key] for key in sorted(pins)),
         owned_contracts=owned,
-        activation_policy=activation_policy,  # type: ignore[arg-type]
+        activation_policy=activation_policy,
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
-
-    if artifact_format == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        return name_procedure(result)
-    return result
 
 
 def accepted_procedure(

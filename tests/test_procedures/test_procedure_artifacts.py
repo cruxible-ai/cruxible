@@ -117,7 +117,9 @@ def _definition(
 
 
 def _artifact(definition: ProcedureDefinition) -> ProcedureArtifact:
-    return procedure_artifact(definition, activation_policy="drain")
+    return procedure_artifact(
+        definition, activation_policy="drain", artifact_format="playbill-procedure-v2"
+    )
 
 
 def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinition:

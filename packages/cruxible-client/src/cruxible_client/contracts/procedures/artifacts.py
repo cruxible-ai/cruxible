@@ -291,19 +291,6 @@ class ProcedureArtifact(_GraphEnvelope):
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     acquisition_policy: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _stored_v3(cls, value: object) -> object:
-        if isinstance(value, dict) and value.get("artifact_format") == "cruxible-procedure-v3":
-            definition = value.get("definition")
-            if isinstance(definition, dict) and any(
-                isinstance(node, dict) and "id" in node for node in definition.get("nodes", ())
-            ):
-                from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
-
-                return expand_procedure(value)
-        return value
-
     @field_validator("acquisition_policy")
     @classmethod
     def _policy_name(cls, value: str | None) -> str | None:
@@ -421,6 +408,19 @@ class NamedProcedureArtifact(ProcedureArtifact):
     definition: NamedProcedureDefinition
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
     blueprint: NamedBlueprintOrigin | None = Field(default=None, exclude_if=lambda v: v is None)  # type: ignore[assignment]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _stored_v3(cls, value: object) -> object:
+        if isinstance(value, dict) and value.get("artifact_format") == "cruxible-procedure-v3":
+            definition = value.get("definition")
+            if isinstance(definition, dict) and any(
+                isinstance(node, dict) and "id" in node for node in definition.get("nodes", ())
+            ):
+                from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
+
+                return expand_procedure(value)
+        return value
 
     def _check_envelope(self, kind: str) -> None:
         _check_named_envelope(self, kind)
