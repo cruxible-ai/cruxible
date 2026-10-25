@@ -75,9 +75,7 @@ def _bare_query() -> QueryDefinition:
     """The work-item read with no projection: rows render the Subjects' own cells."""
 
     declared = work_item_query(BARE)
-    return declared.model_validate(
-        {**declared.model_dump(mode="json"), "projection": None}
-    )
+    return declared.model_validate({**declared.model_dump(mode="json"), "projection": None})
 
 
 @pytest.fixture

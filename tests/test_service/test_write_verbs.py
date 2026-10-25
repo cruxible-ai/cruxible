@@ -952,7 +952,6 @@ def _record_capture(
     """
 
     from cruxible_client.contracts.captures import capture_components
-
     from cruxible_core.evidence.source_readers import (
         ExternalSourceReadRequestV1,
         FakeVersionedExternalSourceReader,

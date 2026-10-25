@@ -13,7 +13,9 @@ from typing import Any, cast
 import pytest
 
 from cruxible_client.contracts.compact_query import QueryRequest
-from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinitionSpec,
+)
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.field_names import short_field_name

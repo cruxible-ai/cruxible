@@ -512,9 +512,7 @@ def check_upload_procedure(
     )
 
     coordinate = _resolve_coordinate(instance, at)
-    accepted = _accepted_procedure(
-        instance, name=name, coordinate=coordinate, bind_references=True
-    )
+    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
     reads = tuple(
         node
         for node in accepted.procedure.definition.nodes

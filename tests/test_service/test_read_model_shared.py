@@ -21,7 +21,10 @@ from cruxible_client.contracts.get_reads import (
     GetSubjectCard,
 )
 from cruxible_client.contracts.orient import ORIENT_KIND_FIELDS
-from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinitionSpec,
+    QueryDefinitionSpec,
+)
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -578,9 +581,7 @@ def test_projected_exact_content_follows_the_engines_visibility_policy(
     instance, seeded = exact_world
     declared = work_item_query("project.exact.contradicted").model_dump(mode="json")
     declared["evaluation_policy"]["visible_verdicts"] = ["contradicted"]
-    rows = _exact_query(
-        instance, spec=NamedQueryDefinitionSpec.model_validate(declared)
-    ).rows
+    rows = _exact_query(instance, spec=NamedQueryDefinitionSpec.model_validate(declared)).rows
 
     assert {row["item_id"]: row["status"] for row in rows} == {
         claim.subject.split("/", 1)[1]: None for claim in seeded.values()
@@ -937,7 +938,9 @@ def test_a_many_valued_exact_content_projection_is_the_list_compact_mode_shows(
 
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
     from cruxible_client.contracts.policies import ClaimResolutionPolicy
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinitionSpec
+    from cruxible_client.contracts.query.definitions import (
+        NamedQueryDefinitionSpec,
+    )
     from cruxible_client.contracts.read_values import ExactContentRef
     from tests.core_support import _exact_content_support as support
     from tests.core_support._candidate_support import submit_query_definition_candidate

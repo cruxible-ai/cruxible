@@ -11,9 +11,9 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    builtin_contract_for_write,
     DirectClaimSource,
     build_coordinator_self_source_capture,
+    builtin_contract_for_write,
     capture_contract_path,
     render_capture_contract,
 )
