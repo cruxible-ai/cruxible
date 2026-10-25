@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     lower_capture_contract_input,
@@ -426,7 +427,13 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
         PROVIDER_BUILDS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
     )
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.proposals.proposals import (
+        AuthenticatedActor,
+        ProposalAdmissionRequest,
+        _validate_identity_evidence_policy_format,
+    )
+    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._pc_c_support import capture_contract as frozen_contract
     from tests.core_support.legacy_capture_builders import initialize_legacy_local
     from tests.test_claims.test_claims import TIMESTAMP, _claim_type
 
@@ -473,10 +480,18 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
             "evidence_admission_policy": policy,
         }
     )
+    contract = (
+        record_contract(name="test.capture")
+        if revision == 36
+        else frozen_contract().model_copy(
+            update={"identity": ArtifactIdentity(kind="CaptureContract", name="test.capture")}
+        )
+    )
     base = instance.accepted_coordinate()
     tree = {
         **instance.tree_at(base.git_oid),
         claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
     }
 
     def submit():
@@ -491,7 +506,12 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
 
     if (revision == 36) != (policy_version == 4):
         with pytest.raises(FormatError, match="upgrade the compiler"):
-            submit()
+            _validate_identity_evidence_policy_format(claim_type, compiler)
+        result = submit()
+        assert result.candidate is None
+        (diagnostic,) = result.evaluation.diagnostics
+        assert diagnostic.code == "cruxible.claim_type.format_invalid"
+        assert "upgrade the compiler" in diagnostic.message
     else:
         result = submit()
         assert result.candidate is not None, result.evaluation.diagnostics

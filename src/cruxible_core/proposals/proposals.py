@@ -3796,6 +3796,24 @@ def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) ->
     return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
 
 
+def _validate_identity_evidence_policy_format(claim_type: ClaimType, compiler: object) -> None:
+    """The identity-policy write gate; proposal orchestration renders its typed refusal."""
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    policy = claim_type.evidence_admission_policy
+    if policy.tag in {
+        "playbill-claim-evidence-admission-policy-v3",
+        "cruxible-claim-evidence-admission-policy-v4",
+    } and (compiler == LIGHT_ARTIFACTS_COMPILER) != (
+        policy.tag == "cruxible-claim-evidence-admission-policy-v4"
+    ):
+        raise FormatError(
+            "new identity evidence policies require v4 on compiler revision 36 "
+            "and v3 below it; "
+            "upgrade the compiler and state evidence_admission_policy explicitly"
+        )
+
+
 def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     # Parseability was decided by the pre-pass, which reports this kind's own
     # format refusal; reaching a law means the member already parsed.
@@ -3820,20 +3838,8 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         TRIGGER_CAPTURE_COMPILER,
     )
 
-    if context.historical_law_coordinate is None and claim_type.evidence_admission_policy.tag in {
-        "playbill-claim-evidence-admission-policy-v3",
-        "cruxible-claim-evidence-admission-policy-v4",
-    }:
-        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
-        if light != (
-            claim_type.evidence_admission_policy.tag
-            == "cruxible-claim-evidence-admission-policy-v4"
-        ):
-            raise FormatError(
-                "new identity evidence policies require v4 on compiler revision 36 "
-                "and v3 below it; "
-                "upgrade the compiler and state evidence_admission_policy explicitly"
-            )
+    if context.historical_law_coordinate is None:
+        _validate_identity_evidence_policy_format(claim_type, context.current.compiler)
 
     if context.historical_law_coordinate is None and context.current.compiler in {
         CLAIM_EVIDENCE_COMPILER,
