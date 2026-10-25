@@ -214,6 +214,160 @@ class _World:
         return result
 
 
+class _CoreWorld(_World):
+    """Frozen exact-pin histories use real core services, never the served write boundary."""
+
+    def __init__(self, root: Path, instance_id: str):
+        from types import SimpleNamespace
+
+        from cruxible_core.governance.actor_context import GovernedActorContext
+        from cruxible_core.service.procedures.procedure_runs import (
+            ProcedureRunRequest,
+            service_run_playbill_procedure,
+        )
+        from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+        self.instance, self.owner = initialize_legacy_local(root, instance_id=instance_id)
+        self.instance_id = instance_id
+        self.root = root
+
+        def run(name):
+            from datetime import UTC, datetime
+
+            now = datetime.now(UTC)
+            return service_run_playbill_procedure(
+                self.instance,
+                name=name,
+                request=ProcedureRunRequest(input={}, evaluation_time=now),
+                actor_context=GovernedActorContext(
+                    actor_type="human_user",
+                    actor_id="owner",
+                    org_id=instance_id,
+                    operation_id="frozen-kit-run",
+                    timestamp=now,
+                ),
+            )
+
+        self.pb = SimpleNamespace(
+            refresh=self.instance.refresh,
+            accepted_procedure=lambda name: SimpleNamespace(run=lambda: run(name)),
+        )
+
+    def tree(self):
+        return dict(self.instance.immutable_tree_at(self.instance.accepted_coordinate().git_oid))
+
+    def activate(self, proposal_id):
+        from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+        receipt = service_activate_playbill_proposal(
+            self.instance,
+            proposal_id=proposal_id,
+            activated_by="owner",
+        )
+        assert receipt.status == "accepted", receipt
+
+    def approve(self, proposal_id):
+        from cruxible_core.service.authoring.documents import (
+            service_inspect_playbill_proposal,
+            service_submit_playbill_approval,
+        )
+        from tests.core_support._support import client_material
+        from tests.test_ledger.test_activation import _sign
+
+        inspected = service_inspect_playbill_proposal(self.instance, proposal_id=proposal_id)
+        candidate = inspected.proposal.candidate
+        assert candidate is not None, inspected.proposal.evaluation.diagnostics
+        signed = _sign(
+            client_material(self.root, self.instance),
+            candidate.candidate_digest,
+            self.instance.accepted_coordinate().semantic_root,
+        )
+        service_submit_playbill_approval(
+            self.instance,
+            proposal_id=proposal_id,
+            attestation=signed.attestation,
+            authenticated_submitter="reviewer",
+        )
+        self.activate(proposal_id)
+
+    def submit(self, *members):
+        from cruxible_client.contracts.authoring.models import (
+            ChangeSetAuthoringPayload,
+            authoring_member_identity,
+        )
+        from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+        from cruxible_core.proposals.proposals import AuthenticatedActor
+
+        coordinator = AuthoringIntentCoordinator.for_instance(self.instance)
+        actor = AuthenticatedActor(actor_id="owner")
+        payload = ChangeSetAuthoringPayload(
+            members=tuple(sorted(members, key=authoring_member_identity)),
+        )
+        intent = coordinator.create(
+            actor=actor, payload=payload, canonical_timestamp="2026-10-24T12:00:00.000000Z"
+        ).intent
+        preflight = coordinator.preflight(intent.intent_id, actor=actor)
+        assert preflight.verdict == "passed", preflight.frontier
+        submitted = coordinator.submit(intent.intent_id, actor=actor)
+        assert submitted.status.proposal_id is not None, submitted
+        self.approve(submitted.status.proposal_id)
+        self.pb.refresh()
+
+    def author(self, *definitions, successions=(), dependents=()):
+        from cruxible_client.contracts.authoring.models import (
+            ClaimTypeAuthoringPayload,
+            ClaimTypeSuccessionMember,
+        )
+
+        self.submit(
+            *(ClaimTypeAuthoringPayload(claim_type=item) for item in definitions),
+            *(
+                ClaimTypeSuccessionMember(successor=item, dependents=dependents)
+                for item in successions
+            ),
+        )
+
+    def build(self, version, owns=("acme.",), kit_id="acme"):
+        from cruxible_core.service.kits import service_build_kit
+
+        return service_build_kit(
+            self.instance,
+            KitBuildRequest(kit_id=kit_id, version=version, owns=owns),
+        ).bundle
+
+    def preview_add(self, request):
+        from cruxible_core.service.kits import service_add_kit
+
+        return service_add_kit(
+            self.instance, request, actor_id="owner", timestamp="2026-10-24T12:00:00.000000Z"
+        )
+
+    def add(self, bundle, **options):
+        before = self.tree()
+        result = self.preview_add(
+            KitAddRequest(bundle=bundle, source="test", dry_run=False, **options)
+        )
+        if result.status == "proposed":
+            assert self.tree() == before
+            self.settle(result)
+        return result
+
+
+def _kit_preview(world, request):
+    if isinstance(world, _CoreWorld):
+        return world.preview_add(request)
+    return playbill_api.playbill_kit_add(world.instance_id, request)
+
+
+@pytest.fixture
+def frozen_worlds(tmp_path: Path):
+    """Only historical exact-pin cases use revision 35 and direct core services."""
+    roots = (tmp_path / "publisher", tmp_path / "consumer")
+    for root in roots:
+        root.mkdir()
+    return tuple(_CoreWorld(root, f"inst_frozen_kit_{root.name}") for root in roots)
+
+
 def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
     kind = predicate.rpartition(".")[0]
     return ClaimType(
@@ -790,11 +944,11 @@ def _query_state(world: _World, name: str) -> str:
 
 
 def test_retiring_dependents_follows_the_dropped_definitions_whole_closure(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
     """F-001: a dependent also reached through a replaced definition still retires."""
 
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     consumer.add(publisher.build("1.0.0"))
     # Discovered first through PLAN (replaced), but it also pins SEATS (dropped).
@@ -1225,7 +1379,8 @@ def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -
     base = lower_capture_contract_input(
         CaptureContractInputRecord(
             name=name, shape="database_snapshot", replay="exact", max_bytes=4096
-        )
+        ),
+        named=True,
     )
     return base.model_copy(
         update={
@@ -1468,6 +1623,11 @@ def _query(name: str, predicates: tuple[str, ...]) -> QueryDefinitionInput:
 
 
 def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
+    if isinstance(world, _CoreWorld):
+        from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+
+        world.submit(lower_authoring_input(definition))
+        return
     draft = world.pb.changes(rationale="Read accounts.")
     draft.query_definition(definition)
     intent = draft.prepare()
@@ -1480,9 +1640,9 @@ def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
 
 
 def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     consumer.add(publisher.build("1.0.0"))
     _author_query(consumer, _query("local.accounts", (PLAN, SEATS)))
@@ -1508,9 +1668,9 @@ def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
 
 
 def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     _author_query(publisher, _query("acme.accounts", (SEATS,)))
     consumer.add(publisher.build("1.0.0"))
@@ -1542,11 +1702,11 @@ def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
 
 @pytest.mark.parametrize("local_dependent", [False, True])
 def test_a_dropped_type_counts_only_queries_left_dependent_after_the_release(
-    worlds: tuple[_World, _World], local_dependent: bool
+    frozen_worlds: tuple[_World, _World], local_dependent: bool
 ) -> None:
     """A same-release query replacement must not inflate the dropped type's count."""
 
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     _author_query(publisher, _query("acme.accounts", (SEATS,)))
     consumer.add(publisher.build("1.0.0"))
@@ -1572,9 +1732,7 @@ def test_a_dropped_type_counts_only_queries_left_dependent_after_the_release(
     )
     release = _without(publisher.build("1.1.0"), SEATS)
     before = consumer.tree()
-    preview = playbill_api.playbill_kit_add(
-        consumer.instance_id, KitAddRequest(bundle=release, source="test")
-    )
+    preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
     assert preview.status == "would_propose", preview.detail
     assert consumer.tree() == before
     by_path = {item.path: item for item in preview.plan}
@@ -1826,6 +1984,39 @@ def _author_policy(world: _World, variant: int) -> None:
         if current is None
         else acquisition_policy_digest(parse_acquisition_policy(current, path=POLICY_PATH)).tagged
     )
+    if isinstance(world, _CoreWorld):
+        from cruxible_client.contracts.acquisition_policies import (
+            IndependentCoherence,
+            InputAcquisitionRule,
+            SourceAcquisitionPolicyV1,
+            render_acquisition_policy,
+        )
+
+        policy = SourceAcquisitionPolicyV1(
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY),
+            inputs=(
+                InputAcquisitionRule(
+                    input_name="intake",
+                    requirement="required",
+                    permitted_replayability=("exact",),
+                    max_age=CanonicalDuration(microseconds=variant * 60_000_000),
+                    on_unavailable="refuse",
+                    on_stale="refuse",
+                    on_oversized="refuse",
+                    on_conflict="refuse",
+                ),
+            ),
+            coherence=IndependentCoherence(),
+            lifecycle=ArtifactLifecycle(predecessor_digest=predecessor),
+        )
+        updates = {POLICY_PATH: render_acquisition_policy(policy)}
+        held = world.tree().get(PROCEDURE_PATH)
+        if held is not None:
+            updates[PROCEDURE_PATH] = render_procedure(
+                _historical_policy_pin(parse_procedure(held, path=PROCEDURE_PATH), policy)
+            )
+        _accept_stored_definitions(world, updates)
+        return
     held = world.tree().get(PROCEDURE_PATH)
     if held is not None:
         procedure = parse_procedure(held, path=PROCEDURE_PATH)
@@ -1868,6 +2059,21 @@ def _counting_procedure(name: str = PROCEDURE) -> ProcedureInput:
 def _author_counting_procedure(
     world: _World, *, historical_pin: bool = False, name: str = PROCEDURE
 ) -> None:
+    if isinstance(world, _CoreWorld):
+        from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+
+        world.submit(lower_authoring_input(_counting_procedure(name)))
+        if historical_pin:
+            procedure = parse_procedure(world.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
+            _accept_stored_definitions(
+                world,
+                {
+                    PROCEDURE_PATH: render_procedure(
+                        _historical_policy_pin(procedure, _live_policy(world))
+                    ),
+                },
+            )
+        return
     draft = world.pb.changes(rationale="Count the intake.")
     draft.procedure(definition=_counting_procedure(name))
     intent = draft.prepare()
@@ -1915,12 +2121,17 @@ def _historical_policy_pin(procedure, policy):
 def _accept_stored_definitions(world, updates):
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 
-    instance = get_playbill_manager().get(world.instance_id)
+    instance = (
+        world.instance
+        if isinstance(world, _CoreWorld)
+        else get_playbill_manager().get(world.instance_id)
+    )
     base = instance.accepted_coordinate()
+    actor_id = "owner" if isinstance(world, _CoreWorld) else "operator"
     result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="operator"),
+        actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/operator/historical-policy-pin",
+            target_ref=f"refs/proposals/{actor_id}/historical-policy-pin",
             proposed_base_oid=base.git_oid,
         ),
         candidate_tree={**world.tree(), **updates},
@@ -1938,9 +2149,9 @@ def _procedure_policy_pin(content: bytes) -> str:
 
 
 def test_a_kit_carries_procedures_and_the_policies_they_pin_moving_pins_through_the_graph(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     _author_policy(publisher, 1)
     # History before the release: the snapshot's policy digest differs from
     # the publisher's, so the Procedure's pin (bound into its definition
@@ -1976,9 +2187,9 @@ def test_a_kit_carries_procedures_and_the_policies_they_pin_moving_pins_through_
 
 
 def test_keeping_a_policy_keeps_the_procedure_pinned_to_the_consumers_version(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     _author_policy(publisher, 1)
     _author_counting_procedure(publisher, historical_pin=True)
     consumer.add(publisher.build("1.0.0"))
@@ -1996,12 +2207,12 @@ def test_keeping_a_policy_keeps_the_procedure_pinned_to_the_consumers_version(
 
 
 def test_an_upgrade_carries_a_consumer_procedure_pinning_a_kit_policy(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
     """Review F-004: a Procedure the consumer authored outside the release takes a
     successor through its typed graph; dropping the policy can retire it with it."""
 
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     _author_policy(publisher, 1)
     assert consumer.add(publisher.build("1.0.0")).status == "accepted"
     _author_counting_procedure(consumer, historical_pin=True)
@@ -2157,11 +2368,11 @@ def test_orient_and_get_name_the_kit_that_owns_each_claim_type_and_subject_kind(
 
 
 def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
-    worlds: tuple[_World, _World],
+    frozen_worlds: tuple[_World, _World],
 ) -> None:
     """Only the edited member diverges; a kit query re-pinned onto it does not."""
 
-    publisher, consumer = worlds
+    publisher, consumer = frozen_worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     _author_query(publisher, _query("acme.accounts", (SEATS,)))
     consumer.add(publisher.build("1.0.0"))
@@ -2180,10 +2391,12 @@ def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
     assert {pin.artifact_digest for pin in query.pins} == {
         claim_type_digest(consumer.claim_type(SEATS)).tagged
     }
-    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == (_path(SEATS),)
+    from cruxible_core.service.kits import service_kit_status
+
+    assert service_kit_status(consumer.instance).kits[0].drifted == (_path(SEATS),)
     from cruxible_core.service.floor.floor import service_export_playbill_floor
 
-    floor = service_export_playbill_floor(get_playbill_manager().get(consumer.instance_id))
+    floor = service_export_playbill_floor(consumer.instance)
     (query_row,) = [
         line
         for line in floor["ontology/queries/INDEX"].decode().splitlines()
@@ -2199,17 +2412,15 @@ def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
 
     publisher.succeed(PLAN, {"type": "string", "minLength": 1})
     release = publisher.build("1.1.0")
-    preview = playbill_api.playbill_kit_add(
-        consumer.instance_id,
+    preview = _kit_preview(
+        consumer,
         KitAddRequest(bundle=release, source="test", dry_run=True, keep=(f"ClaimType:{SEATS}",)),
     )
     plan = {item.path: (item.action, item.consequence) for item in preview.plan}
     assert plan[_path(SEATS)] == ("keep", "overwrites_your_edit")
     assert plan[query_path] == ("unchanged", None)
     assert plan[_path(PLAN)] == ("replace", None)
-    taken = playbill_api.playbill_kit_add(
-        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=True)
-    )
+    taken = _kit_preview(consumer, KitAddRequest(bundle=release, source="test", dry_run=True))
     taking = {item.path: (item.action, item.consequence) for item in taken.plan}
     assert taking[_path(SEATS)] == ("replace", "overwrites_your_edit")
     assert taking[query_path][1] is None
