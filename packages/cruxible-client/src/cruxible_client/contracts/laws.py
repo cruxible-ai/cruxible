@@ -941,33 +941,8 @@ LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 
-NAMED_PROCEDURE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible-procedure-v3", "cruxible-procedure-v3", semantic_revision=1
-    ),
-    artifact_kind="procedure",
-    artifact_tag="cruxible-procedure-v3",
-)
-NAMED_BLUEPRINT_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible-blueprint-v2", "cruxible-blueprint-v2", semantic_revision=1
-    ),
-    artifact_kind="blueprint",
-    artifact_tag="cruxible-blueprint-v2",
-)
-NAMED_QUERY_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible-query-definition-v3", "cruxible-query-definition-v3", semantic_revision=1
-    ),
-    artifact_kind="query-definition",
-    artifact_tag="cruxible-query-definition-v3",
-)
-
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
-        NAMED_PROCEDURE_LAW,
-        NAMED_BLUEPRINT_LAW,
-        NAMED_QUERY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         LIGHT_ACQUISITION_POLICY_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,

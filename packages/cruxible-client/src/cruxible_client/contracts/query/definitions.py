@@ -620,13 +620,13 @@ def evaluate_query_definition_law(
     if accepted_artifacts is not None:
         for pin in query.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
-            if accepted is None:
+            if accepted is None or accepted[1] != pin.artifact_digest:
                 return _refusal(
                     "cruxible.query_definition.pin_unresolved",
                     "A QueryDefinition pin does not resolve at the accepted parent coordinate.",
                     path=path,
                 )
-    if accepted_artifacts is not None:
+    if accepted_artifacts is not None and isinstance(query, NamedQueryDefinition):
         for predicate in query.referenced_predicates:
             if accepted_artifacts.get(f"ClaimType:{predicate}") is None:
                 return _refusal(
