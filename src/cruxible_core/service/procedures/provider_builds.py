@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.named_references import name_provider, name_signing_provider
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     ProviderMoveRequest,
@@ -14,6 +15,8 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.providers import (
+    ProviderAny,
+    ProviderBuild,
     parse_provider,
     provider_digest,
     provider_path,
@@ -79,6 +82,23 @@ def _submit(
     )
 
 
+def _retired_provider(provider: ProviderAny, *, by_name: bool) -> ProviderAny:
+    retired = provider.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=provider_digest(provider).tagged
+            )
+        }
+    )
+    if by_name:
+        return (
+            name_provider(retired)
+            if isinstance(retired, ProviderBuild)
+            else name_signing_provider(retired)
+        )
+    return retired
+
+
 def service_retire_provider(
     instance: PlaybillInstance,
     request: ProviderRetireRequest,
@@ -136,12 +156,8 @@ def service_retire_provider(
                 ),
                 coordinate=AcceptedCoordinate.from_internal(mode.head),
             )
-        retired = provider.model_copy(
-            update={
-                "lifecycle": ArtifactLifecycle(
-                    state="retired", predecessor_digest=provider_digest(provider).tagged
-                )
-            }
+        retired = _retired_provider(
+            provider, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
         )
         status, proposal_id, approval, detail = _submit(
             instance, mode, {path: render_provider(retired)}, actor_id=actor_id, timestamp=timestamp
