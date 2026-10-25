@@ -52,8 +52,10 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is migrated or rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 _TABLES = (
+    "capture_contract_names",
+    "capture_name_progress",
     "capture_selectors",
     "capture_progress",
     "invocation_locators",
@@ -87,7 +89,12 @@ CREATE INDEX IF NOT EXISTS records_occurrence
  ON records(stream, partition_id, occurrence_id, event_kind, sequence);
 CREATE TABLE IF NOT EXISTS capture_selectors (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
- contract_digest TEXT NOT NULL, logical_source TEXT);
+ contract_digest TEXT NOT NULL, logical_source TEXT, contract_identity TEXT);
+CREATE TABLE IF NOT EXISTS capture_contract_names (digest TEXT PRIMARY KEY, identity TEXT);
+CREATE TABLE IF NOT EXISTS capture_name_progress
+ (stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS capture_name
+ ON capture_selectors(contract_identity,logical_source,record_id);
 CREATE INDEX IF NOT EXISTS capture_contract ON capture_selectors(contract_digest, record_id);
 CREATE INDEX IF NOT EXISTS capture_contract_source
  ON capture_selectors(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL;
@@ -181,11 +188,24 @@ def _rebuild_schema(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version == 6:
-            conn.execute("ALTER TABLE capture_selectors ADD COLUMN logical_source TEXT")
+        if version in {6, 7}:
+            if version == 6:
+                conn.execute("ALTER TABLE capture_selectors ADD COLUMN logical_source TEXT")
+                conn.execute(
+                    "CREATE INDEX capture_contract_source ON capture_selectors"
+                    "(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL"
+                )
+            conn.execute("ALTER TABLE capture_selectors ADD COLUMN contract_identity TEXT")
             conn.execute(
-                "CREATE INDEX capture_contract_source ON capture_selectors"
-                "(contract_digest, logical_source, record_id) WHERE logical_source IS NOT NULL"
+                "CREATE TABLE capture_contract_names (digest TEXT PRIMARY KEY, identity TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE capture_name_progress "
+                "(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL)"
+            )
+            conn.execute(
+                "CREATE INDEX capture_name ON capture_selectors"
+                "(contract_identity,logical_source,record_id)"
             )
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         elif version != _SCHEMA_VERSION:
@@ -966,7 +986,9 @@ class JournalIndex:
         stream: JournalStreamIdentityV1,
         *,
         bodies: Any,
-        contract_digest: str,
+        contract_digest: str | None = None,
+        contract_identity: str | None = None,
+        resolve_contract: Callable[[str], str | None] | None = None,
         logical_sources: tuple[str, ...] = (),
         since: datetime | None,
         until: datetime,
@@ -1020,10 +1042,54 @@ class JournalIndex:
                 )
             if len(fresh) > 1024:
                 return (), None, False
+            if contract_identity is not None:
+                if resolve_contract is None:
+                    raise ValueError(
+                        "named Capture discovery requires an accepted-history resolver"
+                    )
+                progress = conn.execute(
+                    "SELECT record_id FROM capture_name_progress WHERE stream=?", (_key(stream),)
+                ).fetchone()
+                pending = conn.execute(
+                    "SELECT c.record_id,c.contract_digest FROM capture_selectors c "
+                    "JOIN records r ON r.id=c.record_id "
+                    "WHERE r.stream=? AND c.record_id>? ORDER BY c.record_id LIMIT 1025",
+                    (_key(stream), 0 if progress is None else progress[0]),
+                ).fetchall()
+                for record_id, digest in pending[:1024]:
+                    known = conn.execute(
+                        "SELECT identity FROM capture_contract_names WHERE digest=?", (digest,)
+                    ).fetchone()
+                    if known is None:
+                        identity = resolve_contract(digest)
+                        conn.execute(
+                            "INSERT INTO capture_contract_names VALUES(?,?)", (digest, identity)
+                        )
+                    else:
+                        identity = known[0]
+                    conn.execute(
+                        "UPDATE capture_selectors SET contract_identity=? WHERE record_id=?",
+                        (identity, record_id),
+                    )
+                if pending:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO capture_name_progress VALUES(?,?)",
+                        (_key(stream), pending[min(len(pending), 1024) - 1][0]),
+                    )
+                if len(pending) > 1024:
+                    return (), None, False
             args: list[Any]
             where, args = (
-                ["r.stream=?", "c.contract_digest=?"],
-                [_key(stream), contract_digest],
+                [
+                    "r.stream=?",
+                    "c.contract_identity=?"
+                    if contract_identity is not None
+                    else "c.contract_digest=?",
+                ],
+                [
+                    _key(stream),
+                    contract_identity if contract_identity is not None else contract_digest,
+                ],
             )
             if logical_sources:
                 where.append("c.logical_source IN (" + ",".join("?" for _ in logical_sources) + ")")

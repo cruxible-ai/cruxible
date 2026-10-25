@@ -51,6 +51,7 @@ from cruxible_core.consumers.protocol import (
     ConsumerWork,
 )
 from cruxible_core.consumers.state import DisposableState
+from cruxible_core.service.procedures.resolution_contracts import capture_contract_name
 from cruxible_core.triggers.journal import trigger_events
 
 #: The internal action this part performs; its registry entry names this part.
@@ -790,10 +791,13 @@ class PredictionPart:
             if scanned_in != generation:
                 ordinal, scan_through, scan_cursor = 0, None, None
             through = head if scan_through is None else scan_through
+            event_window = contract.contract.window
+            assert isinstance(event_window, CaptureEventWindow)
             records, cursor, complete = journal.index.captures(
                 stream,
                 bodies=instance.body_store(),
-                contract_digest=selector,
+                contract_identity=event_window.event.capture_contract_identity.qualified,
+                resolve_contract=lambda digest: capture_contract_name(instance, digest),
                 since=None,
                 until=datetime.max.replace(tzinfo=UTC),
                 limit=CAPTURE_PAGE,

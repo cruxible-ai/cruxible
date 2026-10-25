@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
@@ -22,7 +23,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_pin_bindings
 from cruxible_client.contracts.provider_interfaces import interface_definition_digest
-from cruxible_client.contracts.providers import ProviderV2
+from cruxible_client.contracts.providers import ProviderV2, provider_interface_pin
 
 ReferenceLookup = Callable[[ArtifactIdentity], tuple[Any, str] | None]
 SlotLookup = Callable[[ArtifactIdentity], Iterable[tuple[Any, str]]]
@@ -101,6 +102,8 @@ def bind_procedure_references(
     *,
     lookup: ReferenceLookup,
     slots: SlotLookup | None = None,
+    frozen_pins: tuple[ArtifactPin, ...] | None = None,
+    frozen_implementations: dict[str, str] | None = None,
 ) -> BoundAcceptedProcedure:
     """Resolve one graph, with one lookup per distinct dependency identity.
 
@@ -141,7 +144,7 @@ def bind_procedure_references(
             mode="json"
         )
 
-    def occurrence(item: dict[str, Any]) -> None:
+    def occurrence(item: dict[str, Any], occurrence_id: str) -> None:
         interface_ref = item.get("interface")
         if interface_ref is None:
             return
@@ -166,12 +169,20 @@ def bind_procedure_references(
             provider, _ = resolve(ArtifactIdentity.model_validate(provider_ref["target"]))
         if not isinstance(provider, ProviderV2):
             raise ExecutionError("Provider occurrence requires an installed runtime build")
+        declared_interface = provider_interface_pin(provider, interface.interface_id)
+        if declared_interface is None or declared_interface.target != interface_identity:
+            raise ExecutionError("Provider does not declare the named interface")
         matches = tuple(
             row
             for row in provider.implementations
             if row.interface_id == interface.interface_id
             and row.interface_digest == interface_definition_digest(interface)
         )
+        if len(matches) > 1 and frozen_pins is not None:
+            selected = (frozen_implementations or {}).get(
+                occurrence_id, item.get("implementation_digest")
+            )
+            matches = tuple(row for row in matches if row.implementation_digest == selected)
         if len(matches) != 1:
             raise ExecutionError("Provider occurrence requires one fitting implementation")
         item["interface_digest"] = matches[0].interface_digest
@@ -182,13 +193,13 @@ def bind_procedure_references(
             data[field] = reference(data[field], field)
     for node in data["nodes"]:
         if node["kind"] in {"call", "source"}:
-            occurrence(node)
+            occurrence(node, node["node_id"])
         for field in _NODE_FIELDS.get(node["kind"], ()):
             if field in node:
                 node[field] = reference(node[field], field)
         for body in node.get("body", ()):
             if body["operation"] == "call":
-                occurrence(body)
+                occurrence(body, node["node_id"] + "." + body["node_id"])
             for field in ("provider", "interface", "contract_in", "contract_out", "effect_policy"):
                 if field in body:
                     body[field] = reference(body[field], field)
@@ -196,10 +207,12 @@ def bind_procedure_references(
     definition = ExecutionDefinition.model_validate(data)
     definition._authored = authored.definition
     pins = {p for p in iter_pin_bindings(definition) if isinstance(p, ArtifactPin)}
-    for pin in authored.pins:
+    for pin in dependency_pins(authored) if frozen_pins is None else frozen_pins:
         if pin.target.kind != "Contract":
             _, digest = resolve(pin.target)
-            pins.add(pin.model_copy(update={"artifact_digest": digest}))
+            pins.add(ArtifactPin(role=pin.role, target=pin.target, artifact_digest=digest))
+    if frozen_pins is not None and pins != set(frozen_pins):
+        raise ExecutionError("Recorded admission pins do not reproduce the execution plan")
     plan = ProcedureExecutionPlan(
         identity=authored.identity,
         definition=definition,
@@ -215,4 +228,57 @@ def bind_procedure_references(
         procedure=plan,
         authored=authored,
         artifact_digest=accepted.artifact_digest,
+    )
+
+
+def replay_procedure_references(
+    accepted: AcceptedProcedure,
+    *,
+    pins: tuple[ArtifactPin, ...],
+    lookup_exact: Callable[[ArtifactIdentity, str], tuple[Any, str] | None],
+    implementations: dict[str, str] | None = None,
+) -> BoundAcceptedProcedure:
+    """Rebuild from recorded digests. There is no accepted-head/name resolver."""
+    versions: dict[ArtifactIdentity, str] = {}
+    for pin in pins:
+        if pin.target in versions and versions[pin.target] != pin.artifact_digest:
+            raise ExecutionError("Recorded admission binds two versions of one execution identity")
+        versions[pin.target] = pin.artifact_digest
+    cache: dict[ArtifactIdentity, tuple[Any, str]] = {}
+
+    def exact(identity: ArtifactIdentity) -> tuple[Any, str] | None:
+        if identity not in versions:
+            raise ExecutionError(f"Recorded admission lacks {identity.qualified}")
+        if identity not in cache:
+            selected = lookup_exact(identity, versions[identity])
+            if (
+                selected is None
+                or selected[1] != versions[identity]
+                or getattr(selected[0], "identity", identity) != identity
+            ):
+                raise ExecutionError(
+                    f"Recorded admission material is unavailable: {identity.qualified}"
+                )
+            cache[identity] = selected
+        return cache[identity]
+
+    def slots(interface: ArtifactIdentity) -> tuple[tuple[Any, str], ...]:
+        candidates = []
+        for identity in versions:
+            if identity.kind != "Provider":
+                continue
+            selected = exact(identity)
+            assert selected is not None
+            provider = selected[0]
+            reference = provider_interface_pin(provider, interface.name.partition("/")[0])
+            if reference is not None and reference.target == interface:
+                candidates.append(selected)
+        return tuple(candidates)
+
+    return bind_procedure_references(
+        accepted,
+        lookup=exact,
+        slots=slots,
+        frozen_pins=pins,
+        frozen_implementations=implementations,
     )

@@ -19,7 +19,7 @@ import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Literal, Protocol
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
@@ -106,12 +106,13 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
-from cruxible_core.providers.automation_carry import carry_automation
+from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
     Mover,
     SettledMoves,
@@ -168,12 +169,18 @@ def _builtin(kind: str, name: str, digest: str) -> bool:
     return digest in _builtin_definitions().get((kind, name), frozenset())
 
 
-def _builtin_refusals(tree: Mapping[str, bytes], contents: Mapping[str, bytes]) -> list[str]:
+def _builtin_refusals(
+    tree: Mapping[str, bytes], contents: Mapping[str, bytes], *, by_name: bool = False
+) -> list[str]:
     """A release pinning a built-in needs this instance to hold that exact one."""
 
     refused = []
     for path, content in sorted(contents.items()):
-        for pin in _artifact_state(path, content).pins:
+        state = parse_dependency_artifact(path, content, by_name=by_name)
+        assert state is not None
+        for pin in state.pins:
+            if not isinstance(pin, ArtifactPin):
+                continue
             if not _builtin(pin.target.kind, pin.target.name, pin.artifact_digest):
                 continue
             held_path = (
@@ -245,7 +252,7 @@ def _dependency_order(
     def exact(path: str) -> set[str]:
         found = set()
         for pin in states[path].pins:
-            target = by_digest.get(pin.artifact_digest) or by_identity.get(
+            target = by_digest.get(getattr(pin, "artifact_digest", "")) or by_identity.get(
                 (pin.target.kind, pin.target.name)
             )
             if target is not None:
@@ -400,7 +407,7 @@ def _bundled_provider_pins(
 
     for pin in state.pins:
         if pin.target.kind != "Provider" or _builtin(
-            "Provider", pin.target.name, pin.artifact_digest
+            "Provider", pin.target.name, getattr(pin, "artifact_digest", "")
         ):
             continue
         name = parse_provider_build_name(pin.target.name).name
@@ -426,7 +433,8 @@ def _bundled_provider_pins(
         held = tree_providers.get(provider_path_here)
         provider = (
             None
-            if held is None or held.artifact_digest != pin.artifact_digest
+            if held is None
+            or (isinstance(pin, ArtifactPin) and held.artifact_digest != pin.artifact_digest)
             else parse_provider(tree[provider_path_here], path=provider_path_here)
         )
         differs = _build_difference(provider, package)
@@ -992,6 +1000,7 @@ def _settle_dependents(
     movers: tuple[Mover, ...] = (),
     moves: Mapping[str, ProviderBuildMove] | None = None,
     keep_build: frozenset[str] = frozenset(),
+    by_name: bool = False,
 ) -> SettledMoves:
     """Every write, plus one successor for each accepted dependent they change.
 
@@ -1014,6 +1023,7 @@ def _settle_dependents(
         moves=moves,
         keep=keep_build,
         retire_with=frozenset(retire_with),
+        by_name=by_name,
     )
     if not settled.refused:
         diff.plan[:] = [
@@ -1081,6 +1091,8 @@ def _planned_automation(
     roots: tuple[ArtifactIdentity, ...],
     writes: Mapping[str, bytes],
     retire_with: set[str],
+    *,
+    by_name: bool = False,
 ) -> tuple[tuple[AutomationCarryV1, ...], tuple[StoppedAutomationV1, ...]]:
     """Affected automation before installation, with unavailable final digests.
 
@@ -1109,6 +1121,24 @@ def _planned_automation(
     stops: dict[str, StoppedAutomationV1] = {}
     for item in items:
         if item.artifact_kind not in {"line", "procedure-mandate"}:
+            continue
+        if (
+            by_name
+            and item.artifact_kind == "line"
+            and item.triggering_identity.qualified not in retiring_procedures
+        ):
+            continue
+        if by_name and item.artifact_kind == "line":
+            line = parse_carry_line(tree[item.path], path=item.path)
+            stops[line.identity.qualified] = StoppedAutomationV1(
+                identity=line.identity.qualified,
+                kind="line",
+                stopped_by=line.procedure.target.qualified,
+            )
+            for trigger, _ in live_triggers_of(connection, line.identity.qualified):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=line.identity.qualified
+                )
             continue
         row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
         if row.procedure not in retiring_procedures:
@@ -1576,6 +1606,7 @@ def _early_refusals(
     *,
     downgrade: bool,
     installed_version: str | None,
+    by_name: bool = False,
 ) -> list[str]:
     """Refusals the current state decides, checked before any provider installs.
 
@@ -1584,7 +1615,7 @@ def _early_refusals(
     package's.
     """
 
-    refused = _builtin_refusals(tree, contents)
+    refused = _builtin_refusals(tree, contents, by_name=by_name)
     if downgrade:
         refused.append(
             f"release {manifest.version} is older than installed {installed_version}; "
@@ -1699,7 +1730,11 @@ def _provider_remap(
     remap: dict[str, str] = {}
     for path, content in contents.items():
         for pin in _artifact_state(path, content).pins:
-            if pin.target.kind == "Provider" and pin.target.name in held:
+            if (
+                isinstance(pin, ArtifactPin)
+                and pin.target.kind == "Provider"
+                and pin.target.name in held
+            ):
                 remap[pin.artifact_digest] = held[pin.target.name]
     return remap
 
@@ -1875,6 +1910,7 @@ def _add_kit(
             contents,
             downgrade=transition == "downgrade" and not request.allow_downgrade,
             installed_version=installed_version,
+            by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         # A definition another installed kit owns or holds, which the release
         # would replace: the initial tree's diff decides it, with the same keep
@@ -1950,7 +1986,10 @@ def _add_kit(
                 "the definitions that pin it are not proposed",
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
-    blocked = _builtin_refusals(tree, contents)
+    assert mode.head is not None
+    blocked = _builtin_refusals(
+        tree, contents, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
     )
@@ -2055,6 +2094,7 @@ def _add_kit(
                     ),
                     diff.writes,
                     retire_with,
+                    by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
                 )
             except (ClaimTypeMigrationError, ValueError) as exc:
                 blocked.append(f"automation inventory incomplete: {exc}")
@@ -2071,6 +2111,7 @@ def _add_kit(
                 movers=movers,
                 moves=moves,
                 keep_build=frozenset(request.keep_build),
+                by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
             blocked.extend(settled.refused)
             blocked.extend(

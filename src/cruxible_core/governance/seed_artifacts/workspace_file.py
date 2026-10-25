@@ -46,6 +46,8 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
+    interface_definition_bytes,
+    interface_definition_digest,
     parse_provider_interface,
     provider_external_interface_definition_digest,
     provider_interface_digest,
@@ -184,8 +186,8 @@ def _seeded_registration() -> ProviderInterfaceRegistrationV1:
     )
     if (
         type(registration) is not ProviderInterfaceRegistrationV1
-        or registration.interface_digest != WORKSPACE_FILE_INTERFACE_V2_DIGEST
-        or registration.interface_bytes_hex
+        or interface_definition_digest(registration) != WORKSPACE_FILE_INTERFACE_V2_DIGEST
+        or interface_definition_bytes(registration).hex()
         != canonical_bytes(WORKSPACE_FILE_INTERFACE_DEFINITION).hex()
     ):  # pragma: no cover - guard on checked-in bytes
         raise RuntimeError("the seeded workspace.file registration names another definition")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import re
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -315,6 +316,7 @@ from cruxible_core.claims.key_claims import (
     subject_versions,
 )
 from cruxible_core.compiler.compiler import (
+    LIGHT_ARTIFACTS_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     artifact_kinds_for_compiler,
     candidate_card_renderer_digest_for_compiler,
@@ -1629,7 +1631,7 @@ class EvaluatedTreeState:
 TreeStateProvider = Callable[[Mapping[str, bytes]], EvaluatedTreeState]
 
 
-def build_tree_state(tree: Mapping[str, bytes]) -> EvaluatedTreeState:
+def build_tree_state(tree: Mapping[str, bytes], *, by_name: bool = False) -> EvaluatedTreeState:
     """Derive one tree's whole state by hashing and parsing every member."""
 
     projected = semantic_projection(tree)
@@ -1637,7 +1639,7 @@ def build_tree_state(tree: Mapping[str, bytes]) -> EvaluatedTreeState:
     return EvaluatedTreeState(
         members=members,
         merkle=build_merkle_manifest(members),
-        dependencies=build_dependency_index(projected),
+        dependencies=build_dependency_index(projected, by_name=by_name),
         claim_subjects=build_claim_subject_index(projected),
     )
 
@@ -1848,6 +1850,7 @@ class _MemberContext:
     attestation_principal_provider: AttestationPrincipalProvider | None
     historical_artifact_provider: HistoricalArtifactProvider | None
     candidate_states: Mapping[str, ArtifactDependencyStateV1]
+    candidate_dependencies: DependencyIndexV1
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
     claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
@@ -1860,6 +1863,7 @@ class _MemberContext:
     #: Recovery re-deriving a generation main already holds. Settling a pending
     #: candidate is not this: what it cites for the first time still needs proof.
     replaying_accepted: bool = False
+    rechecking: bool = False
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -1887,6 +1891,28 @@ class _MemberKind:
 
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
+    if context.historical_law_coordinate is None and not context.rechecking:
+        from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
+
+        kind = _member_kind(context.path)
+        if kind is not None and kind.name == "provider-interface":
+            light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+            if (artifact_tag == "cruxible-provider-interface-v4") != light:
+                raise FormatError(
+                    "New ProviderInterfaces require v4 on compiler revision 36; "
+                    "upgrade the compiler or author the admitted legacy format."
+                )
+        if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
+            named = NAMED_REFERENCE_FORMATS[kind.name]
+            light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+            if (
+                artifact_tag == named
+                or (kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2")
+            ) != light:
+                raise FormatError(
+                    f"New {kind.name} artifacts require {named} on compiler revision 36; "
+                    "upgrade the compiler or author the admitted format."
+                )
     if context.historical_law_coordinate is None:
         if artifact_tag == "playbill-claim-v3" and not admits_subject_kinds(
             context.current.compiler
@@ -1997,7 +2023,10 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
     source = procedure.definition.source
     type_ids = tuple("ClaimType:" + name for name in (() if source is None else source.claim_types))
     subject_kinds: tuple[str, ...] = ()
-    if source is not None and source.rules == "cruxible.procedure-source.v2":
+    if (
+        source is not None
+        and getattr(source, "syntax_rules", source.rules) == "cruxible.procedure-source.v2"
+    ):
         from cruxible_core.authoring.procedure_source import source_ontology_names
         from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
 
@@ -2027,6 +2056,7 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
         lookup=source_lookup,
         claim_types=(source_lookup(identity) for identity in type_ids),
         subject_kinds=subject_kinds,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
 
 
@@ -2067,7 +2097,10 @@ def _blueprint_origin_refusal(
     path = blueprint_path(origin.blueprint.target.name)
     content = context.candidate_tree.get(path)
     blueprint = None if content is None else parse_blueprint(content, path=path)
-    if blueprint is None or blueprint_digest(blueprint).tagged != origin.blueprint.artifact_digest:
+    if blueprint is None or (
+        context.current.compiler != LIGHT_ARTIFACTS_COMPILER
+        and blueprint_digest(blueprint).tagged != getattr(origin.blueprint, "artifact_digest", None)
+    ):
         return _diagnostic(
             "cruxible.procedure.blueprint_origin_mismatch",
             "The Procedure names a Blueprint version that is not the current accepted one.",
@@ -2079,10 +2112,11 @@ def _blueprint_origin_refusal(
             "The Procedure instantiates a retired Blueprint.",
             context.path,
         )
-    by_digest = {item.artifact_digest: item for item in context.resolved.providers.values()}
     providers = {}
     for binding in origin.bindings:
-        provider = by_digest.get(binding.artifact_pin.artifact_digest)
+        reference = getattr(binding, "provider", getattr(binding, "artifact_pin", None))
+        assert reference is not None
+        provider = context.resolved.providers.get(reference.target.qualified)
         if provider is None or provider.provider.lifecycle.state != "live":
             return _diagnostic(
                 "cruxible.procedure.blueprint_origin_mismatch",
@@ -2098,7 +2132,8 @@ def _blueprint_origin_refusal(
     try:
         expected = instantiate_blueprint(
             blueprint,
-            blueprint_artifact_digest=origin.blueprint.artifact_digest,
+            blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+            interface_registrations=context.resolved.provider_interfaces,
             name=procedure.identity.name,
             providers=providers,
             activation_policy=procedure.activation_policy,
@@ -2111,6 +2146,12 @@ def _blueprint_origin_refusal(
         )
     except (BlueprintInstantiationError, ValueError) as exc:
         return _diagnostic("cruxible.procedure.blueprint_origin_mismatch", str(exc), context.path)
+    if int(procedure.definition.graph_format) == 7:
+        from cruxible_client.contracts.procedures.names import name_procedure
+
+        named_expected = name_procedure(expected)
+        assert isinstance(named_expected, ProcedureArtifact)
+        expected = named_expected
     expected = expected.model_copy(update={"acquisition_policy": procedure.acquisition_policy})
     if expected != procedure:
         return _diagnostic(
@@ -2135,9 +2176,14 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         and procedure.definition.source.rules == "cruxible.procedure-source.v2"
         else SDK_SOURCE_PROCEDURE_LAW
     )
-    if context.historical_law_coordinate is not None and installed != source_law:
+    if (
+        procedure.definition.graph_format == 6
+        and context.historical_law_coordinate is not None
+        and installed != source_law
+    ):
         raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
-    installed = source_law
+    if procedure.definition.graph_format == 6:
+        installed = source_law
 
     _verify_source(context, procedure)
     if procedure.blueprint is not None:
@@ -2162,13 +2208,9 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         procedure,
         path=context.path,
         predecessor=predecessor,
-        providers={
-            accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
-        },
-        provider_interfaces={
-            accepted.artifact_digest: accepted
-            for accepted in context.resolved.provider_interfaces.values()
-        },
+        providers=context.resolved.providers,
+        provider_interfaces=context.resolved.provider_interfaces,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2303,7 +2345,12 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
     identity = line.identity.qualified
     stranded: set[str] = set()
-    for accepted in context.resolved.triggers.values():
+    for edge in context.candidate_dependencies.edges_by_target.get(context.path, ()):
+        accepted = context.resolved.triggers.get(
+            context.candidate_states[edge.source_path].identity.qualified
+        )
+        if accepted is None:
+            continue
         trigger = accepted.trigger
         if (
             trigger.lifecycle.state != "live"
@@ -2312,7 +2359,9 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
         ):
             continue
         if line.lifecycle.state == "retired" or not schedule_satisfies_input(
-            trigger.schedule, _line_trigger_input(line)
+            trigger.schedule,
+            _line_trigger_input(line),
+            by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
         ):
             stranded.add(trigger.identity.qualified)
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
@@ -2363,13 +2412,9 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         procedure=accepted_procedure,
         predecessor=predecessor,
         default_acquisition_policy=default_policy,
-        providers={
-            accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
-        },
-        provider_interfaces={
-            accepted.artifact_digest: accepted
-            for accepted in context.resolved.provider_interfaces.values()
-        },
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        providers=context.resolved.providers,
+        provider_interfaces=context.resolved.provider_interfaces,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2398,7 +2443,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         result={
             "artifact_digest": law.artifact_digest,
             "occurrence_epoch": line.occurrence_epoch,
-            "procedure_digest": line.procedure.artifact_digest,
+            "procedure_digest": accepted_procedure.artifact_digest,
             "verdict": "accepted",
         },
         retired=line.lifecycle.state == "retired",
@@ -2438,6 +2483,7 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         trigger,
         path=context.path,
         predecessor=predecessor,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
         target_line_live=line_live,
         target_line_input=line_input,
     )
@@ -2547,10 +2593,8 @@ def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
         blueprint,
         path=context.path,
         predecessor=predecessor,
-        provider_interfaces={
-            accepted.artifact_digest: accepted
-            for accepted in context.resolved.provider_interfaces.values()
-        },
+        provider_interfaces=context.resolved.provider_interfaces,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2628,6 +2672,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         path=context.path,
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2638,7 +2683,10 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     installed = _installed(context, query.artifact_format)
     if (
-        installed.coordinate == QUERY_DEFINITION_LAW
+        (
+            installed.coordinate == QUERY_DEFINITION_LAW
+            or context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        )
         and predecessor is not None
         and predecessor.artifact_digest != law.artifact_digest
     ):
@@ -2753,6 +2801,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         path=context.path,
         predecessor=predecessor,
         interface_registrations=context.resolved.provider_interfaces,
+        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
         sibling_control_domains=(
             _sibling_control_domains(
                 context.candidate_tree, provider, context.path, context.candidate_states
@@ -2814,7 +2863,7 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     policy = parse_acquisition_policy(context.content, path=context.path)
     from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 
-    if context.historical_law_coordinate is None:
+    if context.historical_law_coordinate is None and not context.rechecking:
         light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
         if light == isinstance(policy, SourceAcquisitionPolicyV1):
             return _MemberVerdict(
@@ -3290,12 +3339,14 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 
-    if context.historical_law_coordinate is None:
+    if context.historical_law_coordinate is None and not context.rechecking:
         light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
-        if light != (contract.artifact_format == "cruxible-capture-contract-v2"):
+        if contract.artifact_format != (
+            "cruxible-capture-contract-v3" if light else "playbill-capture-contract-v1"
+        ):
             raise FormatError(
-                "new CaptureContracts require v2 on compiler revision 36; "
-                "upgrade the compiler or use a new v2 artifact"
+                "new CaptureContracts require v3 on compiler revision 36; "
+                "upgrade the compiler or use a new v3 artifact"
             )
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
@@ -3306,10 +3357,14 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             artifact_digest=capture_contract_digest(previous).tagged,
         )
     installed = _installed(context, contract.artifact_format)
-    revision_4 = installed.coordinate in {
-        CAPTURE_CONTRACT_LAW_REVISION_4,
-        LIGHT_CAPTURE_CONTRACT_LAW.coordinate,
-    }
+    revision_4 = (
+        contract.artifact_format == "cruxible-capture-contract-v3"
+        or installed.coordinate
+        in {
+            CAPTURE_CONTRACT_LAW_REVISION_4,
+            LIGHT_CAPTURE_CONTRACT_LAW.coordinate,
+        }
+    )
     law = evaluate_capture_contract_law(
         contract,
         path=context.path,
@@ -4530,7 +4585,10 @@ def _resolved_artifacts(
 
 
 def _procedure_pin(state: ArtifactDependencyStateV1) -> ArtifactPin | None:
-    return next((pin for pin in state.pins if pin.role == "procedure"), None)
+    return next(
+        (pin for pin in state.pins if isinstance(pin, ArtifactPin) and pin.role == "procedure"),
+        None,
+    )
 
 
 def _procedure_mandate_pair_diagnostics(
@@ -4764,6 +4822,7 @@ def _evaluate_scoped_members(
             parent=parent.dependencies,
             candidate=candidate_dependencies,
             scope=scope,
+            by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
     )
     if facts is not None and facts.verdict == "refused" and admits_subject_kinds(current.compiler):
@@ -4796,7 +4855,7 @@ def _evaluate_scoped_members(
                         source_path=item.source_path,
                         target_name=item.target_identity.name,
                         pin_role=item.pin_role,
-                        expected_digest=item.expected_target_digest,
+                        expected_digest=item.expected_target_digest or "",
                         accepted_version=_subject_versions(
                             historical_artifact_provider,
                             AcceptedCoordinate.from_internal(current),
@@ -4961,42 +5020,135 @@ def _evaluate_scoped_members(
                 lambda: candidate_dependencies.paths_by_identity,
             )
         assert candidate_identities is not None
-        verdict = kind.evaluate(
-            _MemberContext(
-                path=path,
-                content=proposed,
-                parent_content=current_tree.get(path),
-                current=current,
-                scope=scope,
-                timestamp=timestamp,
-                actor_id=actor_id,
-                principals=principals,
-                bodies=bodies,
-                promotion_verifier=promotion_verifier,
-                producer_receipt_resolver=producer_receipt_resolver,
-                accepted_referent_coordinates=accepted_referents,
-                candidate_tree=candidate_tree,
-                current_tree=current_tree,
-                retained_tree=retained_tree,
-                claim_law_provider=claim_law_provider,
-                attestation_principal_provider=attestation_principal_provider,
-                historical_artifact_provider=historical_artifact_provider,
-                candidate_states=candidate_states,
-                candidate_identities=candidate_identities,
-                resolved=resolved,
-                claim_admission_by_path=claim_admission_by_path,
-                claim_admission_digests_by_path=claim_admission_digests_by_path,
-                claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
-                claim_type_expansions=claim_type_expansions,
-                used_expansions=used_expansions,
-                acceptance_laws=acceptance_laws,
-                historical_law_coordinate=historical_law_coordinates.get(path),
-                replaying_accepted=replaying_accepted,
-            )
+        member_context = _MemberContext(
+            path=path,
+            content=proposed,
+            parent_content=current_tree.get(path),
+            current=current,
+            scope=scope,
+            timestamp=timestamp,
+            actor_id=actor_id,
+            principals=principals,
+            bodies=bodies,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            accepted_referent_coordinates=accepted_referents,
+            candidate_tree=candidate_tree,
+            current_tree=current_tree,
+            retained_tree=retained_tree,
+            claim_law_provider=claim_law_provider,
+            attestation_principal_provider=attestation_principal_provider,
+            historical_artifact_provider=historical_artifact_provider,
+            candidate_states=candidate_states,
+            candidate_dependencies=candidate_dependencies,
+            candidate_identities=candidate_identities,
+            resolved=resolved,
+            claim_admission_by_path=claim_admission_by_path,
+            claim_admission_digests_by_path=claim_admission_digests_by_path,
+            claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
+            claim_type_expansions=claim_type_expansions,
+            used_expansions=used_expansions,
+            acceptance_laws=acceptance_laws,
+            historical_law_coordinate=historical_law_coordinates.get(path),
+            replaying_accepted=replaying_accepted,
         )
+        try:
+            verdict = kind.evaluate(member_context)
+        except (FormatError, ValueError) as exc:
+            verdict = _MemberVerdict(diagnostics=(_diagnostic(kind.format_code, str(exc), path),))
         diagnostics.extend(verdict.diagnostics)
         if verdict.member is not None:
             accepted.append(verdict.member)
+
+    if current.compiler == LIGHT_ARTIFACTS_COMPILER and not replaying_accepted:
+        # The reverse index is maintained from changed paths. Recheck only live
+        # governed referrers, never Claims or mandate authority pins.
+        from cruxible_client.contracts.canonical import pretty_canonical_bytes
+        from cruxible_client.contracts.dependencies import dependency_follows_name
+
+        referrers = {
+            edge.source_path
+            for changed_path in scope
+            for edge in parent.dependencies.edges_by_target.get(changed_path, ())
+            if edge.source_path not in scope
+            and dependency_follows_name(
+                parent.dependencies.states[edge.source_path].artifact_kind,
+                parent.dependencies.states[edge.source_path].pins,
+                parent.dependencies.states[changed_path].identity,
+                edge.pin_role,
+            )
+        }
+        for referrer_path in sorted(referrers):
+            state = candidate_states.get(referrer_path)
+            if state is None or state.lifecycle.state != "live":
+                continue
+            referrer_kind = _member_kind(referrer_path)
+            if referrer_kind is None:
+                continue
+            payload = json.loads(candidate_tree[referrer_path])
+            payload["lifecycle"] = {"state": "live", "predecessor_digest": None}
+            if state.artifact_kind == "line":
+                payload["occurrence_epoch"] = 1
+            unresolved = judge_dependency_closure(
+                parent=candidate_dependencies,
+                candidate=candidate_dependencies,
+                scope=(referrer_path,),
+                by_name=True,
+            ).unresolved_pins
+            if unresolved:
+                diagnostics.extend(
+                    d.model_copy(
+                        update={
+                            "message": f"Broken referrer {state.identity.qualified}: " + d.message
+                        }
+                    )
+                    for d in _refused_closure((), unresolved)
+                )
+                continue
+            try:
+                recheck = referrer_kind.evaluate(
+                    dataclasses.replace(
+                        member_context,
+                        path=referrer_path,
+                        content=pretty_canonical_bytes(payload),
+                        parent_content=None,
+                        historical_law_coordinate=None,
+                        rechecking=True,
+                        replaying_accepted=True,
+                    )
+                )
+            except (CruxibleError, ValueError) as exc:
+                recheck = _MemberVerdict(
+                    diagnostics=(_diagnostic(referrer_kind.format_code, str(exc), referrer_path),)
+                )
+            for diagnostic in recheck.diagnostics:
+                diagnostics.append(
+                    diagnostic.model_copy(
+                        update={
+                            "message": (
+                                f"Broken referrer {state.identity.qualified}: " + diagnostic.message
+                            ),
+                        }
+                    )
+                )
+
+        accepted = [
+            dataclasses.replace(
+                member,
+                result={
+                    **member.result,
+                    "referrers": sorted(
+                        {
+                            candidate_states[edge.source_path].identity.qualified
+                            for edge in candidate_dependencies.edges_by_target.get(member.path, ())
+                            if edge.source_path in referrers
+                            and candidate_states[edge.source_path].lifecycle.state == "live"
+                        }
+                    ),
+                },
+            )
+            for member in accepted
+        ]
 
     if any(item.expanded_artifact_digest not in used_expansions for item in claim_type_expansions):
         diagnostics.append(
@@ -5596,8 +5748,25 @@ def evaluate_proposal_tree(
     parent = (
         parent_state
         if parent_state is not None
-        else (tree_state_provider or build_tree_state)(current_tree)
+        else (
+            tree_state_provider(current_tree)
+            if tree_state_provider is not None
+            else build_tree_state(
+                current_tree, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
+            )
+        )
     )
+    if parent.dependencies.by_name != (current.compiler == LIGHT_ARTIFACTS_COMPILER):
+        # A compiler adoption changes dependency interpretation once. Rebuild
+        # only this derived index at that boundary; ordinary generations carry it.
+        parent = EvaluatedTreeState(
+            parent.members,
+            parent.merkle,
+            build_dependency_index(
+                current_tree, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
+            ),
+            parent.claim_subjects,
+        )
     with getattr(parent, "scope", nullcontext)():
         advanced = advance_tree_members(parent, previous_tree=current_tree, tree=candidate_tree)
         if not advanced.scope:

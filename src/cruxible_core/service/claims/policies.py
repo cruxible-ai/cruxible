@@ -15,7 +15,11 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     parse_approval_policy,
 )
-from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_contract
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    capture_retention_policy,
+    parse_capture_contract,
+)
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -258,7 +262,7 @@ def service_playbill_policies_in_force(
                     digest=capture_contract_digest(contract).tagged,
                     path=path,
                     field_path="/retention_erasure_policy",
-                    value=contract.retention_erasure_policy.model_dump(mode="json"),
+                    value=capture_retention_policy(contract).model_dump(mode="json"),
                 )
             )
         elif kind == "query-definition":

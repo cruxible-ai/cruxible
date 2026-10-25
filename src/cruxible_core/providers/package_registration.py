@@ -13,12 +13,18 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.provider_interfaces import (
+    LegacyProviderEffectClass,
     ProviderBucketConformanceFixture,
     ProviderClassifierCode,
-    ProviderInterfaceContract,
+    ProviderInterfaceContractV3,
     ProviderInterfaceDefinition,
+    ProviderInterfaceDigestDomain,
+    ProviderInterfaceRegistrationAny,
+    interface_definition_bytes,
+    interface_definition_digest,
     provider_external_interface_definition_digest,
     provider_interface_contract,
+    provider_interface_contract_key,
     provider_interface_digest,
     provider_vocabulary_document,
 )
@@ -93,7 +99,9 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("runtime requirement does not match a declared implementation")
         return self
 
-    def interface_registrations(self) -> tuple[ProviderInterfaceContract, ...]:
+    def interface_registrations(
+        self, *, named: bool = True
+    ) -> tuple[ProviderInterfaceRegistrationAny, ...]:
         """The contract registration each exported interface binds.
 
         A registration holds one typed definition under its name and version.
@@ -101,7 +109,7 @@ class PackageRegistrationDocumentV1(_Strict):
         package code and inert bucket metadata never enter that definition.
         """
 
-        result: list[ProviderInterfaceContract] = []
+        result: list[ProviderInterfaceRegistrationAny] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
             try:
                 definition = ProviderInterfaceDefinition.model_validate(exported.definition)
@@ -109,7 +117,8 @@ class PackageRegistrationDocumentV1(_Strict):
                 registration = provider_interface_contract(interface=definition)
                 if (
                     provider_external_interface_definition_digest(
-                        registration.interface_bytes_hex, domain="cruxible.interface.stub.v1"
+                        interface_definition_bytes(registration).hex(),
+                        domain="cruxible.interface.stub.v1",
                     )
                     != exported.interface_digest
                 ):
@@ -132,7 +141,32 @@ class PackageRegistrationDocumentV1(_Strict):
                         )
                     ),
                 ) from exc
-            result.append(registration)
+            if named:
+                result.append(registration)
+            else:
+                effect: LegacyProviderEffectClass = (
+                    "none" if registration.effect_class == "pure" else registration.effect_class
+                )
+                domain: ProviderInterfaceDigestDomain = "cruxible.interface.stub.v1"
+                key = provider_interface_contract_key(
+                    interface_id=registration.interface_id,
+                    interface_digest_domain=domain,
+                    interface_digest=exported.interface_digest,
+                    effect_class=effect,
+                )
+                result.append(
+                    ProviderInterfaceContractV3(
+                        identity=ArtifactIdentity(
+                            kind="ProviderInterface",
+                            name=f"{registration.interface_id}/{key.value}",
+                        ),
+                        interface_id=registration.interface_id,
+                        interface_bytes_hex=interface_definition_bytes(registration).hex(),
+                        interface_digest_domain=domain,
+                        interface_digest=exported.interface_digest,
+                        effect_class=effect,
+                    )
+                )
         return tuple(result)
 
     def _check_definition(self, exported: PackageInterfaceExportV1) -> None:
@@ -158,7 +192,7 @@ class PackageRegistrationDocumentV1(_Strict):
         distribution: ProviderLocalDistributionPin,
         local_env: ProviderLocalEnvBackendPin,
         control_domain: str,
-        interfaces: tuple[ProviderInterfaceContract, ...],
+        interfaces: tuple[ProviderInterfaceRegistrationAny, ...],
     ) -> ProviderBuild:
         """The provider build pinning ``interfaces``: the contract registration each
         exported interface binds. Its identity names the build
@@ -167,7 +201,8 @@ class PackageRegistrationDocumentV1(_Strict):
         expected = {item.interface_id: item.interface_digest for item in self.interfaces}
         if (
             len(interfaces) != len(expected)
-            or {item.interface_id: item.interface_digest for item in interfaces} != expected
+            or {item.interface_id: interface_definition_digest(item) for item in interfaces}
+            != expected
         ):
             raise ValueError("Provider must pin every exported interface exactly once")
         payload = ProviderRuntimeArtifactPayload(

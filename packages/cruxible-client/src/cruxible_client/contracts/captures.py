@@ -25,6 +25,7 @@ from pydantic import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -381,7 +382,152 @@ class CaptureContract(_StrictCaptureModel):
         return self.components.pins
 
 
-CaptureContractAny = CaptureContractV1 | CaptureContract
+class NamedCaptureComponents(_StrictCaptureModel):
+    coordinate_schemas: tuple[ArtifactNameRef, ...]
+    selector_schemas: tuple[ArtifactNameRef, ...]
+    commitment_canonicalizer: ArtifactNameRef
+    replay_policy: ArtifactNameRef
+    provenance_rule: ArtifactNameRef
+    source_subject_mapping: ArtifactNameRef
+    coordinate_grammar: ArtifactNameRef | None = None
+    proof_adapter: ArtifactNameRef | None = None
+
+
+class NamedCaptureRetentionPolicy(_StrictCaptureModel):
+    body_retention: Literal["never_materialize", "optional", "required_for_duration"]
+    minimum_retention: CanonicalDuration | None = None
+    erasure: Literal["prohibited", "authorized_by_rule"]
+    erasure_rule: ArtifactNameRef | None = None
+    selector_privacy: Literal["direct_allowed", "pseudonymous_required"]
+
+
+class NamedCaptureContract(_StrictCaptureModel):
+    artifact_format: Literal["cruxible-capture-contract-v3"] = "cruxible-capture-contract-v3"
+    identity: ArtifactIdentity
+    shape: CaptureShape | Literal["coordinator_self_source"]
+    replay: CaptureReplay
+    components: NamedCaptureComponents
+    selection_budget: CaptureSelectionBudget
+    retention_erasure_policy: NamedCaptureRetentionPolicy
+    epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
+    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="after")
+    def _shape(self) -> NamedCaptureContract:
+        if self.identity.kind != "CaptureContract" or not _CONTRACT_ID_RE.fullmatch(
+            self.identity.name
+        ):
+            raise ValueError("CaptureContract identity must be path-addressable")
+        if (
+            self.shape == "coordinator_self_source"
+            and self.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID
+        ):
+            raise ValueError("coordinator self-source is reserved")
+        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
+            raise ValueError("derived grade requires procedure_output")
+        capture_components(self)
+        capture_retention_policy(self)
+        return self
+
+
+CaptureContractAny = CaptureContractV1 | CaptureContract | NamedCaptureContract
+
+
+def capture_components(contract: CaptureContractAny) -> CaptureContractComponents:
+    """Interpret named compiler components; historical stored digests stay exact."""
+    if isinstance(contract, CaptureContract):
+        return contract.components
+    if isinstance(contract, CaptureContractV1):
+        return CaptureContractComponents.model_validate(
+            {name: getattr(contract, name) for name in CaptureContractComponents.model_fields}
+        )
+    components = contract.components
+
+    def pin(role: str, ref: ArtifactNameRef) -> ArtifactPin:
+        value = capture_component_pin(role, ref.target.name)
+        if ref.target.kind != "Contract" or not CAPTURE_COMPONENTS.resolves(value):
+            raise CaptureFormatError(f"unknown compiler Capture component: {ref.target.qualified}")
+        return value
+
+    rules = [
+        pin("replay-policy", components.replay_policy),
+        pin("provenance-rule", components.provenance_rule),
+        pin("source-subject-mapping", components.source_subject_mapping),
+    ]
+    for role, ref in (
+        ("coordinate-grammar", components.coordinate_grammar),
+        ("proof-adapter", components.proof_adapter),
+        ("erasure-rule", contract.retention_erasure_policy.erasure_rule),
+    ):
+        if ref is not None:
+            rules.append(pin(role, ref))
+    return CaptureContractComponents(
+        coordinate_schema_pins=tuple(
+            pin("coordinate-schema", r) for r in components.coordinate_schemas
+        ),
+        selector_schema_pins=tuple(pin("selector-schema", r) for r in components.selector_schemas),
+        commitment_canonicalizer=pin(
+            "commitment-canonicalizer", components.commitment_canonicalizer
+        ),
+        replay_policy_digest=rules[0].artifact_digest,
+        provenance_rule_digest=rules[1].artifact_digest,
+        source_subject_mapping_digest=rules[2].artifact_digest,
+        pins=tuple(sorted(rules, key=_pin_key)),
+    )
+
+
+def capture_retention_policy(contract: CaptureContractAny) -> CaptureRetentionErasurePolicy:
+    if not isinstance(contract, NamedCaptureContract):
+        return contract.retention_erasure_policy
+    value = contract.retention_erasure_policy
+    data = value.model_dump(mode="python", exclude={"erasure_rule"})
+    if value.erasure_rule is not None:
+        ref = value.erasure_rule
+        rule = capture_component_pin("erasure-rule", ref.target.name)
+        if ref.target.kind != "Contract" or not CAPTURE_COMPONENTS.resolves(rule):
+            raise CaptureFormatError("unknown compiler Capture erasure rule")
+        data["erasure_rule_digest"] = rule.artifact_digest
+    return CaptureRetentionErasurePolicy.model_validate(data)
+
+
+def name_capture_contract(contract: CaptureContract) -> NamedCaptureContract:
+    components = contract.components
+
+    def ref(pin: ArtifactPin) -> ArtifactNameRef:
+        return ArtifactNameRef(target=pin.target)
+
+    def rule(role: str) -> ArtifactNameRef | None:
+        return next((ref(pin) for pin in components.pins if pin.role == role), None)
+
+    def required(role: str) -> ArtifactNameRef:
+        result = rule(role)
+        if result is None:
+            raise CaptureFormatError(f"CaptureContract lacks {role}")
+        return result
+
+    named = NamedCaptureComponents(
+        coordinate_schemas=tuple(map(ref, components.coordinate_schema_pins)),
+        selector_schemas=tuple(map(ref, components.selector_schema_pins)),
+        commitment_canonicalizer=ref(components.commitment_canonicalizer),
+        replay_policy=required("replay-policy"),
+        provenance_rule=required("provenance-rule"),
+        source_subject_mapping=required("source-subject-mapping"),
+        coordinate_grammar=rule("coordinate-grammar"),
+        proof_adapter=rule("proof-adapter"),
+    )
+    policy = contract.retention_erasure_policy.model_dump(
+        mode="python", exclude={"tag", "erasure_rule_digest"}
+    )
+    policy["erasure_rule"] = rule("erasure-rule")
+    return NamedCaptureContract.model_validate(
+        {
+            **contract.model_dump(
+                mode="python", exclude={"artifact_format", "components", "retention_erasure_policy"}
+            ),
+            "components": named,
+            "retention_erasure_policy": policy,
+        }
+    )
 
 
 def contract_source_kinds(contract: CaptureContractAny) -> tuple[str, ...]:
@@ -482,7 +628,7 @@ def _light_builtin(
             {name: getattr(contract, name) for name in CaptureContractComponents.model_fields}
         ),
         selection_budget=contract.selection_budget,
-        retention_erasure_policy=contract.retention_erasure_policy,
+        retention_erasure_policy=capture_retention_policy(contract),
         epistemic_grade=contract.epistemic_grade,
         lifecycle=contract.lifecycle,
     )
@@ -564,7 +710,20 @@ def authorize_erasure(contract: CaptureContractAny) -> CaptureContractAny:
     accepted contract that prohibits erasure needs a successor under a new name.
     """
 
-    policy = contract.retention_erasure_policy.model_copy(
+    if isinstance(contract, NamedCaptureContract):
+        named_policy = contract.retention_erasure_policy.model_copy(
+            update={
+                "erasure": "authorized_by_rule",
+                "erasure_rule": ArtifactNameRef(target=_ERASURE_RULE_PIN.target),
+            }
+        )
+        return NamedCaptureContract.model_validate(
+            {
+                **contract.model_dump(mode="python"),
+                "retention_erasure_policy": named_policy,
+            }
+        )
+    policy = capture_retention_policy(contract).model_copy(
         update={
             "erasure": "authorized_by_rule",
             "erasure_rule_digest": _ERASURE_RULE_PIN.artifact_digest,
@@ -572,7 +731,10 @@ def authorize_erasure(contract: CaptureContractAny) -> CaptureContractAny:
     )
     pins = tuple(
         sorted(
-            {_pin_key(pin): pin for pin in (*contract.pins, _ERASURE_RULE_PIN)}.values(),
+            {
+                _pin_key(pin): pin
+                for pin in (*capture_components(contract).pins, _ERASURE_RULE_PIN)
+            }.values(),
             key=_pin_key,
         )
     )
@@ -584,7 +746,11 @@ def authorize_erasure(contract: CaptureContractAny) -> CaptureContractAny:
             }
         )
     return CaptureContractV1.model_validate(
-        {**contract.model_dump(mode="python"), "retention_erasure_policy": policy, "pins": pins}
+        {
+            **contract.model_dump(mode="python"),
+            "retention_erasure_policy": named_policy,
+            "pins": pins,
+        }
     )
 
 
@@ -772,14 +938,17 @@ COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = _light_builtin(
 COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS = (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    name_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT),
 )
 
 
-def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContract:
-    return _light_builtin(
-        foreign_source_capture_contract_v1(logical_source_identity),
-        shape="foreign_span",
-        replay="attested",
+def foreign_source_capture_contract(logical_source_identity: str) -> NamedCaptureContract:
+    return name_capture_contract(
+        _light_builtin(
+            foreign_source_capture_contract_v1(logical_source_identity),
+            shape="foreign_span",
+            replay="attested",
+        )
     )
 
 
@@ -796,22 +965,32 @@ def is_coordinator_self_source_contract(contract: CaptureContractAny) -> bool:
 
 
 def builtin_contract_for_write(
-    current: CaptureContract, previous: CaptureContractAny | None
-) -> CaptureContract:
-    """Install a compatible v2 successor once; never rewrite evidence or Claims."""
+    current: CaptureContract | NamedCaptureContract,
+    previous: CaptureContractAny | None,
+    *,
+    named: bool = True,
+) -> CaptureContract | NamedCaptureContract:
+    """Install a compatible successor; evidence keeps its exact original version."""
+    chosen = (
+        (name_capture_contract(current) if isinstance(current, CaptureContract) else current)
+        if named
+        else current
+    )
     if previous is None:
-        return current
-    if isinstance(previous, CaptureContract):
+        return chosen
+    if isinstance(previous, NamedCaptureContract) and named:
         return previous
-    broken = capture_contract_successor_break(previous, current)
+    if isinstance(previous, CaptureContract) and not named:
+        return previous
+    broken = capture_contract_successor_break(previous, chosen)
     if broken is not None or previous.lifecycle.state != "live":
         raise CaptureFormatError(
             f"built-in contract cannot succeed {broken or 'retired profile'}; use a new name"
         )
-    return current.model_copy(
+    return chosen.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(
-                predecessor_digest=capture_contract_digest(previous).tagged
+                predecessor_digest=capture_contract_digest(previous).tagged,
             )
         }
     )
@@ -819,8 +998,8 @@ def builtin_contract_for_write(
 
 _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
     {
-        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.provenance_rule_digest,
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.provenance_rule_digest,
+        capture_components(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).provenance_rule_digest,
+        capture_components(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).provenance_rule_digest,
         capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE).artifact_digest,
     }
 )
@@ -837,7 +1016,10 @@ def capture_contract_is_self_asserted(contract: CaptureContractAny) -> bool:
     the identity comparison it generalizes.
     """
 
-    return contract.provenance_rule_digest in _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS
+    return (
+        capture_components(contract).provenance_rule_digest
+        in _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS
+    )
 
 
 def capture_contract_path(contract_id: str) -> str:
@@ -893,7 +1075,11 @@ def _parse_capture_contract(
     except (UnicodeDecodeError, ValueError) as exc:
         raise CaptureFormatError("CaptureContract is not strict JSON") from exc
     if not isinstance(payload, dict) or payload.get("artifact_format") not in (
-        {"playbill-capture-contract-v1", "cruxible-capture-contract-v2"}
+        {
+            "playbill-capture-contract-v1",
+            "cruxible-capture-contract-v2",
+            "cruxible-capture-contract-v3",
+        }
     ):
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise CaptureFormatError(f"unsupported CaptureContract artifact format: {declared!r}")
@@ -990,11 +1176,23 @@ def capture_contract_successor_break(
     """
 
     for name in _EQUAL_ON_SUCCESSION:
-        if getattr(previous, name) != getattr(successor, name):
+
+        def value(contract: CaptureContractAny) -> object:
+            if name in CaptureContractComponents.model_fields:
+                return getattr(capture_components(contract), name)
+            if name == "retention_erasure_policy":
+                return capture_retention_policy(contract)
+            return getattr(contract, name)
+
+        if value(previous) != value(successor):
             return name
-    if isinstance(previous, CaptureContract) and isinstance(successor, CaptureContractV1):
+    if isinstance(previous, CaptureContract | NamedCaptureContract) and isinstance(
+        successor, CaptureContractV1
+    ):
         return "artifact_format"
-    if isinstance(previous, CaptureContract) and isinstance(successor, CaptureContract):
+    if isinstance(previous, CaptureContract | NamedCaptureContract) and isinstance(
+        successor, CaptureContract | NamedCaptureContract
+    ):
         if previous.shape != successor.shape or previous.replay != successor.replay:
             return "shape/replay"
     if isinstance(previous, CaptureContractV1) and isinstance(successor, CaptureContractV1):
@@ -1111,14 +1309,17 @@ def evaluate_capture_contract_law(
                         ),
                     ),
                 )
-    if isinstance(contract, CaptureContract) and contract.shape != "coordinator_self_source":
+    if (
+        isinstance(contract, CaptureContract | NamedCaptureContract)
+        and contract.shape != "coordinator_self_source"
+    ):
         expected = capture_shape_components(contract.shape, contract.replay)
-        if contract.retention_erasure_policy.erasure == "authorized_by_rule":
+        if capture_retention_policy(contract).erasure == "authorized_by_rule":
             expected = expected.model_copy(
                 update={"pins": tuple(sorted((*expected.pins, _ERASURE_RULE_PIN), key=_pin_key))}
             )
         # Built-in foreign contracts retain their original identical decomposition.
-        if contract.components != expected:
+        if capture_components(contract) != expected:
             return CaptureContractLawResult(
                 verdict="refused",
                 diagnostics=(
@@ -1133,17 +1334,17 @@ def evaluate_capture_contract_law(
     registry_roles = {
         (pin.role, pin.artifact_digest)
         for pin in (
-            *contract.coordinate_schema_pins,
-            *contract.selector_schema_pins,
-            contract.commitment_canonicalizer,
-            *contract.pins,
+            *capture_components(contract).coordinate_schema_pins,
+            *capture_components(contract).selector_schema_pins,
+            capture_components(contract).commitment_canonicalizer,
+            *capture_components(contract).pins,
         )
     }
     component_pins = (
-        *contract.coordinate_schema_pins,
-        *contract.selector_schema_pins,
-        contract.commitment_canonicalizer,
-        *(pin for pin in contract.pins if pin.target.kind == "Contract"),
+        *capture_components(contract).coordinate_schema_pins,
+        *capture_components(contract).selector_schema_pins,
+        capture_components(contract).commitment_canonicalizer,
+        *(pin for pin in capture_components(contract).pins if pin.target.kind == "Contract"),
     )
     unresolved_components = tuple(
         pin for pin in component_pins if not CAPTURE_COMPONENTS.resolves(pin)
@@ -1160,9 +1361,9 @@ def evaluate_capture_contract_law(
             ),
         )
     required_registry_entries = {
-        ("replay-policy", contract.replay_policy_digest),
-        ("provenance-rule", contract.provenance_rule_digest),
-        ("source-subject-mapping", contract.source_subject_mapping_digest),
+        ("replay-policy", capture_components(contract).replay_policy_digest),
+        ("provenance-rule", capture_components(contract).provenance_rule_digest),
+        ("source-subject-mapping", capture_components(contract).source_subject_mapping_digest),
     }
     if not required_registry_entries.issubset(registry_roles) and (
         contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
@@ -1178,7 +1379,8 @@ def evaluate_capture_contract_law(
             ),
         )
     if "external" in contract_source_kinds(contract) and (
-        not contract.coordinate_schema_pins or not contract.selector_schema_pins
+        not capture_components(contract).coordinate_schema_pins
+        or not capture_components(contract).selector_schema_pins
     ):
         return CaptureContractLawResult(
             verdict="refused",
@@ -1190,7 +1392,7 @@ def evaluate_capture_contract_law(
                 ),
             ),
         )
-    erasure_digest = contract.retention_erasure_policy.erasure_rule_digest
+    erasure_digest = capture_retention_policy(contract).erasure_rule_digest
     if erasure_digest is not None and ("erasure-rule", erasure_digest) not in registry_roles:
         return CaptureContractLawResult(
             verdict="refused",
@@ -2112,12 +2314,14 @@ def classify_capture_reuse(
     )
     mapping_family = (
         "direct"
-        if contract.source_subject_mapping_digest
-        == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
+        if capture_components(contract).source_subject_mapping_digest
+        == capture_components(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).source_subject_mapping_digest
         else (
             "coordinator"
-            if contract.source_subject_mapping_digest
-            == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.source_subject_mapping_digest
+            if capture_components(contract).source_subject_mapping_digest
+            == capture_components(
+                COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+            ).source_subject_mapping_digest
             else None
         )
     )
@@ -2550,8 +2754,10 @@ def build_provider_external_capture_v2(
     ):
         raise CaptureFormatError("Provider Capture logical source is not admitted by its contract")
     if result.coordinate_type not in {
-        pin.target.name for pin in contract.coordinate_schema_pins
-    } or result.selector_type not in {pin.target.name for pin in contract.selector_schema_pins}:
+        pin.target.name for pin in capture_components(contract).coordinate_schema_pins
+    } or result.selector_type not in {
+        pin.target.name for pin in capture_components(contract).selector_schema_pins
+    }:
         raise CaptureFormatError("Provider Capture source schemas are not admitted")
     if result.byte_length > contract.selection_budget.max_bytes:
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
@@ -2568,7 +2774,7 @@ def build_provider_external_capture_v2(
         or source_read_receipt.resolved_max_bytes != contract.selection_budget.max_bytes
     ):
         raise CaptureFormatError("workspace.file source-read receipt does not correspond")
-    if isinstance(contract, CaptureContract) and result.replayability != (
+    if isinstance(contract, CaptureContract | NamedCaptureContract) and result.replayability != (
         "exact" if contract.replay == "exact" else "attested_only"
     ):
         raise CaptureFormatError(
@@ -2959,7 +3165,7 @@ def capture_erasure_authorized(
     it authorizes erasure by rule, and the record names that rule.
     """
 
-    policy = contract.retention_erasure_policy
+    policy = capture_retention_policy(contract)
     return (
         erasure.capture_contract_digest == contract_digest
         and policy.erasure == "authorized_by_rule"
@@ -3349,7 +3555,9 @@ def _verify_capture_once(
     if envelope.commitment.materialization not in contract_materialization_modes(contract):
         raise CaptureFormatError("Capture materialization is not permitted by its contract")
     if isinstance(envelope.source, ExternalSourceReference):
-        if isinstance(contract, CaptureContract) and envelope.source.replayability != (
+        if isinstance(
+            contract, CaptureContract | NamedCaptureContract
+        ) and envelope.source.replayability != (
             "exact" if contract.replay == "exact" else "attested_only"
         ):
             raise CaptureFormatError("Capture replayability differs from its CaptureContract")
@@ -3383,9 +3591,9 @@ def _verify_capture_once(
                 if not isinstance(claim_id, str) or not claim_id.startswith("CLM-"):
                     raise CaptureFormatError("direct external selection has no Claim identity")
         elif envelope.source.coordinate_type not in {
-            pin.target.name for pin in contract.coordinate_schema_pins
+            pin.target.name for pin in capture_components(contract).coordinate_schema_pins
         } or envelope.source.selector_type not in {
-            pin.target.name for pin in contract.selector_schema_pins
+            pin.target.name for pin in capture_components(contract).selector_schema_pins
         }:
             raise CaptureFormatError("external Capture source schemas are not exactly pinned")
         if (

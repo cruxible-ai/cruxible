@@ -12,6 +12,8 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable, Literal, Protocol, TypeVar, cast, overload
 
+from cruxible_client.contracts.captures import capture_retention_policy
+
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
 
@@ -3126,7 +3128,15 @@ class ProcedureExecutor:
                     matches
                     or contract is None
                     or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
-                    or supplied.capture_contract_digest != contract_pin.artifact_digest
+                    or (
+                        captured_contract := self.capture_contracts.get(
+                            supplied.capture_contract_digest
+                        )
+                    )
+                    is None
+                    or captured_contract.identity != contract_pin.target
+                    or capture_contract_digest(captured_contract).tagged
+                    != supplied.capture_contract_digest
                     or self._acquisition_rule(node.as_) is None
                     or selected is None
                     or selected.disposition != "selected"
@@ -3244,7 +3254,7 @@ class ProcedureExecutor:
             contract = self.capture_contracts.get(landed.input.capture_contract_digest)
             state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
                 selector_privacy=(
-                    contract.retention_erasure_policy.selector_privacy
+                    capture_retention_policy(contract).selector_privacy
                     if contract is not None
                     else "direct_allowed"
                 ),

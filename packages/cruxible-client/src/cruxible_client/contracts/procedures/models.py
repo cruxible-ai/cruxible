@@ -904,7 +904,8 @@ class ProcedureDefinition(_StrictProcedureModel):
         # alias; source-v1 retains its display-only alias.
         if (
             self.source is not None
-            and self.source.rules == "cruxible.procedure-source.v2"
+            and getattr(self.source, "syntax_rules", self.source.rules)
+            == "cruxible.procedure-source.v2"
             and self.returns is not None
         ):
             raise ValueError("Source-v2 uses explicit return paths, not a return alias")

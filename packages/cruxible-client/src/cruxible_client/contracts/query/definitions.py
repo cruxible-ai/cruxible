@@ -15,7 +15,7 @@ import unicodedata
 from collections.abc import Mapping
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, SerializeAsAny, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -528,13 +528,18 @@ def parse_query_definition(
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-query-definition-v1",
         "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
             f"unsupported QueryDefinition artifact format: {declared!r}"
         )
     try:
-        query = QueryDefinition.model_validate(payload)
+        query = (
+            NamedQueryDefinition
+            if payload["artifact_format"] == "cruxible-query-definition-v3"
+            else QueryDefinition
+        ).model_validate(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
@@ -555,7 +560,7 @@ def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
 
 class AcceptedQueryDefinition(_StrictQueryDefinitionModel):
     path: str
-    query: QueryDefinition
+    query: SerializeAsAny[QueryDefinition]
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -605,6 +610,7 @@ def evaluate_query_definition_law(
     path: str,
     predecessor: AcceptedQueryDefinition | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
+    by_name: bool = False,
 ) -> QueryDefinitionLawResult:
     """Evaluate exact path, digest-pinned dependencies, and lifecycle."""
 
@@ -615,7 +621,7 @@ def evaluate_query_definition_law(
     if accepted_artifacts is not None:
         for pin in query.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
-            if accepted is None or accepted[1] != pin.artifact_digest:
+            if accepted is None or (not by_name and accepted[1] != pin.artifact_digest):
                 return _refusal(
                     "cruxible.query_definition.pin_unresolved",
                     "A QueryDefinition pin does not resolve at the accepted parent coordinate.",

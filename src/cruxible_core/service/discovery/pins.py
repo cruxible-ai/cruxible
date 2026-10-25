@@ -82,7 +82,7 @@ def pins_page(
     """Up to ``limit`` live definition pins after ``after``, and the key to continue."""
 
     want = limit + 1
-    rows: list[tuple[str, int, str, str, str]] = []
+    rows: list[tuple[str, int, str, str, str | None]] = []
     for kind in ORIENT_PIN_SOURCE_KINDS:
         prefix, end = f"{kind}:", f"{kind};"
         if after is not None and after.source >= end:
@@ -90,7 +90,13 @@ def pins_page(
         resume = after is not None and after.source >= prefix
         start = (after.source, after.ordinal) if after is not None and resume else (prefix, -1)
         rows.extend(
-            (str(source), int(ordinal), str(role), str(target), str(digest))
+            (
+                str(source),
+                int(ordinal),
+                str(role),
+                str(target),
+                None if digest is None else str(digest),
+            )
             for source, ordinal, role, target, digest in connection.execute(
                 pins_sql(kind), (*start, end, want - len(rows))
             )
@@ -107,8 +113,11 @@ def pins_page(
                 source=source,
                 role=role,
                 target=target,
-                target_digest=digest,
-                current=_current(connection, target, digest),
+                current=(
+                    _current(connection, target, digest)
+                    if source.startswith("ProcedureMandate:") and digest is not None
+                    else _current_name(connection, target)
+                ),
             )
             for source, _ordinal, role, target, digest in rows
         ),
@@ -117,3 +126,10 @@ def pins_page(
 
 
 __all__ = ["PINS_SQL_TEMPLATE", "TARGET_DIGEST_SQL_TEMPLATE", "PinKey", "pins_page", "pins_sql"]
+
+
+def _current_name(connection: sqlite3.Connection, identity: str) -> bool | None:
+    row = connection.execute(
+        "SELECT 1 FROM artifact_lookup WHERE identity=?", (identity,)
+    ).fetchone()
+    return None if row is None else True

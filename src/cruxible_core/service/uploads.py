@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.captures import capture_retention_policy
 from cruxible_client.contracts.procedures.models import SourceNode
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.uploads import (
@@ -532,7 +533,7 @@ def check_upload_procedure(
         contract = contracts.get(pin.artifact_digest)
         if (
             contract is not None
-            and contract.retention_erasure_policy.body_retention == "never_materialize"
+            and capture_retention_policy(contract).body_retention == "never_materialize"
         ):
             raise CaptureUploadRefused(
                 "contract_not_materialized",

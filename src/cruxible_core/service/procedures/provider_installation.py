@@ -20,6 +20,7 @@ from pydantic import TypeAdapter
 from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     InstalledProvider,
@@ -31,7 +32,8 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderInterfaceContract,
+    ProviderInterfaceRegistrationAny,
+    interface_definition_bytes,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
@@ -382,8 +384,8 @@ def _refuse_built_in_interfaces(
 
 
 def _interface_bindings(
-    tree: Mapping[str, bytes], document: PackageRegistrationDocumentV1
-) -> tuple[tuple[ProviderInterfaceContract, bool], ...]:
+    tree: Mapping[str, bytes], document: PackageRegistrationDocumentV1, *, named: bool = True
+) -> tuple[tuple[ProviderInterfaceRegistrationAny, bool], ...]:
     """Each exported interface's contract registration, and whether it is already live.
 
     A build reuses the exact definition registered at its interface name and
@@ -391,8 +393,13 @@ def _interface_bindings(
     refuses before a proposal or deployment is created.
     """
 
-    result: list[tuple[ProviderInterfaceContract, bool]] = []
-    for desired in document.interface_registrations():
+    result: list[tuple[ProviderInterfaceRegistrationAny, bool]] = []
+    registrations = (
+        document.interface_registrations()
+        if named
+        else document.interface_registrations(named=False)
+    )
+    for desired in registrations:
         path = provider_interface_path(desired.identity.name)
         current_bytes = tree.get(path)
         if current_bytes is None:
@@ -402,8 +409,9 @@ def _interface_bindings(
         if current.lifecycle.state != "live":
             raise ProposalIntegrityError("install cannot silently restore a retired interface")
         if (
-            not isinstance(current, ProviderInterfaceContract)
-            or current.interface_bytes_hex != desired.interface_bytes_hex
+            type(current) is not type(desired)
+            or interface_definition_bytes(current).hex()
+            != interface_definition_bytes(desired).hex()
         ):
             raise RequestRefusedError(
                 "cruxible.provider_interface.version_conflict",
@@ -422,7 +430,7 @@ def _interface_bindings(
 
 
 def _accepted(
-    registration: ProviderInterfaceContract,
+    registration: ProviderInterfaceRegistrationAny,
 ) -> AcceptedProviderInterfaceRegistration:
     return AcceptedProviderInterfaceRegistration(
         path=provider_interface_path(registration.identity.name),
@@ -433,7 +441,7 @@ def _accepted(
 
 def _refuse_unproven_provider(
     provider: ProviderBuild,
-    interfaces: tuple[ProviderInterfaceContract, ...],
+    interfaces: tuple[ProviderInterfaceRegistrationAny, ...],
     sibling_control_domains: frozenset[str],
 ) -> None:
     """The Provider law, before anything is proposed, against the registrations it binds.
@@ -509,7 +517,8 @@ def _definition_changes(
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
     changed = []
-    bindings = _interface_bindings(tree, document)
+    light = instance.coordinate_for_oid(accepted_oid).compiler == LIGHT_ARTIFACTS_COMPILER
+    bindings = _interface_bindings(tree, document, named=light)
     for registration, live in bindings:
         if live:
             continue
@@ -526,6 +535,8 @@ def _definition_changes(
         control_domain=provider.control_domain,
         interfaces=interfaces,
     )
+    if light:
+        desired = name_provider(desired)
     path = provider_path(desired.identity.name)
     current_bytes = tree.get(path)
     if current_bytes is not None:
@@ -537,12 +548,31 @@ def _definition_changes(
                 "restore it silently",
                 repair=RepairOperation(operation="cruxible.provider.list"),
             )
-        governed = {"lifecycle", "signing_keys", "capture_contract_digests", "upstream_provenance"}
-        if current.model_dump(exclude={*governed, "pins"}) != desired.model_dump(
-            exclude={*governed, "pins"}
-        ) or [pin for pin in current.pins if pin.role == "provider-interface"] != list(
-            desired.pins
-        ):
+        governed = {
+            "lifecycle",
+            "signing_keys",
+            "capture_contract_digests",
+            "capture_contracts",
+            "upstream_provenance",
+            "artifact_format",
+            "pins",
+            "interfaces",
+        }
+
+        def interfaces_of(value: ProviderAny) -> tuple[str, ...]:
+            from cruxible_client.contracts.dependencies import dependency_pins
+
+            return tuple(
+                sorted(
+                    p.target.qualified
+                    for p in dependency_pins(value)
+                    if p.target.kind == "ProviderInterface"
+                )
+            )
+
+        if current.model_dump(exclude=governed) != desired.model_dump(
+            exclude=governed
+        ) or interfaces_of(current) != interfaces_of(desired):
             # One wheel and lock name one build on every host; a different
             # environment here for the same build is not a new build.
             raise RequestRefusedError(
@@ -556,31 +586,45 @@ def _definition_changes(
                     )
                 ),
             )
-        return candidate, tuple(sorted(changed)), desired
+        assert isinstance(current, ProviderBuild)
+        return candidate, tuple(sorted(changed)), current
     carried = _carried_from_newest(instance, tree, desired.provider_name, accepted_oid)
     if carried is not None:
         # Independently governed signing and capture configuration follows the
         # name from its most recent build to the new one.
-        desired = desired.model_copy(
-            update={
-                "signing_keys": carried.signing_keys,
-                "capture_contract_digests": carried.capture_contract_digests,
-                "upstream_provenance": carried.upstream_provenance,
-                "pins": tuple(
-                    sorted(
-                        (
-                            *desired.pins,
-                            *(pin for pin in carried.pins if pin.role == "capture-contract"),
-                        ),
-                        key=lambda pin: (
-                            pin.role.encode("utf-8"),
-                            pin.target.qualified.encode("utf-8"),
-                        ),
-                    )
-                ),
-            }
-        )
-        desired = ProviderBuild.model_validate(desired.model_dump(mode="json"))
+        metadata: dict[str, Any] = {
+            "signing_keys": carried.signing_keys,
+            "upstream_provenance": carried.upstream_provenance,
+        }
+        if light:
+            from cruxible_client.contracts.artifacts import ArtifactNameRef
+            from cruxible_client.contracts.dependencies import dependency_pins
+
+            metadata["capture_contracts"] = tuple(
+                ArtifactNameRef(target=pin.target)
+                for pin in dependency_pins(carried)
+                if pin.role == "capture-contract"
+            )
+        else:
+            metadata.update(
+                {
+                    "capture_contract_digests": carried.capture_contract_digests,
+                    "pins": tuple(
+                        sorted(
+                            (
+                                *desired.pins,
+                                *(pin for pin in carried.pins if pin.role == "capture-contract"),
+                            ),
+                            key=lambda pin: (
+                                pin.role.encode("utf-8"),
+                                pin.target.qualified.encode("utf-8"),
+                            ),
+                        )
+                    ),
+                }
+            )
+        desired = desired.model_copy(update=metadata)
+        desired = type(desired).model_validate(desired.model_dump(mode="json"))
     with instance.bind_accepted_projection(instance.coordinate_for_oid(accepted_oid)) as projection:
         siblings = frozenset(
             row[0]

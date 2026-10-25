@@ -7,14 +7,23 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, ClassVar, Literal, TypeAlias, cast
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -139,7 +148,7 @@ class ProviderV1(_StrictProviderModel):
             raise ValueError("Provider public keys must be unique")
         return value
 
-    @field_validator("capture_contract_digests")
+    @field_validator("capture_contract_digests", check_fields=False)
     @classmethod
     def _contracts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
@@ -148,7 +157,7 @@ class ProviderV1(_StrictProviderModel):
             ArtifactDigest.from_tagged(digest)
         return value
 
-    @field_validator("pins")
+    @field_validator("pins", check_fields=False)
     @classmethod
     def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
         if value != tuple(sorted(value, key=_pin_key)):
@@ -164,7 +173,7 @@ class ProviderV1(_StrictProviderModel):
         # format is the single artifact of its name. ``/`` is outside the name
         # grammar, so the two spellings never collide.
         name, slash, build = self.identity.name.partition("/")
-        built = self.artifact_format == PROVIDER_BUILD_FORMAT
+        built = self.artifact_format in {PROVIDER_BUILD_FORMAT, "cruxible-provider-v5"}
         if (
             self.identity.kind != "Provider"
             or not _PROVIDER_NAME_RE.fullmatch(name)
@@ -806,8 +815,70 @@ class ProviderBuild(Provider):
         return self
 
 
+class NamedProviderBuild(ProviderBuild):
+    artifact_format: Literal["cruxible-provider-v5"] = "cruxible-provider-v5"  # type: ignore[assignment]
+    interfaces: tuple[ArtifactNameRef, ...]
+    capture_contracts: tuple[ArtifactNameRef, ...] = ()
+    capture_contract_digests: ClassVar[tuple[str, ...]] = ()  # type: ignore[misc]
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    @field_validator("interfaces")
+    @classmethod
+    def _named_interfaces(cls, value: tuple[ArtifactNameRef, ...]) -> tuple[ArtifactNameRef, ...]:
+        names = tuple(item.target.qualified for item in value)
+        if any(item.target.kind != "ProviderInterface" for item in value) or names != tuple(
+            sorted(set(names))
+        ):
+            raise ValueError("Provider interfaces must name sorted unique registrations")
+        return value
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _named_captures(cls, value: tuple[ArtifactNameRef, ...]) -> tuple[ArtifactNameRef, ...]:
+        names = tuple(item.target.qualified for item in value)
+        if any(item.target.kind != "CaptureContract" for item in value) or names != tuple(
+            sorted(set(names))
+        ):
+            raise ValueError("Provider capture declarations must name sorted unique contracts")
+        return value
+
+
+class NamedProviderIdentity(ProviderV1):
+    """A signing Provider identity without a package runtime."""
+
+    artifact_format: Literal["cruxible-provider-identity-v2"] = "cruxible-provider-identity-v2"  # type: ignore[assignment]
+    capture_contracts: tuple[ArtifactNameRef, ...] = ()
+    interfaces: tuple[ArtifactNameRef, ...] = ()
+    capture_contract_digests: ClassVar[tuple[str, ...]] = ()  # type: ignore[misc]
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _declarations(self) -> NamedProviderIdentity:
+        if not self.signing_keys:
+            raise ValueError("a signing Provider requires signing keys")
+        for refs, kind in (
+            (self.capture_contracts, "CaptureContract"),
+            (self.interfaces, "ProviderInterface"),
+        ):
+            names = tuple(ref.target.qualified for ref in refs)
+            if any(ref.target.kind != kind for ref in refs) or names != tuple(sorted(set(names))):
+                raise ValueError("Provider declarations must name sorted unique artifacts")
+        return self
+
+
+def provider_declares_capture_contract(provider: ProviderV1, identity: ArtifactIdentity) -> bool:
+    if isinstance(provider, NamedProviderBuild | NamedProviderIdentity):
+        return any(ref.target == identity for ref in provider.capture_contracts)
+    return any(
+        pin.role == "capture-contract"
+        and pin.target == identity
+        and pin.artifact_digest in provider.capture_contract_digests
+        for pin in provider.pins
+    )
+
+
 ProviderAny: TypeAlias = Annotated[
-    ProviderV1 | ProviderV2 | Provider | ProviderBuild,
+    ProviderV1 | ProviderV2 | Provider | ProviderBuild | NamedProviderBuild | NamedProviderIdentity,
     Field(discriminator="artifact_format"),
 ]
 _PROVIDER_ADAPTER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
@@ -926,7 +997,7 @@ def provider_digest(provider: ProviderAny) -> ArtifactDigest:
 
 class AcceptedProvider(_StrictProviderModel):
     path: str
-    provider: ProviderAny
+    provider: SerializeAsAny[ProviderAny]
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -960,7 +1031,9 @@ def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResult:
     )
 
 
-def provider_interface_pin(provider: ProviderV1, interface_id: str) -> ArtifactPin | None:
+def provider_interface_pin(
+    provider: ProviderV1, interface_id: str
+) -> ArtifactPin | ArtifactNameRef | None:
     """The pin naming the registration ``provider`` binds for ``interface_id``.
 
     A registration is named ``ProviderInterface:<id>`` (single path) or
@@ -968,9 +1041,13 @@ def provider_interface_pin(provider: ProviderV1, interface_id: str) -> ArtifactP
     found by the interface id its target names, never by spelling the identity.
     """
 
-    for pin in provider.pins:
+    for pin in (
+        provider.interfaces
+        if isinstance(provider, NamedProviderBuild | NamedProviderIdentity)
+        else provider.pins
+    ):
         if (
-            pin.role == "provider-interface"
+            (not isinstance(pin, ArtifactPin) or pin.role == "provider-interface")
             and pin.target.kind == "ProviderInterface"
             and pin.target.name.partition("/")[0] == interface_id
         ):
@@ -978,28 +1055,31 @@ def provider_interface_pin(provider: ProviderV1, interface_id: str) -> ArtifactP
     return None
 
 
-def _build_runtime(provider: ProviderBuild) -> dict[str, object]:
+def _build_runtime(provider: ProviderBuild, *, by_name: bool = False) -> dict[str, object]:
     """What a build runs: fixed for its whole lineage."""
 
-    return {
+    result: dict[str, object] = {
         "control_domain": provider.control_domain,
         "runtime_artifact": provider.runtime_artifact.model_dump(mode="json"),
         "implementations": [item.model_dump(mode="json") for item in provider.implementations],
-        "interface_pins": [
+    }
+    if not by_name:
+        result["interface_pins"] = [
             item.model_dump(mode="json")
             for item in provider.pins
             if item.role == "provider-interface"
-        ],
-    }
+        ]
+    return result
 
 
 def evaluate_provider_law(
-    provider: ProviderAny,
+    provider: SerializeAsAny[ProviderAny],
     *,
     path: str,
     predecessor: AcceptedProvider | None,
     interface_registrations: Mapping[str, object] | None = None,
     sibling_control_domains: frozenset[str] = frozenset(),
+    by_name: bool = False,
 ) -> ProviderLawResult:
     """Identity, path, succession and the registrations a Provider binds.
 
@@ -1007,6 +1087,7 @@ def evaluate_provider_law(
     this provider name: a new build joins its name's one control domain.
     """
 
+    by_name = by_name or isinstance(provider, NamedProviderBuild | NamedProviderIdentity)
     if path != provider_path(provider.identity.name):
         return _law_refusal(
             "cruxible.provider.path_mismatch",
@@ -1054,7 +1135,8 @@ def evaluate_provider_law(
             )
         if isinstance(provider, ProviderBuild) and (
             not isinstance(predecessor.provider, ProviderBuild)
-            or _build_runtime(provider) != _build_runtime(predecessor.provider)
+            or _build_runtime(provider, by_name=by_name)
+            != _build_runtime(predecessor.provider, by_name=by_name)
         ):
             return _law_refusal(
                 "cruxible.provider.build_immutable",
@@ -1088,14 +1170,22 @@ def evaluate_provider_law(
                     f"Provider interface {implementation.interface_id!r} is not accepted.",
                     path=path,
                 )
-            accepted_digest = getattr(accepted, "artifact_digest", None)
-            if interface_pin is None or interface_pin.artifact_digest != accepted_digest:
+            if interface_pin is None or (
+                not by_name
+                and getattr(interface_pin, "artifact_digest", None)
+                != getattr(accepted, "artifact_digest", None)
+            ):
                 return _law_refusal(
                     "cruxible.provider.interface_pin_missing",
-                    "Provider interface declarations require exact governed registration pins.",
+                    "Provider interface declarations must name an accepted registration.",
                     path=path,
                 )
-            if getattr(registration, "interface_digest", None) != implementation.interface_digest:
+            from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
+            if (
+                interface_definition_digest(cast(Any, registration))
+                != implementation.interface_digest
+            ):
                 return _law_refusal(
                     "cruxible.provider.interface_digest_mismatch",
                     "Provider manifest and governed interface digest disagree.",

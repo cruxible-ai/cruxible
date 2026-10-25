@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -52,8 +52,10 @@ from cruxible_client.contracts.procedures.named_models import NamedProcedureDefi
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
+    interface_definition_bytes,
+    interface_definition_digest,
 )
-from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
+from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2, provider_interface_pin
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -421,14 +423,17 @@ def procedure_runnability(
                 for body in node.body
                 if body.operation != "transform"
             )
-    if definition.open_slots or definition.pin_slots:
+    if (definition.open_slots or definition.pin_slots) and definition.graph_format == 6:
         rows.append(ProcedureNodeSupport(node_id="procedure", kind="open_slot", runs_on="nowhere"))
     if any(row.runs_on == "nowhere" for row in rows):
         return "unsupported", tuple(rows)
     return ("line" if rows else "direct"), tuple(rows)
 
 
-_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(ProcedureArtifact)
+ProcedureArtifactAny = Annotated[
+    ProcedureArtifact | NamedProcedureArtifact, Field(discriminator="artifact_format")
+]
+_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifactAny] = TypeAdapter(ProcedureArtifactAny)
 
 
 def procedure_path(name: str) -> str:
@@ -486,7 +491,7 @@ def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
 
 class AcceptedProcedure(_StrictProcedureArtifactModel):
     path: str
-    procedure: ProcedureArtifact
+    procedure: ProcedureArtifactAny
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -531,6 +536,7 @@ def evaluate_procedure_law(
         AcceptedProviderInterfaceRegistration,
     ]
     | None = None,
+    by_name: bool = False,
 ) -> ProcedureLawResult:
     """Evaluate stable identity, predecessor, and exact closure."""
 
@@ -575,7 +581,7 @@ def evaluate_procedure_law(
     slots = sorted(
         {*procedure.definition.open_slots, *(s.slot_name for s in procedure.definition.pin_slots)}
     )
-    if slots:
+    if slots and procedure.definition.graph_format == 6:
         return _refusal(
             "cruxible.procedure.open_slots",
             "A Procedure pins every Provider exactly; open slots belong only to a "
@@ -587,6 +593,7 @@ def evaluate_procedure_law(
         procedure=procedure,
         providers={} if providers is None else providers,
         provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
+        by_name=by_name or isinstance(procedure, NamedProcedureArtifact),
     )
     if provider_refusal is not None:
         code, message = provider_refusal
@@ -618,30 +625,44 @@ def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, ob
 def _evaluate_provider_pins(
     definition: ProcedureDefinition,
     *,
-    procedure: ProcedureArtifact,
+    procedure: ProcedureArtifact | None,
     providers: Mapping[str, AcceptedProvider],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
+    by_name: bool = False,
 ) -> tuple[str, str] | None:
     for occurrence_id, occurrence in provider_occurrences(definition):
         interface_pin = getattr(occurrence, "interface")
-        interface_digest = getattr(occurrence, "interface_digest")
-        accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
+        accepted_interface = provider_interfaces.get(interface_pin.target.qualified)
+        if accepted_interface is None and isinstance(interface_pin, ArtifactPin):
+            accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
         if accepted_interface is None or (
             accepted_interface.registration.identity != interface_pin.target
-            or accepted_interface.registration.interface_digest != interface_digest
         ):
             return (
                 "cruxible.procedure.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
             )
+        if not by_name and (
+            not isinstance(interface_pin, ArtifactPin)
+            or interface_pin.artifact_digest != accepted_interface.artifact_digest
+            or getattr(occurrence, "interface_digest")
+            != interface_definition_digest(accepted_interface.registration)
+        ):
+            return (
+                "cruxible.procedure.provider_interface_pin_mismatch",
+                "Provider occurrence does not pin its exact interface.",
+            )
         try:
-            check_provider_node_contract(occurrence, accepted_interface, procedure)
+            if procedure is not None:
+                check_provider_node_contract(occurrence, accepted_interface, procedure)
         except (ValueError, KeyError) as exc:
             return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRef):
             continue
-        accepted_provider = providers.get(provider_binding.artifact_digest)
+        accepted_provider = providers.get(provider_binding.target.qualified)
+        if accepted_provider is None and isinstance(provider_binding, ArtifactPin):
+            accepted_provider = providers.get(provider_binding.artifact_digest)
         if accepted_provider is None or (
             accepted_provider.provider.identity != provider_binding.target
             or not isinstance(accepted_provider.provider, ProviderV2)
@@ -650,13 +671,28 @@ def _evaluate_provider_pins(
                 "cruxible.procedure.provider_runtime_manifest_required",
                 f"Provider occurrence {occurrence_id!r} requires an accepted Provider v2.",
             )
-        implementation_digest = getattr(occurrence, "implementation_digest")
+        if by_name:
+            declared_interface = provider_interface_pin(
+                accepted_provider.provider, accepted_interface.registration.interface_id
+            )
+            if declared_interface is None or declared_interface.target != interface_pin.target:
+                return (
+                    "cruxible.procedure.provider_interface_pin_mismatch",
+                    "Provider does not declare the named interface.",
+                )
+        if not by_name and provider_binding.artifact_digest != accepted_provider.artifact_digest:
+            return (
+                "cruxible.procedure.provider_runtime_manifest_required",
+                "Provider occurrence does not pin its accepted runtime.",
+            )
         matches = tuple(
             row
             for row in accepted_provider.provider.implementations
-            if row.implementation_digest == implementation_digest
+            if (
+                by_name or row.implementation_digest == getattr(occurrence, "implementation_digest")
+            )
             and row.interface_id == accepted_interface.registration.interface_id
-            and row.interface_digest == interface_digest
+            and row.interface_digest == interface_definition_digest(accepted_interface.registration)
         )
         if not matches:
             return (
@@ -691,13 +727,13 @@ def check_provider_node_contract(
 
     if (
         isinstance(node, SourceNode)
-        and interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
+        and interface_definition_digest(interface.registration) == WORKSPACE_FILE_INTERFACE_DIGEST
     ):
         return None
     contract = provider_operation_contract(interface.registration)
-    declared_effect = json.loads(bytes.fromhex(interface.registration.interface_bytes_hex)).get(
-        "effect_class"
-    )
+    declared_effect = json.loads(
+        bytes.fromhex(interface_definition_bytes(interface.registration).hex())
+    ).get("effect_class")
     if declared_effect != provider_effect_class(interface.registration):
         raise ValueError("ProviderInterface effect class differs from its operation declaration")
     if isinstance(node, SourceNode):
@@ -707,7 +743,8 @@ def check_provider_node_contract(
         # with its independently retained source-read receipt. Generic Sources
         # must themselves return the external acquisition envelope.
         workspace_read = (
-            interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
+            interface_definition_digest(interface.registration)
+            == WORKSPACE_FILE_INTERFACE_V2_DIGEST
         )
         if contract.output != ACQUISITION_RESULT and not workspace_read:
             raise ValueError("Source requires the shared external acquisition result contract")
@@ -725,9 +762,8 @@ def check_provider_node_contract(
                     (
                         owned
                         for owned in procedure.owned_contracts
-                        if isinstance(consumer.contract_out, ArtifactPin)
-                        and procedure_owned_contract_digest(owned).tagged
-                        == consumer.contract_out.artifact_digest
+                        if isinstance(consumer.contract_out, ArtifactPin | ArtifactNameRef)
+                        and owned.identity == consumer.contract_out.target
                     ),
                     None,
                 )

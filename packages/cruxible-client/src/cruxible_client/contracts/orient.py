@@ -294,7 +294,6 @@ class OrientInterfaceProvider(_StrictOrientModel):
     """One live Provider implementing an interface, and the implementation it pins."""
 
     provider: str
-    implementation_digest: str
 
 
 class OrientInterface(_StrictOrientModel):
@@ -317,7 +316,6 @@ class OrientInterface(_StrictOrientModel):
     output: tuple[str, ...] = ()
     effect: Literal["pure", "external_read", "external_mutation"]
     providers: tuple[OrientInterfaceProvider, ...] = ()
-    interface_digest: str
     operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)
 
 
@@ -469,11 +467,10 @@ ORIENT_PIN_SOURCE_KINDS: tuple[str, ...] = (
 
 
 class OrientPin(_StrictOrientModel):
-    """One required pin of a live definition: ``source`` pins ``target`` as ``role``.
+    """One dependency of a live definition, identified by source, field and target.
 
-    ``target_digest`` is the exact version pinned; ``current`` says whether
-    that is the target's accepted version at the coordinate (absent when the
-    target is not an indexed artifact). Read in reverse, the rows name who
+    ``current`` says whether the reference resolves to a live target.
+    Read in reverse, the rows name who
     uses a contract, a ClaimType or a Procedure: the Procedures that capture
     under a contract (role ``capture-contract``), the Lines on a Procedure,
     the mandates that settle a ClaimType.
@@ -482,7 +479,6 @@ class OrientPin(_StrictOrientModel):
     source: str
     role: str
     target: str
-    target_digest: str
     current: bool | None = Field(default=None, exclude_if=_is_none)
 
 

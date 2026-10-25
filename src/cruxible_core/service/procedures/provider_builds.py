@@ -19,6 +19,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.build_moves import Mover, build_move, settle_changes
 from cruxible_core.providers.builds import (
@@ -212,7 +213,12 @@ def service_move_provider(
                 if source not in moves:
                     moves[source] = build_move(tree, source.partition(":")[2], resolution.resolved)
             settled = settle_changes(
-                tree, writes={}, connection=connection, movers=movers, moves=moves
+                tree,
+                writes={},
+                connection=connection,
+                movers=movers,
+                moves=moves,
+                by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
         if settled.refused or any(item.action == "refused" for item in settled.repins):
             status, proposal_id, approval, detail = (

@@ -48,8 +48,6 @@ CAPS = ProcedureHardCaps(
 PROVIDER = ProviderBinding(
     provider="example",
     interface="example.call",
-    interface_digest="sha256:" + "1" * 64,
-    implementation_digest="sha256:" + "2" * 64,
 )
 
 
@@ -235,9 +233,7 @@ def test_invalid_graphs_use_shared_validator(steps):
 def test_new_binding_does_not_mutate_existing_preview():
     plan = sequence(Call("call")).bind(call=PROVIDER)
     before = plan.preview().model_dump(mode="json")
-    after = plan.bind(
-        call=PROVIDER.model_copy(update={"implementation_digest": "sha256:" + "3" * 64})
-    )
+    after = plan.bind(call=PROVIDER.model_copy(update={"provider": "example-successor"}))
     assert plan.preview().model_dump(mode="json") == before
     assert after.preview().nodes != plan.preview().nodes
 
@@ -269,14 +265,12 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
         artifact_digest="sha256:" + "a" * 64,
         artifact_kind="ProviderInterface",
         pin_role="provider-interface",
-        interface_digest=PROVIDER.interface_digest,
         effect_class="external_read",
         interface_basis="accepted_registration",
         providers=[
             ProviderInterfaceImplementation(
                 provider_identity="Provider:" + name,
                 provider_artifact_digest="sha256:" + "d" * 64,
-                implementation_digest=PROVIDER.implementation_digest,
             )
             for name in ("first", "second")
         ],

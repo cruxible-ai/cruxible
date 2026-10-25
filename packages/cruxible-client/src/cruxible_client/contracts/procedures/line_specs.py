@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -24,6 +24,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -39,7 +40,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, provider_occurrences
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
@@ -52,13 +53,15 @@ from cruxible_client.contracts.procedures.pin_expectations import (
     TRIGGER_CAPTURE_CONTRACT,
     validate_exact_pin_expectation,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelector,
+    NamedCaptureEventSelector,
+)
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
-    ProviderV2,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -156,7 +159,7 @@ class LineSpec(_StrictLineModel):
 
     _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
     _epsilon = field_validator("epsilon", mode="before")(_decimal_wrapper)
-    _pins = field_validator("pins")(_sorted_pins)
+    _pins = field_validator("pins", check_fields=False)(_sorted_pins)
 
     @model_validator(mode="after")
     def _shape(self) -> "LineSpec":
@@ -197,13 +200,38 @@ class LineSpec(_StrictLineModel):
         return self
 
 
+class NamedLineSpec(LineSpec):
+    artifact_format: Literal["cruxible-line-v7"] = "cruxible-line-v7"  # type: ignore[assignment]
+    procedure: ArtifactNameRef  # type: ignore[assignment]
+    acquisition_policy: ArtifactNameRef | None = None  # type: ignore[assignment]
+    trigger_event: NamedCaptureEventSelector | None = None
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _shape(self) -> NamedLineSpec:
+        if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
+            raise ValueError("Line identity must be path-addressable and kind Line")
+        if self.procedure.target.kind != "Procedure":
+            raise ValueError("a Line names a Procedure")
+        if (
+            self.acquisition_policy is not None
+            and self.acquisition_policy.target.kind != "SourceAcquisitionPolicy"
+        ):
+            raise ValueError("a Line names an acquisition policy")
+        if (self.trigger_input is None) != (self.trigger_event is None):
+            raise ValueError("a trigger input and its accepted event come together")
+        return self
+
+
 def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
     """The internal ordering value of what a Line asks to do."""
 
     return AUTHORITY_RUNG[line.max_authority]
 
 
-def trigger_capture_source(line: LineSpec, procedure: AcceptedProcedure) -> SourceNode:
+def trigger_capture_source(
+    line: LineSpec, procedure: AcceptedProcedure, *, by_name: bool = True
+) -> SourceNode:
     """Resolve the single input and verify its closed CaptureContract pin."""
     if line.trigger_input is None:
         raise ValueError("this Line binds no trigger input")
@@ -218,18 +246,20 @@ def trigger_capture_source(line: LineSpec, procedure: AcceptedProcedure) -> Sour
     pin = node.capture_contract
     selector = line.trigger_event
     if (
-        not isinstance(pin, ArtifactPin)
+        not isinstance(pin, ArtifactPin | ArtifactNameRef)
         or selector is None
+        or (pin.target != selector.capture_contract_identity)
         or (
-            pin.target != selector.capture_contract_identity
-            or pin.artifact_digest != selector.capture_contract_digest
+            not by_name
+            and isinstance(pin, ArtifactPin)
+            and pin.artifact_digest != selector.capture_contract_digest
         )
     ):
         raise ValueError("trigger input CaptureContract differs from the event selector")
     return node
 
 
-_LINE_SPEC_ADAPTER: TypeAdapter[LineSpec] = TypeAdapter(LineSpec)
+_LINE_SPEC_ADAPTER: TypeAdapter[LineSpec | NamedLineSpec] = TypeAdapter(LineSpec | NamedLineSpec)
 
 
 def line_spec_path(name: str) -> str:
@@ -284,7 +314,7 @@ def line_identity_digest(identity: ArtifactIdentity) -> str:
 
 class AcceptedLineSpec(_StrictLineModel):
     path: str
-    line: LineSpec
+    line: Annotated[LineSpec | NamedLineSpec, Field(discriminator="artifact_format")]
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -332,6 +362,7 @@ def evaluate_line_spec_law(
     procedure: AcceptedProcedure,
     predecessor: AcceptedLineSpec | None,
     default_acquisition_policy: SourceAcquisitionPolicyAny | None = None,
+    by_name: bool = False,
     providers: Mapping[str, AcceptedProvider] | None = None,
     provider_interfaces: Mapping[
         str,
@@ -343,14 +374,18 @@ def evaluate_line_spec_law(
         return _refusal(
             "cruxible.line.path_mismatch", "Line identity/path disagreement.", path=path
         )
-    if line.procedure.artifact_digest != procedure.artifact_digest:
+    if line.procedure.target != procedure.procedure.identity or (
+        not by_name
+        and not isinstance(line, NamedLineSpec)
+        and line.procedure.artifact_digest != procedure.artifact_digest
+    ):
         return _refusal(
             "cruxible.line.procedure_pin_mismatch",
             "LineSpec does not pin the supplied accepted Procedure.",
             path=path,
         )
     definition = procedure.procedure.definition
-    if definition.open_slots or definition.pin_slots:
+    if (definition.open_slots or definition.pin_slots) and definition.graph_format == 6:
         return _refusal(
             "cruxible.line.procedure_open_slots",
             "A Line runs an exact Procedure; instantiate the Blueprint first.",
@@ -368,13 +403,31 @@ def evaluate_line_spec_law(
         )
     if line.trigger_input is not None:
         try:
-            trigger_capture_source(line, procedure)
+            trigger_capture_source(
+                line, procedure, by_name=by_name or isinstance(line, NamedLineSpec)
+            )
         except ValueError as exc:
             return _refusal("cruxible.line.trigger_input_mismatch", str(exc), path=path)
+    if by_name or isinstance(line, NamedLineSpec):
+        from cruxible_client.contracts.procedures.contracts import (
+            OwnedProcedureContractValidator,
+            ProcedureContractValidationError,
+        )
+
+        if isinstance(definition.contract_in, ArtifactPin | ArtifactNameRef):
+            try:
+                OwnedProcedureContractValidator(procedure).validate_contract(
+                    contract=definition.contract_in,
+                    payload=normalize_canonical(line.parameters),
+                    direction="input",
+                )
+            except ProcedureContractValidationError as exc:
+                return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
     provider_result = _verify_provider_pins(
         definition,
         providers={} if providers is None else providers,
         provider_interfaces={} if provider_interfaces is None else provider_interfaces,
+        by_name=by_name or isinstance(line, NamedLineSpec),
     )
     if provider_result is not None:
         code, message = provider_result
@@ -439,9 +492,17 @@ def evaluate_line_spec_law(
                 "Line successor does not pin its exact predecessor.",
                 path=path,
             )
-        acceptance_changed = (line.trigger_input, line.trigger_event) != (
+
+        def event_key(value: CaptureEventSelector | None) -> object:
+            if not by_name and not isinstance(line, NamedLineSpec):
+                return value
+            return (
+                None if value is None else (value.capture_contract_identity, value.logical_sources)
+            )
+
+        acceptance_changed = (line.trigger_input, event_key(line.trigger_event)) != (
             predecessor.line.trigger_input,
-            predecessor.line.trigger_event,
+            event_key(predecessor.line.trigger_event),
         )
         expected_epoch = predecessor.line.occurrence_epoch + (1 if acceptance_changed else 0)
         if line.occurrence_epoch != expected_epoch:
@@ -463,66 +524,18 @@ def _verify_provider_pins(
     *,
     providers: Mapping[str, AcceptedProvider],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
+    by_name: bool = False,
 ) -> tuple[str, str] | None:
-    """Every Provider occurrence pins one accepted, unambiguous implementation."""
+    from cruxible_client.contracts.procedures.artifacts import _evaluate_provider_pins
 
-    for node_id, node in provider_occurrences(definition):
-        provider_pin = getattr(node, "provider")
-        interface_pin = getattr(node, "interface")
-        interface_digest = getattr(node, "interface_digest")
-        implementation_digest = getattr(node, "implementation_digest")
-        if not isinstance(provider_pin, ArtifactPin):
-            return (
-                "cruxible.line.provider_implementation_unavailable",
-                f"Provider occurrence {node_id!r} has no exact Provider pin.",
-            )
-        accepted_provider = providers.get(provider_pin.artifact_digest)
-        if accepted_provider is None or not isinstance(accepted_provider.provider, ProviderV2):
-            return (
-                "cruxible.line.provider_runtime_manifest_required",
-                f"Provider occurrence {node_id!r} does not bind an accepted Provider v2.",
-            )
-        accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
-        if accepted_interface is None:
-            return (
-                "cruxible.line.provider_interface_pin_mismatch",
-                f"Provider occurrence {node_id!r} lacks its accepted interface registration.",
-            )
-        registration = accepted_interface.registration
-        if registration.interface_digest != interface_digest:
-            return (
-                "cruxible.line.provider_interface_pin_mismatch",
-                f"Provider occurrence {node_id!r} interface digest does not reproduce.",
-            )
-        matches = tuple(
-            record
-            for record in accepted_provider.provider.implementations
-            if record.implementation_digest == implementation_digest
-            and record.interface_id == registration.interface_id
-            and record.interface_digest == interface_digest
-        )
-        if not matches:
-            return (
-                "cruxible.line.provider_implementation_unavailable",
-                f"Provider occurrence {node_id!r} implementation is unavailable.",
-            )
-        if len(matches) != 1:
-            return (
-                "cruxible.line.provider_implementation_ambiguous",
-                f"Provider occurrence {node_id!r} implementation is ambiguous.",
-            )
-        record = matches[0]
-        manifest_matches = tuple(
-            item
-            for item in accepted_provider.provider.runtime_artifact.manifest.implementations
-            if item.interface_id == record.interface_id and item.entrypoint == record.entrypoint
-        )
-        if len(manifest_matches) != 1:
-            return (
-                "cruxible.line.provider_implementation_ambiguous",
-                f"Provider occurrence {node_id!r} manifest row is not singular.",
-            )
-    return None
+    # The occurrence law reads only graph, interface and provider metadata.
+    return _evaluate_provider_pins(
+        definition,
+        procedure=None,
+        providers=providers,
+        provider_interfaces=provider_interfaces,
+        by_name=by_name,
+    )
 
 
 __all__ = [

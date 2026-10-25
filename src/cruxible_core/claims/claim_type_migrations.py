@@ -59,6 +59,7 @@ from cruxible_core.claims.closure import (
     parse_dependency_artifact,
     reverse_pin_closure,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -484,6 +485,7 @@ def claim_type_migration_inventory(
     tree: Mapping[str, bytes],
     *,
     root: ArtifactIdentity,
+    by_name: bool = False,
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
     """Return the live reverse-pin closure plus its retired Claim members.
 
@@ -499,6 +501,7 @@ def claim_type_migration_inventory(
         closure = reverse_pin_closure(
             tree,
             root=root,
+            by_name=by_name,
             include=lambda state: _include_migration_dependent(
                 artifact_kind=state.artifact_kind,
                 lifecycle_state=state.lifecycle.state,
@@ -964,6 +967,7 @@ def dependent_closure_inventory(
     *,
     roots: tuple[ArtifactIdentity, ...],
     fixed_paths: frozenset[str],
+    by_name: bool = False,
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
     """The union of several roots' reverse-pin closures over one accepted tree.
 
@@ -974,7 +978,7 @@ def dependent_closure_inventory(
 
     found: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
     for root in roots:
-        for item in claim_type_migration_inventory(tree, root=root):
+        for item in claim_type_migration_inventory(tree, root=root, by_name=by_name):
             if item.path not in fixed_paths:
                 found.setdefault(item.path, item)
     return tuple(found[path] for path in sorted(found))
@@ -1124,7 +1128,9 @@ def _service_migrate_claim_type_v1(
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
 
-    inventory = claim_type_migration_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(
+        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     if any(item.artifact_kind != "claim" for item in inventory):
         kinds = tuple(sorted({item.artifact_kind for item in inventory}))
         raise ClaimTypeMigrationDependentSetMismatch(
@@ -1210,7 +1216,9 @@ def _service_migrate_claim_type_v2(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = claim_type_migration_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(
+        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(
@@ -1310,7 +1318,9 @@ def _service_migrate_claim_type_v3(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = claim_type_migration_inventory(tree, root=successor.identity)
+    inventory = claim_type_migration_inventory(
+        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
+    )
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(

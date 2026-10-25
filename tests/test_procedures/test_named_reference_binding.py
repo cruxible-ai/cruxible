@@ -13,7 +13,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.names import name_procedure
-from cruxible_core.procedures.reference_binding import bind_procedure_references
+from cruxible_core.procedures.reference_binding import (
+    bind_procedure_references,
+    replay_procedure_references,
+)
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition, _digest
 
 
@@ -65,3 +68,41 @@ def test_admission_refuses_a_retired_named_dependency():
                 _digest("retired"),
             ),
         )
+
+
+def test_replay_uses_recorded_versions_and_refuses_substituted_material():
+    authored = name_procedure(_artifact(_definition()))
+    accepted = AcceptedProcedure(
+        path=procedure_path(authored.identity.name),
+        procedure=authored,
+        artifact_digest=procedure_artifact_digest(authored).tagged,
+    )
+    recorded = _digest("admission-query")
+    admitted = bind_procedure_references(
+        accepted,
+        lookup=lambda identity: (SimpleNamespace(identity=identity), recorded),
+    )
+    reads = []
+
+    def exact(identity, digest):
+        reads.append((identity.qualified, digest))
+        return SimpleNamespace(identity=identity), recorded
+
+    replayed = replay_procedure_references(
+        accepted, pins=admitted.procedure.pins, lookup_exact=exact
+    )
+    assert reads == [("QueryDefinition:claims-by-status", recorded)]
+    assert replayed.procedure.pins == admitted.procedure.pins
+    assert replayed.procedure.definition == admitted.procedure.definition
+    assert render_procedure(replayed.authored) == render_procedure(authored)
+    with pytest.raises(ExecutionError, match="material is unavailable"):
+        replay_procedure_references(
+            accepted,
+            pins=admitted.procedure.pins,
+            lookup_exact=lambda identity, digest: (
+                SimpleNamespace(identity=identity),
+                _digest("new-head-query"),
+            ),
+        )
+    with pytest.raises(ExecutionError, match="lacks QueryDefinition"):
+        replay_procedure_references(accepted, pins=(), lookup_exact=exact)

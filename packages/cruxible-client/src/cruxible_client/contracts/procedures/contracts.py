@@ -7,12 +7,11 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifact,
     ProcedureOwnedContract,
     procedure_owned_contract_digest,
 )
@@ -281,15 +280,14 @@ class OwnedProcedureContractValidator:
     """Resolve Contract pins only from one accepted Procedure-v2 owner."""
 
     def __init__(self, accepted: AcceptedProcedure) -> None:
-        if not isinstance(accepted.procedure, ProcedureArtifact):
-            raise ProcedureContractValidationError(
-                "owner-carried Contract validation requires playbill-procedure-v2"
-            )
         self._contracts = {
             procedure_owned_contract_digest(contract).tagged: contract
             for contract in accepted.procedure.owned_contracts
         }
-        self._structured = int(accepted.procedure.definition.graph_format) == 6
+        self._by_name = {
+            contract.identity: contract for contract in accepted.procedure.owned_contracts
+        }
+        self._structured = int(accepted.procedure.definition.graph_format) >= 6
 
     def _validate_structured(self, owned: ProcedureOwnedContract, value: CanonicalValue) -> None:
         if self._structured:
@@ -312,7 +310,7 @@ class OwnedProcedureContractValidator:
     def validate_contract(
         self,
         *,
-        contract: ArtifactPin,
+        contract: ArtifactPin | ArtifactNameRef,
         payload: CanonicalValue,
         direction: Literal["input", "output"],
     ) -> CanonicalValue:
@@ -320,7 +318,11 @@ class OwnedProcedureContractValidator:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin does not target Contract"
             )
-        owned = self._contracts.get(contract.artifact_digest)
+        owned = (
+            self._by_name.get(contract.target)
+            if isinstance(contract, ArtifactNameRef)
+            else self._contracts.get(contract.artifact_digest)
+        )
         if owned is None or owned.identity != contract.target:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin is outside the Procedure owner closure"
@@ -332,7 +334,7 @@ class OwnedProcedureContractValidator:
     def validate_contract_with_budget(
         self,
         *,
-        contract: ArtifactPin,
+        contract: ArtifactPin | ArtifactNameRef,
         payload: CanonicalValue,
         direction: Literal["input", "output"],
         max_items: int,
@@ -341,7 +343,11 @@ class OwnedProcedureContractValidator:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin does not target Contract"
             )
-        owned = self._contracts.get(contract.artifact_digest)
+        owned = (
+            self._by_name.get(contract.target)
+            if isinstance(contract, ArtifactNameRef)
+            else self._contracts.get(contract.artifact_digest)
+        )
         if owned is None or owned.identity != contract.target:
             raise ProcedureContractValidationError(
                 f"{direction} contract pin is outside the Procedure owner closure"
@@ -354,8 +360,12 @@ class OwnedProcedureContractValidator:
         self._validate_structured(owned, result.value)
         return result
 
-    def unique_list_field_path(self, contract: ArtifactPin) -> str | None:
-        owned = self._contracts.get(contract.artifact_digest)
+    def unique_list_field_path(self, contract: ArtifactPin | ArtifactNameRef) -> str | None:
+        owned = (
+            self._by_name.get(contract.target)
+            if isinstance(contract, ArtifactNameRef)
+            else self._contracts.get(contract.artifact_digest)
+        )
         if owned is None or owned.identity != contract.target:
             return None
         paths: list[str] = []

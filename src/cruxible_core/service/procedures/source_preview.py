@@ -1,5 +1,9 @@
 """Read-only Procedure source preview through the same resolver used by prepare."""
 
+from cruxible_client.contracts.artifacts import ArtifactNameRef
+from cruxible_client.contracts.procedures.models import iter_pin_bindings
+from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+from cruxible_client.contracts.procedures.names import named_graph
 from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreview,
@@ -9,6 +13,7 @@ from cruxible_core.authoring.procedure_source import (
     accepted_build_resolver,
     resolve_indexed_source,
 )
+from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -24,11 +29,23 @@ def service_preview_procedure_source(
             rows = EvaluationRows(projection)
             builds = accepted_build_resolver(instance, coordinate, rows)
             compiled = resolve_indexed_source(request.source, rows, builds=builds)
+        definition = compiled.definition
+        contracts = compiled.contracts
+        if coordinate.compiler == LIGHT_ARTIFACTS_COMPILER:
+            definition = NamedProcedureDefinition.model_validate(
+                named_graph(definition.model_dump(mode="json", by_alias=True))
+            )
+            required = {
+                ref.target.name
+                for ref in iter_pin_bindings(definition)
+                if isinstance(ref, ArtifactNameRef) and ref.target.kind == "Contract"
+            }
+            contracts = tuple(contract for contract in contracts if contract.name in required)
         return ProcedureSourcePreview(
             name=request.source.name,
             coordinate=request.at,
-            definition=compiled.definition,
-            contracts=compiled.contracts,
+            definition=definition,
+            contracts=contracts,
             source_map=compiled.source_map,
             provider_builds=tuple(builds.resolutions),
         )
