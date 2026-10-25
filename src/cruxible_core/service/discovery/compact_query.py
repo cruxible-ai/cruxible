@@ -71,6 +71,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
     AcceptedQueryDefinition,
+    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
@@ -1998,7 +1999,9 @@ def _artifact_definition(
 # -- spec and named queries -------------------------------------------------------
 
 
-def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> QueryDefinition:
+def _pinned_spec(
+    vocabulary: QueryVocabulary, spec: QueryDefinitionSpec | NamedQueryDefinitionSpec
+) -> QueryDefinition:
     if isinstance(spec.entry, QueryEntry):
         for index, kind in enumerate(spec.entry.subject_kinds):
             vocabulary.require_kind(kind, field_path=f"spec.entry.subject_kinds[{index}]")
@@ -2012,7 +2015,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> Quer
                 repair="use accepted predicates (query kind=ClaimType lists them)",
                 field_path="spec",
             )
-    if spec.artifact_format == "cruxible-query-definition-v3":
+    if isinstance(spec, NamedQueryDefinitionSpec):
         return validate_query_definition(spec)
     explicit = {pin.target.name: pin for pin in spec.pins if pin.role == CLAIM_TYPE_PIN_ROLE}
     for predicate, pin in explicit.items():
