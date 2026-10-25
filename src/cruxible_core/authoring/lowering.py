@@ -3330,12 +3330,22 @@ def _render_non_procedure_member(
             query = source
         if light_query:
             query = query.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+        previous_query: QueryDefinition | None = None
+        previous_content = None
         if isinstance(source, QuerySpecInput) and tree is not None:
             previous_content = tree.get(query_definition_path(query.identity.name))
             if previous_content is not None:
                 previous_query = parse_query_definition(
                     previous_content, path=query_definition_path(query.identity.name)
                 )
+                if previous_query.lifecycle.state == "retired":
+                    _refuse(
+                        "cruxible.query_definition.lifecycle_invalid",
+                        "$.query",
+                        "A retired QueryDefinition cannot be revived or revised.",
+                        repair_kind="replace_input",
+                        repair_description="Author a query under a new identity.",
+                    )
                 query = query.model_copy(
                     update={
                         "lifecycle": ArtifactLifecycle(
@@ -3388,6 +3398,13 @@ def _render_non_procedure_member(
                 )
             ]
             query = QueryDefinition.model_validate(body)
+        if previous_query is not None and _same_revision_content(query, previous_query):
+            assert previous_content is not None
+            return (
+                query_definition_path(query.identity.name),
+                previous_content,
+                query_definition_digest(previous_query).tagged,
+            )
         return (
             query_definition_path(query.identity.name),
             render_query_definition(query),

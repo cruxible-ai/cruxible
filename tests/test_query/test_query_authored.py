@@ -456,3 +456,37 @@ def test_entry_and_hop_grammar_accept_token_whitespace(resolver):
     assert query.entry.subject_id.parameter == "incident"
     assert query.traversal[0].required
     assert query.traversal[0].where.kind == "claim_presence"
+
+
+def test_authored_query_repetition_is_a_noop_and_revisions_bind_the_predecessor(tree):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
+    payload = lower_authoring_input(
+        QueryDefinitionInput(kind="query_definition", query_definition=simple())
+    )
+    path, wire, digest = _render_non_procedure_member(payload, tree=tree, light_query=True)
+    accepted = {**tree, path: wire}
+    assert _render_non_procedure_member(payload, tree=accepted, light_query=True) == (
+        path,
+        wire,
+        digest,
+    )
+    revised = lower_authoring_input(
+        QueryDefinitionInput(
+            kind="query_definition", query_definition=simple(description="Revised query.")
+        )
+    )
+    _, updated, updated_digest = _render_non_procedure_member(
+        revised, tree=accepted, light_query=True
+    )
+    assert updated_digest != digest
+    assert parse_query_definition(updated, path=path).lifecycle.predecessor_digest == digest
+    retired = parse_query_definition(updated, path=path).model_copy(
+        update={"lifecycle": ArtifactLifecycle(state="retired", predecessor_digest=updated_digest)}
+    )
+    with pytest.raises(AuthoringLoweringError) as caught:
+        _render_non_procedure_member(
+            payload, tree={**tree, path: render_query_definition(retired)}, light_query=True
+        )
+    assert caught.value.code == "cruxible.query_definition.lifecycle_invalid"
