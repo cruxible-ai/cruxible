@@ -633,13 +633,6 @@ PROVIDER_INTERFACE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider-interface",
     artifact_tag="playbill-provider-interface-v1",
 )
-LIGHT_PROCEDURE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible.procedure.v3", "cruxible-procedure-v3", semantic_revision=1
-    ),
-    artifact_kind="procedure",
-    artifact_tag="cruxible-procedure-v3",
-)
 LIGHT_ACQUISITION_POLICY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.source-acquisition-policy.v2",
@@ -688,13 +681,6 @@ QUERY_DEFINITION_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     ),
     artifact_kind="query-definition",
     artifact_tag="playbill-query-definition-v2",
-)
-QUERY_DEFINITION_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible.query-definition.v3", "cruxible-query-definition-v3", semantic_revision=1
-    ),
-    artifact_kind="query-definition",
-    artifact_tag="cruxible-query-definition-v3",
 )
 EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=EXHAUST_PROMOTION_LAW,
@@ -973,6 +959,12 @@ NAMED_REFERENCE_LAWS = tuple(
     for kind, tag in NAMED_REFERENCE_FORMATS.items()
 )
 
+# Public names refer to the one current named-law entry for each v3 tag.
+LIGHT_PROCEDURE_LAW = next(law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "procedure")
+QUERY_DEFINITION_V3_ACCEPTANCE_LAW = next(
+    law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "query-definition"
+)
+
 NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "cruxible.provider-identity.v2", "cruxible-provider-identity-v2", semantic_revision=1
@@ -987,7 +979,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         LIGHT_ACQUISITION_POLICY_LAW,
-        LIGHT_PROCEDURE_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
@@ -1052,7 +1043,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
-        QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,

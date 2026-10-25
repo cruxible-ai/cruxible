@@ -479,3 +479,24 @@ def test_frozen_provider_runtime_and_trigger_event_checks_stay_exact():
     )
     assert not schedule_satisfies_input(schedule, required, by_name=False)
     assert schedule_satisfies_input(schedule, required, by_name=True)
+
+
+def test_each_v3_tag_has_one_named_law_object():
+    from cruxible_client.contracts.laws import (
+        ACCEPTANCE_LAWS,
+        LIGHT_PROCEDURE_LAW,
+        NAMED_REFERENCE_LAWS,
+        QUERY_DEFINITION_V3_ACCEPTANCE_LAW,
+    )
+
+    for alias in (LIGHT_PROCEDURE_LAW, QUERY_DEFINITION_V3_ACCEPTANCE_LAW):
+        (entry,) = (law for law in NAMED_REFERENCE_LAWS if law.artifact_tag == alias.artifact_tag)
+        assert alias is entry
+        assert ACCEPTANCE_LAWS.resolve_member(artifact_tag=alias.artifact_tag) is entry
+        assert (
+            ACCEPTANCE_LAWS.require_historical(
+                identifier=entry.coordinate.identifier,
+                digest=entry.coordinate.digest,
+            )
+            is entry
+        )
