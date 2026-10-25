@@ -285,6 +285,7 @@ def _claim_type_path(claim_type: ClaimType) -> str:
 
 def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name=f"project.reading_{index:04d}"),
         entry=QueryEntry(
             binding="item",

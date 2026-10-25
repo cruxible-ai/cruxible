@@ -126,9 +126,11 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 class QueryDefinition(_StrictQueryDefinitionModel):
     """One governed, digest-pinned, Claim-native canonical query declaration."""
 
-    artifact_format: Literal["playbill-query-definition-v1", "playbill-query-definition-v2"] = (
-        "playbill-query-definition-v1"
-    )
+    artifact_format: Literal[
+        "playbill-query-definition-v1",
+        "playbill-query-definition-v2",
+        "cruxible-query-definition-v3",
+    ] = "playbill-query-definition-v1"
     identity: ArtifactIdentity
     description: str | None = None
     entry: QueryEntry | QueryArtifactsEntry
@@ -147,6 +149,11 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     maximum_budgets: QueryBudgets
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v3_defaults(cls, data: Any) -> Any:
+        return _query_v3_defaults(data)
 
     @field_validator("description")
     @classmethod
@@ -410,14 +417,32 @@ def _spec_schema(schema: dict[str, Any]) -> None:
         schema["required"] = [name for name in required if name not in SPEC_DEFAULTED_FIELDS]
 
 
+def _query_v3_defaults(data: Any) -> Any:
+    if (
+        not isinstance(data, Mapping)
+        or data.get("artifact_format") != "cruxible-query-definition-v3"
+    ):
+        return data
+    stated = dict(data)
+    entry = stated.get("entry")
+    if isinstance(entry, Mapping):
+        stated.setdefault(
+            "result_binding",
+            entry.get("binding", "definition" if "artifact_kind" in entry else None),
+        )
+    stated.setdefault("result_cardinality", "many")
+    if "default_budgets" not in stated and "maximum_budgets" in stated:
+        stated["default_budgets"] = stated["maximum_budgets"]
+    return stated
+
+
 def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     """The spec with each omitted defaulted field stated.
 
-    - ``result_shape``: ``subject`` for a Subject entry, ``artifact_definition``
-      for an artifacts entry (which also takes ``artifact_format`` v2).
+    - ``result_shape``: ``subject`` for a Subject entry;
+      ``artifact_definition`` for an artifacts entry (v2).
     - ``result_cardinality``: ``many``.
-    - ``dedupe``: ``subject`` or ``artifact``, following the shape; a ``path`` or
-      ``relation_claim`` query states it.
+    - ``dedupe``: ``subject`` or ``artifact`` for those shapes; other shapes state it.
     - ``evaluation_policy``: supported, current Claims; conflicts surfaced.
     - budgets: 100 results by default, 1000 at most, the traversal's own depth.
 
@@ -445,8 +470,17 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     )
     traversal = stated.get("traversal")
     depth = len(traversal) if isinstance(traversal, list | tuple) else 0
-    stated.setdefault("default_budgets", {"max_results": 100, "max_traversal_depth": depth})
-    stated.setdefault("maximum_budgets", {"max_results": 1000, "max_traversal_depth": depth})
+    path_fields = (
+        {"max_paths": 20000, "max_paths_per_result": 100}
+        if shape in {"path", "relation_claim"}
+        else {}
+    )
+    stated.setdefault(
+        "default_budgets", {"max_results": 100, "max_traversal_depth": depth, **path_fields}
+    )
+    stated.setdefault(
+        "maximum_budgets", {"max_results": 1000, "max_traversal_depth": depth, **path_fields}
+    )
     return stated
 
 
@@ -469,7 +503,10 @@ class QueryDefinitionSpec(QueryDefinition):
     @model_validator(mode="before")
     @classmethod
     def _defaults(cls, data: Any) -> Any:
-        return query_spec_defaults(data) if isinstance(data, Mapping) else data
+        if isinstance(data, Mapping):
+            data = _query_v3_defaults(data)
+            return query_spec_defaults(data)
+        return data
 
     def _validate_pins(self) -> None:
         referenced = set(self.referenced_predicates)
@@ -511,8 +548,40 @@ def validate_query_definition_path(
     return path
 
 
+def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
+    if query.artifact_format != "cruxible-query-definition-v3":
+        return query.model_dump(mode="json")
+
+    def compact(model: BaseModel, output: dict[str, Any]) -> None:
+        # Tags belong to declared model positions, never to opaque JSON data.
+        output.pop("tag", None)
+        if "kind" in type(model).model_fields:
+            output["kind"] = getattr(model, "kind")
+        for name in type(model).model_fields:
+            child = getattr(model, name)
+            if name not in output:
+                continue
+            if isinstance(child, BaseModel) and isinstance(output[name], dict):
+                compact(child, output[name])
+            elif isinstance(child, tuple) and isinstance(output[name], list):
+                for source, target in zip(child, output[name], strict=True):
+                    if isinstance(source, BaseModel) and isinstance(target, dict):
+                        compact(source, target)
+
+    body = query.model_dump(mode="json", exclude_defaults=True)
+    compact(query, body)
+    body["artifact_format"] = query.artifact_format
+    if query.result_binding == query.entry.binding:
+        body.pop("result_binding", None)
+    if query.result_cardinality == "many":
+        body.pop("result_cardinality", None)
+    if query.default_budgets == query.maximum_budgets:
+        body.pop("default_budgets", None)
+    return body
+
+
 def render_query_definition(query: QueryDefinition) -> bytes:
-    return pretty_canonical_bytes(query.model_dump(mode="json"))
+    return pretty_canonical_bytes(query_definition_wire(query))
 
 
 def parse_query_definition(
@@ -554,7 +623,7 @@ def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
-        query.model_dump(mode="json"),
+        query_definition_wire(query),
     )
 
 

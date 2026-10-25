@@ -472,6 +472,7 @@ def _world(tmp_path):
     status = claim_type.predicate
     query = _query().model_copy(
         update={
+            "artifact_format": "cruxible-query-definition-v3",
             "identity": ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
             "entry": QueryEntry(
                 binding="item",

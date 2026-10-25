@@ -40,10 +40,16 @@ NOW = datetime(2026, 9, 16, tzinfo=UTC)
 
 
 def definition(
-    kind="ClaimType", *, namespaces=(), prefixes=(), name="security.ontology", max_results=100
+    kind="ClaimType",
+    *,
+    namespaces=(),
+    prefixes=(),
+    name="security.ontology",
+    max_results=100,
+    artifact_format="cruxible-query-definition-v3",
 ):
     return QueryDefinition(
-        artifact_format="playbill-query-definition-v2",
+        artifact_format=artifact_format,
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryArtifactsEntry(
             artifact_kind=kind,
@@ -104,7 +110,7 @@ def test_invalid_scope_is_not_a_broad_read(entry):
 
 
 def test_v1_definition_and_result_encoding_stay_frozen():
-    old = work_item_query()
+    old = work_item_query().model_copy(update={"artifact_format": "playbill-query-definition-v1"})
     assert (
         parse_query_definition(
             render_query_definition(old), path=query_definition_path(old.identity.name)
@@ -409,7 +415,7 @@ def test_old_compiler_cannot_reinterpret_artifact_query_format():
     )
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
-    query = definition()
+    query = definition(artifact_format="playbill-query-definition-v2")
     tree = {query_definition_path(query.identity.name): render_query_definition(query)}
     with pytest.raises(ProjectionFormatError):
         parse_projection_tree(

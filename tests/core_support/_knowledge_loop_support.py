@@ -259,6 +259,7 @@ def work_item_query(
             }
         )
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntry(binding="item", subject_kinds=(SUBJECT_KIND,)),
         result_binding="item",

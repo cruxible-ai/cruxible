@@ -3355,6 +3355,7 @@ def _render_non_procedure_member(
     *,
     tree: Mapping[str, bytes] | None = None,
     light: bool = False,
+    query_paths: tuple[str, ...] | None = None,
 ) -> tuple[str, bytes, str]:
     if isinstance(payload, ResolutionContractAuthoringPayload):
         from cruxible_client.contracts.resolution_contracts import (
@@ -3422,7 +3423,72 @@ def _render_non_procedure_member(
             _refuse_unassigned_subject(shell.subject_kind, shell.subject_id, element="subject")
         return (path, render_subject(shell), subject_digest(shell).tagged)
     if isinstance(payload, QueryDefinitionAuthoringPayload):
-        query: QueryDefinition = payload.query_definition
+        from cruxible_client.contracts.query.authored import (
+            QuerySpecError,
+            QuerySpecInput,
+            lower_query_spec,
+        )
+        from cruxible_core.service.discovery.authored_query import (
+            AuthoredQueryResolver,
+            candidate_query_vocabulary,
+        )
+        from cruxible_core.service.read_refusals import ReadRefusalError
+
+        source = payload.query_definition
+        query: QueryDefinition
+        if isinstance(source, QuerySpecInput):
+            try:
+                query = lower_query_spec(
+                    source,
+                    AuthoredQueryResolver(
+                        candidate_query_vocabulary(tree or {}, paths=query_paths)
+                    ),
+                )
+            except (QuerySpecError, ReadRefusalError) as exc:
+                _refuse(
+                    exc.error_code,
+                    exc.field_path or "query_definition",
+                    str(exc),
+                    repair_kind="replace_input",
+                    repair_description="Correct the authored path using the candidate vocabulary.",
+                )
+            except ValidationError as exc:
+                _refuse(
+                    "cruxible.authoring.query_definition_invalid",
+                    "$",
+                    str(exc),
+                    repair_kind="replace_input",
+                    repair_description=(
+                        "Correct the authored fields or budgets to satisfy the query law."
+                    ),
+                )
+        else:
+            query = source
+        if light:
+            query = query.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+        previous_query: QueryDefinition | None = None
+        previous_content = None
+        if isinstance(source, QuerySpecInput) and tree is not None:
+            previous_content = tree.get(query_definition_path(query.identity.name))
+            if previous_content is not None:
+                previous_query = parse_query_definition(
+                    previous_content, path=query_definition_path(query.identity.name)
+                )
+                if previous_query.lifecycle.state == "retired":
+                    _refuse(
+                        "cruxible.query_definition.lifecycle_invalid",
+                        "$.query",
+                        "A retired QueryDefinition cannot be revived or revised.",
+                        repair_kind="replace_input",
+                        repair_description="Author a query under a new identity.",
+                    )
+                query = query.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            predecessor_digest=query_definition_digest(previous_query).tagged
+                        )
+                    }
+                )
         if tree is not None:
             pins = {(pin.role, pin.target.qualified): pin for pin in query.pins}
             for predicate in query.referenced_predicates:
@@ -3478,6 +3544,13 @@ def _render_non_procedure_member(
             query = QueryDefinition.model_validate(body)
         if light:
             query = name_query(query)
+        if previous_query is not None and _same_revision_content(query, previous_query):
+            assert previous_content is not None
+            return (
+                query_definition_path(query.identity.name),
+                previous_content,
+                query_definition_digest(previous_query).tagged,
+            )
         return (
             query_definition_path(query.identity.name),
             render_query_definition(query),
@@ -4120,6 +4193,22 @@ def _render_procedure_mandate_member(
     return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
 
 
+def _authored_query_paths(
+    payload: object,
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+) -> tuple[str, ...] | None:
+    from cruxible_client.contracts.query.authored import QuerySpecInput
+    from cruxible_core.service.discovery.authored_query import candidate_vocabulary_paths
+
+    if isinstance(payload, QueryDefinitionAuthoringPayload) and isinstance(
+        payload.query_definition, QuerySpecInput
+    ):
+        return candidate_vocabulary_paths(instance, base, tree)
+    return None
+
+
 def _lower_non_procedure(
     *,
     payload: ResolutionContractAuthoringPayload
@@ -4131,9 +4220,15 @@ def _lower_non_procedure(
     | CaptureContractAuthoringPayload
     | SourceAcquisitionPolicyAuthoringPayload,
     base_tree: Mapping[str, bytes],
-    light: bool = False,
+    base: AcceptedProjectionCoordinate,
+    instance: PlaybillInstance,
 ) -> LoweredAuthoring:
-    path, content, digest = _render_non_procedure_member(payload, tree=base_tree, light=light)
+    path, content, digest = _render_non_procedure_member(
+        payload,
+        tree=base_tree,
+        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+        query_paths=_authored_query_paths(payload, instance, base, base_tree),
+    )
     candidate_tree = fork_tree(base_tree)
     candidate_tree[path] = content
     changed = () if base_tree.get(path) == content else ((path, content),)
@@ -5328,7 +5423,7 @@ def _rescope_member_error(
     )
     return AuthoringLoweringError(
         code=error.code,
-        offending_element=f"members[{index}].{error.offending_element}",
+        offending_element=f"members[{index}].{error.offending_element.removeprefix('$.')}",
         message=error.message,
         repairs=repairs,
     )
@@ -5691,7 +5786,10 @@ def _stage_change_set_member(
         candidate_tree[kind_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(
-        member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+        member,
+        tree=staged_tree,
+        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+        query_paths=_authored_query_paths(member, instance, base, staged_tree),
     )
     candidate_tree = fork_tree(staged_tree)
     candidate_tree[path] = content
@@ -6495,7 +6593,7 @@ def _lower_authoring(
             idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
     return _lower_non_procedure(
-        payload=intent.payload, base_tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+        payload=intent.payload, base_tree=base_tree, base=base, instance=instance
     )
 
 

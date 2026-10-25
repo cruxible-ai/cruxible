@@ -582,7 +582,27 @@ query_definition(
 ) -> QueryDraft
 ```
 
-Builds a QueryDraft with optional coordinate assertions from referenced vocabulary.
+Builds a QueryDraft with optional coordinate assertions from referenced vocabulary. The authored form uses
+`QuerySpecInput` from `cruxible_client.contracts.query.authored`:
+
+```python
+from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+from cruxible_client.contracts.query.authored import QuerySpecInput
+
+spec = QuerySpecInput.model_validate({
+    "query": "project.ready",
+    "from": {"item": "project.work_item"},
+    "where": 'item.status == "ready"',
+    "fields": ["item", "item.status"],
+})
+draft = cx.query_definition(definition=QueryDefinitionInput(
+    kind="query_definition", query_definition=spec,
+))
+```
+
+Authored queries resolve names against the candidate vocabulary; omit the
+optional `vocabulary` assertions for that form. See [saved questions](../../docs/asking-questions.md#saved-questions-named-queries)
+for filters, hops, includes and budgets.
 
 **Conditions and effects:** A vocabulary ref not used by the query refuses. Ordinary Claim and artifact-definition queries share this API.
 
@@ -4867,7 +4887,7 @@ Import: `cruxible_client.contracts.authoring.inputs.QueryDefinitionInput`. [Sour
 | Field | Type | Default / construction |
 |---|---|---|
 | `kind` | `Literal['query_definition']` | `Required` |
-| `query_definition` | `QueryDefinitionSpec \| QueryDefinition` | `Required` |
+| `query_definition` | `QuerySpecInput \| QueryDefinitionSpec \| QueryDefinition` | `Required` |
 
 <a id="api-approvalpolicyinput"></a>
 

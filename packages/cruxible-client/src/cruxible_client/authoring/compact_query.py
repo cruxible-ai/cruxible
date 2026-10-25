@@ -240,25 +240,79 @@ def render_query_table(page: QueryResultRecord) -> str:
 
 _IN_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s+in\s+(.+?)\s*$")
 _EXISTS_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s+(!?)exists\s*$")
-_OPERATOR_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s*(!=|<=|>=|=|<|>|~)\s*(.*?)\s*$")
-_SYMBOLS = {"=": "eq", "!=": "ne", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte", "~": "contains"}
+_OPERATOR_RE = re.compile(r"^\s*([A-Za-z0-9_.]+)\s*(==|!=|<=|>=|=|<|>|~)\s*(.*?)\s*$")
+_SYMBOLS = {
+    "==": "eq",
+    "=": "eq",
+    "!=": "ne",
+    "<": "lt",
+    "<=": "lte",
+    ">": "gt",
+    ">=": "gte",
+    "~": "contains",
+}
 WHERE_SYNTAX = "'f=v', 'f!=v', 'f<v', 'f<=v', 'f>v', 'f>=v', 'f in a,b', 'f exists', 'f~text'"
 
 
 def parse_where(expression: str) -> QueryFilter:
-    """Read one CLI filter expression; values stay strings for the daemon to type."""
+    """The authored filter grammar's single-comparison case, with CLI spellings."""
+    from cruxible_client.contracts.query.authored import QuerySpecError, parse_filter
 
-    match = _IN_RE.fullmatch(expression)
-    if match is not None:
-        values = [item.strip() for item in match.group(2).split(",") if item.strip()]
-        if values:
-            return query_filter(match.group(1), "in", values)
-    match = _EXISTS_RE.fullmatch(expression)
-    if match is not None:
-        return query_filter(match.group(1), "exists", match.group(2) != "!")
-    match = _OPERATOR_RE.fullmatch(expression)
-    if match is not None and match.group(3):
-        return query_filter(match.group(1), _SYMBOLS[match.group(2)], match.group(3))
+    membership = _IN_RE.fullmatch(expression)
+    comparison = _OPERATOR_RE.fullmatch(expression)
+    grammar_case = (
+        expression.lstrip().startswith(("exists ", "not exists "))
+        or (membership is not None and membership.group(2).startswith("("))
+        or (comparison is not None and comparison.group(3).startswith('"'))
+    )
+    if grammar_case:
+        try:
+            parsed = parse_filter(expression)
+            if parsed.kind == "presence":
+                return query_filter(str(parsed.operands[0].value), "exists", True)
+            if parsed.kind == "not" and parsed.children[0].kind == "presence":
+                return query_filter(str(parsed.children[0].operands[0].value), "exists", False)
+            if parsed.kind in {"comparison", "membership"} and all(
+                item.kind in {"literal", "name", "decimal"} for item in parsed.operands[1:]
+            ):
+                field = str(parsed.operands[0].value)
+                if parsed.kind == "membership":
+                    return query_filter(field, "in", [item.value for item in parsed.operands[1:]])
+                return query_filter(field, parsed.operator, parsed.operands[1].value)
+        except QuerySpecError as exc:
+            raise ValueError(str(exc)) from exc
+        raise ValueError("--where takes one comparison, membership, or presence test")
+
+    try:
+        match = _EXISTS_RE.fullmatch(expression)
+        if match is not None:
+            parsed = parse_filter(("not " if match.group(2) else "") + "exists " + match.group(1))
+            return query_filter(match.group(1), "exists", parsed.kind != "not")
+        match = _IN_RE.fullmatch(expression)
+        if match is not None:
+            raw = match.group(2)
+            if raw.startswith("(") and raw.endswith(")"):
+                raw = raw[1:-1]
+            values = [item.strip() for item in raw.split(",") if item.strip()]
+            if values:
+                parse_filter(
+                    match.group(1)
+                    + " in ("
+                    + ", ".join(json.dumps(value) for value in values)
+                    + ")"
+                )
+                return query_filter(match.group(1), "in", values)
+        match = _OPERATOR_RE.fullmatch(expression)
+        if match is not None and match.group(3):
+            operator = _SYMBOLS[match.group(2)]
+            parsed = parse_filter(
+                match.group(1) + " " + match.group(2) + " " + json.dumps(match.group(3))
+            )
+            return query_filter(match.group(1), operator, parsed.operands[1].value)
+    except QuerySpecError as exc:
+        raise ValueError(
+            f"cannot read the filter {expression!r}; write one of {WHERE_SYNTAX}"
+        ) from exc
     raise ValueError(
         f"cannot read the filter {expression!r}; write one of {WHERE_SYNTAX}, "
         "for example 'adoption_state=adopted'"

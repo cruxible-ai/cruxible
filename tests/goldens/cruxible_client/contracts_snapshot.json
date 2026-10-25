@@ -8215,7 +8215,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -8413,6 +8414,9 @@
               "query_definition": {
                 "anyOf": [
                   {
+                    "$ref": "#/$defs/QuerySpecInput"
+                  },
+                  {
                     "$ref": "#/$defs/QueryDefinitionSpec"
                   },
                   {
@@ -8440,7 +8444,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -8947,6 +8952,25 @@
             "title": "QueryLiteralRef",
             "type": "object"
           },
+          "QueryMaximumInput": {
+            "additionalProperties": false,
+            "properties": {
+              "paths_per_result": {
+                "default": 1000,
+                "minimum": 1,
+                "title": "Paths Per Result",
+                "type": "integer"
+              },
+              "results": {
+                "default": 2000,
+                "minimum": 1,
+                "title": "Results",
+                "type": "integer"
+              }
+            },
+            "title": "QueryMaximumInput",
+            "type": "object"
+          },
           "QueryMembershipFilter": {
             "additionalProperties": false,
             "description": "Set membership over an explicit, nonempty, canonically ordered value list.",
@@ -9115,6 +9139,33 @@
               "operand"
             ],
             "title": "QueryNegationFilter",
+            "type": "object"
+          },
+          "QueryOrderInput": {
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "type"
+            ],
+            "title": "QueryOrderInput",
             "type": "object"
           },
           "QueryOrdering": {
@@ -9338,6 +9389,151 @@
               "value"
             ],
             "title": "QueryProjectionField",
+            "type": "object"
+          },
+          "QuerySpecInput": {
+            "additionalProperties": false,
+            "description": "One QueryDefinition, expressed in binding names and predicate names.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "from": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "From",
+                "type": "object"
+              },
+              "hops": {
+                "default": [],
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "title": "Hops",
+                "type": "array"
+              },
+              "include": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "title": "Include",
+                "type": "object"
+              },
+              "limit": {
+                "default": 200,
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "max": {
+                "$ref": "#/$defs/QueryMaximumInput"
+              },
+              "order": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryOrderInput"
+                    }
+                  ]
+                },
+                "title": "Order",
+                "type": "array"
+              },
+              "params": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "string",
+                        "integer",
+                        "boolean",
+                        "decimal",
+                        "timestamp",
+                        "subject_reference"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "const": "subject",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "title": "Params",
+                "type": "object"
+              },
+              "paths_per_result": {
+                "default": 100,
+                "minimum": 1,
+                "title": "Paths Per Result",
+                "type": "integer"
+              },
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "visible": {
+                "default": "current",
+                "enum": [
+                  "current",
+                  "held"
+                ],
+                "title": "Visible",
+                "type": "string"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "query",
+              "from",
+              "fields"
+            ],
+            "title": "QuerySpecInput",
             "type": "object"
           },
           "QuerySubjectFieldRef": {
@@ -50427,7 +50623,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -89142,7 +89339,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -92845,7 +93043,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -99125,7 +99324,8 @@
                 "default": "playbill-query-definition-v1",
                 "enum": [
                   "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
+                  "playbill-query-definition-v2",
+                  "cruxible-query-definition-v3"
                 ],
                 "title": "Artifact Format",
                 "type": "string"

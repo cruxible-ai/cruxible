@@ -1823,8 +1823,17 @@ def _query_card(
 ) -> GetQueryCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         query = cast(QueryDefinition, projection.typed.source(resolved.identity))
+    from cruxible_client.contracts.query.authored import QuerySpecInput, query_spec_from_definition
+
+    definition: QuerySpecInput | QueryDefinition | None = None
+    if query.artifact_format == "cruxible-query-definition-v3":
+        try:
+            definition = query_spec_from_definition(query)
+        except ValueError:
+            definition = query
     return GetQueryCard(
         query=query.identity.name,
+        definition=definition,
         description=query.description,
         params=tuple(
             GetQueryParameter(name=item.name, type=str(item.value_type), required=item.required)

@@ -144,6 +144,7 @@ def _spec(
 ) -> QueryDefinitionSpec:
     return QueryDefinitionSpec.model_validate(
         dict(
+            artifact_format="cruxible-query-definition-v3",
             identity=ArtifactIdentity(kind="QueryDefinition", name=name),
             entry=QueryEntry(binding="item", subject_kinds=(KIND,)),
             result_binding="item",

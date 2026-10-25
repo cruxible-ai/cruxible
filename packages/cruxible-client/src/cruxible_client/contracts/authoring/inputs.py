@@ -82,6 +82,7 @@ from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
 )
+from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
     NamedQueryDefinition,
     QueryDefinition,
@@ -365,7 +366,7 @@ class SubjectSuccessionInput(_StrictInputModel):
 
 class QueryDefinitionInput(_StrictInputModel):
     kind: Literal["query_definition"]
-    query_definition: QueryDefinitionSpec | QueryDefinition | NamedQueryDefinition
+    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition | NamedQueryDefinition
 
 
 class ApprovalPolicyInput(_StrictInputModel):

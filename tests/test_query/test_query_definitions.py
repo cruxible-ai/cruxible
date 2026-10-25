@@ -253,6 +253,18 @@ def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> 
     assert parse_query_definition(rendered, path=QUERY_PATH) == query
 
 
+def test_query_definition_v3_is_compact_without_moving_frozen_v1() -> None:
+    fixture = json.loads(GOLDEN.read_bytes())
+    v1 = QueryDefinition.model_validate(fixture["query_definition"])
+    v3 = v1.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
+    wire = render_query_definition(v3)
+    assert wire.decode() == fixture["canonical_v3_wire"]
+    assert query_definition_digest(v3).tagged == fixture["v3_artifact_digest"]
+    assert parse_query_definition(wire, path=QUERY_PATH) == v3
+    assert len(wire) < len(render_query_definition(v1))
+    assert b'"tag"' not in wire
+
+
 def test_query_definition_digest_uses_the_shared_envelope_domain() -> None:
     from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 
@@ -929,7 +941,7 @@ def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path:
     instance, _owner = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
-    query = single_status_query()
+    query = single_status_query(artifact_format="cruxible-query-definition-v3")
     query_path = query_definition_path(query.identity.name)
     candidate_tree = {
         **base_tree,
@@ -954,7 +966,8 @@ def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path:
     assert set(members) == {STATUS_CLAIM_TYPE_PATH, query_path}
     member = members[query_path]
     assert member.artifact_kind == "query-definition"
-    assert member.law_identifier == "playbill.query-definition.v1"
+    assert member.law_identifier == "cruxible.query-definition.v3"
+    assert QUERY_DEFINITION_ACCEPTANCE_LAW.coordinate.identifier == "playbill.query-definition.v1"
     assert member.candidate_artifact_digest == query_definition_digest(query).tagged
     law_result = next(
         item.result for item in evaluation.candidate.law_evidence if item.path == query_path
@@ -966,7 +979,7 @@ def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path:
 def test_a_query_definition_proposal_is_admitted_as_an_authorable_path(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
-    query = single_status_query()
+    query = single_status_query(artifact_format="cruxible-query-definition-v3")
     tree = {
         **instance.tree_at(base.git_oid),
         STATUS_CLAIM_TYPE_PATH: render_claim_type(claim_type(STATUS_PREDICATE)),
@@ -1131,3 +1144,39 @@ def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> N
     ]
     # An accepted definition stays strict: every field is stated.
     assert set(SPEC_DEFAULTED_FIELDS) <= set(QueryDefinition.model_json_schema()["required"])
+
+
+@pytest.mark.parametrize("format", ["playbill-query-definition-v1", "cruxible-query-definition-v3"])
+def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    explicit = active_work_query(
+        artifact_format=format,
+        result_shape="subject",
+        dedupe="subject",
+        default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
+        maximum_budgets=QueryBudgets(max_results=500, max_traversal_depth=4),
+    )
+    stated = explicit.model_dump(mode="json")
+    stated.pop("result_shape")
+    stated.pop("dedupe")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "subject"
+    assert defaulted.dedupe == "subject"
+    assert defaulted.model_dump(mode="json") == explicit.model_dump(mode="json")
+    assert query_definition_digest(defaulted) == query_definition_digest(explicit)
+
+
+def test_explicit_path_specs_still_receive_the_path_budget_defaults():
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    stated = active_work_query().model_dump(mode="json")
+    stated.pop("default_budgets")
+    stated.pop("maximum_budgets")
+    defaulted = QueryDefinitionSpec.model_validate(stated)
+    assert defaulted.result_shape == "path"
+    assert defaulted.dedupe == "path"
+    for budget in (defaulted.default_budgets, defaulted.maximum_budgets):
+        assert budget.max_paths == 20000
+        assert budget.max_paths_per_result == 100
+        assert budget.max_traversal_depth == len(defaulted.traversal)

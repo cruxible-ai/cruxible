@@ -139,3 +139,36 @@ def test_the_approval_lock_is_per_candidate(tmp_path: Path) -> None:
         thread.start()
         assert entered.wait(timeout=10), "a second candidate's approval lock blocked"
         thread.join(timeout=10)
+
+
+def test_an_approval_arriving_during_a_read_keeps_files_paired_with_their_signers(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    reviewer = client_material(tmp_path, instance, principal_id="reviewer")
+    proposed = _submit(instance)
+    digest = proposed.candidate.candidate_digest
+    root = proposed.candidate.candidate.parent_semantic_root
+    earlier = _sign(reviewer, digest, root)
+    arriving = _sign(owner, digest, root)
+    evidence = instance.proposal_evidence()
+    evidence.write_approval(digest, earlier)
+    directory = evidence.approvals / digest.removeprefix("sha256:")
+    scanned = []
+
+    class ArrivingDirectory(type(directory)):
+        def glob(self, pattern):
+            paths = tuple(super().glob(pattern))
+            if not scanned:
+                scanned.append(True)
+                evidence.write_approval(digest, arriving)
+            return iter(paths)
+
+    snapshot = evidence._read_approval_files(ArrivingDirectory(directory), digest)
+    signers = {item.attestation.signer_id for item in snapshot}
+    assert "reviewer" in signers
+    assert signers <= {"owner", "reviewer"}
+    assert {item.attestation.signer_id for item in evidence.read_approvals(digest)} == {
+        "owner",
+        "reviewer",
+    }

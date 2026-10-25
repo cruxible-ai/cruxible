@@ -65,6 +65,7 @@ def _query(*, missing_parameter: bool = False) -> QueryDefinition:
     if missing_parameter:
         parameters.append(QueryParameterDeclaration(name="required_extra", value_type="string"))
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.subject_exists"),
         entry=QueryEntry(
             binding="item",

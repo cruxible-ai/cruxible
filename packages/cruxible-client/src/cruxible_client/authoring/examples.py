@@ -797,7 +797,11 @@ def query_ontology_example() -> QueryDefinitionInput:
             result_shape="artifact_definition",
             result_cardinality="many",
             dedupe="artifact",
-            evaluation_policy=query_claims_by_type_example().query_definition.evaluation_policy,
+            evaluation_policy=QueryEvaluationPolicy(
+                visible_verdicts=("supported",),
+                visible_currency=("current",),
+                conflict_behavior="surface_conflicts",
+            ),
             default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
             maximum_budgets=QueryBudgets(max_results=1000, max_traversal_depth=0),
         ),
