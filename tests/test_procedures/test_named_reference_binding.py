@@ -106,3 +106,36 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
         )
     with pytest.raises(ExecutionError, match="lacks QueryDefinition"):
         replay_procedure_references(accepted, pins=(), lookup_exact=exact)
+
+
+def test_v3_artifact_and_admission_graph_digests_reproduce_from_compact_named_wire():
+    import json
+
+    from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+    from cruxible_client.contracts.procedures.artifacts import (
+        parse_procedure,
+        procedure_artifact_digest,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import (
+        compute_procedure_definition_digest,
+        compute_procedure_node_digests,
+    )
+    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    original = name_procedure(_artifact(_definition()))
+    wire = render_procedure(original)
+    restored = parse_procedure(wire, path="procedures/" + original.identity.name + ".json")
+    assert procedure_artifact_digest(original) == typed_digest(
+        ArtifactDigest,
+        "cruxible-procedure-v3",
+        json.loads(wire),
+    )
+    assert procedure_artifact_digest(restored) == procedure_artifact_digest(original)
+    assert compute_procedure_definition_digest(
+        restored.definition
+    ) == compute_procedure_definition_digest(original.definition)
+    assert compute_procedure_node_digests(restored.definition) == compute_procedure_node_digests(
+        original.definition
+    )
