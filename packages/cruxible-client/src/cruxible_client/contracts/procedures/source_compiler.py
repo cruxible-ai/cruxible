@@ -40,9 +40,12 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceSpan,
 )
 from cruxible_client.contracts.procedures.source_views import (
-    expanded_model_schema,
+    claim_view_schema,
     query_view_schema,
     read_object_schema,
+)
+from cruxible_client.contracts.procedures.source_views import (
+    schema_json_type as _json_type,
 )
 from cruxible_client.contracts.records import RecordConstructor, record_field_names
 
@@ -141,33 +144,6 @@ class CompiledSource:
     definition: ProcedureDefinition
     contracts: tuple[SourceContract, ...]
     source_map: tuple[SourceMapEntry, ...]
-
-
-def _json_type(schema: ValueType) -> dict[str, Any]:
-    if isinstance(schema, ContractSchema):
-        return {
-            "type": "object",
-            "properties": {k: _json_type(v) for k, v in schema.fields.items()},
-            "required": [k for k, v in schema.fields.items() if not v.optional],
-            "additionalProperties": schema.allow_extra,
-        }
-    if schema.json_schema is not None:
-        return schema.json_schema
-    if schema.type == "json":
-        return {}
-    if schema.type == "list":
-        return {
-            "type": "array",
-            "items": _json_type(ContractSchema(fields=schema.item_fields or {})),
-        }
-    result: dict[str, Any] = {
-        "type": {"int": "integer", "bool": "boolean", "datetime": "string", "date": "string"}.get(
-            schema.type, schema.type
-        )
-    }
-    if schema.enum is not None:
-        result["enum"] = schema.enum
-    return result
 
 
 def _field_type(schema: ValueType) -> PropertySchema:
@@ -952,41 +928,7 @@ class _Compiler:
         self, selected: ClaimSelection, node: ast.Call, cardinality: str, limit: int | None = None
     ) -> Value:
         shape = selected.type.structure
-        from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
-        from cruxible_client.contracts.semantic import SemanticAddress
-
-        value_schema = (
-            shape.literal_schema
-            if shape.object_kind == "literal"
-            else expanded_model_schema(
-                SubjectClaimObject if shape.object_kind == "subject" else ExactContentClaimObject
-            )
-        )
-        schema = ContractSchema(
-            fields={
-                "value": PropertySchema(type="json", json_schema=value_schema),
-                "claim_id": PropertySchema(type="string"),
-                "revision": PropertySchema(type="string"),
-                "subject": PropertySchema(
-                    type="json", json_schema=expanded_model_schema(SemanticAddress)
-                ),
-                "predicate": PropertySchema(type="string"),
-                "qualifier": PropertySchema(type="json", json_schema={"type": ["string", "null"]}),
-                "role": PropertySchema(type="string"),
-                "object_kind": PropertySchema(type="string"),
-                "lifecycle_state": PropertySchema(type="string"),
-                "captures": PropertySchema(
-                    type="json", json_schema={"type": "array", "items": {"type": "string"}}
-                ),
-                "verdict": PropertySchema(type="string"),
-                "currency": PropertySchema(type="string"),
-                "identity": PropertySchema(type="string"),
-                "artifact_digest": PropertySchema(type="string"),
-                "statement_digest": PropertySchema(type="string"),
-                "path": PropertySchema(type="string"),
-                "claim": PropertySchema(type="json"),
-            }
-        )
+        schema = claim_view_schema(shape)
         pin = ArtifactPin(
             role="claim-type",
             target=ArtifactIdentity(kind="ClaimType", name=shape.predicate),

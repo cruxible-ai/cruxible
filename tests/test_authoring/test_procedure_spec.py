@@ -367,3 +367,166 @@ def test_field_descriptors_forbid_unknown_fields_and_coercion():
                 "value": {"type": "list", "item_fields": {"nested": {"type": "integer", "typo": 1}}}
             }
         )
+
+
+def test_authored_spec_prepares_through_existing_graph_laws(tmp_path):
+    from tests.test_authoring.test_authoring_procedures import TIMESTAMP, _coordinator
+
+    coordinator, actor = _coordinator(tmp_path)
+    authored = spec(
+        steps=[
+            {
+                "id": "positive",
+                "guard": "input.value > 0",
+                "else": 'halt(empty, "Nothing remains")',
+            },
+            {"project": "result", "fields": {"value": "$input.value"}},
+        ]
+    )
+    result = coordinator.compile(
+        actor=actor,
+        payload=lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert result.verdict == "passed", result.frontier
+    pending = coordinator.list_pending(actor=actor).intents[-1]
+    assert pending.semantic_identity == "Procedure:test.authored"
+    assert pending.payload.definition["procedure_spec"]["steps"][0]["id"] == "positive"
+
+
+def test_authored_graph_refusal_names_step_id(tmp_path):
+    from tests.test_authoring.test_authoring_procedures import TIMESTAMP, _coordinator
+
+    coordinator, actor = _coordinator(tmp_path)
+    authored = spec(
+        steps=[{"project": "result", "fields": {"value": "$input.value"}, "next": "result"}]
+    )
+    result = coordinator.compile(
+        actor=actor,
+        payload=lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert result.verdict == "refused"
+    assert any("result" in diagnostic.message for diagnostic in result.frontier.diagnostics)
+
+
+@pytest.mark.parametrize("population", [10, 100])
+def test_authored_lowering_requests_only_the_named_interface(population):
+    class Vocabulary(dict):
+        def __iter__(self):
+            raise AssertionError("authoring must not scan vocabulary")
+
+        def values(self):
+            raise AssertionError("authoring must not scan vocabulary")
+
+        def items(self):
+            raise AssertionError("authoring must not scan vocabulary")
+
+    vocabulary = Vocabulary({f"unrelated.{i}": {} for i in range(population)})
+    vocabulary["test@1"] = {"count": PropertySchema(type="integer")}
+    requested = []
+
+    def resolve(kind, step):
+        requested.append((kind, step.interface))
+        return {"bindings": {}, "input": {}, "output": vocabulary[step.interface]}
+
+    authored = spec(
+        input={},
+        returns="read",
+        steps=[{"call": "read", "interface": "test@1", "provider": "test", "input": {}}],
+    )
+    lowered = lower_procedure_spec(authored, resolve=resolve)
+    assert requested == [("binding", "test@1")]
+    assert lowered.definition["returns"] == "read"
+
+
+def test_template_prefixes_are_step_names_and_explicit_input_alias_survives():
+    authored = spec(
+        steps=[
+            {"project": "inputly", "fields": {"value": "$input.value"}},
+            {"project": "result", "fields": {"value": "$inputly.value"}},
+        ]
+    )
+    lowered = lower_procedure_spec(authored)
+    assert lowered.definition["nodes"][1]["fields"]["value"] == "$steps.inputly.value"
+    authored = spec(
+        steps=[
+            {"project": "input", "fields": {"value": "$input.value"}},
+            {"project": "result", "fields": {"value": "$steps.input.value"}},
+        ]
+    )
+    lowered = lower_procedure_spec(authored)
+    assert lowered.definition["nodes"][1]["fields"]["value"] == "$steps.input.value"
+
+
+def test_spec_dump_preserves_else_with_and_without_aliases():
+    authored = spec(
+        steps=[
+            {"guard": "input.value > 0", "else": "halt(empty)"},
+            {"project": "result", "fields": {"value": "$input.value"}},
+        ]
+    )
+    for by_alias in (True, False):
+        assert (
+            ProcedureSpec.model_validate(authored.model_dump(mode="json", by_alias=by_alias))
+            == authored
+        )
+
+
+def test_decompile_does_not_fold_a_halt_reached_by_fallthrough():
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _layout_definition
+
+    definition = _layout_definition(halt_before_return=False)
+    definition = definition.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"reason": "empty"}) if node.kind == "halt" else node
+                for node in definition.nodes
+            )
+        }
+    )
+    original = _artifact(definition)
+    authored = decompile_procedure(original)
+    # result falls through to stop as well as the guard's false arm. That halt
+    # is a real shared graph step, not syntactic sugar owned by one guard.
+    assert any(getattr(step, "halt", None) is not None for step in authored.steps)
+    assert any(getattr(step, "else_", None) == "stop" for step in authored.steps)
+
+
+def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
+    long_id = "a" * 128
+    authored = spec(
+        steps=[
+            {"id": long_id, "guard": "input.value > 0", "else": "halt(empty)"},
+            {"project": "result", "fields": {"value": "$input.value"}},
+            {"halt": "other", "id": long_id[:123] + "_halt"},
+        ]
+    )
+    lowered = lower_procedure_spec(authored)
+    ids = [node["node_id"] for node in lowered.definition["nodes"]]
+    assert len(ids) == len(set(ids))
+    assert all(len(id_) <= 128 for id_ in ids)
+
+
+def test_v3_retains_the_transform_spec_union_discriminator():
+    from cruxible_client.contracts.procedures.models import TransformAdapterSpec, TransformNode
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    definition = _definition()
+    transform = TransformNode(
+        node_id="result",
+        transform_kind="adapter",
+        contract_in=definition.contract_in,
+        contract_out=definition.contract_out,
+        spec=TransformAdapterSpec(value={}),
+        **{"as": "result"},
+    )
+    artifact = _artifact(definition.model_copy(update={"nodes": (transform,), "returns": "result"}))
+    content = render_procedure(artifact)
+    assert (
+        json.loads(content)["definition"]["nodes"][0]["spec"]["tag"]
+        == "playbill-transform-adapter-spec-v1"
+    )
+    assert (
+        parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact
+    )

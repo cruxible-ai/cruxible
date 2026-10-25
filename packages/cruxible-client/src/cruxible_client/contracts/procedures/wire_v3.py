@@ -36,7 +36,7 @@ def compact_procedure(value: Any) -> Any:
                 continue
             default = field.get_default(call_default_factory=True)
             if (
-                name not in {"kind", "artifact_format"}
+                name not in {"kind", "tag", "artifact_format"}
                 and not (isinstance(value, PropertySchema) and name == "type")
                 and default is not PydanticUndefined
                 and member == default

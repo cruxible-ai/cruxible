@@ -10,14 +10,19 @@ from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.authored import ProcedureSpec, _template_aliases
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.expressions import render_procedure_expression
+from cruxible_client.contracts.procedures.graph import analyze_procedure
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
+    ClaimTapNode,
     GuardNode,
     HaltNode,
     InboxEgressNode,
+    InvokeNode,
     ProjectNode,
     ProposeChangeSetNode,
+    RepeatNode,
+    SelectNode,
     SettleChangeSetNode,
     SourceNode,
     StateTapNode,
@@ -33,6 +38,9 @@ def _name(pin: Any) -> str:
 
 def _short(value: Any) -> Any:
     if isinstance(value, str) and value.startswith("$steps."):
+        alias = value[len("$steps.") :].partition(".")[0]
+        if alias in {"input", "item", "params", "steps"}:
+            return value
         return "$" + value[len("$steps.") :]
     if isinstance(value, dict):
         return {k: _short(v) for k, v in value.items()}
@@ -58,18 +66,14 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     nodes = definition.nodes
     by_id = {node.node_id: node for node in nodes}
     incoming: dict[str, list[str]] = {}
-    for node in nodes:
-        for edge in (
-            getattr(node, "next", None),
-            getattr(node, "on_true", None),
-            getattr(node, "on_false", None),
-        ):
-            if edge is not None:
-                incoming.setdefault(edge, []).append(node.node_id)
+    for node_id, edges in analyze_procedure(definition).edges.items():
+        for target in edges.values():
+            incoming.setdefault(target, []).append(node_id)
     folded_halts = {
         node.on_false: node.node_id
         for node in nodes
         if isinstance(node, GuardNode)
+        and not (set(node.predicate.step_aliases()) & {"input", "param"})
         and isinstance(by_id.get(node.on_false), HaltNode)
         and re.fullmatch(r"[a-z][a-z0-9_.-]*", getattr(by_id[node.on_false], "reason", None) or "")
         is not None
@@ -128,6 +132,32 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 )
                 if node.effect_policy is not None:
                     step["effect_policy"] = _name(node.effect_policy)
+            elif isinstance(node, ClaimTapNode):
+                step = dict(
+                    claim=node.as_,
+                    claim_type=_name(node.claim_type),
+                    subject=_short(node.subject_id),
+                    subject_kind=node.subject_kind,
+                    all=node.limit,
+                )
+            elif isinstance(node, InvokeNode):
+                step = dict(
+                    invoke=_name(node.procedure), input=_short(node.input), **{"as": node.as_}
+                )
+            elif isinstance(node, SelectNode):
+                step = dict(
+                    select=node.as_,
+                    sources=node.sources,
+                    output=schema(node.contract_out).fields,
+                    contract=_name(node.contract_out),
+                )
+            elif isinstance(node, RepeatNode):
+                step = dict(
+                    repeat=node.as_,
+                    max_attempts=node.max_attempts,
+                    body=node.body,
+                    until=render_procedure_expression(node.until),
+                )
             elif isinstance(node, StateTapNode):
                 step = dict(tap=node.as_, query=_name(node.query), params=_short(node.parameters))
                 if node.budgets is not None:
@@ -150,6 +180,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     contract_out=_name(node.contract_out),
                 )
             elif isinstance(node, GuardNode):
+                if set(node.predicate.step_aliases()) & {"input", "param"}:
+                    steps.append({"explicit": node})
+                    continue
                 # Non-abort diagnostics are inert at runtime, but remain part of
                 # historical definition digests. Preserve them explicitly.
                 branch = (

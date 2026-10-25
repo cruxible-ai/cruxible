@@ -11,7 +11,18 @@ from collections.abc import Callable, Mapping
 from difflib import get_close_matches
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    Tag,
+    field_validator,
+    model_serializer,
+)
+from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.contract_schema import (
@@ -58,7 +69,9 @@ Template: TypeAlias = JsonValue
 
 
 class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True, json_schema_mode_override="validation"
+    )
 
 
 class StepOptions(_Model):
@@ -268,6 +281,10 @@ class ProcedureSpec(_Model):
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
     annotations: JsonValue = Field(default_factory=dict)
 
+    @model_serializer(mode="wrap")
+    def _wire(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return cast(dict[str, Any], _authored_defaults(self, handler(self)))
+
     @field_validator("input", "params", "output", mode="before")
     @classmethod
     def _field_types(cls, value: Any) -> Any:
@@ -277,6 +294,35 @@ class ProcedureSpec(_Model):
                 for name, field in value.items()
             }
         return value
+
+
+def _authored_defaults(value: Any, wire: Any) -> Any:
+    """Omit model defaults while preserving every scalar in JSON templates."""
+    if isinstance(value, BaseModel) and isinstance(wire, dict):
+        result = {}
+        for name, field in type(value).model_fields.items():
+            key = field.alias if field.alias in wire else name
+            if key not in wire:
+                continue
+            member = getattr(value, name)
+            default = field.get_default(call_default_factory=True)
+            fixed_type = isinstance(value, PropertySchema) and name == "type"
+            if (
+                not fixed_type
+                and name not in {"kind", "tag"}
+                and default is not PydanticUndefined
+                and member == default
+            ):
+                continue
+            result[key] = _authored_defaults(member, wire[key])
+        return result
+    if isinstance(value, dict) and isinstance(wire, dict):
+        return {key: _authored_defaults(value[key], member) for key, member in wire.items()}
+    if isinstance(value, (tuple, list)) and isinstance(wire, (tuple, list)):
+        return [
+            _authored_defaults(member, encoded) for member, encoded in zip(value, wire, strict=True)
+        ]
+    return wire
 
 
 class ProcedureSpecError(ValueError):
@@ -353,6 +399,10 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         if not isinstance(step, (GuardStep, HaltStep, InboxStep, ProposeStep, SettleStep, EmitStep))
     }
     taps = {step.tap for step in spec.steps if isinstance(step, TapStep)}
+    collection_aliases = {
+        step.claim for step in spec.steps if isinstance(step, ClaimStep) and step.all is not None
+    }
+    used_ids = {_step_id(step, index) for index, step in enumerate(spec.steps)}
     generated: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
 
@@ -375,13 +425,14 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
     def lookup_ref(text: str, path: str) -> PropertySchema | None:
         fields: dict[str, PropertySchema] | None
         parts = text.removeprefix("$").split(".")
-        if parts[0] == "steps":
+        explicit_step = parts[0] == "steps"
+        if explicit_step:
             parts = parts[1:]
-        if parts[0] == "input":
+        if not explicit_step and parts[0] == "input":
             fields, rest = input_fields, parts[1:]
-        elif parts[0] in {"params", "param"}:
+        elif not explicit_step and parts[0] in {"params", "param"}:
             fields, rest = param_fields, parts[1:]
-        elif parts[0] == "item":
+        elif not explicit_step and parts[0] == "item":
             return None  # the typed item transform validates this scoped reference
         else:
             if parts[0] not in aliases:
@@ -396,7 +447,15 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         if fields is None:
             return None
         if not rest:
+            if parts[0] in collection_aliases:
+                return PropertySchema(type="list", item_fields=fields)
             return PropertySchema(type="json", json_schema={"type": "object"})
+        if parts[0] in collection_aliases:
+            raise ProcedureSpecError(
+                "procedure_ref_unknown",
+                path,
+                "A bounded all-Claim read is a list; select fields in an item transform",
+            )
         field: PropertySchema | None = None
         for index, member in enumerate(rest):
             if member not in fields:
@@ -422,7 +481,10 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     "rows": "$steps." + value[1:] + ".result.rows",
                     "truncated": "$steps." + value[1:] + ".truncated",
                 }
-            if value.startswith(("$input", "$params", "$item", "$steps")):
+            if any(
+                value == root or value.startswith(root + ".")
+                for root in ("$input", "$item", "$steps")
+            ):
                 return value
             return "$steps." + value[1:]
         if isinstance(value, dict):
@@ -481,12 +543,23 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     node["effect_policy"] = _ref(
                         "EffectPolicy", step.effect_policy, "effect-policy"
                     )
-                _check_call_input(step.input, details.get("input"), path + ".input", lookup_ref)
+                _check_call_input(
+                    step.input,
+                    details.get("input"),
+                    path + ".input",
+                    lookup_ref,
+                    allow_extra=details.get("input_allow_extra", False),
+                )
                 alias = step.call
             else:
                 node.update(
                     capture_contract=_ref("CaptureContract", step.contract, "capture-contract"),
-                    request=template(step.request, path + ".request"),
+                    request=template(
+                        {**details.get("request_defaults", {}), **step.request}
+                        if isinstance(step.request, dict)
+                        else step.request,
+                        path + ".request",
+                    ),
                 )
                 alias = step.source
         elif isinstance(step, TapStep):
@@ -502,10 +575,14 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             output = query_view_schema().fields
             alias = step.tap
         elif isinstance(step, ClaimStep):
+            details = {} if resolve is None else resolve("claim", step)
+            output = details.get("output")
             node.update(
                 kind="state_claim",
                 claim_type=_ref("ClaimType", step.claim_type, "claim-type"),
-                subject_kind=step.subject_kind or step.claim_type.rpartition(".")[0],
+                subject_kind=details.get("subject_kind")
+                or step.subject_kind
+                or step.claim_type.rpartition(".")[0],
                 subject_id=template(step.subject, path + ".subject"),
                 cardinality="one" if step.all is None else "all",
                 limit=step.all,
@@ -554,7 +631,15 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             )
             if step.then:
                 node["on_true"] = step.then
-            node["on_false"] = _branch(step.else_, id_, generated, node, path + ".else")
+            halt_id = id_[:123] + "_halt"
+            suffix = 2
+            while halt_id in used_ids:
+                halt_id = id_[:110] + "_halt_" + str(suffix)
+                suffix += 1
+            used_ids.add(halt_id)
+            node["on_false"] = _branch(
+                step.else_, id_, generated, node, path + ".else", halt_id=halt_id
+            )
             if (
                 step.else_id is not None
                 and generated
@@ -621,11 +706,20 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             )
             alias = step.select
         elif isinstance(step, RepeatStep):
+            enclosing_schemas, enclosing_aliases = dict(schemas), set(aliases)
+            for body in step.body:
+                aliases.add(body.as_)
+                schemas[body.as_] = None
+            until = predicate(step.until, path + ".until")
+            schemas.clear()
+            schemas.update(enclosing_schemas)
+            aliases.clear()
+            aliases.update(enclosing_aliases)
             node.update(
                 kind="repeat",
                 max_attempts=step.max_attempts,
                 body=[body.model_dump(mode="json", by_alias=True) for body in step.body],
-                until=predicate(step.until, path + ".until").model_dump(mode="json"),
+                until=until.model_dump(mode="json"),
             )
             alias = step.repeat
         if alias is not None:
@@ -633,7 +727,11 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             schemas[alias] = output
             previous = alias
         nodes.append(node)
-    returns = spec.returns or previous
+    returns = (
+        None
+        if spec.source is not None and spec.source.rules == "cruxible.procedure-source.v2"
+        else spec.returns or previous
+    )
     if isinstance(returns, (ReturnFrom, ReturnFields)):
         fields = (
             returns.fields
@@ -733,6 +831,20 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         definition["budget"]["max_result_bytes"] = limits.result_bytes
     if caps.result_bytes is not None:
         definition["hard_caps"]["max_result_bytes"] = caps.result_bytes
+    if spec.slots:
+        definition["pin_slots"] = (
+            [
+                {
+                    "slot_name": slot,
+                    "pin_role": "provider",
+                    "artifact_kind": "Provider",
+                    "interface_digest": resolve("slot", interface),
+                }
+                for slot, interface in sorted(spec.slots.items())
+            ]
+            if resolve is not None
+            else []
+        )
     if spec.params:
         definition["parameter_contract"] = contract(
             spec.parameter_contract or spec.procedure + "-params",
@@ -791,7 +903,13 @@ def _interface_name(value: str) -> str:
 
 
 def _branch(
-    text: str, id_: str, generated: list[dict[str, Any]], guard: dict[str, Any], path: str
+    text: str,
+    id_: str,
+    generated: list[dict[str, Any]],
+    guard: dict[str, Any],
+    path: str,
+    *,
+    halt_id: str | None = None,
 ) -> str:
     match = re.fullmatch(r'(halt|abort)\(([a-z][a-z0-9_.-]*)(?:,\s*("(?:[^"\\]|\\.)*"))?\)', text)
     if match is None:
@@ -812,7 +930,11 @@ def _branch(
             )
         guard.update(refusal_code=reason, message=json.loads(message))
         return "$abort"
-    node: dict[str, Any] = {"kind": "halt", "node_id": id_ + "_halt", "reason": reason}
+    node: dict[str, Any] = {
+        "kind": "halt",
+        "node_id": halt_id or id_[:123] + "_halt",
+        "reason": reason,
+    }
     if message is not None:
         node["message"] = json.loads(message)
     generated.append(node)
@@ -873,8 +995,22 @@ def _check_predicate(predicate: GuardPredicate, path: str, lookup: Any) -> None:
     left, right = type_of(predicate.left), type_of(predicate.right)
     if left is None or right is None:
         return
-    normalized = {"int": "integer", "boolean": "bool"}
-    a, b = normalized.get(left.type, left.type), normalized.get(right.type, right.type)
+    from cruxible_client.contracts.procedures.source_views import schema_json_type
+
+    left_schema, right_schema = schema_json_type(left), schema_json_type(right)
+    a, b = left_schema.get("type", left.type), right_schema.get("type", right.type)
+    if isinstance(a, list):
+        a = (
+            next((kind for kind in a if kind != "null"), "null")
+            if len(set(a) - {"null"}) <= 1
+            else "union"
+        )
+    if isinstance(b, list):
+        b = (
+            next((kind for kind in b if kind != "null"), "null")
+            if len(set(b) - {"null"}) <= 1
+            else "union"
+        )
     null = any(
         op.kind == "literal" and op.value is None for op in (predicate.left, predicate.right)
     )
@@ -887,23 +1023,32 @@ def _check_predicate(predicate: GuardPredicate, path: str, lookup: Any) -> None:
             path,
             f"Comparison operands have incompatible types {a} and {b}",
         )
-    for operand, other in ((predicate.left, right), (predicate.right, left)):
-        if operand.kind == "literal" and other.enum is not None:
+    for operand, other in ((predicate.left, right_schema), (predicate.right, left_schema)):
+        if operand.kind == "literal" and other.get("enum") is not None:
             from cruxible_client.contracts.canonical import canonical_bytes
 
-            if canonical_bytes(operand.value) not in {canonical_bytes(v) for v in other.enum}:
+            if canonical_bytes(operand.value) not in {canonical_bytes(v) for v in other["enum"]}:
                 raise ProcedureSpecError(
                     "procedure_operand_type_mismatch",
                     path,
-                    f"Literal {operand.value!r} is outside enum {other.enum!r}",
+                    f"Literal {operand.value!r} is outside enum {other['enum']!r}",
                 )
 
 
 def _check_call_input(
-    value: Any, fields: dict[str, PropertySchema] | None, path: str, lookup: Any
+    value: Any,
+    fields: dict[str, PropertySchema] | None,
+    path: str,
+    lookup: Any,
+    *,
+    allow_extra: bool = False,
 ) -> None:
     if fields is None or not isinstance(value, dict):
         return
+    if not allow_extra:
+        for name in value:
+            if name not in fields:
+                _unknown(path + "." + name, name, fields)
     for name, field in fields.items():
         if name not in value:
             if not field.optional and field.default is None:
@@ -912,6 +1057,8 @@ def _check_call_input(
                     path,
                     f"Required interface input field {name!r} is missing",
                 )
+            continue
+        if value[name] is None and field.optional:
             continue
         if isinstance(value[name], str) and value[name].startswith("$"):
             declared = lookup(value[name], path + "." + name)

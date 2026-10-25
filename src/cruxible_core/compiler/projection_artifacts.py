@@ -8,7 +8,6 @@ import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Literal, Mapping, cast
 
 from pydantic import BaseModel, ValidationError
@@ -38,6 +37,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_projection_structure,
     parse_claim_type,
 )
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
     CasError,
@@ -477,9 +477,18 @@ def _whole_semantic_mapping(
     )
 
 
-@lru_cache(maxsize=32)
+_PROCEDURE_WIRE_NODES: ParseMemo[dict[str, dict[str, Any]]] = ParseMemo(
+    capacity=32, max_bytes=4 * 1024 * 1024
+)
+
+
 def _procedure_wire_nodes(content: bytes) -> dict[str, dict[str, Any]]:
-    return {node["id"]: node for node in json.loads(content)["definition"]["nodes"]}
+    return _PROCEDURE_WIRE_NODES.parse(
+        content,
+        "procedure-wire-nodes",
+        CURRENT_ARTIFACT_CODEC,
+        lambda: {node["id"]: node for node in json.loads(content)["definition"]["nodes"]},
+    )
 
 
 def _procedure_node_span(
