@@ -567,9 +567,7 @@ def test_entry_parameter_refusals_distinguish_missing_from_wrong_type(params, co
 
 @pytest.mark.parametrize("family", ["claim_type", "subject_kind"])
 @pytest.mark.parametrize("size", [10, 2100])
-def test_immutable_vocabulary_metadata_is_parsed_once_at_two_sizes(
-    family, size, resolver, monkeypatch
-):
+def test_immutable_vocabulary_metadata_is_parsed_once_at_two_sizes(family, size, resolver):
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.subject_kinds import (
         SubjectKind,
@@ -597,22 +595,19 @@ def test_immutable_vocabulary_metadata_is_parsed_once_at_two_sizes(
                 identity_rule=SubjectKindMinted(),
             )
             metadata[subject_kind_path(name)] = render_subject_kind(kind)
-    parser_name = "parse_claim_type" if family == "claim_type" else "parse_subject_kind"
-    original = getattr(authored_query, parser_name)
-    calls = []
-
-    def counted(*args, **kwargs):
-        calls.append(1)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(authored_query, parser_name, counted)
+    cache = (
+        authored_query._predicate_info if family == "claim_type" else authored_query._declared_kind
+    )
+    before = cache.cache_info()
     paths = tuple(metadata)
     first = candidate_query_vocabulary(metadata, paths=paths)
-    assert len(calls) == size
-    calls.clear()
+    after_first = cache.cache_info()
+    assert after_first.misses - before.misses == size
     second = candidate_query_vocabulary(metadata, paths=paths)
+    after_second = cache.cache_info()
     assert second == first
-    assert calls == []
+    assert after_second.misses == after_first.misses
+    assert after_second.hits - after_first.hits == size
 
 
 def test_get_keeps_unconstrained_hop_targets_in_the_typed_definition(resolver):
