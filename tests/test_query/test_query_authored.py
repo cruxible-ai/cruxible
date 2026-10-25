@@ -667,3 +667,52 @@ def test_deep_filters_refuse_with_a_source_column_instead_of_recursing(wrapper, 
     assert caught.value.column == (65 if wrapper == "parentheses" else 257)
     within_limit = "(" * 64 + atom + ")" * 64 if wrapper == "parentheses" else "not " * 64 + atom
     assert parse_filter(within_limit)
+
+
+@pytest.mark.parametrize("family", ["claim_type", "subject_kind"])
+def test_candidate_vocabulary_metadata_caches_evict_at_a_finite_capacity(family, resolver):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKind,
+        SubjectKindMinted,
+        render_subject_kind,
+        subject_kind_path,
+    )
+    from cruxible_core.service.discovery import authored_query
+
+    cache = (
+        authored_query._predicate_info if family == "claim_type" else authored_query._declared_kind
+    )
+    cache.cache_clear()
+    capacity = cache.cache_info().maxsize
+    assert capacity is not None and capacity <= 4096
+    template = resolver.vocabulary.predicates["security.incident.name"].claim_type
+    first = None
+    try:
+        for index in range(capacity + 1):
+            name = f"test.bounded_{family}.item_{index}"
+            if family == "claim_type":
+                definition = template.model_copy(
+                    update={
+                        "identity": ArtifactIdentity(kind="ClaimType", name=name),
+                        "predicate": name,
+                    }
+                )
+                args = (claim_type_path(name), render_claim_type(definition))
+            else:
+                definition = SubjectKind(
+                    identity=ArtifactIdentity(kind="SubjectKind", name=name),
+                    identity_rule=SubjectKindMinted(),
+                )
+                args = (subject_kind_path(name), render_subject_kind(definition))
+            if first is None:
+                first = args
+            cache(*args)
+        assert cache.cache_info().currsize == capacity
+        assert cache.cache_info().misses == capacity + 1
+        assert first is not None
+        cache(*first)
+        assert cache.cache_info().misses == capacity + 2
+        assert cache.cache_info().currsize == capacity
+    finally:
+        cache.cache_clear()
