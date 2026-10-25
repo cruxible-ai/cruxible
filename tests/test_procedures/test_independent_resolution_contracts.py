@@ -380,10 +380,9 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     instance, owner, contract = contract_world(tmp_path)
     accept_contract(instance, owner, contract)
     procedure = _slotless_procedure("capture-anchor").procedure
-    selector = CaptureEventSelector(
-        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
-        capture_contract_digest="sha256:" + "a" * 64,
-    )
+    from tests.test_procedures.test_line_triggers import SELECTOR
+
+    selector = SELECTOR
     journal, _ = _journal_for_write(instance)
     stream = _stream(instance)
     _activate_writer(journal, stream, "run:anchor")
