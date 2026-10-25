@@ -926,3 +926,28 @@ def test_blueprint_instantiation_can_reproduce_the_recorded_procedure_format(art
     )
     assert restored == procedure
     assert restored.blueprint == procedure.blueprint
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
+def test_reference_moves_and_kit_lifecycle_updates_keep_the_recorded_wire_format(artifact_format):
+    import json
+
+    from cruxible_client.contracts.canonical import pretty_canonical_bytes
+    from cruxible_core.claims.artifact_references import move_references
+    from cruxible_core.service.kits import _render
+
+    procedure = _concrete().model_copy(update={"artifact_format": artifact_format})
+    path = procedure_path(procedure.identity.name)
+    content = render_procedure(procedure)
+    moved = move_references(path, json.loads(content), {})
+    assert pretty_canonical_bytes(moved) == content
+    moved["lifecycle"] = {
+        "state": "live",
+        "predecessor_digest": procedure_artifact_digest(procedure).tagged,
+    }
+    updated, digest = _render(path, moved)
+    parsed = parse_procedure(updated, path=path)
+    assert parsed.artifact_format == artifact_format
+    assert parsed.lifecycle.predecessor_digest == procedure_artifact_digest(procedure).tagged
+    assert digest == procedure_artifact_digest(parsed).tagged

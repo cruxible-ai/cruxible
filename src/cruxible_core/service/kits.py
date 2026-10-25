@@ -218,7 +218,15 @@ def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
 
 
 def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
-    content = pretty_canonical_bytes(payload)
+    if path.startswith("procedures/") and payload.get("artifact_format") == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.artifacts import (
+            ProcedureArtifact,
+            render_procedure,
+        )
+
+        content = render_procedure(ProcedureArtifact.model_validate(payload))
+    else:
+        content = pretty_canonical_bytes(payload)
     return content, _artifact_state(path, content).artifact_digest
 
 
