@@ -638,3 +638,19 @@ def test_get_keeps_non_reference_order_keys_in_the_typed_definition(kind, resolv
     query = query.model_copy(update={"orderings": (QueryOrdering(key=key, value_type="string"),)})
     with pytest.raises(ValueError, match="explicit typed definition"):
         query_spec_from_definition(query)
+
+
+@pytest.mark.parametrize(
+    "binding", ["now", "and", "or", "not", "exists", "in", "true", "false", "null"]
+)
+@pytest.mark.parametrize("location", ["from", "hop"])
+def test_reserved_binding_names_refuse_with_a_rename_repair(binding, location, resolver):
+    spec = (
+        simple(**{"from": {binding: "security.incident"}}, fields=[binding])
+        if location == "from"
+        else simple(hops=[{binding: "incident.vulnerability!"}])
+    )
+    with pytest.raises(QuerySpecError, match="rename the binding") as caught:
+        lower_query_spec(spec, resolver)
+    assert caught.value.error_code == "cruxible.query.unknown_field"
+    assert caught.value.field_path == ("$.from" if location == "from" else "$.hops[0]")

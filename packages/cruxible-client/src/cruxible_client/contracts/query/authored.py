@@ -129,6 +129,9 @@ class FilterExpression:
     children: tuple[FilterExpression, ...] = ()
 
 
+_RESERVED_BINDINGS = frozenset({"now", "and", "or", "not", "exists", "in", "true", "false", "null"})
+
+
 _TOKEN = re.compile(
     r'\s*(?:("(?:[^"\\]|\\.)*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?)|'
     r"(\$?[a-zA-Z_][a-zA-Z0-9_.]*)|(==|!=|<=|>=|[=<>~(),]))"
@@ -291,6 +294,15 @@ class _LowerQuery:
         self.spec, self.resolver = spec, resolver
         self.bindings: dict[str, tuple[str, ...]] = {}
 
+    @staticmethod
+    def require_binding(name: str, path: str) -> None:
+        if name in _RESERVED_BINDINGS:
+            raise QuerySpecError(
+                "cruxible.query.unknown_field",
+                f"{name!r} is reserved by the filter grammar; rename the binding",
+                path=path,
+            )
+
     def ref(
         self, text: str, path: str, *, scalar: bool = False
     ) -> tuple[QueryValueRef, QueryValueType]:
@@ -442,6 +454,7 @@ class _LowerQuery:
 
     def lower(self) -> QueryDefinitionSpec:
         binding, entry_text = next(iter(self.spec.from_.items()))
+        self.require_binding(binding, "$.from")
         matched_entry = re.fullmatch(
             r"\s*([a-z][a-z0-9_.]*)\s*(?:=\s*\$([a-z][a-z0-9_]*))?\s*", entry_text
         )
@@ -473,6 +486,7 @@ class _LowerQuery:
         for index, hop in enumerate(self.spec.hops):
             target, expression = next(iter(hop.items()))
             path = f"$.hops[{index}]"
+            self.require_binding(target, path)
             filtered = re.split(r"\s+where(?:\s+|$)", expression, maxsplit=1)
             filter_separator = len(filtered) == 2
             condition = filtered[1] if filter_separator else ""
