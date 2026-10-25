@@ -418,6 +418,25 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
 
 
 def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
+    """The original fixture's nonexistent items field must be refused."""
+    from cruxible_client.authoring.procedures import PostInbox
+
+    plan = sequence(
+        Project("result", fields={"count": 1}, contract_out=NUMBER),
+        PostInbox("inbox", input={"items": Output("result", "items")}, max_items=5),
+    )
+    preview = plan.preview()
+    assert not preview.ready_for_prepare
+    assert [error.code for error in preview.errors] == ["procedure_ref_unknown"]
+    assert preview.errors[0].step == "inbox"
+    assert "$.steps[0].inbox.items" in preview.errors[0].message
+    assert "Unknown reference 'items'" in preview.errors[0].message
+    with pytest.raises(ProcedureCompositionError) as caught:
+        plan.build()
+    assert caught.value.preview.errors == preview.errors
+
+
+def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
     from cruxible_client.authoring.procedures import PostInbox
     from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 

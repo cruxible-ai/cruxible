@@ -34,7 +34,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_owned_contract_digest,
 )
-from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureSpec,
+    ProcedureSpecError,
+    lower_procedure_spec,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.contracts import validate_contract_schema
 from cruxible_client.contracts.procedures.graph import (
@@ -697,6 +701,23 @@ class Sequence:
             contracts=tuple(contracts[name] for name in sorted(contracts)),
         )
         lower_authoring_input(input_)  # Same pure payload lowering used by SDK/CLI/HTTP.
+        if not errors:
+            authored = _authored_input(input_)
+            assert authored.spec is not None
+            try:
+                lower_procedure_spec(authored.spec)
+            except ProcedureSpecError as exc:
+                index = exc.field_path.partition("$.steps[")[2].partition("]")[0]
+                authored_step = (
+                    authored.spec.steps[int(index)]
+                    if index.isdigit() and int(index) < len(authored.spec.steps)
+                    else None
+                )
+                error(
+                    getattr(authored_step, "id", None),
+                    exc.code.removeprefix("cruxible.authoring."),
+                    str(exc),
+                )
         # Do not expose internal unbound stand-ins as if they were selections.
         visible_nodes = tuple(
             {
@@ -742,25 +763,29 @@ class Sequence:
         input_, preview = self._compile()
         if preview.errors:
             raise ProcedureCompositionError(preview)
-        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
-        from cruxible_client.contracts.procedures.decompile import decompile_procedure
+        return _authored_input(input_)
 
-        # Decompile the checked local graph into the same declared authored form
-        # the CLI/MCP accept. Preview-only symbolic pins never enter this spec.
-        definition = ProcedureDefinition.model_validate(_symbolic_pins(input_.definition))
-        owner = ProcedureArtifact.model_construct(
-            definition=definition,
-            owned_contracts=tuple(
-                ProcedureOwnedContract(
-                    identity=parse_artifact_identity("Contract:" + c.name),
-                    schema=_schema(c),
-                )
-                for c in input_.contracts
-            ),
-            activation_policy=input_.activation_policy,
-            acquisition_policy=input_.acquisition_policy,
-        )
-        return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
+
+def _authored_input(input_: ProcedureInput) -> ProcedureInput:
+    """One conversion shared by preview validation and the submitted input."""
+    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
+    # Preview-only symbolic pins never enter the recognized authored steps.
+    definition = ProcedureDefinition.model_validate(_symbolic_pins(input_.definition))
+    owner = ProcedureArtifact.model_construct(
+        definition=definition,
+        owned_contracts=tuple(
+            ProcedureOwnedContract(
+                identity=parse_artifact_identity("Contract:" + c.name),
+                schema=_schema(c),
+            )
+            for c in input_.contracts
+        ),
+        activation_policy=input_.activation_policy,
+        acquisition_policy=input_.acquisition_policy,
+    )
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
 
 
 def _has_reference(value: object) -> bool:
