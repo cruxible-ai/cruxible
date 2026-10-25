@@ -327,3 +327,14 @@ def test_where_keyword_escape_round_trips(field: str, operator: str) -> None:
     assert spelled is not None and spelled.isidentifier() and not iskeyword(spelled)
     key = spelled if operator == "eq" else f"{spelled}__{operator}"
     assert keyword_field(key) == (field, operator)
+
+
+@pytest.mark.parametrize(
+    "expression", ["1abc=3", "true=1", "1abc in a,b", "null in a,b", "true exists", "false !exists"]
+)
+def test_legacy_where_refusals_are_value_errors_about_the_original_input(expression):
+    with pytest.raises(ValueError) as caught:
+        parse_where(expression)
+    assert type(caught.value) is ValueError
+    assert repr(expression) in str(caught.value)
+    assert "column" not in str(caught.value)

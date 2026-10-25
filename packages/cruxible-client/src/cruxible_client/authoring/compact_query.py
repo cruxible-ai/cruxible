@@ -283,28 +283,36 @@ def parse_where(expression: str) -> QueryFilter:
             raise ValueError(str(exc)) from exc
         raise ValueError("--where takes one comparison, membership, or presence test")
 
-    match = _EXISTS_RE.fullmatch(expression)
-    if match is not None:
-        parsed = parse_filter(("not " if match.group(2) else "") + "exists " + match.group(1))
-        return query_filter(match.group(1), "exists", parsed.kind != "not")
-    match = _IN_RE.fullmatch(expression)
-    if match is not None:
-        raw = match.group(2)
-        if raw.startswith("(") and raw.endswith(")"):
-            raw = raw[1:-1]
-        values = [item.strip() for item in raw.split(",") if item.strip()]
-        if values:
-            parse_filter(
-                match.group(1) + " in (" + ", ".join(json.dumps(value) for value in values) + ")"
+    try:
+        match = _EXISTS_RE.fullmatch(expression)
+        if match is not None:
+            parsed = parse_filter(("not " if match.group(2) else "") + "exists " + match.group(1))
+            return query_filter(match.group(1), "exists", parsed.kind != "not")
+        match = _IN_RE.fullmatch(expression)
+        if match is not None:
+            raw = match.group(2)
+            if raw.startswith("(") and raw.endswith(")"):
+                raw = raw[1:-1]
+            values = [item.strip() for item in raw.split(",") if item.strip()]
+            if values:
+                parse_filter(
+                    match.group(1)
+                    + " in ("
+                    + ", ".join(json.dumps(value) for value in values)
+                    + ")"
+                )
+                return query_filter(match.group(1), "in", values)
+        match = _OPERATOR_RE.fullmatch(expression)
+        if match is not None and match.group(3):
+            operator = _SYMBOLS[match.group(2)]
+            parsed = parse_filter(
+                match.group(1) + " " + match.group(2) + " " + json.dumps(match.group(3))
             )
-            return query_filter(match.group(1), "in", values)
-    match = _OPERATOR_RE.fullmatch(expression)
-    if match is not None and match.group(3):
-        operator = _SYMBOLS[match.group(2)]
-        parsed = parse_filter(
-            match.group(1) + " " + match.group(2) + " " + json.dumps(match.group(3))
-        )
-        return query_filter(match.group(1), operator, parsed.operands[1].value)
+            return query_filter(match.group(1), operator, parsed.operands[1].value)
+    except QuerySpecError as exc:
+        raise ValueError(
+            f"cannot read the filter {expression!r}; write one of {WHERE_SYNTAX}"
+        ) from exc
     raise ValueError(
         f"cannot read the filter {expression!r}; write one of {WHERE_SYNTAX}, "
         "for example 'adoption_state=adopted'"
