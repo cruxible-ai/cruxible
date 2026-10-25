@@ -693,13 +693,17 @@ def _canonical_successor_bytes(
             candidate = supplied_content
         elif current.artifact_tag == "cruxible-query-definition-v3":
             from cruxible_client.contracts.query.definitions import (
-                NamedQueryDefinition, render_query_definition,
+                NamedQueryDefinition,
+                render_query_definition,
             )
+
             candidate = render_query_definition(NamedQueryDefinition.model_validate(payload))
         elif current.artifact_tag == "cruxible-procedure-v3":
             from cruxible_client.contracts.procedures.artifacts import (
-                NamedProcedureArtifact, render_procedure,
+                NamedProcedureArtifact,
+                render_procedure,
             )
+
             candidate = render_procedure(NamedProcedureArtifact.model_validate(payload))
         else:
             candidate = pretty_canonical_bytes(payload)

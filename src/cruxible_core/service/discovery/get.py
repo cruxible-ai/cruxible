@@ -1826,7 +1826,7 @@ def _query_card(
     from cruxible_client.contracts.query.authored import QuerySpecInput, query_spec_from_definition
 
     definition: QuerySpecInput | QueryDefinition | None = None
-    if query.artifact_format == "cruxible-query-definition-v3":
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
         try:
             definition = query_spec_from_definition(query)
         except ValueError:

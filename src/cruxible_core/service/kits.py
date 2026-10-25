@@ -237,11 +237,11 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
         and payload.get("artifact_format") == "cruxible-query-definition-v3"
     ):
         from cruxible_client.contracts.query.definitions import (
-            QueryDefinition,
+            NamedQueryDefinition,
             render_query_definition,
         )
 
-        content = render_query_definition(QueryDefinition.model_validate(payload))
+        content = render_query_definition(NamedQueryDefinition.model_validate(payload))
     else:
         content = pretty_canonical_bytes(payload)
     return content, _artifact_state(path, content).artifact_digest

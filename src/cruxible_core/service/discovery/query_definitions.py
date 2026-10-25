@@ -59,7 +59,7 @@ def _view(
     from cruxible_client.contracts.query.authored import query_spec_from_definition
 
     envelope = query.model_dump(mode="json")
-    if query.artifact_format == "cruxible-query-definition-v3":
+    if getattr(query, "artifact_format") == "cruxible-query-definition-v3":
         try:
             envelope = query_spec_from_definition(query).model_dump(
                 mode="json", by_alias=True, exclude_defaults=True

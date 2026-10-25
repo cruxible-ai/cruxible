@@ -750,3 +750,18 @@ def test_pinless_query_wire_restores_only_declared_defaults(resolver):
     assert restored == query
     assert render_query_definition(restored) == wire
     assert query_definition_digest(restored) == query_definition_digest(query)
+
+
+def test_typed_named_query_specs_fill_defaults_without_reintroducing_pins(resolver):
+    from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec
+
+    full = lower_query_spec(simple(), resolver)
+    body = full.model_dump(mode="json")
+    body.pop("result_shape")
+    body.pop("dedupe")
+    partial = NamedQueryDefinitionSpec.model_validate(body)
+    assert partial.model_dump(mode="json") == full.model_dump(mode="json")
+    assert "pins" not in type(partial).model_fields
+    accepted = QueryDefinitionInput(kind="query_definition", query_definition=body)
+    assert isinstance(accepted.query_definition, NamedQueryDefinitionSpec)
+    assert query_definition_digest(accepted.query_definition) == query_definition_digest(full)

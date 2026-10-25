@@ -518,6 +518,19 @@ class QueryDefinitionSpec(QueryDefinition):
                 raise ValueError("QueryDefinition contract pins must target Contract identities")
 
 
+class NamedQueryDefinitionSpec(NamedQueryDefinition):
+    """The pin-less typed authoring form with the same stated defaults."""
+
+    model_config = QueryDefinitionSpec.model_config
+
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            return query_spec_defaults(_query_v3_defaults(data))
+        return data
+
+
 def query_definition_path(name: str) -> str:
     """Return the one canonical ledger path for a QueryDefinition identity name."""
 
@@ -548,7 +561,7 @@ def validate_query_definition_path(
 
 
 def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
-    if query.artifact_format != "cruxible-query-definition-v3":
+    if getattr(query, "artifact_format") != "cruxible-query-definition-v3":
         return query.model_dump(mode="json")
 
     def compact(model: BaseModel, output: dict[str, Any]) -> None:
