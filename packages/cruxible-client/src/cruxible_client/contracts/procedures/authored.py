@@ -22,6 +22,7 @@ from pydantic import (
     field_validator,
     model_serializer,
 )
+from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.captures import CanonicalDuration
@@ -288,6 +289,27 @@ class ProcedureSpec(_Model):
     )
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
     annotations: JsonValue = Field(default_factory=dict)
+
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        # Honor the model's validation-mode override at the generator root.
+        # Otherwise standalone serialization generation can hoist recursive
+        # PropertySchema definitions under Output but leave their Input refs.
+        return super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode="validation",
+            union_format=union_format,
+        )
 
     # No return-schema annotation: this wrap only omits defaults from the
     # model's own shape. A dict return schema would erase the typed served
