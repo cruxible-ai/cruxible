@@ -277,11 +277,13 @@ def test_blueprint_is_accepted_previewed_and_instantiated_through_authoring(
         blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
         name="lookup-b",
         providers={"lookup": provider},
+        artifact_format="playbill-procedure-v2",
     )
     tampered = ProcedureDefinition.model_validate(
         {**legit.definition.model_dump(mode="json", by_alias=True), "description": "tampered"}
     )
     forged = ProcedureArtifact(
+        artifact_format=legit.artifact_format,
         identity=legit.identity,
         definition=tampered,
         definition_digest=compute_procedure_definition_digest(tampered).tagged,
@@ -649,6 +651,7 @@ def test_admission_refuses_a_new_instance_of_a_retired_blueprint(tmp_path, monke
         retired,
         blueprint_artifact_digest=blueprint_digest(retired).tagged,
         name="lookup-b",
+        artifact_format="playbill-procedure-v2",
         providers={
             "lookup": AcceptedProvider(
                 path=provider_path("demo-provider"),
@@ -904,3 +907,47 @@ def test_a_blueprint_and_an_instance_dependent_move_with_their_interface() -> No
     }
     assert procedure.blueprint is not None
     assert procedure.blueprint.blueprint.artifact_digest == blueprint_digest_before
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
+def test_blueprint_instantiation_can_reproduce_the_recorded_procedure_format(artifact_format):
+    blueprint = _blueprint()
+    procedure = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="recorded-instance",
+        providers={"lookup": accepted_provider()},
+        artifact_format=artifact_format,
+    )
+    assert procedure.artifact_format == artifact_format
+    restored = parse_procedure(
+        render_procedure(procedure), path=procedure_path("recorded-instance")
+    )
+    assert restored == procedure
+    assert restored.blueprint == procedure.blueprint
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
+def test_reference_moves_and_kit_lifecycle_updates_keep_the_recorded_wire_format(artifact_format):
+    import json
+
+    from cruxible_client.contracts.canonical import pretty_canonical_bytes
+    from cruxible_core.claims.artifact_references import move_references
+    from cruxible_core.service.kits import _render
+
+    procedure = _concrete().model_copy(update={"artifact_format": artifact_format})
+    path = procedure_path(procedure.identity.name)
+    content = render_procedure(procedure)
+    moved = move_references(path, json.loads(content), {})
+    assert pretty_canonical_bytes(moved) == content
+    moved["lifecycle"] = {
+        "state": "live",
+        "predecessor_digest": procedure_artifact_digest(procedure).tagged,
+    }
+    updated, digest = _render(path, moved)
+    parsed = parse_procedure(updated, path=path)
+    assert parsed.artifact_format == artifact_format
+    assert parsed.lifecycle.predecessor_digest == procedure_artifact_digest(procedure).tagged
+    assert digest == procedure_artifact_digest(parsed).tagged

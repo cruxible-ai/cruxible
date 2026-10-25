@@ -19,6 +19,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.graph import procedure_edge_target
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.exhaust import (
@@ -295,9 +296,7 @@ def _grain_fields(
         }
     if from_node_id is None or arm_label is None or from_node_id not in digests:
         raise ExecutionError("arm reading lacks a valid source endpoint")
-    graph_edges = {node.node_id: node for node in accepted.procedure.definition.nodes}
-    source = graph_edges[from_node_id]
-    actual_target = getattr(source, arm_label)
+    actual_target = procedure_edge_target(accepted.procedure.definition, from_node_id, arm_label)
     if actual_target != node_id:
         raise ExecutionError("arm reading does not name an authored graph edge")
     arm_digest = procedure_arm_content_digest(

@@ -32,7 +32,7 @@ StringT = TypeVar("StringT", bound=str)
 
 
 class _StrictMeasurementModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
 def _canonical_name(value: str, *, label: str) -> str:

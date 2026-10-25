@@ -692,6 +692,19 @@ def _canonical_successor_bytes(
         candidate = (
             supplied_content if supplied_content is not None else (pretty_canonical_bytes(payload))
         )
+        if (
+            supplied_content is None
+            and supplied is None
+            and current.artifact_kind == "procedure"
+            and isinstance(payload, dict)
+            and payload.get("artifact_format") == "cruxible-procedure-v3"
+        ):
+            from cruxible_client.contracts.procedures.artifacts import (
+                ProcedureArtifact,
+                render_procedure,
+            )
+
+            candidate = render_procedure(ProcedureArtifact.model_validate(payload))
         parsed = parse_dependency_artifact(current.path, candidate)
     except (CruxibleError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(

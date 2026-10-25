@@ -617,6 +617,7 @@ class ProcedureHaltTerminal(_StrictResultModel):
     classification: Literal["halted"] = "halted"
     node_id: str
     reason: str | None = None
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
     journal_coordinate: ProcedureJournalCoordinate | None = None
 
 

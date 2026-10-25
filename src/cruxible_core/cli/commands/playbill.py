@@ -5908,7 +5908,7 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
     """
 
     if result.card is not None:
-        card = result.card.model_dump(mode="json")
+        card = result.card.model_dump(mode="json", by_alias=result.kind == "procedure")
         if isinstance(card.get("evidence"), list):
             card["evidence"] = [_public_name(str(name)) for name in card["evidence"]]
         for rule in card.get("evidence_rules") or ():
@@ -5958,6 +5958,9 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
                     )
         else:
             for key, value in card.items():
+                if key == "authored" and result.kind == "procedure" and value is not None:
+                    click.echo(json.dumps(value, ensure_ascii=False, indent=2))
+                    continue
                 if value in (None, [], {}):
                     continue
                 if isinstance(value, list) and all(isinstance(item, dict) for item in value):

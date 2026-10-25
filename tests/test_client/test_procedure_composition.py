@@ -18,6 +18,7 @@ from cruxible_client.authoring.procedures import (
     Sequence,
     Source,
     Transform,
+    lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
@@ -82,7 +83,10 @@ def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
     draft = Cruxible.procedure(object(), definition=bound)
     assert draft.payload == lower_authoring_input(bound.build())
     assert (
-        draft.payload.definition["nodes"][1]["provider"]["resolution"] == "accepted_at_intent_base"
+        lower_authoring_input(lower_procedure_spec(bound.build().spec)).definition["nodes"][1][
+            "provider"
+        ]["resolution"]
+        == "accepted_at_intent_base"
     )
 
 
@@ -97,7 +101,8 @@ def test_source_project_emit_matches_security_dogfood_shape():
     assert preview.terminals == ("emit",)
     assert preview.nodes[-1]["input"] == "$steps.fetch"
     assert preview.returns == "summary"
-    assert len(plan.build().contracts) == 2
+    assert plan.build().spec is not None
+    assert len(lower_procedure_spec(plan.build().spec).contracts) == 2
 
 
 def test_unbound_provider_refuses_before_authoring():
@@ -403,29 +408,53 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     assert preview.terminals == ("settle",)
     last = preview.nodes[-1]
     assert (last["kind"] if isinstance(last, dict) else last.kind) == "settle_change_set"
-    assert plan.build().definition["terminal_capability"] == 3
+    assert lower_procedure_spec(plan.build().spec).definition["terminal_capability"] == 3
 
 
 def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
+    """The original fixture's nonexistent items field must be refused."""
     from cruxible_client.authoring.procedures import PostInbox
-    from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 
     plan = sequence(
         Project("result", fields={"count": 1}, contract_out=NUMBER),
         PostInbox("inbox", input={"items": Output("result", "items")}, max_items=5),
     )
     preview = plan.preview()
+    assert not preview.ready_for_prepare
+    assert [error.code for error in preview.errors] == ["procedure_ref_unknown"]
+    assert preview.errors[0].step == "inbox"
+    assert "$.steps[0].inbox.items" in preview.errors[0].message
+    assert "Unknown reference 'items'" in preview.errors[0].message
+    with pytest.raises(ProcedureCompositionError) as caught:
+        plan.build()
+    assert caught.value.preview.errors == preview.errors
+
+
+def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
+    from cruxible_client.authoring.procedures import PostInbox
+    from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
+
+    plan = sequence(
+        Project("result", fields={"count": 1}, contract_out=NUMBER),
+        PostInbox("inbox", input={"items": [{"count": Output("result", "count")}]}, max_items=5),
+    )
+    preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("inbox",)
     assert preview.authority == "observe"
-    node = plan.build().definition["nodes"][-1]
+    node = lower_procedure_spec(plan.build().spec).definition["nodes"][-1]
     assert node == {
         "kind": "post_inbox",
         "node_id": "inbox",
-        "input": {"items": "$steps.result.items"},
+        "input": {"items": [{"count": "$steps.result.count"}]},
         "max_items": 5,
     }
-    assert "max_items" not in sequence(PostInbox("inbox")).build().definition["nodes"][0]
+    assert (
+        "max_items"
+        not in lower_procedure_spec(sequence(PostInbox("inbox")).build().spec).definition["nodes"][
+            0
+        ]
+    )
 
     successor = sequence(PostInbox("inbox", next="after"), Halt("after"))
     assert "invalid_next" in [d.code for d in successor.preview().errors]
@@ -481,5 +510,9 @@ def test_typed_item_builders_emit_the_frozen_tags_and_item_references():
         SettleChangeSet("settle", candidate_templates=(item,)),
     ).bind(result=PROVIDER)
     assert plan.preview().ready_for_prepare
-    (node,) = [n for n in plan.build().definition["nodes"] if n["kind"] == "settle_change_set"]
+    (node,) = [
+        n
+        for n in lower_procedure_spec(plan.build().spec).definition["nodes"]
+        if n["kind"] == "settle_change_set"
+    ]
     assert node["candidate_templates"][0]["tag"] == "playbill-procedure-claim-proposal-item-v3"

@@ -633,6 +633,13 @@ PROVIDER_INTERFACE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider-interface",
     artifact_tag="playbill-provider-interface-v1",
 )
+LIGHT_PROCEDURE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.procedure.v3", "cruxible-procedure-v3", semantic_revision=1
+    ),
+    artifact_kind="procedure",
+    artifact_tag="cruxible-procedure-v3",
+)
 LIGHT_ACQUISITION_POLICY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.source-acquisition-policy.v2",
@@ -973,6 +980,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         LIGHT_ACQUISITION_POLICY_LAW,
+        LIGHT_PROCEDURE_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,

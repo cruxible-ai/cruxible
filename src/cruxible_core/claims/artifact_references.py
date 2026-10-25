@@ -451,6 +451,11 @@ def _move_graph(
             "pins": [pin.model_dump(mode="json") for pin in pins],
         }
     )
+    if getattr(moved, "artifact_format", None) == "cruxible-procedure-v3":
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+
+        compact: dict[str, Any] = compact_procedure(moved)
+        return compact
     result: dict[str, Any] = json.loads(json.dumps(moved.model_dump(mode="json", by_alias=True)))
     return result
 

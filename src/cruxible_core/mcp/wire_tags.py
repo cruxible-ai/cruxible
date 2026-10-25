@@ -56,10 +56,16 @@ def _strip(node: object, removed: set[str], stripped: set[int]) -> object:
         return node
     properties = node.get("properties")
     if isinstance(properties, dict):
-        hidden = [name for name, schema in properties.items() if _tag_only_schema(schema)]
+        hidden = [
+            name
+            for name, schema in properties.items()
+            if _tag_only_schema(schema)
+            or (isinstance(schema, dict) and schema.get("readOnly") is True)
+        ]
         for name in hidden:
+            if _tag_only_schema(properties[name]):
+                removed.add(name)
             del properties[name]
-            removed.add(name)
         if hidden:
             stripped.add(id(node))
         required = node.get("required")
@@ -118,6 +124,28 @@ def hide_wire_tags(schema: dict[str, Any]) -> dict[str, Any]:
     _strip(result, removed, stripped)
     definitions = result.get("$defs")
     _loosen_unions(result, removed, stripped, definitions if isinstance(definitions, dict) else {})
+    if isinstance(definitions, dict):
+        reachable: set[str] = set()
+
+        def visit(value: object) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    visit(item)
+            elif isinstance(value, dict):
+                reference = value.get("$ref")
+                if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                    name = reference.rsplit("/", 1)[-1]
+                    if name not in reachable and name in definitions:
+                        reachable.add(name)
+                        visit(definitions[name])
+                for key, item in value.items():
+                    if key != "$defs":
+                        visit(item)
+
+        visit(result)
+        result["$defs"] = {
+            name: definition for name, definition in definitions.items() if name in reachable
+        }
     return result
 
 

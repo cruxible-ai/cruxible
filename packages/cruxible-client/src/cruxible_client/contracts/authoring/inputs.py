@@ -11,12 +11,14 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     ValidationError,
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -69,6 +71,11 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+from cruxible_client.contracts.procedures.authored import (
+    ProcedureSpec,
+    ProcedureSpecError,
+    lower_procedure_spec,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import ExhaustTapNode, ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
@@ -96,6 +103,15 @@ _SUBJECT_SHORTHAND_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
     r"(?P<id>[^/\\\x00-\x1f\x7f]{1,1024})$"
 )
+
+
+def _authored_procedure_input_shape(value: object) -> object:
+    """The declared bare spec is also an authoring input, including in sets."""
+    if isinstance(value, ProcedureSpec):
+        return {"kind": "procedure", "spec": value}
+    if isinstance(value, dict) and "kind" not in value and "procedure" in value:
+        return {"kind": "procedure", **value}
+    return value
 
 
 class _StrictInputModel(BaseModel):
@@ -235,12 +251,31 @@ class ClaimInput(_StrictInputModel):
 
 class ProcedureInput(_StrictInputModel):
     kind: Literal["procedure"]
-    definition: dict[str, object]
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
+    definition: dict[str, object] = Field(default_factory=dict)
+    spec: ProcedureSpec | None = Field(default=None, exclude_if=lambda value: value is None)
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
     #: Optional policy name; omitted uses SourceAcquisitionPolicy:default at admission.
     acquisition_policy: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _authored_form(cls, value: object) -> object:
+        if isinstance(value, dict) and "procedure" in value:
+            value = dict(value)
+            kind = value.pop("kind", "procedure")
+            retire = value.pop("retire", False)
+            return {"kind": kind, "retire": retire, "spec": value}
+        return value
+
+    @model_validator(mode="after")
+    def _one_form(self) -> "ProcedureInput":
+        if self.spec is None and not self.definition:
+            raise PydanticCustomError("missing", "a Procedure input requires spec or definition")
+        if self.spec is not None and (self.definition or self.contracts):
+            raise ValueError("use either spec or definition/contracts")
+        return self
 
     @field_validator("definition", mode="before")
     @classmethod
@@ -517,6 +552,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | BlueprintInstanceInput
     | ProcedureInput,
     Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
 ]
 
 
@@ -552,6 +588,7 @@ AuthoringInput: TypeAlias = Annotated[
     | SubjectKindInput
     | ChangeSetInput,
     Field(discriminator="kind"),
+    BeforeValidator(_authored_procedure_input_shape),
 ]
 
 
@@ -894,6 +931,21 @@ def _procedure_payload(
 ) -> ProcedureAuthoringPayload:
     if not value.retire:
         refuse_unserved_procedure_nodes(value.definition, field_path="input.definition")
+    if value.spec is not None:
+        try:
+            lower_procedure_spec(value.spec)  # shared offline syntax/reference checks
+        except ProcedureSpecError as exc:
+            raise AuthoringInputError(exc.code, exc.field_path, exc.message, exc.repair) from exc
+        return ProcedureAuthoringPayload(
+            definition={
+                "name": value.spec.procedure,
+                "procedure_spec": value.spec.model_dump(mode="json", by_alias=True),
+            },
+            owned_contracts=(),
+            activation_policy=value.spec.activation,
+            acquisition_policy=value.spec.acquisition_policy,
+            retire=value.retire,
+        )
     contracts = tuple(
         sorted(
             (

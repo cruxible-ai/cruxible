@@ -2727,6 +2727,31 @@ def _lower_procedure(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayload)
+    if "procedure_spec" in payload.definition:
+        from cruxible_client.contracts.procedures.authored import ProcedureSpec, ProcedureSpecError
+        from cruxible_core.authoring.procedure_spec import resolve_procedure_spec
+
+        try:
+            spec = ProcedureSpec.model_validate(payload.definition["procedure_spec"])
+            retiring = payload.retire
+            payload = resolve_procedure_spec(instance, base, base_tree, spec, candidate_paths)
+            payload = payload.model_copy(update={"retire": retiring})
+        except ProcedureSpecError as exc:
+            _refuse(
+                exc.code,
+                exc.field_path,
+                exc.message,
+                repair_kind="replace_definition",
+                repair_description=exc.repair,
+            )
+        except ValueError as exc:
+            _refuse(
+                "cruxible.authoring.procedure_definition_invalid",
+                "$.steps",
+                str(exc),
+                repair_kind="replace_definition",
+                repair_description="Repair the authored Procedure.",
+            )
     if not payload.retire:
         _refuse_unserved_procedure(payload.definition)
     source_authoring = "source_request" in payload.definition
@@ -3053,7 +3078,17 @@ def _lower_procedure(
         )
     try:
         envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
+        format_arguments: dict[str, Any] = (
+            {}
+            if is_blueprint
+            else {
+                "artifact_format": "cruxible-procedure-v3"
+                if base.compiler == LIGHT_ARTIFACTS_COMPILER
+                else "playbill-procedure-v2"
+            }
+        )
         procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
+            **format_arguments,
             identity=identity,
             definition=definition,
             definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -3098,6 +3133,14 @@ def _procedure_lowered(
     if base.compiler == LIGHT_ARTIFACTS_COMPILER:
         procedure = name_procedure(procedure)
     candidate_tree = fork_tree(base_tree)
+    if isinstance(procedure, ProcedureArtifact):
+        procedure = procedure.model_copy(
+            update={
+                "artifact_format": "cruxible-procedure-v3"
+                if base.compiler == LIGHT_ARTIFACTS_COMPILER
+                else "playbill-procedure-v2"
+            }
+        )
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor
         procedure_bytes = base_tree[path]
@@ -3262,6 +3305,9 @@ def _lower_blueprint_instance(
             blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
             interface_registrations=blueprint_interfaces(blueprint, interface_lookup),
             name=instantiation.name,
+            artifact_format="cruxible-procedure-v3"
+            if base.compiler == LIGHT_ARTIFACTS_COMPILER
+            else "playbill-procedure-v2",
             providers=providers,
             activation_policy=payload.activation_policy,
             extra_pins=(),
