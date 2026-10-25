@@ -71,6 +71,7 @@ from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     FixedWindow,
     LogicalSources,
+    NamedCaptureEventSelector,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -1961,7 +1962,7 @@ class ResolvedTriggerCaptureContract(_StrictAuthoringModel):
     """The exact contract a Trigger resolved during this prepare or preview."""
 
     trigger_name: str
-    event: CaptureEventSelector
+    event: CaptureEventSelector | NamedCaptureEventSelector
 
 
 class PreflightResult(_StrictAuthoringModel):

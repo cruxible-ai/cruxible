@@ -16,10 +16,11 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
-    foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
     render_capture_contract,
 )
 from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
 from cruxible_client.contracts.triggers import CaptureLandingSchedule, parse_trigger, trigger_path
 from cruxible_core.authoring import lowering
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -79,8 +80,8 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(
     assert result.verdict == "passed", result.frontier
     assert calls and all(item.model_dump(mode="json") == schedule for item in calls)
     assert result.resolved_trigger_contracts[0].trigger_name == "on-feed"
-    assert result.resolved_trigger_contracts[0].event == SELECTOR.model_copy(
-        update={"logical_sources": sources}
+    assert result.resolved_trigger_contracts[0].event == NamedCaptureEventSelector(
+        capture_contract_identity=SELECTOR.capture_contract_identity, logical_sources=sources
     )
     from cruxible_client.contracts import AuthoringPreflightResult
 
@@ -94,8 +95,9 @@ def test_contract_succession_requires_closure_and_cannot_retarget_a_stored_trigg
         CaptureLandingSchedule(event=SELECTOR),
         triggers=(),
         with_owner=True,
+        historical=True,
     )
-    contract = foreign_source_capture_contract("security.advisory")
+    contract = foreign_source_capture_contract_v1("security.advisory")
     old_digest = capture_contract_digest(contract).tagged
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
@@ -191,4 +193,6 @@ def test_retire_prepare_preserves_predecessor_without_contract_lookup(tmp_path, 
         canonical_timestamp="2026-10-17T12:00:00.000000Z",
     )
     assert result.verdict == "passed", result.frontier
-    assert result.resolved_trigger_contracts[0].event == SELECTOR
+    assert result.resolved_trigger_contracts[0].event == NamedCaptureEventSelector(
+        capture_contract_identity=SELECTOR.capture_contract_identity
+    )
