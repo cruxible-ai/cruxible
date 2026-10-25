@@ -904,3 +904,22 @@ def test_a_blueprint_and_an_instance_dependent_move_with_their_interface() -> No
     }
     assert procedure.blueprint is not None
     assert procedure.blueprint.blueprint.artifact_digest == blueprint_digest_before
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
+def test_blueprint_instantiation_can_reproduce_the_recorded_procedure_format(artifact_format):
+    blueprint = _blueprint()
+    procedure = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="recorded-instance",
+        providers={"lookup": accepted_provider()},
+        artifact_format=artifact_format,
+    )
+    assert procedure.artifact_format == artifact_format
+    restored = parse_procedure(
+        render_procedure(procedure), path=procedure_path("recorded-instance")
+    )
+    assert restored == procedure
+    assert restored.blueprint == procedure.blueprint

@@ -296,6 +296,9 @@ def instantiate_blueprint(
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] | None = None,
     extra_pins: tuple[ArtifactPin, ...] = (),
     lifecycle: ArtifactLifecycle | None = None,
+    artifact_format: Literal[
+        "playbill-procedure-v2", "cruxible-procedure-v3"
+    ] = "cruxible-procedure-v3",
 ) -> ProcedureArtifact:
     """Bind one accepted Provider per slot and return the ordinary Procedure it yields.
 
@@ -399,6 +402,7 @@ def instantiate_blueprint(
             "Instantiation produced pins outside the Blueprint's exact closure.",
         )
     return ProcedureArtifact(
+        artifact_format=artifact_format,
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,

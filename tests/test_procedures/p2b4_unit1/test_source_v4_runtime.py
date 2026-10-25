@@ -241,6 +241,7 @@ def _source_fixture(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "artifact_format": "cruxible-procedure-v3" if rule is None else "playbill-procedure-v2",
             "pins": pins,
         }
     )

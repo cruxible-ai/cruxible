@@ -2100,6 +2100,7 @@ def _blueprint_origin_refusal(
             blueprint,
             blueprint_artifact_digest=origin.blueprint.artifact_digest,
             name=procedure.identity.name,
+            artifact_format=procedure.artifact_format,
             providers=providers,
             activation_policy=procedure.activation_policy,
             extra_pins=tuple(

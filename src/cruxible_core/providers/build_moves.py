@@ -295,6 +295,7 @@ def _reinstantiated(
             blueprint,
             blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
             name=procedure.identity.name,
+            artifact_format=procedure.artifact_format,
             providers=providers,
             activation_policy=procedure.activation_policy,
             extra_pins=tuple(

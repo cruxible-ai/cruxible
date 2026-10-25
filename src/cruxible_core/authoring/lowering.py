@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
+from typing import Any, Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -3006,7 +3006,11 @@ def _lower_procedure(
         )
     try:
         envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
+        format_arguments: dict[str, Any] = (
+            {} if is_blueprint else {"artifact_format": "playbill-procedure-v2"}
+        )
         procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
+            **format_arguments,
             identity=identity,
             definition=definition,
             definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -3205,6 +3209,9 @@ def _lower_blueprint_instance(
             blueprint,
             blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
             name=instantiation.name,
+            artifact_format="cruxible-procedure-v3"
+            if base.compiler == LIGHT_ARTIFACTS_COMPILER
+            else "playbill-procedure-v2",
             providers=providers,
             activation_policy=payload.activation_policy,
             extra_pins=(),
