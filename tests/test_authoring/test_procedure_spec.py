@@ -367,6 +367,28 @@ def test_decompile_inventory_recognizes_return_and_halt_patterns():
     assert authored.steps[6].else_ == "halt(no_change)"
 
 
+def test_decompile_recognizes_the_generated_tap_view_and_lowers_it_back():
+    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    call = next(node for node in original.definition.nodes if node.kind == "call")
+    view = {"rows": "$steps.held.result.rows", "truncated": "$steps.held.truncated"}
+    definition = original.definition.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"input": {**call.input, "held": view}})
+                if node is call
+                else node
+                for node in original.definition.nodes
+            )
+        }
+    )
+    authored = decompile_procedure(original.model_copy(update={"definition": definition}))
+    authored_call = next(step for step in authored.steps if hasattr(step, "call"))
+    assert authored_call.input["held"] == "$held"
+    lowered = lower_procedure_spec(authored)
+    lowered_call = next(node for node in lowered.definition["nodes"] if node["kind"] == "call")
+    assert lowered_call["input"]["held"] == view
+
+
 def test_field_descriptors_forbid_unknown_fields_and_coercion():
     with pytest.raises(ValidationError):
         spec(input={"value": {"type": "integer", "optinal": True}})

@@ -39,16 +39,28 @@ def _name(pin: Any) -> str:
     return pin.target.name
 
 
-def _short(value: Any) -> Any:
+def _short(value: Any, tap_aliases: frozenset[str]) -> Any:
     if isinstance(value, str) and value.startswith("$steps."):
         alias = value[len("$steps.") :].partition(".")[0]
         if alias in {"input", "item", "params", "steps"}:
             return value
         return "$" + value[len("$steps.") :]
     if isinstance(value, dict):
-        return {k: _short(v) for k, v in value.items()}
+        rows = value.get("rows")
+        if set(value) == {"rows", "truncated"} and isinstance(rows, str):
+            parts = rows.split(".")
+            if (
+                len(parts) == 4
+                and parts[0] == "$steps"
+                and parts[2:] == ["result", "rows"]
+                and parts[1] in tap_aliases
+                and parts[1] not in {"input", "item", "params", "steps"}
+                and value["truncated"] == f"$steps.{parts[1]}.truncated"
+            ):
+                return "$" + parts[1]
+        return {k: _short(v, tap_aliases) for k, v in value.items()}
     if isinstance(value, list):
-        return [_short(v) for v in value]
+        return [_short(v, tap_aliases) for v in value]
     return value
 
 
@@ -67,6 +79,11 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
     import json
 
     nodes = definition.nodes
+    tap_aliases = frozenset(node.as_ for node in nodes if isinstance(node, StateTapNode))
+
+    def short(value: Any) -> Any:
+        return _short(value, tap_aliases)
+
     by_id = {node.node_id: node for node in nodes}
     incoming: dict[str, list[str]] = {}
     for node_id, edges in analyze_procedure(definition).edges.items():
@@ -105,7 +122,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 for source in incoming.get(node.node_id, [])
             ):
                 folded_project = node.node_id
-                returns = {"fields": _short(node.fields), "id": node.as_}
+                returns = {"fields": short(node.fields), "id": node.as_}
                 break
     guard_halts = procedure_guard_halt_targets(definition)
     steps: list[dict[str, Any]] = []
@@ -127,14 +144,14 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     contract=_name(node.capture_contract),
                     interface=_name(node.interface),
                     provider=_name(node.provider),
-                    request=_short(node.request),
+                    request=short(node.request),
                 )
             elif isinstance(node, CallNode):
                 step = dict(
                     call=node.as_,
                     interface=_name(node.interface),
                     provider=_name(node.provider),
-                    input=_short(node.input),
+                    input=short(node.input),
                 )
                 if node.effect_policy is not None:
                     step["effect_policy"] = _name(node.effect_policy)
@@ -142,13 +159,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(
                     claim=node.as_,
                     claim_type=_name(node.claim_type),
-                    subject=_short(node.subject_id),
+                    subject=short(node.subject_id),
                     subject_kind=node.subject_kind,
                     all=node.limit,
                 )
             elif isinstance(node, InvokeNode):
                 step = dict(
-                    invoke=_name(node.procedure), input=_short(node.input), **{"as": node.as_}
+                    invoke=_name(node.procedure), input=short(node.input), **{"as": node.as_}
                 )
             elif isinstance(node, SelectNode):
                 step = dict(
@@ -165,13 +182,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     until=render_procedure_expression(node.until),
                 )
             elif isinstance(node, StateTapNode):
-                step = dict(tap=node.as_, query=_name(node.query), params=_short(node.parameters))
+                step = dict(tap=node.as_, query=_name(node.query), params=short(node.parameters))
                 if node.budgets is not None:
                     step["budgets"] = node.budgets.model_dump(mode="json")
             elif type(node) is ProjectNode and isinstance(node.fields, dict):
                 step = dict(
                     project=node.as_,
-                    fields=_short(node.fields),
+                    fields=short(node.fields),
                     output=schema(node.contract_out).fields,
                     contract=_name(node.contract_out),
                 )
@@ -179,7 +196,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(
                     transform=node.as_,
                     kind=node.transform_kind,
-                    spec=_short(node.spec.model_dump(mode="json")),
+                    spec=short(node.spec.model_dump(mode="json")),
                     input=schema(node.contract_in).fields,
                     output=schema(node.contract_out).fields,
                     contract_in=_name(node.contract_in),
@@ -217,26 +234,26 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             elif isinstance(node, SettleChangeSetNode):
                 candidates = raw["candidate_templates"]
                 step = dict(
-                    settle=_short(
+                    settle=short(
                         candidates["items"] if isinstance(candidates, dict) else candidates
                     ),
-                    result=_short(node.result),
+                    result=short(node.result),
                 )
             elif isinstance(node, ProposeChangeSetNode) and not node.claim_types:
                 candidates = raw["candidate_templates"]
                 step = dict(
-                    propose=_short(
+                    propose=short(
                         candidates["items"] if isinstance(candidates, dict) else candidates
                     ),
-                    result=_short(node.result),
+                    result=short(node.result),
                 )
             elif isinstance(node, InboxEgressNode):
-                step = dict(inbox=_short(node.input), max_items=node.max_items)
+                step = dict(inbox=short(node.input), max_items=node.max_items)
             elif isinstance(node, CaptureEgressNode):
                 step = dict(
                     emit=_name(node.capture_contract),
-                    input=_short(node.input),
-                    result=_short(node.result),
+                    input=short(node.input),
+                    result=short(node.result),
                 )
             else:
                 steps.append({"explicit": node})
