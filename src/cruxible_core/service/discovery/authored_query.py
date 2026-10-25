@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from functools import lru_cache
+from functools import cache
 from typing import cast
 
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
@@ -154,7 +154,7 @@ class AuthoredQueryResolver:
         )
 
 
-@lru_cache(maxsize=2048)
+@cache
 def _predicate_info(path: str, content: bytes) -> PredicateInfo | None:
     claim_type = parse_claim_type(content, path=path)
     if claim_type.lifecycle.state != "live":
@@ -172,7 +172,7 @@ def _predicate_info(path: str, content: bytes) -> PredicateInfo | None:
     )
 
 
-@lru_cache(maxsize=2048)
+@cache
 def _declared_kind(path: str, content: bytes) -> str | None:
     value = parse_subject_kind(content, path=path)
     return value.identity.name if value.lifecycle.state == "live" else None

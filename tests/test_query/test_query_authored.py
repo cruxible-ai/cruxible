@@ -563,3 +563,53 @@ def test_entry_parameter_refusals_distinguish_missing_from_wrong_type(params, co
         lower_query_spec(spec, resolver)
     assert caught.value.error_code == "cruxible.query." + code
     assert caught.value.field_path == "$.from"
+
+
+@pytest.mark.parametrize("family", ["claim_type", "subject_kind"])
+@pytest.mark.parametrize("size", [10, 2100])
+def test_immutable_vocabulary_metadata_is_parsed_once_at_two_sizes(
+    family, size, resolver, monkeypatch
+):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKind,
+        SubjectKindMinted,
+        render_subject_kind,
+        subject_kind_path,
+    )
+    from cruxible_core.service.discovery import authored_query
+
+    metadata = {}
+    template = resolver.vocabulary.predicates["security.incident.name"].claim_type
+    for index in range(size):
+        name = f"test.cache_{family}_{size}.item_{index}"
+        if family == "claim_type":
+            definition = template.model_copy(
+                update={
+                    "identity": ArtifactIdentity(kind="ClaimType", name=name),
+                    "predicate": name,
+                }
+            )
+            metadata[claim_type_path(name)] = render_claim_type(definition)
+        else:
+            kind = SubjectKind(
+                identity=ArtifactIdentity(kind="SubjectKind", name=name),
+                identity_rule=SubjectKindMinted(),
+            )
+            metadata[subject_kind_path(name)] = render_subject_kind(kind)
+    parser_name = "parse_claim_type" if family == "claim_type" else "parse_subject_kind"
+    original = getattr(authored_query, parser_name)
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(authored_query, parser_name, counted)
+    paths = tuple(metadata)
+    first = candidate_query_vocabulary(metadata, paths=paths)
+    assert len(calls) == size
+    calls.clear()
+    second = candidate_query_vocabulary(metadata, paths=paths)
+    assert second == first
+    assert calls == []
