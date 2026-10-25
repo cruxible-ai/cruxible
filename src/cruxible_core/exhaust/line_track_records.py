@@ -23,6 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
@@ -200,7 +201,11 @@ def line_track_record_dimensions(
 ) -> LineTrackRecordDimensionsV1:
     """Compute the three separate dimensions of one Line/Procedure binding."""
 
-    if accepted_line.line.procedure.artifact_digest != accepted_procedure.artifact_digest:
+    reference = accepted_line.line.procedure
+    if reference.target != accepted_procedure.procedure.identity or (
+        isinstance(reference, ArtifactPin)
+        and reference.artifact_digest != accepted_procedure.artifact_digest
+    ):
         raise LineTrackRecordError(
             "accepted Procedure is not the exact implementation this LineSpec pins"
         )
