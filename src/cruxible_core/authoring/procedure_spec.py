@@ -43,16 +43,28 @@ def resolve_procedure_spec(
                 cache[identity] = selected.source(identity)
             return cache[identity]
 
-        def source(identity: str) -> Any:
+        def source(identity: str, path: str) -> Any:
             value = maybe_source(identity)
             if (
                 value is None
                 or getattr(getattr(value, "lifecycle", None), "state", "live") != "live"
             ):
+                from cruxible_client.contracts.errors import ReadRefusalError
+                from cruxible_core.service.discovery.get import resolve_get_ref
+
+                # Keep the indexed exact-name clean path. On refusal, reuse
+                # discovery's existing nearest-name diagnostics for this kind.
+                candidates: tuple[str, ...]
+                try:
+                    found = resolve_get_ref(instance, base, identity)
+                    candidates = (found.display,) if found.identity != identity else ()
+                except ReadRefusalError as exc:
+                    candidates = exc.candidates
                 raise ProcedureSpecError(
                     "artifact_reference_unresolved",
-                    "$.steps",
-                    f"{identity} is not live at the candidate tree",
+                    path,
+                    f"{identity} is not live at the candidate tree. "
+                    f"Nearest candidates: {list(candidates)}",
                 )
             return value
 
@@ -94,7 +106,10 @@ def resolve_procedure_spec(
 
         def resolve(kind: str, name: Any) -> Any:
             if kind == "procedure_output":
-                child = source("Procedure:" + name.removeprefix("Procedure:"))
+                child = source(
+                    "Procedure:" + name.invoke.removeprefix("Procedure:"),
+                    step_paths[id(name)] + ".invoke",
+                )
                 pin = child.definition.contract_out
                 return next(
                     c.contract_schema.fields
@@ -104,7 +119,10 @@ def resolve_procedure_spec(
             if kind == "claim":
                 from cruxible_client.contracts.procedures.source_views import claim_view_schema
 
-                claim_type = source("ClaimType:" + name.claim_type.removeprefix("ClaimType:"))
+                claim_type = source(
+                    "ClaimType:" + name.claim_type.removeprefix("ClaimType:"),
+                    step_paths[id(name)] + ".claim_type",
+                )
                 shape = claim_type.structure
                 subject_kind = name.subject_kind or (
                     shape.allowed_subject_kinds[0]
@@ -123,9 +141,17 @@ def resolve_procedure_spec(
                 interface_identity = binding_name(
                     "ProviderInterface", _interface_name(name), "$.slots"
                 )
-                return source(interface_identity).interface_digest
+                return source(interface_identity, "$.slots").interface_digest
             step = name
             authored_path = step_paths.get(id(step), "$.steps")
+            capture = (
+                source(
+                    "CaptureContract:" + step.contract.removeprefix("CaptureContract:"),
+                    authored_path + ".contract",
+                )
+                if isinstance(step, SourceStep)
+                else None
+            )
             interface_name = _interface_name(step.interface)
             interface_identity = binding_name(
                 "ProviderInterface", interface_name, authored_path + ".interface"
@@ -144,7 +170,7 @@ def resolve_procedure_spec(
                     == requested_version
                 ):
                     interface_identity = "ProviderInterface:workspace.file"
-            interface = source(interface_identity)
+            interface = source(interface_identity, authored_path + ".interface")
             provider_name = step.provider
             if provider_name in spec.slots:
                 declared = binding_name(
@@ -203,7 +229,7 @@ def resolve_procedure_spec(
                 provider_identity = binding_name(
                     "Provider", provider_name, authored_path + ".provider"
                 )
-            provider = source(provider_identity)
+            provider = source(provider_identity, authored_path + ".provider")
             implementations = [
                 item
                 for item in getattr(provider, "implementations", ())
@@ -227,9 +253,7 @@ def resolve_procedure_spec(
             if isinstance(step, SourceStep) and interface_identity.startswith(
                 "ProviderInterface:workspace.file"
             ):
-                capture = source(
-                    "CaptureContract:" + step.contract.removeprefix("CaptureContract:")
-                )
+                assert capture is not None
                 coordinates = capture.coordinate_schema_pins
                 selectors = capture.selector_schema_pins
                 if len(coordinates) == len(selectors) == 1:

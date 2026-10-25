@@ -653,6 +653,71 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
     assert any("result" in diagnostic.message for diagnostic in result.frontier.diagnostics)
 
 
+@pytest.mark.parametrize(
+    ("step", "field", "candidate"),
+    [
+        (
+            {"claim": "read", "claim_type": "semantic.alais", "subject": "test"},
+            "claim_type",
+            "ClaimType:semantic.alias",
+        ),
+        (
+            {"invoke": "stored.procc", "input": {"status": "open"}},
+            "invoke",
+            "Procedure:stored.proc",
+        ),
+        (
+            {
+                "source": "read",
+                "contract": "security.invenotry",
+                "interface": "workspace.file",
+                "request": {},
+            },
+            "contract",
+            "CaptureContract:security.inventory",
+        ),
+    ],
+)
+def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
+    tmp_path, step, field, candidate
+):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        foreign_source_capture_contract,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.procedures.artifacts import procedure_path
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_procedures import TIMESTAMP
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
+
+    instance, owner = initialize_local(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    capture = foreign_source_capture_contract("security.inventory").model_copy(
+        update={"identity": ArtifactIdentity(kind="CaptureContract", name="security.inventory")}
+    )
+    tree[capture_contract_path(capture.identity.name)] = render_capture_contract(capture)
+    procedure = _slotless_procedure("stored.proc").procedure
+    tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
+
+    authored = spec(steps=[step, {"project": "result", "fields": {"value": 1}}])
+    result = AuthoringIntentCoordinator.for_instance(instance).compile(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert result.verdict == "refused"
+    refusal = result.frontier.diagnostics[0]
+    assert refusal.code == "cruxible.authoring.artifact_reference_unresolved"
+    assert refusal.offending_element == "$.steps[0]." + field
+    assert candidate in refusal.message
+
+
 @pytest.mark.parametrize("population", [10, 100])
 def test_authored_lowering_requests_only_the_named_interface(population):
     class Vocabulary(dict):

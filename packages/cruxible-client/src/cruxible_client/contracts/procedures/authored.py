@@ -735,7 +735,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                 input=template(step.input, path + ".input"),
             )
             if resolve:
-                output = resolve("procedure_output", step.invoke)
+                output = resolve("procedure_output", step)
             alias = step.as_ or id_
         elif isinstance(step, SelectStep):
             for source in step.sources:
