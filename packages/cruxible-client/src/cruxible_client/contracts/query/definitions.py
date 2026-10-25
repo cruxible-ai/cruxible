@@ -528,18 +528,13 @@ def parse_query_definition(
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-query-definition-v1",
         "playbill-query-definition-v2",
-        "cruxible-query-definition-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
             f"unsupported QueryDefinition artifact format: {declared!r}"
         )
     try:
-        query = (
-            NamedQueryDefinition
-            if payload["artifact_format"] == "cruxible-query-definition-v3"
-            else QueryDefinition
-        ).model_validate(payload)
+        query = QueryDefinition.model_validate(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"

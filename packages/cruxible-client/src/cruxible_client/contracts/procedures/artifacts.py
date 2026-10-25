@@ -428,9 +428,7 @@ def procedure_runnability(
     return ("line" if rows else "direct"), tuple(rows)
 
 
-_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(
-    ProcedureArtifact | NamedProcedureArtifact
-)
+_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifact] = TypeAdapter(ProcedureArtifact)
 
 
 def procedure_path(name: str) -> str:

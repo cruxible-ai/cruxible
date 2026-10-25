@@ -511,6 +511,10 @@ def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
 
 
 def test_named_procedure_has_no_cross_reference_digests() -> None:
+    from cruxible_client.contracts.procedures.artifacts import (
+        NamedProcedureArtifact,
+        ProcedureFormatError,
+    )
     from cruxible_client.contracts.procedures.names import name_procedure
 
     historical = _artifact(_definition())
@@ -522,7 +526,9 @@ def test_named_procedure_has_no_cross_reference_digests() -> None:
     assert "pins" not in payload
     assert "artifact_digest" not in str(payload["definition"])
     assert "role" not in str(payload["definition"])
-    assert parse_procedure(render_procedure(named), path=procedure_path("triage")) == named
+    assert NamedProcedureArtifact.model_validate_json(render_procedure(named)) == named
+    with pytest.raises(ProcedureFormatError):
+        parse_procedure(render_procedure(named), path=procedure_path("triage"))
     assert render_procedure(historical) == original
     assert name_procedure(named) == named
     assert parse_procedure(original, path=procedure_path("triage")) == historical
