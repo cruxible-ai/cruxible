@@ -593,7 +593,12 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     )
     # A row carries what a Procedure node pins: the interface digest and its
     # operation contract; demo.fetch has no Provider yet.
-    assert fetch.interface_digest.startswith("sha256:") and fetch.providers == ()
+    from cruxible_client.contracts.provider_interfaces import provider_interface_digest
+
+    inventory = accepted_provider_interfaces(instance, instance.accepted_coordinate())
+    assert provider_interface_digest(inventory[0].registration).tagged.startswith("sha256:")
+    assert fetch.providers == ()
+    assert "interface_digest" not in fetch.model_dump(mode="json")
     assert fetch.operation_contract is not None
     assert first.next == (
         'cruxible_get(ref="ProviderInterface:demo.fetch")',
@@ -613,7 +618,14 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     )
     ((implementation),) = demo.providers
     assert implementation.provider == "demo-provider"
-    assert implementation.implementation_digest.startswith("sha256:")
+    from cruxible_client.contracts.providers import parse_provider, provider_path
+
+    path = provider_path(implementation.provider)
+    provider = parse_provider(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    assert provider.implementations[0].implementation_digest.startswith("sha256:")
+    assert "implementation_digest" not in implementation.model_dump(mode="json")
 
     # The rows come from the one accepted inventory: the same interfaces, in order.
     inventory = accepted_provider_interfaces(instance, instance.accepted_coordinate())

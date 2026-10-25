@@ -218,19 +218,19 @@ def test_mandate_reads_carry_the_typed_scope_and_condition(tmp_path: Path) -> No
 # -- K3: the pins between live definitions ----------------------------------------------
 
 
-def _definition_pins(instance: PlaybillInstance) -> set[tuple[str, str, str, str]]:
+def _definition_pins(instance: PlaybillInstance) -> set[tuple[str, str, str]]:
     """Every live definition's required pins, by a full read: the oracle."""
 
     from cruxible_core.indexes.typed_state import OWNER_BY_IDENTITY_KIND
 
-    found: set[tuple[str, str, str, str]] = set()
+    found: set[tuple[str, str, str]] = set()
     for kind in ORIENT_PIN_SOURCE_KINDS:
         table = OWNER_BY_IDENTITY_KIND[kind].table
         found.update(
-            (str(a), str(b), str(c), str(d))
-            for a, b, c, d in _sql(
+            (str(a), str(b), str(c))
+            for a, b, c in _sql(
                 instance,
-                "SELECT p.source_identity, p.pin_role, p.target_identity, p.target_digest "
+                "SELECT p.source_identity, p.pin_role, p.target_identity "
                 f"FROM pins p JOIN {table} s ON s.identity=p.source_identity "
                 "WHERE p.edge_kind='required_pin' AND s.lifecycle='live'",
             )
@@ -251,8 +251,9 @@ def test_the_pins_section_pages_every_live_definition_pin_once(tmp_path: Path) -
     rows = [row for page in pages for row in page.pins or ()]
     assert all(len(page.pins or ()) <= 2 for page in pages)
     assert [page.truncated for page in pages] == [True] * (len(pages) - 1) + [False]
-    keys = [(row.source, row.role, row.target, row.target_digest) for row in rows]
+    keys = [(row.source, row.role, row.target) for row in rows]
     assert len(keys) == len(set(keys)) and set(keys) == _definition_pins(instance)
+    assert all("target_digest" not in row.model_dump(mode="json") for row in rows)
     assert [row.source for row in rows] == sorted(row.source for row in rows)
     assert not any(row.source.startswith(("Claim:", "Subject:")) for row in rows)
     mandate = {(row.role, row.target) for row in rows if row.source == "ProcedureMandate:triage"}
