@@ -164,7 +164,7 @@ include: {categories: part.category}
 
 `!` makes a hop required; otherwise a missing relation keeps the row with an
 empty binding. Prefix the source with `<` for a reverse hop, such as
-`part: <vehicle.catalog.part.fits!`. A hop may end with `where FILTER`.
+`matching_part: <vehicle.catalog.part.fits!`. A hop may end with `where FILTER`.
 Its target kind follows from the relation when there is one; state
 `: kind_a|kind_b` to select kinds explicitly. An include attaches up to 500
 predicate values without expanding the primary rows. Numeric text can be

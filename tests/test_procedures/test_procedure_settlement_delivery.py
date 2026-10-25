@@ -82,6 +82,7 @@ def _condition(*, only_subject: str | None, require_claim: bool = False) -> Quer
     claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
 
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name="security.settle-condition"),
         entry=QueryEntry(
             binding="advisory",

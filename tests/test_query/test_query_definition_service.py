@@ -51,7 +51,7 @@ def test_accepted_query_definition_reads_back_at_its_accepted_coordinate(tmp_pat
     assert view.path == query_definition_path(QUERY_NAME)
     assert view.artifact_digest == query_definition_digest(work_item_query()).tagged
     assert view.coordinate.git_oid == instance.accepted_coordinate().git_oid
-    assert view.envelope["artifact_format"] == "playbill-query-definition-v1"
+    assert view.envelope["artifact_format"] == "cruxible-query-definition-v3"
 
 
 def test_absent_query_definition_is_refused_rather_than_returned_empty(tmp_path: Path) -> None:

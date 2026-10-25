@@ -412,6 +412,7 @@ def _condition() -> QueryDefinition:
     """The settle condition: the target work item exists; its status rides along."""
 
     return QueryDefinition(
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name=CONDITION_NAME),
         entry=QueryEntry(
             binding="item",
