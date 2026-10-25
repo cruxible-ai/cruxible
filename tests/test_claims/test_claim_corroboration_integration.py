@@ -11,6 +11,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    builtin_contract_for_write,
     DirectClaimSource,
     build_coordinator_self_source_capture,
     capture_contract_path,
@@ -31,6 +32,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.query.definitions import (
+    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -53,6 +55,8 @@ from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
+SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+
 SEED_TIMESTAMP = "2026-08-28T12:00:00.000000Z"
 PROPOSAL_TIMESTAMP = "2026-08-28T12:01:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 28, 11, 59, tzinfo=timezone.utc)
@@ -64,8 +68,7 @@ def _query(*, missing_parameter: bool = False) -> QueryDefinition:
     ]
     if missing_parameter:
         parameters.append(QueryParameterDeclaration(name="required_extra", value_type="string"))
-    return QueryDefinition(
-        artifact_format="cruxible-query-definition-v3",
+    return NamedQueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.subject_exists"),
         entry=QueryEntry(
             binding="item",
@@ -94,7 +97,7 @@ def _corroborated_type(
     min_count: int = 1,
     predecessor_digest: str | None = None,
 ) -> ClaimType:
-    base = _claim_type(contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+    base = _claim_type(contract=SELF_SOURCE)
     return base.model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
@@ -121,7 +124,7 @@ def _seed_vocabulary(
     query: QueryDefinition | None,
     proposal_name: str = "corroboration-vocabulary",
     timestamp: str = SEED_TIMESTAMP,
-    capture_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    capture_contract=SELF_SOURCE,
 ) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(capture_contract.identity.name)] = render_capture_contract(
@@ -154,6 +157,7 @@ def _claim_for_type(
 ) -> ClaimArtifactV2:
     capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
+        accepted_contract=SELF_SOURCE,
         actor_id="owner",
         claim_id=claim_id,
         body=canonical_bytes(
@@ -174,7 +178,7 @@ def _claim_for_type(
         capture_digest=capture.capture_digest,
         source_digest=capture.commitment_digest,
         source_length=length,
-        contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+        contract=SELF_SOURCE,
     )
     type_digest = claim_type_digest(claim_type).tagged
     return claim.model_copy(
