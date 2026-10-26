@@ -48,33 +48,70 @@ lists them as the replacement" is a section of a document the field cites. A
 single `write` puts the section in the document and records the Claims that
 rest on it, so neither lands without the other:
 
-~~~yaml
-because: Brake pad choice for the 2019 Civic.
-docs:
-  - op: append
-    id: why
-    file: docs/decisions.md
-    under: [Decisions]
-    text: |
-      ## Ceramic pads for the 2019 Civic
+~~~python
+from cruxible_client import Cruxible
 
-      We stock ceramic pads (bp-2210) rather than organic ones for the 2019
-      Civic: they last about twice as long in city driving, and Acme lists them
-      as the replacement for bp-1142.
-changes:
-  - {op: set, subject: catalog.decision/civic-brake-pads, field: summary, value: Stock ceramic pads (bp-2210) for the 2019 Civic, evidence: {kind: section, ref: why}}
-  - {op: set, subject: catalog.decision/civic-brake-pads, field: status, value: accepted, evidence: {kind: section, ref: why}}
-  - {op: add, subject: catalog.decision/civic-brake-pads, field: governs, value: catalog.vehicle/honda-civic-2019, evidence: {kind: section, ref: why}}
+cx = Cruxible.connect()
+batch = cx.changes(because="Brake pad choice for the 2019 Civic.",
+                   subject="catalog.decision/civic-brake-pads")
+batch.append_section("docs/decisions.md", under=("Decisions",), id="why", text=(
+    "## Ceramic pads for the 2019 Civic\n\n"
+    "We stock ceramic pads (bp-2210) rather than organic ones for the 2019\n"
+    "Civic: they last about twice as long in city driving, and Acme lists them\n"
+    "as the replacement for bp-1142.\n"
+))
+why = batch.section("why")
+batch.set("summary", "Stock ceramic pads (bp-2210) for the 2019 Civic", evidence=why)
+batch.set("status", "accepted", evidence=why)
+batch.add("governs", "catalog.vehicle/honda-civic-2019", evidence=why)
+outcome = batch.write()
+outcome.status                                    # 'accepted'
+outcome.subjects_added                            # ('catalog.decision/civic-brake-pads',)
+[(c.field, c.after, c.verdict) for c in outcome.changes]
+# [('summary', 'Stock ceramic pads (bp-2210) for the 2019 Civic', 'supported'),
+#  ('status', 'accepted', 'supported'),
+#  ('governs', 'catalog.vehicle/honda-civic-2019', 'supported')]
 ~~~
 
-~~~text
-$ cruxible write decision.yaml
-accepted (generation 21, 0bf1ba964f77)
-  doc docs/decisions.md ['Decisions', 'Ceramic pads for the 2019 Civic']: written (sha256:…)
-  set catalog.decision/civic-brake-pads summary: Stock ceramic pads (bp-2210) for the 2019 Civic  [CLM-…; verdict supported]
-  set catalog.decision/civic-brake-pads status: accepted  [CLM-…; verdict supported]
-  add catalog.decision/civic-brake-pads governs: catalog.vehicle/honda-civic-2019  [CLM-…; verdict supported]
-  + subject catalog.decision/civic-brake-pads
+`batch.section("why")` cites the section the same write appends, and
+`subject=` names the decision once for every change. On the CLI, `cruxible
+write FILE` takes the same write as a YAML file. For MCP-only clients, it is
+one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Brake pad choice for the 2019 Civic.",
+  "subject": "catalog.decision/civic-brake-pads",
+  "docs": [
+    {
+      "op": "append",
+      "id": "why",
+      "file": "docs/decisions.md",
+      "under": ["Decisions"],
+      "text": "## Ceramic pads for the 2019 Civic\n\nWe stock ceramic pads (bp-2210) rather than organic ones for the 2019\nCivic: they last about twice as long in city driving, and Acme lists them\nas the replacement for bp-1142.\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "set",
+      "field": "summary",
+      "value": "Stock ceramic pads (bp-2210) for the 2019 Civic",
+      "evidence": {"kind": "section", "ref": "why"}
+    },
+    {
+      "op": "set",
+      "field": "status",
+      "value": "accepted",
+      "evidence": {"kind": "section", "ref": "why"}
+    },
+    {
+      "op": "add",
+      "field": "governs",
+      "value": "catalog.vehicle/honda-civic-2019",
+      "evidence": {"kind": "section", "ref": "why"}
+    }
+  ]
+}
 ~~~
 
 The reasoning stays where people read it, and the decision becomes something

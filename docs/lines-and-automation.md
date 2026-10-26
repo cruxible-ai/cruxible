@@ -103,20 +103,45 @@ reference](procedure-source.md) covers every step.
 ### Write the Line, its Trigger and its mandate
 
 A Line, its Triggers and its mandate are definitions like any other, so they
-go in through authoring as one change set:
+go in through authoring as one change set, saved here as `automation.json`:
 
 ~~~json
-{"kind": "change_set", "rationale": "Check Acme's discontinued-parts list every morning; propose what it lists for review.", "members": [
- {"kind": "line", "name": "catalog.acme-discontinued", "procedure_name": "catalog.acme-discontinued",
-  "acquisition_policy_name": "catalog.acquisition", "max_authority": "propose",
-  "parameters": {"path": "supplier/acme-discontinued.txt"}},
- {"kind": "trigger", "name": "catalog.acme-discontinued-daily", "line_name": "catalog.acme-discontinued",
-  "schedule": {"kind": "cron", "expression": "0 6 * * *"}},
- {"kind": "procedure_mandate", "name": "catalog.acme-discontinued-propose", "procedure_name": "catalog.acme-discontinued",
-  "grants": "propose", "namespace": ["claims"], "valid_from": "2026-10-21T00:00:00Z", "expires_at": "2027-01-19T00:00:00Z",
-  "resource_ceiling": {"max_wall_clock": {"microseconds": 60000000}, "max_provider_calls": 1,
-    "max_capture_bytes": 1000000, "max_items": 1000, "max_repeat_attempts": 1}}
-]}
+{
+  "kind": "change_set",
+  "rationale": "Check Acme's discontinued-parts list every morning; propose what it lists for review.",
+  "members": [
+    {
+      "kind": "line",
+      "name": "catalog.acme-discontinued",
+      "procedure_name": "catalog.acme-discontinued",
+      "acquisition_policy_name": "catalog.acquisition",
+      "max_authority": "propose",
+      "parameters": {"path": "supplier/acme-discontinued.txt"}
+    },
+    {
+      "kind": "trigger",
+      "name": "catalog.acme-discontinued-daily",
+      "line_name": "catalog.acme-discontinued",
+      "schedule": {"kind": "cron", "expression": "0 6 * * *"}
+    },
+    {
+      "kind": "procedure_mandate",
+      "name": "catalog.acme-discontinued-propose",
+      "procedure_name": "catalog.acme-discontinued",
+      "grants": "propose",
+      "namespace": ["claims"],
+      "valid_from": "2026-10-21T00:00:00Z",
+      "expires_at": "2027-01-19T00:00:00Z",
+      "resource_ceiling": {
+        "max_wall_clock": {"microseconds": 60000000},
+        "max_provider_calls": 1,
+        "max_capture_bytes": 1000000,
+        "max_items": 1000,
+        "max_repeat_attempts": 1
+      }
+    }
+  ]
+}
 ~~~
 
 ~~~text
@@ -262,18 +287,48 @@ query `catalog.part_categorized`, holds only for parts the team has given a
 category:
 
 ~~~json
-{"kind": "change_set", "rationale": "Graduate the Acme discontinued check to settle: a week of runs, nothing contradicted.", "members": [
- {"kind": "procedure_mandate", "name": "catalog.acme-discontinued-settle", "procedure_name": "catalog.acme-discontinued",
-  "grants": "settle", "namespace": ["claims"], "valid_from": "2026-10-21T00:00:00Z", "expires_at": "2027-01-19T00:00:00Z",
-  "scope": [{"claim_type": "catalog.part.discontinued", "change_kinds": ["create", "revise"]}],
-  "condition": {"query_name": "catalog.part_categorized", "binding_parameter": "part_id",
-                "required_fields": ["category"], "fallback": "propose"},
-  "resource_ceiling": {"max_wall_clock": {"microseconds": 60000000}, "max_provider_calls": 1,
-    "max_capture_bytes": 1000000, "max_items": 1000, "max_repeat_attempts": 1}},
- {"kind": "line", "name": "catalog.acme-discontinued", "procedure_name": "catalog.acme-discontinued",
-  "acquisition_policy_name": "catalog.acquisition", "max_authority": "settle",
-  "parameters": {"path": "supplier/acme-discontinued.txt"}}
-]}
+{
+  "kind": "change_set",
+  "rationale": "Graduate the Acme discontinued check to settle: a week of runs, nothing contradicted.",
+  "members": [
+    {
+      "kind": "procedure_mandate",
+      "name": "catalog.acme-discontinued-settle",
+      "procedure_name": "catalog.acme-discontinued",
+      "grants": "settle",
+      "namespace": ["claims"],
+      "valid_from": "2026-10-21T00:00:00Z",
+      "expires_at": "2027-01-19T00:00:00Z",
+      "scope": [
+        {
+          "claim_type": "catalog.part.discontinued",
+          "change_kinds": ["create", "revise"]
+        }
+      ],
+      "condition": {
+        "query_name": "catalog.part_categorized",
+        "binding_parameter": "part_id",
+        "required_fields": ["category"],
+        "fallback": "propose"
+      },
+      "resource_ceiling": {
+        "max_wall_clock": {"microseconds": 60000000},
+        "max_provider_calls": 1,
+        "max_capture_bytes": 1000000,
+        "max_items": 1000,
+        "max_repeat_attempts": 1
+      }
+    },
+    {
+      "kind": "line",
+      "name": "catalog.acme-discontinued",
+      "procedure_name": "catalog.acme-discontinued",
+      "acquisition_policy_name": "catalog.acquisition",
+      "max_authority": "settle",
+      "parameters": {"path": "supplier/acme-discontinued.txt"}
+    }
+  ]
+}
 ~~~
 
 The new Line version stops the old enablement, so enable it again. The
@@ -335,12 +390,42 @@ inbox is never accepted state. Judge each item and record what you decided:
 write what you concluded and `link` the item to it, `dismiss` it with a reason,
 or `ack` it as seen:
 
-~~~text
-$ cruxible write recall.yaml
-accepted (generation 26, 67213e49bbae)
-  set catalog.note/acme-recall-bp-2210-4471 title: Acme recall: bp-2210 batch 4471 may delaminate  [CLM-35798a58…; verdict supported]
-  add catalog.note/acme-recall-bp-2210-4471 about: catalog.part/bp-2210  [CLM-c7e17e1b…; verdict supported]
+~~~python
+from cruxible_client import Cruxible
 
+cx = Cruxible.connect()
+recall = (
+    cx.changes(because="Acme's recall notice of 2026-10-20: bp-2210 batch 4471.",
+               subject="catalog.note/acme-recall-bp-2210-4471")
+    .set("title", "Acme recall: bp-2210 batch 4471 may delaminate")
+    .add("about", "catalog.part/bp-2210")
+    .write()
+)
+[(c.field, c.after, c.verdict) for c in recall.changes]
+# [('title', 'Acme recall: bp-2210 batch 4471 may delaminate', 'supported'),
+#  ('about', 'catalog.part/bp-2210', 'supported')]
+~~~
+
+For MCP-only clients, the same write is one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Acme's recall notice of 2026-10-20: bp-2210 batch 4471.",
+  "subject": "catalog.note/acme-recall-bp-2210-4471",
+  "changes": [
+    {
+      "op": "set",
+      "field": "title",
+      "value": "Acme recall: bp-2210 batch 4471 may delaminate"
+    },
+    {"op": "add", "field": "about", "value": "catalog.part/bp-2210"}
+  ]
+}
+~~~
+
+Then link the item to the note, and dismiss the other:
+
+~~~text
 $ cruxible inbox link INB-b73819240332 --subject catalog.note/acme-recall-bp-2210-4471
 linked  INB-b73819240332  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
 

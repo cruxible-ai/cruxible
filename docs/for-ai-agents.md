@@ -227,6 +227,32 @@ outcome.status                                        # 'accepted'
 # [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
 ~~~
 
+For MCP-only clients, the same write is one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Fitment check at the shop.",
+  "subject": "catalog.part/af-208",
+  "docs": [
+    {
+      "op": "append",
+      "id": "check",
+      "file": "docs/fitment.md",
+      "under": ["Fitment notes"],
+      "text": "## af-208 on the 2019 Civic\n\nFitted at the shop on 2026-10-21: no issues.\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "add",
+      "field": "fits",
+      "value": "catalog.vehicle/honda-civic-2019",
+      "evidence": {"kind": "section", "ref": "check"}
+    }
+  ]
+}
+~~~
+
 `replace_section(..., expect=digest)` replaces a section only if nobody
 changed it since you read it. Each write accepts in the same call when the
 approval policy and your tier allow it; otherwise the outcome says `awaiting
@@ -246,7 +272,7 @@ w.catalog.part.category            # WorldClaimType for that field
 w.catalog.part.category.filters    # a value only this field admits
 w.catalog.part.category.tyres      # AttributeError: names no enum member 'tyres';
                                    # its literal schema admits: brakes, filters, lighting, wipers
-w.catalog.part["zz-999"]           # AbsentSubject, with the repair to create it
+w.catalog.part["zz-999"]           # AbsentSubject: raised, with the repair to create it
 
 part = w.catalog.part["bp-1142"]
 part.category                      # tuple of ClaimViews: every live Claim of that field

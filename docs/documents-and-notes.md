@@ -33,39 +33,87 @@ A `write` can carry document changes beside value changes, and a change can
 cite a section the same write produces. The note and the Claim land in one
 change, or neither does:
 
-~~~yaml
-because: Fitment check at the shop.
-docs:
-  - op: append
-    id: check
-    file: docs/fitment.md
-    under: [Fitment notes]
-    text: |
-      ## bp-1142 on the 2019 Civic
+~~~python
+from cruxible_client import Cruxible
 
-      Fitted to a 2019 Civic at the shop on 2026-10-21: front axle, no issues.
-changes:
-  - {op: add, subject: catalog.part/bp-1142, field: fits, value: catalog.vehicle/honda-civic-2019, evidence: {kind: section, ref: check}}
+cx = Cruxible.connect()
+batch = cx.changes(because="Fitment check at the shop.")
+batch.append_section("docs/fitment.md", under=("Fitment notes",), id="check", text=(
+    "## bp-1142 on the 2019 Civic\n\n"
+    "Fitted to a 2019 Civic at the shop on 2026-10-21: front axle, no issues.\n"
+))
+batch.add("catalog.part/bp-1142", "fits", "catalog.vehicle/honda-civic-2019",
+          evidence=batch.section("check"))
+outcome = batch.write()
+outcome.status                                    # 'accepted'
+[(c.field, c.after, c.verdict) for c in outcome.changes]
+# [('fits', 'catalog.vehicle/honda-civic-2019', 'supported')]
+note = outcome.docs[0]
+note.section, note.written                        # (('Fitment notes', 'bp-1142 on the 2019 Civic'), True)
+~~~
+
+On the CLI, `cruxible write FILE` takes the same write as a YAML file. For
+MCP-only clients, it is one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Fitment check at the shop.",
+  "docs": [
+    {
+      "op": "append",
+      "id": "check",
+      "file": "docs/fitment.md",
+      "under": ["Fitment notes"],
+      "text": "## bp-1142 on the 2019 Civic\n\nFitted to a 2019 Civic at the shop on 2026-10-21: front axle, no issues.\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "add",
+      "subject": "catalog.part/bp-1142",
+      "field": "fits",
+      "value": "catalog.vehicle/honda-civic-2019",
+      "evidence": {"kind": "section", "ref": "check"}
+    }
+  ]
+}
 ~~~
 
 You choose where documents live and how they're organized; Cruxible only needs
 heading paths to find sections:
 
-- **`append`** adds a new section under the heading path in `under` (`[]`
-  appends at the end of the file). Its text must start with a heading.
-- **`replace`** replaces the section at the heading path in `section`,
-  including its heading. Add `expect` with the section's current digest (each
-  write prints the digest it wrote): if someone changed the section since you
-  read it, nothing is written.
-- **`id`** names the section so changes can cite it as `{kind: section, ref:
-  ID}`.
+- **`append_section`** (`op: append`) adds a new section under the heading
+  path in `under` (`()` appends at the end of the file). Its text must start
+  with a heading.
+- **`replace_section`** (`op: replace`) replaces the section at a heading
+  path, including its heading. Pass `expect` with the section's current
+  digest (each write reports the digest it wrote): if someone changed the
+  section since you read it, nothing is written.
+- **`id`** names the section so changes can cite it: `batch.section(ID)`, or
+  `{kind: section, ref: ID}` in a write file.
 
-~~~text
-$ cruxible write tidy-note.yaml
-refused (not submitted)
-cruxible.doc.section_changed: Section ('Decisions', 'Ceramic pads by default') now has digest sha256:1777714a…
-  repair: re-read the section, then retry with expect: sha256:1777714a…
+Here the note is tidied with the digest the write above reported, and a
+second replace that still passes that digest is refused, because the first one
+changed the section:
+
+~~~python
+read = note.after_digest
+path = ("Fitment notes", "bp-1142 on the 2019 Civic")
+tidy = cx.changes(because="Tidy the fitment note.")
+tidy.replace_section("docs/fitment.md", path, expect=read, text=(
+    "## bp-1142 on the 2019 Civic\n\n"
+    "Fitted at the shop on 2026-10-21: front axle, no issues.\n"
+))
+tidy.write().docs[0].written                      # True
+again = cx.changes(because="Tidy it again.")
+again.replace_section("docs/fitment.md", path, expect=read, text=(
+    "## bp-1142 on the 2019 Civic\n\nFitted at the shop: front axle.\n"
+))
+again.write()                                     # WriteRefusalError: cruxible.doc.section_changed
 ~~~
+
+The refusal names the section's digest now and its repair: re-read the
+section, then retry with that `expect`.
 
 A section written this way counts as its author's own words, with a location
 people can read, and a later edit to it brings every Claim citing it back for
@@ -74,17 +122,20 @@ review ([Keeping knowledge current](keeping-knowledge-current.md#drift-a-source-
 A write can also change documents alone. When it does, Cruxible reminds you
 that nothing cites the text:
 
-~~~text
-$ cruxible write shop-notes.yaml
-accepted (generation 18, 04b316178ef4)
-No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.
-  doc docs/fitment.md ['Fitment notes', 'Wiper blades']: written (sha256:a93397de…)
+~~~python
+prose = cx.changes(because="Shop notes on wiper blades.")
+prose.append_section("docs/fitment.md", under=("Fitment notes",), text=(
+    "## Wiper blades\n\nNotes from the shop on fitting wiper blades.\n"
+))
+written = prose.write()
+written.hint
+# 'No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.'
 ~~~
 
 Document changes are applied only once the write is accepted (or is waiting
-for approval); a refused write or a `--dry-run` touches no file. Files under
-`.cruxible` and `.git` can't be written this way, and neither can a projection
-block (see below).
+for approval); a refused write or a dry run (`--dry-run`, `dry_run=True`)
+touches no file. Files under `.cruxible` and `.git` can't be written this way,
+and neither can a projection block (see below).
 
 ## Citing what's already written
 
@@ -96,8 +147,11 @@ cruxible add catalog.part/bp-2210 fits catalog.vehicle/honda-civic-2019 \
   --evidence-file 'catalogs/acme-2026.md#bp-2210 Ceramic front brake pads. Fits: 2019 Honda Civic'
 ~~~
 
-or cite an existing section by its heading path,
-`{kind: section, file: docs/fitment.md, section: [Fitment notes, Wiper blades]}`.
+or cite an existing section by its heading path: in the SDK,
+`SectionEvidence(file="docs/fitment.md", section=("Fitment notes", "Wiper blades"))`
+from `cruxible_client.contracts.write`, or
+`{kind: section, file: docs/fitment.md, section: [Fitment notes, Wiper blades]}`
+in a write file.
 Either is evidence from a file, not your own words, so the field's rules must
 admit that file's source ([Evidence and admission](evidence-and-admission.md)).
 

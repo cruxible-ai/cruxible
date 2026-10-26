@@ -293,20 +293,45 @@ The commonest evidence is something someone wrote down. Rather than keeping
 notes beside the knowledge, where they pile up, a single write can add the
 prose to a Markdown file and record the Claims that rest on it:
 
-~~~yaml
-because: Acme catalog 2026, brakes page.
-docs:
-  - op: append
-    id: bp1142
-    file: docs/fitment.md
-    under: [Fitment notes]
-    text: |
-      ## bp-1142 front brake pads
+~~~python
+from cruxible_client import Cruxible
 
-      Acme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).
-changes:
-  - {op: add, subject: catalog.part/bp-1142, field: fits,
-     value: catalog.vehicle/honda-civic-2019, evidence: {kind: section, ref: bp1142}}
+cx = Cruxible.connect()
+batch = cx.changes(because="Acme catalog 2026, brakes page.")
+batch.append_section("docs/fitment.md", under=("Fitment notes",), id="bp1142", text=(
+    "## bp-1142 front brake pads\n\n"
+    "Acme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).\n"
+))
+batch.add("catalog.part/bp-1142", "fits", "catalog.vehicle/honda-civic-2019",
+          evidence=batch.section("bp1142"))
+batch.write().status                              # 'accepted'
+~~~
+
+The same write is a YAML file for `cruxible write FILE`, and for MCP-only
+clients one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Acme catalog 2026, brakes page.",
+  "docs": [
+    {
+      "op": "append",
+      "id": "bp1142",
+      "file": "docs/fitment.md",
+      "under": ["Fitment notes"],
+      "text": "## bp-1142 front brake pads\n\nAcme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "add",
+      "subject": "catalog.part/bp-1142",
+      "field": "fits",
+      "value": "catalog.vehicle/honda-civic-2019",
+      "evidence": {"kind": "section", "ref": "bp1142"}
+    }
+  ]
+}
 ~~~
 
 The note lands in `docs/fitment.md`, where people keep reading it, and the
