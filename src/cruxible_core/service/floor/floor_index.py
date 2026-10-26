@@ -57,10 +57,13 @@ from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObjec
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
     FloorManifest,
-    build_floor_manifest,
     content_digest,
-    floor_manifest_digest,
     floor_notes_digest,
+)
+from cruxible_client.contracts.floor_inventory import (
+    FloorInventory,
+    FloorManifestState,
+    floor_manifest_state,
 )
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.derived.memo import memo_get, memo_put
@@ -239,6 +242,9 @@ class FloorRender:
     source_state: SourcesLedgerState | None = None
     # The forward renders that led here, oldest first.
     steps: tuple[FloorStep, ...] = ()
+    # The manifest inventory, patched from the previous render's when that one
+    # was built: only the files this render wrote or dropped (``_Files``).
+    inventory_seed: FloorInventory | None = field(default=None, repr=False, compare=False)
 
     @property
     def generation(self) -> int:
@@ -249,28 +255,51 @@ class FloorRender:
         return floor_notes_digest(dict(self.rationales.items()))
 
     @cached_property
-    def _manifest(self) -> FloorManifest:
-        # The v6 manifest digests the whole inventory: its build is the format's
-        # O(files), once per render and only when a delta or export needs it.
-        return build_floor_manifest(
+    def inventory(self) -> FloorInventory:
+        """Every file's manifest entry, carried from the render before when it had them.
+
+        Built whole (every path validated) only for a render with no built
+        predecessor: a cold index, a new renderer, or the first floor asked for.
+        """
+
+        if self.inventory_seed is not None:
+            return self.inventory_seed
+        return FloorInventory.build(
+            {
+                path: (*self.digests[path], changed)
+                for path, (_content, changed) in self.files.items()
+            }
+        )
+
+    def built_inventory(self) -> FloorInventory | None:
+        """The inventory, when it is already at hand (never builds it)."""
+
+        built = self.__dict__.get("inventory")
+        return built if isinstance(built, FloorInventory) else self.inventory_seed
+
+    @cached_property
+    def _manifest(self) -> FloorManifestState:
+        return floor_manifest_state(
+            self.inventory,
             renderer=self.renderer,
             coordinate=self.inputs.coordinate,
             generation=self.inputs.generation,
             notes_digest=self.notes_digest,
-            files={
-                path: (*self.digests[path], changed)
-                for path, (_content, changed) in self.files.items()
-            },
         )
 
     def manifest(self) -> FloorManifest:
-        """The floor's manifest, built once per render from the digests taken at render time."""
+        """The floor's manifest; its entries are the inventory's, never rebuilt."""
 
-        return self._manifest
+        return self._manifest.manifest
+
+    def manifest_content(self) -> bytes:
+        """The floor's exact ``manifest.json`` bytes."""
+
+        return self._manifest.content
 
     @cached_property
     def manifest_digest(self) -> str:
-        return floor_manifest_digest(self._manifest)
+        return self._manifest.digest
 
     def changed_paths_since(self, base: int) -> frozenset[str] | None:
         """Every file path this render's forward steps touched after ``base``.
@@ -1497,21 +1526,55 @@ def render_floor(
                 frozenset(files.removed),
             ),
         )
+    files_now = files.files.persistent()
+    digests_now = files.digests.persistent()
     return FloorRender(
         inputs,
         renderer,
         subjects_now,
         indexes.persistent(),
         changes.persistent(),
-        files.files.persistent(),
+        files_now,
         sources,
         rationales=rationales.persistent(),
-        digests=files.digests.persistent(),
+        digests=digests_now,
         kinds=kinds_now,
         live_sequences=live_sequences,
         source_state=source_state,
         steps=steps,
+        inventory_seed=_patched_inventory(previous, files, files_now, digests_now),
     )
+
+
+def _patched_inventory(
+    previous: FloorRender | None,
+    files: _Files,
+    files_now: PMap[str, tuple[bytes, int]],
+    digests_now: PMap[str, tuple[str, int]],
+) -> FloorInventory | None:
+    """The previous render's built inventory with this render's writes and drops.
+
+    Costs the paths this render touched. None when the previous render never
+    built one (it is then built whole if asked for), or when the patch refuses
+    a path: building it whole raises the same refusal where the manifest is
+    asked for, as before.
+    """
+
+    base = None if previous is None else previous.built_inventory()
+    if base is None:
+        return None
+    touched = files.written | files.removed
+    try:
+        return base.patch(
+            {
+                path: (*digests_now[path], files_now[path][1])
+                for path in touched
+                if path in files_now
+            },
+            (path for path in touched if path not in files_now),
+        )
+    except ValueError:
+        return None
 
 
 # -- the index on the instance ------------------------------------------------------
