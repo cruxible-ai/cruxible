@@ -221,6 +221,22 @@ def test_tool_parameters_use_declared_types_except_instance_defined_query_parame
     assert offenders == [], f"untyped MCP parameters: {offenders}"
 
 
+def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from cruxible_core.mcp.tools import McpProcedureBindings
+
+    schema = _schemas()["cruxible_procedure_run"].inputSchema
+    assert schema["properties"]["bindings"]["anyOf"][0] == {"$ref": "#/$defs/McpProcedureBindings"}
+    assert schema["$defs"]["McpProcedureBindings"]["additionalProperties"] == {"type": "string"}
+    assert McpProcedureBindings.model_validate({"fetch": "web/build"}).root == {
+        "fetch": "web/build"
+    }
+    with pytest.raises(ValidationError):
+        McpProcedureBindings.model_validate({"fetch": {"provider": "web/build"}})
+
+
 def test_depublish_names_the_stored_file_identity() -> None:
     schema = _schemas()["cruxible_block_depublish"].inputSchema
     assert set(schema["properties"]) == {"instance_id", "file_id", "block_id", "dry_run", "at"}

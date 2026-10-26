@@ -8,7 +8,7 @@ from functools import wraps
 from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
 from pydantic.json_schema import SkipJsonSchema
 
 from cruxible_client import contracts
@@ -133,6 +133,10 @@ class McpSourceBinding(BaseModel):
         min_length=1,
         description="The source as PLANE:IDENTITY: external:NAME or ledger:PATH.",
     )
+
+
+class McpProcedureBindings(RootModel[dict[str, str]]):
+    """Provider choices keyed by the accepted Procedure's declared slot names."""
 
 
 def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
@@ -1390,7 +1394,7 @@ def register_tools(
                 description="The Procedure's input; checked against its accepted input contract."
             ),
         ],
-        bindings: dict[str, str] | None = None,
+        bindings: McpProcedureBindings | None = None,
         evaluation_time: str | None = None,
         at: contracts.AcceptedCoordinate | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
@@ -1405,7 +1409,7 @@ def register_tools(
             trigger_event=trigger_event,
             at=_dump(at),
             input=input,
-            bindings=bindings,
+            bindings=None if bindings is None else bindings.root,
         )
 
     @_tool
