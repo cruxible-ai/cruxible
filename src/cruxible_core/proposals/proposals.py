@@ -1895,6 +1895,12 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
         from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
 
         kind = _member_kind(context.path)
+        if (
+            kind is not None
+            and kind.name == "blueprint"
+            and context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        ):
+            raise FormatError("Blueprints are read-only; author a Procedure with slots.")
         if kind is not None and kind.name == "provider-interface":
             light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
             if (artifact_tag == "cruxible-provider-interface-v4") != light:
@@ -2060,7 +2066,7 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
     )
 
 
-def _blueprint_origin_refusal(
+def _historical_blueprint_origin_refusal(
     context: _MemberContext,
     procedure: ProcedureArtifact,
     previous: ProcedureArtifact | None,
@@ -2187,8 +2193,8 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         installed = source_law
 
     _verify_source(context, procedure)
-    if procedure.blueprint is not None:
-        origin_refusal = _blueprint_origin_refusal(
+    if procedure.blueprint is not None and context.current.compiler != LIGHT_ARTIFACTS_COMPILER:
+        origin_refusal = _historical_blueprint_origin_refusal(
             context,
             procedure,
             None
@@ -2592,6 +2598,7 @@ def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
     )
 
     blueprint = parse_blueprint(context.content, path=context.path)
+    _installed(context, blueprint.artifact_format)
     _verify_source(context, blueprint)
     predecessor: AcceptedBlueprint | None = None
     if context.parent_content is not None:

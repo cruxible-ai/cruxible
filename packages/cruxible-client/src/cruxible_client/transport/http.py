@@ -1609,6 +1609,7 @@ class CruxibleClient:
         evaluation_time: str | None,
         at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         input: Any,
+        bindings: Mapping[str, str] | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
         trigger_event: contracts.TriggerEventReference | None = None,
     ) -> contracts.ProcedureRunState:
@@ -1629,6 +1630,7 @@ class CruxibleClient:
                 "at": self._coordinate_body(at),
                 "evaluation_time": evaluation_time,
                 "input": input,
+                **({"bindings": dict(bindings)} if bindings else {}),
             },
         )
         return self._parse_model(response, contracts.ProcedureRunState)

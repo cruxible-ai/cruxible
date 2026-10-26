@@ -146,7 +146,14 @@ def line_slot_interface_digest(
     """
 
     surface: list[dict[str, str]] = []
-    origin = accepted_procedure.procedure.blueprint
+    authored = getattr(accepted_procedure, "authored", accepted_procedure.procedure)
+    if authored.definition.graph_format == 7:
+        return typed_digest(
+            Sha256Value,
+            "cruxible-line-slot-interface-surface-v2",
+            {"slots": [slot.model_dump(mode="json") for slot in authored.definition.pin_slots]},
+        ).tagged
+    origin = authored.blueprint
     for binding in () if origin is None else origin.bindings:
         # The binding names its slot's interface: one Provider may fill two
         # slots of different interfaces, so the Provider pin cannot tell them apart.

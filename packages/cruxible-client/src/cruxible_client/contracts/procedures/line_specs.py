@@ -203,6 +203,7 @@ class LineSpec(_StrictLineModel):
 class NamedLineSpec(LineSpec):
     artifact_format: Literal["cruxible-line-v7"] = "cruxible-line-v7"  # type: ignore[assignment]
     procedure: ArtifactNameRef  # type: ignore[assignment]
+    bindings: dict[str, ArtifactNameRef] = Field(default_factory=dict, exclude_if=lambda v: not v)
     acquisition_policy: ArtifactNameRef | None = None  # type: ignore[assignment]
     trigger_event: NamedCaptureEventSelector | None = None
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
@@ -211,6 +212,8 @@ class NamedLineSpec(LineSpec):
     def _shape(self) -> NamedLineSpec:
         if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Line identity must be path-addressable and kind Line")
+        if any(ref.target.kind != "Provider" for ref in self.bindings.values()):
+            raise ValueError("Line bindings name Providers")
         if self.procedure.target.kind != "Procedure":
             raise ValueError("a Line names a Procedure")
         if (
@@ -428,6 +431,7 @@ def evaluate_line_spec_law(
         providers={} if providers is None else providers,
         provider_interfaces={} if provider_interfaces is None else provider_interfaces,
         by_name=by_name or isinstance(line, NamedLineSpec),
+        bindings=getattr(line, "bindings", {}),
     )
     if provider_result is not None:
         code, message = provider_result
@@ -525,9 +529,15 @@ def _verify_provider_pins(
     providers: Mapping[str, AcceptedProvider],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     by_name: bool = False,
+    bindings: Mapping[str, ArtifactNameRef] | None = None,
 ) -> tuple[str, str] | None:
     from cruxible_client.contracts.procedures.artifacts import _evaluate_provider_pins
 
+    declared = {
+        slot.slot_name: slot for slot in getattr(definition, "_authored", definition).pin_slots
+    }
+    if set(bindings or {}) - set(declared):
+        return ("cruxible.procedure.slot_binding_missing", "Bind only declared Provider slots.")
     # The occurrence law reads only graph, interface and provider metadata.
     return _evaluate_provider_pins(
         definition,
@@ -535,6 +545,7 @@ def _verify_provider_pins(
         providers=providers,
         provider_interfaces=provider_interfaces,
         by_name=by_name,
+        bindings=bindings,
     )
 
 

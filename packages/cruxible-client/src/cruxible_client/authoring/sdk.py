@@ -102,8 +102,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.authoring.inputs import (
-    BlueprintInput,
-    BlueprintInstanceInput,
     ProcedureInput,
     ProcedureMandateInput,
     QueryDefinitionInput,
@@ -844,9 +842,7 @@ class PredictionSettlement:
 
 
 #: Every form ``cx.procedure`` accepts.
-ProcedureDefinitionInput: TypeAlias = (
-    ProcedureInput | BlueprintInput | BlueprintInstanceInput | ProcedureSequence | ProcedureSource
-)
+ProcedureDefinitionInput: TypeAlias = ProcedureInput | ProcedureSequence | ProcedureSource
 
 
 @dataclass(frozen=True)
@@ -1193,11 +1189,7 @@ class ChangeSetDraft:
     def procedure(
         self,
         *,
-        definition: ProcedureInput
-        | BlueprintInput
-        | BlueprintInstanceInput
-        | ProcedureSequence
-        | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
     ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset.
 
@@ -1237,6 +1229,7 @@ class ChangeSetDraft:
         *,
         name: str,
         procedure: str,
+        bindings: Mapping[str, str] | None = None,
         acquisition_policy: str | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
@@ -1276,6 +1269,7 @@ class ChangeSetDraft:
                 payload=LineAuthoringPayload(
                     name=name,
                     procedure_name=procedure,
+                    bindings={} if bindings is None else dict(bindings),
                     acquisition_policy_name=acquisition_policy,
                     max_authority=max_authority,
                     trigger_input=trigger_input,
@@ -4182,11 +4176,7 @@ class Cruxible:
     def procedure(
         self,
         *,
-        definition: ProcedureInput
-        | BlueprintInput
-        | BlueprintInstanceInput
-        | ProcedureSequence
-        | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
     ) -> ProcedureDraft:
         """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
 
@@ -4195,12 +4185,8 @@ class Cruxible:
 
         Declare owned input/output schemas in ``definition.contracts`` and use
         ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base. A Provider position left as a ``slot``
-        makes the definition a Blueprint (``BlueprintInput``); a Procedure binds
-        every slot, by instantiating a Blueprint (``BlueprintInstanceInput``) or
-        by binding each declared slot of a ``ProcedureSource``. Exact pins
-        belong to accepted graphs and are never silently converted into
-        references to a potentially different version.
+        resolve at the intent base. Provider slots stay open in a Procedure and
+        bind by fit at run admission, or through a Line's explicit bindings.
 
         Activation, retirement, and the optional acquisition-policy name are
         also carried by this input. The daemon resolves the policy at the same
@@ -4215,16 +4201,14 @@ class Cruxible:
             definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
-        if not isinstance(definition, ProcedureInput | BlueprintInput | BlueprintInstanceInput):
+        if not isinstance(definition, ProcedureInput):
             raise TypeError(
-                "procedure definition must be a ProcedureInput, BlueprintInput, "
-                "BlueprintInstanceInput, ProcedureSource or authoring Sequence"
+                "procedure definition must be a ProcedureInput, ProcedureSource "
+                "or authoring Sequence"
             )
         payload = lower_authoring_input(definition)
         assert isinstance(payload, ProcedureAuthoringPayload)
-        if isinstance(definition, BlueprintInstanceInput):
-            pass  # Lowering resolves the Blueprint and each bound Provider.
-        elif isinstance(definition, ProcedureInput) and definition.spec is not None:
+        if definition.spec is not None:
             pass  # the shared typed authored-form lowering checks it
         elif "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
@@ -5632,6 +5616,7 @@ class Procedure:
         self,
         *,
         input: Record | None = None,
+        bindings: Mapping[str, str] | None = None,
         at: AcceptedCoordinate | None = None,
         resolution_contract: ResolutionContractReference | None = None,
         trigger_event: TriggerEventReference | None = None,
@@ -5656,6 +5641,7 @@ class Procedure:
             evaluation_time=self._playbill._evaluation_time(),
             at=self._playbill._read_at(at or self._coordinate),
             input=normalize_canonical(normalized),
+            **({"bindings": bindings} if bindings else {}),
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
         )

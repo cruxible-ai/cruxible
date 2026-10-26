@@ -132,13 +132,22 @@ def dependency_pins(
             # Retained source/Blueprint origin describe provenance. Actual
             # graph fields already contain their governed dependencies.
             for name in type(item).model_fields:
-                if name not in {"source", "owned_contracts", "pins"}:
+                if name not in {"source", "owned_contracts", "pins"} and not (
+                    by_name
+                    and name == "blueprint"
+                    and getattr(getattr(item, "identity", None), "kind", None) == "Procedure"
+                ):
                     yield from visit(getattr(item, name), name)
         elif isinstance(item, tuple | list):
             for member in item:
                 yield from visit(member, field)
 
     pins.extend(visit(artifact))
+    if getattr(getattr(artifact, "identity", None), "kind", None) == "Line":
+        pins.extend(
+            ArtifactRef(role="provider", target=ref.target)
+            for ref in getattr(artifact, "bindings", {}).values()
+        )
     if getattr(artifact, "identity", None) is not None:
         if artifact.identity.kind == "QueryDefinition" and not getattr(artifact, "pins", ()):
             pins.extend(

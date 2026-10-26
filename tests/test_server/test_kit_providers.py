@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client.artifacts import pack_artifact, unpack_artifact
-from cruxible_client.contracts.authoring.inputs import BlueprintInstanceInput
 from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitBuildRequest,
@@ -309,7 +308,7 @@ def _author(world: Any, *, procedure: bool = True) -> None:
 
     from cruxible_client.authoring.examples import acquisition_policy_example
     from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_client.contracts.authoring.inputs import BlueprintInput, ProcedureInput
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
 
     example = acquisition_policy_example().acquisition_policy
     draft = world.pb.changes(rationale="Ship an increment kit.")
@@ -329,9 +328,12 @@ def _author(world: Any, *, procedure: bool = True) -> None:
                 acquisition_policy=POLICY,
             )
         )
-    definition, contracts = _graph(world, provider=None)
+    definition, contracts = _graph(
+        world, provider="kit-call" if hasattr(world, "instance") else None
+    )
+    definition["name"] = BLUEPRINT
     draft.procedure(
-        definition=BlueprintInput(kind="blueprint", definition=definition, contracts=contracts)
+        definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
     )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
@@ -427,7 +429,7 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
-            f"blueprints/{BLUEPRINT}.json",
+            f"procedures/{BLUEPRINT}.json",
             f"procedures/{PROCEDURE}.json",
             next(
                 p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
@@ -507,13 +509,11 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         other = _package(tmp_path / "local", provider_checkout, name="other-call")
         _install(consumer, other)
         draft = consumer.pb.changes(rationale="Increment with the other provider.")
-        draft.procedure(
-            definition=BlueprintInstanceInput(
-                kind="blueprint_instance",
-                name="acme.increment-other",
-                blueprint=BLUEPRINT,
-                bindings={"increment": "other-call"},
-            )
+        draft.line(
+            name="acme.increment-other",
+            procedure=BLUEPRINT,
+            bindings={"increment": "other-call"},
+            parameters={"n": 5},
         )
         intent = draft.prepare()
         assert not intent.refused, intent.diagnostics
@@ -521,7 +521,7 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert submitted._candidate_status is not None
         consumer.approve(submitted._candidate_status.proposal_id)
         consumer.pb.refresh()
-        assert _run(consumer, "acme.increment-other", 5) == {"n": 6}
+        assert consumer.pb.line("acme.increment-other").run().result == {"n": 6}
     finally:
         for _ in opened:
             pass
@@ -880,7 +880,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
 
     from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.dependencies import dependency_pins
-    from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_core.service.kits import _builtin, service_add_kit, service_build_kit
     from tests.core_support._candidate_support import submit_member_candidate
@@ -903,12 +903,12 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
             "interface": raw["nodes"][0]["interface"],
         }
     ]
-    from cruxible_client.contracts.procedures.artifacts import NamedBlueprintArtifact
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 
     definition = NamedProcedureDefinition.model_validate(raw)
-    blueprint = NamedBlueprintArtifact(
-        identity={"kind": "Blueprint", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
+    blueprint = NamedProcedureArtifact(
+        identity={"kind": "Procedure", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
         owned_contracts=procedure.owned_contracts,
@@ -916,7 +916,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     )
     inspection = submit_member_candidate(
         instance,
-        members={blueprint_path(blueprint.identity.name): render_blueprint(blueprint)},
+        members={procedure_path(blueprint.identity.name): render_procedure(blueprint)},
         actor_id="owner",
         proposal_name="files-skeleton",
         proposal_family="procedure",
@@ -930,7 +930,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
 
     paths = [item.path for item in release.manifest.artifacts]
     assert "procedures/acme.files.json" in paths
-    assert "blueprints/acme.files-skeleton.json" in paths
+    assert "procedures/acme.files-skeleton.json" in paths
     assert not any(path.startswith(("providers/", "provider-interfaces/")) for path in paths)
     assert release.manifest.providers == ()
     released = parse_procedure(

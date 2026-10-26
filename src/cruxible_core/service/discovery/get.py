@@ -135,7 +135,6 @@ from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRul
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
-from cruxible_client.contracts.providers import ProviderV2
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
@@ -1843,87 +1842,6 @@ def _query_card(
     )
 
 
-def _blueprint_card(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    resolved: ResolvedRef,
-    *,
-    surface: ReadSurface,
-) -> GetBlueprintCard:
-    from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
-    from cruxible_client.contracts.procedures.blueprints import (
-        blueprint_slot_interface,
-    )
-
-    with instance.bind_accepted_projection(coordinate) as projection:
-        blueprint = cast(BlueprintArtifact, projection.typed.source(resolved.identity))
-        definition = blueprint.definition
-        fits: dict[str, tuple[str, ...]] = {}
-        for slot in definition.pin_slots:
-            # Only the live builds bound to a registration of the slot's exact
-            # contract are read (the pin index), never every Provider.
-            candidates = []
-            for (identity,) in projection.typed.connection.execute(
-                "SELECT DISTINCT p.source_identity FROM main.provider_interfaces i "
-                "JOIN main.pins p ON p.target_identity=i.identity "
-                "AND p.edge_kind='required_pin' "
-                "JOIN main.providers r ON r.identity=p.source_identity "
-                "WHERE i.identity=? AND i.lifecycle='live' AND r.lifecycle='live' "
-                "ORDER BY p.source_identity",
-                (getattr(blueprint_slot_interface(blueprint, slot), "target").qualified,),
-            ):
-                row = projection.typed.envelope(str(identity))
-                provider = projection.typed.source(str(identity))
-                if row is None or provider is None:
-                    continue
-                interface_ref = blueprint_slot_interface(blueprint, slot)
-                assert interface_ref is not None
-                registration = projection.typed.source(interface_ref.target.qualified)
-                from cruxible_client.contracts.provider_interfaces import (
-                    interface_definition_digest,
-                )
-
-                if (
-                    registration is not None
-                    and isinstance(provider, ProviderV2)
-                    and sum(
-                        row.interface_id == registration.interface_id
-                        and row.interface_digest == interface_definition_digest(registration)
-                        for row in provider.implementations
-                    )
-                    == 1
-                ):
-                    candidates.append(provider.identity.name)
-            fits[slot.slot_name] = _fitting_names(projection, tuple(candidates))
-    inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
-    if definition.parameter_contract is not None:
-        inputs["parameters"] = _pin_name(definition.parameter_contract)
-    slots = []
-    for slot in definition.pin_slots:
-        interface = blueprint_slot_interface(blueprint, slot)
-        slots.append(
-            GetBlueprintSlot(
-                slot=slot.slot_name,
-                interface="" if interface is None else interface.target.qualified,
-                fits=fits[slot.slot_name],
-            )
-        )
-    name = _name(resolved.identity)
-    example = {
-        "cli": "cruxible authoring example blueprint-instance",
-        "mcp": 'cruxible_authoring_example(name="blueprint-instance")',
-        "sdk": "cx.procedure(definition=source.bind(...))",
-    }[surface]
-    return GetBlueprintCard(
-        blueprint=name,
-        description=definition.description,
-        lifecycle=blueprint.lifecycle.state,
-        inputs=inputs,
-        slots=tuple(slots),
-        next=(example, _render_get(surface, resolved.display, "proof")),
-    )
-
-
 def _trigger_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -3266,7 +3184,26 @@ def service_playbill_get(
         elif resolved.kind == "trigger":
             card = _trigger_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "blueprint":
-            card = _blueprint_card(instance, coordinate, resolved, surface=surface)
+            with instance.bind_accepted_projection(coordinate) as projection:
+                retained = projection.typed.source(resolved.identity)
+            assert retained is not None
+            from cruxible_client.contracts.procedures.blueprints import blueprint_slot_interface
+
+            card = GetBlueprintCard(
+                blueprint=_name(resolved.identity),
+                description=retained.definition.description,
+                lifecycle=retained.lifecycle.state,
+                inputs={"input": _pin_name(retained.definition.contract_in)},
+                slots=tuple(
+                    GetBlueprintSlot(
+                        slot=slot.slot_name,
+                        interface="" if reference is None else reference.target.qualified,
+                    )
+                    for slot in retained.definition.pin_slots
+                    for reference in (blueprint_slot_interface(retained, slot),)
+                ),
+                next=(_render_get(surface, resolved.display, "proof"),),
+            )
         elif resolved.kind == "subject_kind":
             card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":

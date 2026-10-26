@@ -449,14 +449,13 @@ def test_depublish_transport_sends_file_id_and_keeps_the_frozen_result() -> None
         client._client.close()
 
 
-@pytest.mark.parametrize("kind", ["procedure", "blueprint"])
+@pytest.mark.parametrize("kind", ["procedure"])
 @pytest.mark.parametrize("typed_node", [False, True])
 def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
     kind: str, typed_node: bool
 ) -> None:
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.contracts.authoring.inputs import (
-        BlueprintInput,
         ProcedureInput,
         lower_authoring_input,
     )
@@ -482,7 +481,7 @@ def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
         raw["definition"]["nodes"][0] = ExhaustTapNode.model_validate(node)
     else:
         raw["definition"]["nodes"][0] = node
-    model = ProcedureInput if kind == "procedure" else BlueprintInput
+    model = ProcedureInput
     definition = model.model_validate(raw)
     with pytest.raises(AuthoringInputError) as caught:
         lower_authoring_input(definition)

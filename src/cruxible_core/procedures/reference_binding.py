@@ -6,7 +6,7 @@ identity remain separate from the exact pins recorded by run admission.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
@@ -102,6 +102,8 @@ def bind_procedure_references(
     *,
     lookup: ReferenceLookup,
     slots: SlotLookup | None = None,
+    bindings: Mapping[str, ArtifactIdentity] | None = None,
+    frozen_providers: Mapping[str, ArtifactIdentity] | None = None,
     frozen_pins: tuple[ArtifactPin, ...] | None = None,
     frozen_implementations: dict[str, str] | None = None,
 ) -> BoundAcceptedProcedure:
@@ -134,6 +136,22 @@ def bind_procedure_references(
 
     selected_slots: dict[str, tuple[Any, str]] = {}
     slot_declarations = {s.slot_name: s for s in authored.definition.pin_slots}
+    if set(bindings or {}) - set(slot_declarations):
+        from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+        from cruxible_core.errors import RequestRefusedError
+
+        raise RequestRefusedError(
+            "cruxible.procedure.slot_binding_missing",
+            "Bind only declared Provider slots.",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction.model_validate(
+                    {
+                        "target": "bindings",
+                        "required_change": "Remove bindings for undeclared slots.",
+                    }
+                )
+            ),
+        )
     data = authored.definition.model_dump(mode="json", by_alias=True)
     data.pop("source", None)
 
@@ -168,10 +186,32 @@ def bind_procedure_references(
             if slot not in selected_slots:
                 if slot not in slot_declarations or slots is None:
                     raise ExecutionError(f"Provider slot {slot!r} has no admission resolver")
-                candidates = tuple(slots(interface_identity))
+                explicit = (bindings or {}).get(slot) or (frozen_providers or {}).get(occurrence_id)
+                candidates = (
+                    (resolve(explicit),)
+                    if explicit is not None
+                    else tuple(slots(interface_identity))
+                )
                 if len(candidates) != 1:
-                    raise ExecutionError(
-                        f"Provider slot {slot!r} needs one fitting build; found {len(candidates)}"
+                    from cruxible_client.contracts.repairs import (
+                        HandEditInstruction,
+                        HandEditRepair,
+                    )
+                    from cruxible_core.errors import RequestRefusedError
+
+                    code = "slot_binding_missing" if not candidates else "slot_binding_ambiguous"
+                    names = [provider.identity.qualified for provider, _ in candidates]
+                    raise RequestRefusedError(
+                        "cruxible.procedure." + code,
+                        f"Provider slot {slot!r} needs one fitting build; candidates: {names}",
+                        repair=HandEditRepair(
+                            hand_edit=HandEditInstruction(
+                                target="bindings",
+                                required_change=(
+                                    f"Install a fitting build or bind {slot}=provider explicitly."
+                                ),
+                            )
+                        ),
                     )
                 selected_slots[slot] = candidates[0]
             provider, digest = selected_slots[slot]
@@ -256,6 +296,7 @@ def replay_procedure_references(
     pins: tuple[ArtifactPin, ...],
     lookup_exact: Callable[[ArtifactIdentity, str], tuple[Any, str] | None],
     implementations: dict[str, str] | None = None,
+    providers: Mapping[str, ArtifactIdentity] | None = None,
 ) -> BoundAcceptedProcedure:
     """Rebuild from recorded digests. There is no accepted-head/name resolver."""
     versions: dict[ArtifactIdentity, str] = {}
@@ -299,5 +340,6 @@ def replay_procedure_references(
         lookup=exact,
         slots=slots,
         frozen_pins=pins,
+        frozen_providers=providers,
         frozen_implementations=implementations,
     )

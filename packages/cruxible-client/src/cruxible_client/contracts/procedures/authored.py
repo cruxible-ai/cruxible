@@ -912,7 +912,9 @@ def lower_procedure_spec(
                         else {
                             "pin_role": "provider",
                             "artifact_kind": "Provider",
-                            "interface_digest": resolve("slot", interface),
+                            "interface_digest": resolve("slot", interface)
+                            if resolve is not None
+                            else None,
                         }
                     ),
                 }

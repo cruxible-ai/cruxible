@@ -305,7 +305,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             procedure=definition.name,
             description=definition.description,
             slots={
-                slot.slot_name: _name(slot.interface).replace("/v", "@")
+                slot.slot_name: _name(getattr(slot, "interface")).replace("/v", "@")
                 for slot in definition.pin_slots
             },
             input=schema(definition.contract_in).fields,

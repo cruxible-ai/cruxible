@@ -243,24 +243,16 @@ providers that fit it:
 cruxible get Blueprint:catalog.price-check
 ~~~
 
-When nothing fits a slot, install a provider that implements its interface.
-Then bind one provider per slot:
+A Procedure may leave Provider slots open, each naming its required interface.
+A direct run selects the single installed build that fits each slot. No fit refuses
+`cruxible.procedure.slot_binding_missing`; several fits refuse
+`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
+with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
+carry the same `bindings` mapping alongside its Procedure and parameters.
+Existing Blueprint artifacts remain readable, and their exact Procedure instances
+keep running. New definitions are Procedures with slots.
 
-~~~bash
-cruxible authoring example blueprint-instance      # a template to edit
-cruxible authoring submit - --dry-run <<'EOF'
-{"kind": "blueprint_instance",
- "name": "catalog.price-check-web",
- "blueprint": "catalog.price-check",
- "bindings": {"fetch": "cruxible-provider-web"}}
-EOF
-~~~
-
-`--dry-run` reports every refusal without saving anything: a missing or
-retired Blueprint, a provider that does not implement the slot's interface, a
-slot left unbound. Submit without `--dry-run` to land when policy and caller
-allow; `--no-accept` keeps the proposal. The result is an ordinary Procedure:
-run it with `cruxible procedure run`, or author a Line over it.
 
 ### Check and upgrade
 

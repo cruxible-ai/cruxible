@@ -725,6 +725,7 @@ def _evaluate_provider_pins(
     providers: Mapping[str, AcceptedProvider],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     by_name: bool = False,
+    bindings: Mapping[str, ArtifactNameRef] | None = None,
 ) -> tuple[str, str] | None:
     for occurrence_id, occurrence in provider_occurrences(definition):
         interface_pin = getattr(occurrence, "interface")
@@ -755,7 +756,10 @@ def _evaluate_provider_pins(
             return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRef):
-            continue
+            selected = (bindings or {}).get(provider_binding.slot_name)
+            if selected is None:
+                continue
+            provider_binding = selected
         accepted_provider = providers.get(provider_binding.target.qualified)
         if accepted_provider is None and isinstance(provider_binding, ArtifactPin):
             accepted_provider = providers.get(provider_binding.artifact_digest)

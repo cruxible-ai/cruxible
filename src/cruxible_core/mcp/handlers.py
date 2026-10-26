@@ -1413,6 +1413,7 @@ def handle_playbill_procedure_run(
     evaluation_time: str | None,
     at: dict[str, Any] | None,
     input: Any,
+    bindings: dict[str, str] | None = None,
     resolution_contract: contracts.ResolutionContractReference | None = None,
     trigger_event: contracts.TriggerEventReference | None = None,
 ) -> contracts.ProcedureRunState:
@@ -1422,6 +1423,7 @@ def handle_playbill_procedure_run(
             "evaluation_time": evaluated_at,
             "at": at,
             "input": input,
+            "bindings": bindings or {},
             "resolution_contract": resolution_contract,
             "trigger_event": trigger_event,
         }
@@ -1437,6 +1439,7 @@ def handle_playbill_procedure_run(
             ),
             at=None if request.at is None else request.at.model_dump(mode="json"),
             input=request.input,
+            **({"bindings": bindings} if bindings else {}),
         ),
         operation_name="cruxible_procedure_run",
     )

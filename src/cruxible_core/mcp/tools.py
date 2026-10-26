@@ -1390,6 +1390,7 @@ def register_tools(
                 description="The Procedure's input; checked against its accepted input contract."
             ),
         ],
+        bindings: dict[str, str] | None = None,
         evaluation_time: str | None = None,
         at: contracts.AcceptedCoordinate | None = None,
         resolution_contract: contracts.ResolutionContractReference | None = None,
@@ -1404,6 +1405,7 @@ def register_tools(
             trigger_event=trigger_event,
             at=_dump(at),
             input=input,
+            bindings=bindings,
         )
 
     @_tool

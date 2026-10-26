@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.authoring.inputs import BlueprintInstanceInput
+from cruxible_client.contracts.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -24,12 +24,12 @@ from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
-    BLUEPRINT,
     PROCEDURE,
     _add,
     _author,
     _build,
     _client,
+    _graph,
     _install,
     _package,
     _run,
@@ -55,15 +55,12 @@ def _accept_members(world, members, *, timestamp):
 
 
 def _instantiate(world, name):
+    definition, contracts = _graph(world, provider="kit-call")
+    definition["name"] = name
     intent = (
         world.pb.changes(rationale="Use the kit's provider.")
         .procedure(
-            definition=BlueprintInstanceInput(
-                kind="blueprint_instance",
-                name=name,
-                blueprint=BLUEPRINT,
-                bindings={"increment": "kit-call"},
-            )
+            definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
         )
         .prepare()
     )

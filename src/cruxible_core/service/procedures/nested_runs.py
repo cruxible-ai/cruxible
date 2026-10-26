@@ -137,6 +137,15 @@ def retained_delegation(
             authored,
             pins=run.full_pins,
             lookup_exact=exact,
+            providers={
+                item.node_id: next(
+                    pin.target
+                    for pin in run.full_pins
+                    if pin.target.kind == "Provider"
+                    and pin.artifact_digest == item.provider_artifact_digest
+                )
+                for item in getattr(run, "resolved_provider_bindings", ())
+            },
             implementations={
                 item.node_id: item.implementation_digest
                 for item in getattr(run, "resolved_provider_bindings", ())
