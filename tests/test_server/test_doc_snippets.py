@@ -32,6 +32,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import cruxible_client
+import cruxible_client.contracts.errors as client_errors
 from cruxible_client.authoring.files import add_catalog_entry
 from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.write import WriteRequest
@@ -123,18 +125,27 @@ def _expectation(lines: list[str], comments: dict[int, str], node: ast.stmt) -> 
     return " ".join(following) if following else None
 
 
-def _expected_error(comment: str | None) -> type[BaseException] | None:
-    """``# Name: ...`` where Name is an exception (a builtin, or the SDK's)."""
+def _expected_error(comment: str | None, namespace: dict[str, Any]) -> type[BaseException] | None:
+    """``# Name: ...`` where Name is an exception: a builtin, the SDK's, or a write refusal."""
 
     if comment is None:
         return None
     named = re.match(r"([A-Za-z_]\w*):", comment)
     if named is None:
         return None
-    import cruxible_client
-
-    error = getattr(builtins, named.group(1), None) or getattr(
-        cruxible_client, named.group(1), None
+    name = named.group(1)
+    error = next(
+        (
+            found
+            for found in (
+                namespace.get(name),
+                getattr(builtins, name, None),
+                getattr(cruxible_client, name, None),
+                getattr(client_errors, name, None),
+            )
+            if found is not None
+        ),
+        None,
     )
     if isinstance(error, type) and issubclass(error, BaseException):
         return error
@@ -158,7 +169,7 @@ def run_block(block: Block, namespace: dict[str, Any]) -> None:
         segment = ast.get_source_segment(block.source, node)
         where = f"{block.doc}:{block.line + node.lineno} {segment}"
         comment = _expectation(lines, comments, node)
-        error = _expected_error(comment)
+        error = _expected_error(comment, namespace)
         if error is not None:
             with pytest.raises(error):
                 _run(node, namespace, where)
@@ -341,6 +352,7 @@ WorldBuilder = Callable[[TestClient, str, Path], Cruxible]
 #: doc -> the world its python blocks run against.
 PAGES: dict[str, WorldBuilder] = {
     "building-team-knowledge.md": car_parts,
+    "documents-and-notes.md": car_parts,
     "for-ai-agents.md": car_parts,
 }
 
