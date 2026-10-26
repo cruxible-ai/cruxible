@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-24:la-b1",
-    "surface_digest": "sha256:85d7ece5748dc355bc8ec29f9b9553b3316b3bc705b79352269784b474d0faa7"
+    "surface_digest": "sha256:0c1fbbfca9a8837ec2c998a83da316b63beade7519b7da2f919532481851e305"
   },
   "surface": {
     "cli_leaves": [
@@ -2677,7 +2677,7 @@
           "run_procedure"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_run",
-        "input_schema_digest": "sha256:e0c4670725afd0d45f3e92eaeed55304d0b826b0f2ab8c3ba0617b8521ab0582",
+        "input_schema_digest": "sha256:2ff06b6296f97665ec7f2c20b96e0cdd91d1cee1bc2e65e239ea1d7aea1d053f",
         "name": "cruxible_procedure_run",
         "output_schema_digest": "sha256:efdbac67c24fac632dff0a8ce5ee1a12d0ae3f32302555ee47cbc16a787ba395",
         "permission": "READ_ONLY"
