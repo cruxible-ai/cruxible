@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
@@ -21,6 +22,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -33,6 +35,7 @@ from cruxible_core.procedures.execution import (
     ProcedureRunAdmissionV1,
     ProcedureRunResultV1,
     nested_admission,
+    procedure_node_pin_sets,
     procedure_parent_binding,
 )
 from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
@@ -43,7 +46,10 @@ from cruxible_core.procedures.nested import (
     constrained_caps,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
-from cruxible_core.procedures.reference_binding import replay_procedure_references
+from cruxible_core.procedures.reference_binding import (
+    replay_procedure_references,
+    supplied_source_provider_bindings,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
@@ -133,24 +139,50 @@ def retained_delegation(
                 return None
             return owner.parse(body, path=member_path), digest
 
-        return replay_procedure_references(
-            authored,
-            pins=run.full_pins,
-            lookup_exact=exact,
-            providers={
-                item.node_id: next(
-                    pin.target
-                    for pin in run.full_pins
-                    if pin.target.kind == "Provider"
-                    and pin.artifact_digest == item.provider_artifact_digest
+        try:
+            provider_pins = {
+                pin.artifact_digest: pin.target
+                for pin in run.full_pins
+                if pin.target.kind == "Provider"
+            }
+            providers: dict[str, ArtifactIdentity] = {}
+            for item in getattr(run, "resolved_provider_bindings", ()):
+                identity = provider_pins.get(item.provider_artifact_digest)
+                if identity is None:
+                    raise ExecutionError("Recorded Provider binding has no matching admission pin")
+                providers[item.node_id] = identity
+            full_pins = set(run.full_pins)
+            providers.update(
+                supplied_source_provider_bindings(
+                    node_pin_sets={item.node_id: item.pins for item in run.node_pin_sets},
+                    landed_capture_input_names=frozenset(
+                        item.input_name for item in run.landed_capture_inputs
+                    ),
+                    nodes=authored.procedure.definition.nodes,
+                    contains_pin=full_pins.__contains__,
                 )
-                for item in getattr(run, "resolved_provider_bindings", ())
-            },
-            implementations={
-                item.node_id: item.implementation_digest
-                for item in getattr(run, "resolved_provider_bindings", ())
-            },
-        )
+            )
+            replayed = replay_procedure_references(
+                authored,
+                pins=run.full_pins,
+                lookup_exact=exact,
+                providers=providers,
+                implementations={
+                    item.node_id: item.implementation_digest
+                    for item in getattr(run, "resolved_provider_bindings", ())
+                },
+            )
+            if (
+                replayed.procedure.pins != run.full_pins
+                or procedure_node_pin_sets(replayed) != run.node_pin_sets
+            ):
+                raise ExecutionError("Recorded admission pins do not reproduce the execution plan")
+            return replayed
+        except (ExecutionError, RequestRefusedError) as exc:
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: recorded bindings cannot reproduce "
+                f"Procedure {run.procedure_identity.qualified}: {exc}"
+            ) from exc
 
     accepted = version(parent)
     child = version(admission)
@@ -172,7 +204,13 @@ def retained_delegation(
     delegation = ProcedureDelegation(
         ParentInvocationContext(parent, accepted, node, remaining, None), child
     )
-    delegation.authority(admission)
+    try:
+        delegation.authority(admission)
+    except ExecutionError as exc:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: recorded child authority does not reproduce "
+            f"its parent delegation: {exc}"
+        ) from exc
     nested_parent = nested_admission(parent)
     if nested_parent is not None:
         retained = retained_delegation(instance, nested_parent)

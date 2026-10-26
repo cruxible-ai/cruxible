@@ -107,7 +107,7 @@ class _Invoker(_WorkspaceInvoker):
         )
 
 
-def _slotted_world(tmp_path, *, landed=False):
+def _slotted_world(tmp_path, *, landed=False, invoke_child=False):
     instance, _, measured = _world(tmp_path)
     _, _, first, interface = slotted()
     second = _other(interface.registration)
@@ -211,6 +211,51 @@ def _slotted_world(tmp_path, *, landed=False):
                     },
                 ],
                 "budget": {"provider_calls": 2, "capture_bytes": 65536},
+            }
+        )
+    if invoke_child:
+        child_spec = ProcedureSpec.model_validate(
+            {
+                "procedure": "test.recovery-child",
+                "input": {"value": "integer"},
+                "output": {"value": "integer"},
+                "steps": [
+                    {
+                        "call": "child_result",
+                        "id": "child-call",
+                        "interface": "test.compute@1",
+                        "provider": first.provider.identity.name,
+                        "input": {"value": "$input.value"},
+                    }
+                ],
+                "returns": "child_result",
+                "budget": {"provider_calls": 1},
+            }
+        )
+        child_payload = lower_authoring_input(lower_procedure_spec(child_spec))
+        child_definition = NamedProcedureDefinition.model_validate(child_payload.definition)
+        child = NamedProcedureArtifact(
+            identity=ArtifactIdentity(kind="Procedure", name=child_spec.procedure),
+            definition=child_definition,
+            definition_digest=compute_procedure_definition_digest(child_definition).tagged,
+            owned_contracts=child_payload.owned_contracts,
+            activation_policy="snapshot",
+        )
+        extra_members["procedures/" + child.identity.name + ".json"] = render_procedure(child)
+        spec = ProcedureSpec.model_validate(
+            {
+                **spec.model_dump(mode="json"),
+                "steps": [
+                    *[step.model_dump(mode="json", by_alias=True) for step in spec.steps],
+                    {
+                        "invoke": child.identity.name,
+                        "id": "delegate",
+                        "input": {"value": "$result.value"},
+                    },
+                    {"project": "finished", "fields": {"value": "$result.value"}},
+                ],
+                "returns": "finished",
+                "budget": {"provider_calls": 3, "capture_bytes": 65536},
             }
         )
     payload = lower_authoring_input(lower_procedure_spec(spec))
