@@ -120,11 +120,27 @@ def parse_iso_duration_microseconds(value: str) -> int:
     )
 
 
+def format_iso_duration_microseconds(microseconds: int) -> str:
+    """Whole microseconds as the compact ISO-8601 seconds duration that parses back to them.
+
+    ``120_000_000`` is ``PT120S`` and ``1_500_000`` is ``PT1.5S``: integer
+    arithmetic, no trailing fractional zeros, so the text is display only and
+    ``parse_iso_duration_microseconds`` returns the same value.
+    """
+
+    if microseconds < 0:
+        raise ValueError("an ISO-8601 duration is nonnegative")
+    seconds, fraction = divmod(microseconds, 1_000_000)
+    tail = f".{fraction:06d}".rstrip("0") if fraction else ""
+    return f"PT{seconds}{tail}S"
+
+
 __all__ = [
     "ISO_8601_DURATION_HINT",
     "ISO_8601_FORMAT_HINT",
     "ensure_utc",
     "format_datetime",
+    "format_iso_duration_microseconds",
     "is_effective",
     "is_expired",
     "parse_datetime",
