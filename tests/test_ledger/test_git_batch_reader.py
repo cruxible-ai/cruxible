@@ -268,3 +268,55 @@ def test_bytes_replaced_on_disk_are_refused_under_their_original_id(tmp_path, ob
     tree = SnapshotTree({"claims/x.json": BlobRef(oid, len(original), ledger.read_blobs)})
     with pytest.raises(GitError, match="do not hash to their ID"):
         tree["claims/x.json"]
+
+
+def test_tree_reads_resolve_the_repository_and_its_commit_once(tmp_path, monkeypatch):
+    """Per-read work on one ledger is a stat, never a path resolution or a commit re-read."""
+
+    import os
+
+    ledger = _ledger(tmp_path / "ledger.git")
+    tree = ledger._write_tree({f"subjects/k/s{i:03d}.json": b"{}" for i in range(50)})
+    commit = (
+        ledger._git(
+            ["commit-tree", tree, "-m", "x"],
+            environment={
+                "GIT_AUTHOR_NAME": "a",
+                "GIT_AUTHOR_EMAIL": "a@a",
+                "GIT_COMMITTER_NAME": "a",
+                "GIT_COMMITTER_EMAIL": "a@a",
+            },
+        )
+        .decode()
+        .strip()
+    )
+    ledger.list_tree(commit)  # one whole listing remembered, as an activation has
+    realpaths = []
+    resolve = os.path.realpath
+    monkeypatch.setattr(
+        ledger_git.os.path, "realpath", lambda path: realpaths.append(path) or resolve(path)
+    )
+    reads = []
+    commit_tree = GitLedger._commit_tree
+    monkeypatch.setattr(
+        GitLedger,
+        "_commit_tree",
+        lambda self, oid: reads.append(oid) or commit_tree(self, oid),
+    )
+    objects = ledger_git._BatchBlobReader.objects
+    monkeypatch.setattr(
+        ledger_git._BatchBlobReader,
+        "objects",
+        lambda self, oids: reads.extend(oids) or objects(self, oids),
+    )
+    for index in range(200):
+        assert ledger.tree_has_path(commit, f"subjects/k/s{index % 50:03d}.json")
+        assert len(ledger.tree_child_names(commit, "subjects/k")) == 50
+        assert ledger._root_tree(commit) == tree
+    assert realpaths == []
+    assert reads == []
+    # A replacement at the same path is still noticed: it is resolved afresh.
+    shutil.rmtree(ledger.path)
+    _ledger(tmp_path / "ledger.git")
+    ledger_git._repository_key(ledger.path)
+    assert len(realpaths) == 1
