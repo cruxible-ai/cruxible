@@ -1898,8 +1898,12 @@ A `subject` member creates one Subject by its kind and key, and the result
 reports the id:
 
 ~~~json
-{"kind": "subject", "subject_kind": "dev.decision", "key": {"slug": "Ship It"},
- "rationale": "We decided to ship."}
+{
+  "kind": "subject",
+  "subject_kind": "dev.decision",
+  "key": {"slug": "Ship It"},
+  "rationale": "We decided to ship."
+}
 ~~~
 
 `key` maps each key ClaimType (by predicate, or by its last name under the kind)
@@ -1938,10 +1942,18 @@ A Claim's `subject`, or a Subject-valued `object`'s `subject`, may also name the
 Subject by its kind and key, one part or several, as a Procedure v3 item does:
 
 ~~~json
-{"kind": "claim", "subject": {"subject_kind": "security.assessment",
-  "key": {"release": "R1", "cve": "CVE-2021-44228"}},
- "predicate": "security.assessment.status", "object": {"kind": "literal", "value": "open"},
- "role": "observation", "rationale": "Triaged.", "source": {"kind": "self_source", "body": "open"}}
+{
+  "kind": "claim",
+  "subject": {
+    "subject_kind": "security.assessment",
+    "key": {"release": "R1", "cve": "CVE-2021-44228"}
+  },
+  "predicate": "security.assessment.status",
+  "object": {"kind": "literal", "value": "open"},
+  "role": "observation",
+  "rationale": "Triaged.",
+  "source": {"kind": "self_source", "body": "open"}
+}
 ~~~
 
 Each key part is read in its key ClaimType's canonical form. It resolves when
@@ -2008,10 +2020,21 @@ single unique slug, so `cruxible write` naming `dev.decision/<slug>` keeps
 working (it resolves the Subject holding the slug, or creates it):
 
 ~~~json
-{"kind": "change_set", "members": [
-  {"kind": "claim_type", "claim_type": "<dev.decision.slug: v8, literal string, one-valued>"},
-  {"kind": "subject_kind", "name": "dev.decision", "keys": ["dev.decision.slug"],
-   "uniqueness": "unique"}]}
+{
+  "kind": "change_set",
+  "members": [
+    {
+      "kind": "claim_type",
+      "claim_type": "<dev.decision.slug: v8, literal string, one-valued>"
+    },
+    {
+      "kind": "subject_kind",
+      "name": "dev.decision",
+      "keys": ["dev.decision.slug"],
+      "uniqueness": "unique"
+    }
+  ]
+}
 ~~~
 
 `cruxible authoring example subject-kind` prints a complete one. A change-set
@@ -2458,8 +2481,12 @@ which takes a `cadence`, `cron`, or `generation_accepted` schedule).
 For Capture landings, author by contract name:
 
 ```json
-{"kind":"trigger","name":"on-advisory","line_name":"triage",
- "schedule":{"kind":"capture_landing","capture_contract":"security.advisory"}}
+{
+  "kind": "trigger",
+  "name": "on-advisory",
+  "line_name": "triage",
+  "schedule": {"kind": "capture_landing", "capture_contract": "security.advisory"}
+}
 ```
 
 Add `"logical_sources":["osv.dev.query"]` to the landing schedule, or to the
