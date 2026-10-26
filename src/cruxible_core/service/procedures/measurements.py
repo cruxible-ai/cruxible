@@ -111,6 +111,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.procedures.execution import procedure_node_pin_sets
 from cruxible_core.procedures.readings import (
     ProcedureReadingV1,
     ReadingReplayKey,
@@ -120,7 +121,10 @@ from cruxible_core.procedures.readings import (
     procedure_reading_partition_id,
     reading_replay_key,
 )
-from cruxible_core.procedures.reference_binding import replay_procedure_references
+from cruxible_core.procedures.reference_binding import (
+    replay_procedure_references,
+    supplied_source_provider_bindings,
+)
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionV1,
@@ -1331,6 +1335,18 @@ def _replay_measured_run(
                 provider_artifact_digest=binding.provider_artifact_digest,
             )
         providers[binding.node_id] = identity
+    receipt_pins = set(receipt.validated_pins)
+    try:
+        providers.update(
+            supplied_source_provider_bindings(
+                node_pin_sets={item.node_id: item.pins for item in grain.node_pin_sets},
+                landed_capture_input_names=grain.landed_capture_input_names,
+                nodes=accepted.procedure.definition.nodes,
+                contains_pin=receipt_pins.__contains__,
+            )
+        )
+    except ExecutionError as exc:
+        raise _refuse("measurement_run_mismatch", str(exc)) from exc
     with instance.bind_accepted_projection(observation) as projection:
         for identity in dict.fromkeys(providers.values()):
             provider = indexed_exact_provider(projection.typed.connection, identity.qualified)
@@ -1363,6 +1379,8 @@ def _replay_measured_run(
             )
             if replayed.procedure.pins != receipt.validated_pins:
                 raise ExecutionError("Recorded admission pins do not reproduce the receipt")
+            if procedure_node_pin_sets(replayed) != grain.node_pin_sets:
+                raise ExecutionError("Recorded admission node pins do not reproduce the receipt")
             return replayed
     except (ExecutionError, RequestRefusedError) as exc:
         raise _refuse(

@@ -563,3 +563,120 @@ def test_source_combines_typed_field_read_and_existing_query(tmp_path):
         "accepted_claim",
         "accepted_state_v2",
     }
+
+
+def test_crashed_child_recovers_delegation_from_a_landed_slotted_source(tmp_path):
+    from datetime import timedelta
+
+    from cruxible_core.procedures.execution import ProcedureRunAdmissionV9, procedure_node_pin_sets
+    from cruxible_core.procedures.nested import authority_procedure
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.procedures.nested_runs import retained_delegation
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        ProcedureRunRecoveryRequired,
+        _DeterministicClock,
+        service_run_playbill_line,
+    )
+    from tests.test_procedures.test_procedure_source_runs import _Operator, _reader
+    from tests.test_procedures.test_slotted_measurement_replay import (
+        NOW,
+        _actor,
+        _Invoker,
+        _slotted_world,
+    )
+
+    class Crash(BaseException):
+        pass
+
+    class Invoker(_Invoker):
+        crash = False
+        child_run_id = None
+
+        def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
+            if self.crash and occurrence.node_id == "child-call":
+                self.child_run_id = context.run_id
+                raise Crash()
+            return super().invoke_provider(
+                occurrence=occurrence,
+                context=context,
+                invocation_id=invocation_id,
+                bound=bound,
+                deadline=deadline,
+            )
+
+    instance, accepted, line, _, _, _ = _slotted_world(
+        tmp_path,
+        landed=True,
+        invoke_child=True,
+    )
+    invoker = Invoker()
+    operator = _Operator(invoker)
+    producer = service_run_playbill_procedure(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureRunRequest(
+            input={"value": 1},
+            evaluation_time=NOW,
+            bindings={slot: ref.target.name for slot, ref in line.bindings.items()},
+        ),
+        actor_context=_actor(instance),
+        provider_runtime_operator=operator,
+        workspace_file_reader=_reader(instance, tmp_path / "workspace"),
+    )
+    assert producer.status == "succeeded", producer.terminal
+    event = next(o.capture_event for o in producer.outcomes if o.event_kind == "produced_capture")
+    invoker.crash = True
+    with pytest.raises(Crash):
+        service_run_playbill_line(
+            instance,
+            path_identity_digest=line.identity.name,
+            request=LineRunRequest(line=line.identity.name, event=event),
+            actor_context=_actor(instance),
+            caller_rung=2,
+            daemon_clock=_DeterministicClock(NOW + timedelta(seconds=1)),
+            provider_runtime_operator=operator,
+        )
+    assert invoker.spawn_calls == 1, "The Line consumes the Capture without refetching"
+    assert invoker.child_run_id is not None
+    child_records = payloads(instance, invoker.child_run_id)
+    admission = ProcedureRunAdmissionV9.model_validate(
+        next(value["admission"] for kind, value in child_records if kind == "admission_bound")
+    )
+    assert admission.parent_binding is not None
+    parent_records = payloads(instance, admission.parent_binding.parent_run_id)
+    parent = ProcedureRunAdmissionV9.model_validate(
+        next(value["admission"] for kind, value in parent_records if kind == "admission_bound")
+    )
+    assert parent.landed_capture_inputs[0].input_name == "captured"
+    assert [binding.node_id for binding in parent.resolved_provider_bindings] == ["result"]
+    assert "attempt_finalized" not in {kind for kind, _ in child_records}
+    assert "attempt_finalized" not in {kind for kind, _ in parent_records}
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    recovered = retained_delegation(reopened, admission)
+    assert authority_procedure(admission, recovered).target == accepted.procedure.identity
+    assert recovered.context.accepted.procedure.pins == parent.full_pins
+    assert procedure_node_pin_sets(recovered.context.accepted) == parent.node_pin_sets
+    source = recovered.context.accepted.procedure.definition.nodes[0]
+    assert source.node_id == "read" and source.as_ == "captured"
+    assert source.provider.target == line.bindings["fetch"].target
+    # Explicit invalid retained inputs exercise the recovery boundary without
+    # changing the authentic journal or substituting any production service.
+    for broken in (
+        admission.model_copy(
+            update={
+                "full_pins": tuple(
+                    pin for pin in admission.full_pins if pin.target.kind != "Provider"
+                ),
+            }
+        ),
+        admission.model_copy(update={"node_pin_sets": ()}),
+        admission.model_copy(
+            update={
+                "actor_context": admission.actor_context.model_copy(update={"actor_id": "another"}),
+            }
+        ),
+    ):
+        with pytest.raises(ProcedureRunRecoveryRequired) as refused:
+            retained_delegation(reopened, broken)
+        assert refused.value.code == "cruxible.procedure.run.recovery_required"

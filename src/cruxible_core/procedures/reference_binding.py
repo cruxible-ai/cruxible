@@ -6,7 +6,7 @@ identity remain separate from the exact pins recorded by run admission.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
@@ -21,7 +21,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     procedure_owned_contract_digest,
 )
-from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_pin_bindings
+from cruxible_client.contracts.procedures.models import (
+    ProcedureDefinition,
+    ProcedureNode,
+    SourceNode,
+    iter_pin_bindings,
+)
 from cruxible_client.contracts.provider_interfaces import interface_definition_digest
 from cruxible_client.contracts.providers import ProviderV2, provider_interface_pin
 
@@ -95,6 +100,38 @@ class BoundAcceptedProcedure(AcceptedProcedure):
 
 def authored_procedure(accepted: AcceptedProcedure) -> ProcedureArtifact:
     return accepted.authored if isinstance(accepted, BoundAcceptedProcedure) else accepted.procedure
+
+
+def supplied_source_provider_bindings(
+    *,
+    node_pin_sets: Mapping[str, tuple[ArtifactPin, ...]],
+    landed_capture_input_names: Collection[str],
+    nodes: Iterable[ProcedureNode],
+    contains_pin: Callable[[ArtifactPin], bool],
+) -> dict[str, ArtifactIdentity]:
+    """Replay supplied Sources from their admission pins, without fit selection.
+
+    A landed Capture supplies its Source without invoking that Source's
+    Provider. The graph choice remains authenticated by the per-node pins,
+    although external-occurrence bindings deliberately omit it. Callers check
+    membership in the run's full admission or receipt pins with an indexed set.
+    """
+    providers: dict[str, ArtifactIdentity] = {}
+    for node in nodes:
+        if not isinstance(node, SourceNode) or node.as_ not in landed_capture_input_names:
+            continue
+        source_pins = tuple(
+            pin
+            for pin in node_pin_sets.get(node.node_id, ())
+            if pin.role == "provider" and pin.target.kind == "Provider"
+        )
+        if len(source_pins) != 1 or not contains_pin(source_pins[0]):
+            raise ExecutionError(
+                f"The run's supplied Source {node.node_id!r} "
+                "has no matching admission Provider pin."
+            )
+        providers[node.node_id] = source_pins[0].target
+    return providers
 
 
 def validate_slot_names(bindings: Iterable[str], declared: Iterable[str]) -> None:
