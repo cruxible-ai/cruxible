@@ -184,7 +184,11 @@ def test_line_bindings_are_law_checked_and_indexed():
     assert parse_line_spec(render_line_spec(line), path=kwargs["path"]) == line
     assert any(pin.target == provider.provider.identity for pin in dependency_pins(line))
     bad = line.model_copy(update={"bindings": {"typo": next(iter(line.bindings.values()))}})
-    assert evaluate_line_spec_law(bad, **kwargs).verdict == "refused"
+    bad_result = evaluate_line_spec_law(bad, **kwargs)
+    assert bad_result.verdict == "refused"
+    assert bad_result.diagnostics[0].code == "cruxible.procedure.slot_undeclared"
+    assert "compute" in bad_result.diagnostics[0].message
+    assert "typo" in bad_result.diagnostics[0].message
     assert evaluate_line_spec_law(line, **{**kwargs, "providers": {}}).verdict == "refused"
 
 
@@ -249,6 +253,16 @@ def test_authored_slots_admit_on_36_render_and_run_with_explicit_override(tmp_pa
                 verified_binding=bound.binding,
             )
 
+    with pytest.raises(RequestRefusedError) as undeclared:
+        service_run_playbill_procedure(
+            instance,
+            name=spec.procedure,
+            request=ProcedureRunRequest(input={"value": 1}, bindings={"typo": "not-installed"}),
+            actor_context=_actor(),
+        )
+    assert undeclared.value.error_code == "cruxible.procedure.slot_undeclared"
+    assert "declared slots: ['compute']" in str(undeclared.value)
+    assert "typo" in str(undeclared.value)
     with pytest.raises(RequestRefusedError) as missing:
         service_run_playbill_procedure(
             instance,

@@ -65,6 +65,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
@@ -1038,7 +1039,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
     name: str
     procedure_name: str
-    bindings: dict[str, str] = Field(default_factory=dict)
+    bindings: ProcedureBindings = Field(default_factory=dict)
     acquisition_policy_name: str | None = None
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None

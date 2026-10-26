@@ -537,7 +537,11 @@ def _verify_provider_pins(
         slot.slot_name: slot for slot in getattr(definition, "_authored", definition).pin_slots
     }
     if set(bindings or {}) - set(declared):
-        return ("cruxible.procedure.slot_binding_missing", "Bind only declared Provider slots.")
+        return (
+            "cruxible.procedure.slot_undeclared",
+            f"Unknown Provider slots: {sorted(set(bindings or {}) - set(declared))}; "
+            f"declared slots: {sorted(declared)}.",
+        )
     # The occurrence law reads only graph, interface and provider metadata.
     return _evaluate_provider_pins(
         definition,

@@ -97,6 +97,28 @@ def authored_procedure(accepted: AcceptedProcedure) -> ProcedureArtifact:
     return accepted.authored if isinstance(accepted, BoundAcceptedProcedure) else accepted.procedure
 
 
+def validate_slot_names(bindings: Iterable[str], declared: Iterable[str]) -> None:
+    """Reject unknown keys before resolving any Provider choices."""
+    declared = set(declared)
+    unknown = set(bindings) - declared
+    if unknown:
+        from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+        from cruxible_core.errors import RequestRefusedError
+
+        raise RequestRefusedError(
+            "cruxible.procedure.slot_undeclared",
+            f"Unknown Provider slots: {sorted(unknown)}; declared slots: {sorted(declared)}.",
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction.model_validate(
+                    {
+                        "target": "bindings",
+                        "required_change": f"Bind only declared slots: {sorted(declared)}.",
+                    }
+                )
+            ),
+        )
+
+
 def bind_procedure_references(
     accepted: AcceptedProcedure,
     *,
@@ -136,22 +158,7 @@ def bind_procedure_references(
 
     selected_slots: dict[str, tuple[Any, str]] = {}
     slot_declarations = {s.slot_name: s for s in authored.definition.pin_slots}
-    if set(bindings or {}) - set(slot_declarations):
-        from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
-        from cruxible_core.errors import RequestRefusedError
-
-        raise RequestRefusedError(
-            "cruxible.procedure.slot_binding_missing",
-            "Bind only declared Provider slots.",
-            repair=HandEditRepair(
-                hand_edit=HandEditInstruction.model_validate(
-                    {
-                        "target": "bindings",
-                        "required_change": "Remove bindings for undeclared slots.",
-                    }
-                )
-            ),
-        )
+    validate_slot_names(bindings or {}, slot_declarations)
     data = authored.definition.model_dump(mode="json", by_alias=True)
     data.pop("source", None)
 
@@ -199,10 +206,14 @@ def bind_procedure_references(
                     )
                     from cruxible_core.errors import RequestRefusedError
 
-                    code = "slot_binding_missing" if not candidates else "slot_binding_ambiguous"
+                    code = (
+                        "cruxible.procedure.slot_binding_missing"
+                        if not candidates
+                        else "cruxible.procedure.slot_binding_ambiguous"
+                    )
                     names = [provider.identity.qualified for provider, _ in candidates]
                     raise RequestRefusedError(
-                        "cruxible.procedure." + code,
+                        code,
                         f"Provider slot {slot!r} needs one fitting build; candidates: {names}",
                         repair=HandEditRepair(
                             hand_edit=HandEditInstruction(

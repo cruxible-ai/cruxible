@@ -75,6 +75,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     procedure_runnability,
 )
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -573,7 +574,7 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
-    bindings: dict[str, str] = Field(default_factory=dict)
+    bindings: ProcedureBindings = Field(default_factory=dict)
     input: object
 
     @field_validator("evaluation_time")
@@ -801,8 +802,12 @@ def _accepted_procedure(
                     result.append((provider, digest))
             return tuple(result)
 
+        from cruxible_core.procedures.reference_binding import validate_slot_names
         from cruxible_core.providers.builds import indexed_exact_provider, indexed_newest_provider
 
+        validate_slot_names(
+            bindings or {}, (slot.slot_name for slot in procedure.definition.pin_slots)
+        )
         selected = {}
         for slot, name in (bindings or {}).items():
             bare = name.removeprefix("Provider:")

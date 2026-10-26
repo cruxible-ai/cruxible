@@ -74,6 +74,7 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpecError,
     lower_procedure_spec,
 )
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import ExhaustTapNode, ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
@@ -426,7 +427,7 @@ class LineInput(_StrictInputModel):
     kind: Literal["line"]
     name: str
     procedure_name: str
-    bindings: dict[str, str] = Field(default_factory=dict)
+    bindings: ProcedureBindings = Field(default_factory=dict)
     acquisition_policy_name: str | None = Field(
         default=None,
         description=("SourceAcquisitionPolicy name; omitted uses the instance default."),

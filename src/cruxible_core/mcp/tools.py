@@ -57,6 +57,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -135,7 +136,7 @@ class McpSourceBinding(BaseModel):
     )
 
 
-class McpProcedureBindings(RootModel[dict[str, str]]):
+class McpProcedureBindings(RootModel[ProcedureBindings]):
     """Provider choices keyed by the accepted Procedure's declared slot names."""
 
 

@@ -229,7 +229,14 @@ def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values()
 
     schema = _schemas()["cruxible_procedure_run"].inputSchema
     assert schema["properties"]["bindings"]["anyOf"][0] == {"$ref": "#/$defs/McpProcedureBindings"}
-    assert schema["$defs"]["McpProcedureBindings"]["additionalProperties"] == {"type": "string"}
+    binding_schema = schema["$defs"]["McpProcedureBindings"]
+    assert binding_schema["additionalProperties"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 393,
+    }
+    assert binding_schema["propertyNames"] == {"minLength": 1, "maxLength": 256}
+    assert binding_schema["maxProperties"] == 256
     assert McpProcedureBindings.model_validate({"fetch": "web/build"}).root == {
         "fetch": "web/build"
     }
