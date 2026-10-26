@@ -7929,7 +7929,14 @@
               },
               "bindings": {
                 "additionalProperties": {
+                  "maxLength": 393,
+                  "minLength": 1,
                   "type": "string"
+                },
+                "maxProperties": 256,
+                "propertyNames": {
+                  "maxLength": 256,
+                  "minLength": 1
                 },
                 "title": "Bindings",
                 "type": "object"
@@ -35821,7 +35828,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -36516,7 +36526,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -62912,7 +62925,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -65626,7 +65642,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -67783,7 +67802,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -70272,7 +70294,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -72866,7 +72891,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -75707,7 +75735,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
