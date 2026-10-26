@@ -207,6 +207,7 @@ def _field(
         record["literal_schema"] = schema or {"type": "string"}
     if roles:
         record["permitted_roles"] = list(roles)
+        record["default_role"] = roles[0]
     if key:
         record["literal_schema"] = {"type": "string", "minLength": 1}
         record["canonical_form"] = _KEY_FORM
@@ -379,6 +380,7 @@ PAGES: dict[str, WorldBuilder] = {
     "documents-and-notes.md": car_parts,
     "evolving-your-vocabulary.md": split_category,
     "for-ai-agents.md": car_parts,
+    "lines-and-automation.md": car_parts,
 }
 
 #: (doc, block line) -> why that block is not run.
@@ -422,7 +424,12 @@ def test_every_python_block_in_docs_is_run_or_listed() -> None:
 
 def _comparable(request: WriteRequest) -> dict[str, Any]:
     dumped = request.model_dump(mode="json")
-    return {key: dumped.get(key) for key in ("because", "subject", "changes", "docs")}
+    return {
+        "because": dumped["because"],
+        "subject": dumped.get("subject"),
+        "changes": dumped.get("changes") or [],
+        "docs": dumped.get("docs") or [],
+    }
 
 
 @pytest.fixture
