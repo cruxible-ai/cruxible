@@ -1062,3 +1062,29 @@ def test_slots_cannot_stand_in_non_provider_positions():
                 ],
             }
         )
+
+
+def test_slot_interface_readback_preserves_every_part_of_its_name():
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+
+    authored = spec(
+        slots={"compute": "vendor/version/v1"},
+        output={"value": "integer"},
+        steps=[
+            {"call": "result", "interface": "vendor/version/v1", "provider": "compute", "input": {}}
+        ],
+    )
+    payload = lower_authoring_input(lower_procedure_spec(authored))
+    definition = ProcedureDefinition.model_validate(payload.definition)
+    artifact = ProcedureArtifact(
+        identity={"kind": "Procedure", "name": definition.name},
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        owned_contracts=payload.owned_contracts,
+        activation_policy="snapshot",
+    )
+    restored = decompile_procedure(artifact)
+    assert restored.slots == {"compute": "vendor/version@1"}
+    assert (
+        ProcedureDefinition.model_validate(lower_procedure_spec(restored).definition) == definition
+    )
