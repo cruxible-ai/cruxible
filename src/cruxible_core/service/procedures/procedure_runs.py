@@ -301,6 +301,7 @@ from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.permissions import PermissionMode, get_capability_ceiling
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
@@ -441,9 +442,16 @@ GOVERNED_RUN_CALLER_RUNG = 1
 
 
 def run_permission_rung(target_rung: int) -> int:
-    """The caller rung a run needs: governed write if it can propose or settle."""
+    """The caller rung a run needs: governed write if it can propose or settle.
 
-    return GOVERNED_RUN_CALLER_RUNG if target_rung > 1 else 0
+    Every run also retains its journal and Captures. A daemon whose capability
+    ceiling is read-only persists nothing, so there every run needs governed
+    write, which that ceiling refuses (an observe-only run included).
+    """
+
+    if target_rung > 1 or get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
+        return GOVERNED_RUN_CALLER_RUNG
+    return 0
 
 
 def require_run_permission(tool_name: str, *, target_rung: int, caller_rung: int) -> None:
@@ -451,7 +459,8 @@ def require_run_permission(tool_name: str, *, target_rung: int, caller_rung: int
 
     The tier follows the target, not the tool: an observe-only Line or
     Procedure runs at read-only, and one whose terminals propose or settle
-    needs governed write, whichever door triggers it.
+    needs governed write, whichever door triggers it. Under a read-only
+    capability ceiling every run refuses.
     """
 
     required = run_permission_rung(target_rung)

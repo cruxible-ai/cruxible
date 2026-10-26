@@ -130,7 +130,9 @@ credentials may be narrower but cannot exceed the ceiling.
 
 A read-only witness can run with a read_only ceiling and replicated accepted
 ledger/CAS material. It can independently verify and serve reads without holding
-owner/reviewer private keys.
+owner/reviewer private keys. Under that ceiling every request that would change
+instance state refuses, including Line and Procedure runs and Line dispatch,
+which retain a run journal and Captures even for an observe-only Line.
 
 ## Key custody
 

@@ -165,6 +165,7 @@ from cruxible_core.runtime.permissions import (
     PermissionMode,
     check_permission,
     current_request_instance_scope,
+    get_capability_ceiling,
     get_current_mode,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -2298,9 +2299,15 @@ def _check_run_target_permission(
     can propose or settle writes governed state, so it needs governed write.
     A target with no live accepted artifact has nothing to gate: the service
     refuses it after its own request checks, and re-checks the caller's tier
-    for any target it finds.
+    for any target it finds. A read-only capability ceiling refuses every run.
     """
 
+    if get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
+        # Every run retains its journal and Captures; a read-only daemon
+        # persists nothing, so it refuses before reading any target.
+        check_permission(
+            tool_name, instance_id=instance_id, required_override=PermissionMode.GOVERNED_WRITE
+        )
     try:
         rung = target_rung()
     except (ProcedureNotFound, ProcedureRetired, LineRunNotAccepted):
