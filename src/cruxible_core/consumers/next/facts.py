@@ -2070,7 +2070,15 @@ def catch_up(instance: Any, *, now: datetime) -> None:
         original = _read_cursors(connection)
     if original is not None and original.heads == heads.key():
         return
-    with reading_at(heads.positions), recording_body_identities():
+    # One catch-up step reads the accepted head hundreds of times (per derived
+    # Claim, per resolved slot): inside the scope each read reuses one bound
+    # projection instead of binding and verifying the piece again.
+    scope = getattr(instance, "projection_scope", None)
+    with (
+        nullcontext() if scope is None else scope(),
+        reading_at(heads.positions),
+        recording_body_identities(),
+    ):
         _catch_up_to(instance, heads, original, now=now, swept=swept)
 
 
