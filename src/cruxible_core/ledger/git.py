@@ -2665,6 +2665,19 @@ class GitLedger:
         entries = self._directory_entries(oid, directory)
         return () if entries is None else tuple(sorted(entries, key=_tree_order_key(entries)))
 
+    def directory_tree_oid(self, oid: str, directory: str) -> str | None:
+        """The tree object ID of one directory ("" is the root), or None if it is absent."""
+
+        if not directory:
+            self._validate_oid(oid)
+            return self._commit_root(_repository_key(self.path), oid)
+        parent, _separator, name = directory.rpartition("/")
+        entries = self._directory_entries(oid, parent)
+        entry = None if entries is None else entries.get(name)
+        if entry is None or entry[0] != b"40000":
+            return None
+        return entry[1]
+
     def _directory_entries(
         self, oid: str, directory: str
     ) -> Mapping[str, tuple[bytes, str]] | None:

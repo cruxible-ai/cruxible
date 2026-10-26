@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import functools
 import re
+import threading
+from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +20,7 @@ from cruxible_client.contracts.canonical import (
     normalize_manifest_paths,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
 from cruxible_core.ledger.git import GitLedger, GitTreeChange, GitTreeEntry
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
@@ -189,17 +193,29 @@ def _refuse_case_fold_siblings(
     """Refuse an added name whose case fold another child of its directory shares.
 
     Only names the parent did not hold are checked: the parent's siblings passed
-    when its projection was built. Each directory that gains a name is listed and
-    folded once per delta, however many names it gains. Below a case-rigid
-    top-level directory (``_case_rigid_tops``) no two names a registered path may
-    hold share a fold, so those levels need no listing at all.
+    when its projection was built. Below a case-rigid top-level directory
+    (``_case_rigid_tops``) no two names a registered path may hold share a fold,
+    so those levels need no look at all. Every other directory that gains a name
+    is checked against its folded child names (``_head_folds``): carried from the
+    parent directory's by this delta's own additions and removals, or listed once.
     """
     added: dict[str, set[str]] = {}
+    removed: dict[str, set[str]] = {}
     looked: set[str] = set()
     for change in changes:
+        parts = change.path.split("/")
+        if change.status == "D" and change.oid is None:
+            # The deepest name the head no longer holds leaves its directory.
+            if parts[0] in case_rigid_tops:
+                continue
+            for depth in range(len(parts)):
+                prefix = "/".join(parts[: depth + 1])
+                if not repository.tree_has_path(head_oid, prefix):
+                    removed.setdefault("/".join(parts[:depth]), set()).add(parts[depth])
+                    break
+            continue
         if change.status != "A":
             continue
-        parts = change.path.split("/")
         rigid = parts[0] in case_rigid_tops
         for depth, name in enumerate(parts):
             if depth and rigid:
@@ -212,14 +228,103 @@ def _refuse_case_fold_siblings(
                 continue  # this name already passed as the parent's sibling
             added.setdefault("/".join(parts[:depth]), set()).add(name)
     for directory, names in added.items():
-        folds: dict[str, set[str]] = {}
-        for sibling in repository.tree_child_names(head_oid, directory):
-            folds.setdefault(sibling.casefold(), set()).add(sibling)
+        folds = _head_folds(
+            repository,
+            directory,
+            base_oid=base_oid,
+            head_oid=head_oid,
+            added=names,
+            removed=removed.get(directory, set()),
+        )
         for name in names:
             if any(sibling != name for sibling in folds.get(name.casefold(), ())):
                 raise ProjectionFormatError(
                     "ledger tree paths are not canonical and collision-free"
                 )
+
+
+# A directory's child names by case fold, per directory tree object ID (its
+# names are a function of that ID alone, in any repository): a successor's is
+# its parent's carried by the delta, so a directory is listed only when cold.
+# Bounded by the names held (a generation touches many small shard directories
+# and a few wide ones) as well as by directories.
+_FOLDS_CAPACITY = 4096
+_FOLDS_NAME_CAPACITY = 400_000
+_FOLDS: OrderedDict[str, PersistentMap[tuple[str, ...]]] = OrderedDict()
+_FOLDS_NAMES = 0
+_FOLDS_LOCK = threading.Lock()
+
+
+def _remembered_folds(tree_oid: str | None) -> PersistentMap[tuple[str, ...]] | None:
+    if tree_oid is None:
+        return None
+    with _FOLDS_LOCK:
+        folds = _FOLDS.get(tree_oid)
+        if folds is not None:
+            _FOLDS.move_to_end(tree_oid)
+        return folds
+
+
+def _remember_folds(tree_oid: str, folds: PersistentMap[tuple[str, ...]]) -> None:
+    global _FOLDS_NAMES
+    with _FOLDS_LOCK:
+        previous = _FOLDS.pop(tree_oid, None)
+        if previous is not None:
+            _FOLDS_NAMES -= len(previous)
+        _FOLDS[tree_oid] = folds
+        _FOLDS_NAMES += len(folds)
+        while len(_FOLDS) > 1 and (
+            len(_FOLDS) > _FOLDS_CAPACITY or _FOLDS_NAMES > _FOLDS_NAME_CAPACITY
+        ):
+            _old, evicted = _FOLDS.popitem(last=False)
+            _FOLDS_NAMES -= len(evicted)
+
+
+def _head_folds(
+    repository: GitLedger,
+    directory: str,
+    *,
+    base_oid: str,
+    head_oid: str,
+    added: set[str],
+    removed: set[str],
+) -> Mapping[str, tuple[str, ...]]:
+    """The head directory's child names by case fold.
+
+    Carried from the parent directory's remembered folds by exactly the names
+    this delta adds and removes there (Git's diff names every changed entry), or,
+    with none remembered, folded from one listing of the head directory.
+    """
+    directory_oid = getattr(repository, "directory_tree_oid", None)
+    head_tree = None if directory_oid is None else directory_oid(head_oid, directory)
+    remembered = _remembered_folds(head_tree)
+    if remembered is not None:
+        return remembered
+    base_tree = None if directory_oid is None else directory_oid(base_oid, directory)
+    base: PersistentMap[tuple[str, ...]] | None
+    if directory_oid is not None and base_tree is None:
+        base = PersistentMap()  # a new directory: every child name is an added one
+    else:
+        base = _remembered_folds(base_tree)
+    if base is None or head_tree is None:
+        listed: dict[str, list[str]] = {}
+        for sibling in repository.tree_child_names(head_oid, directory):
+            listed.setdefault(sibling.casefold(), []).append(sibling)
+        folds = PersistentMap((fold, tuple(sorted(group))) for fold, group in listed.items())
+    else:
+        folds = base
+        for name in removed:
+            fold = name.casefold()
+            kept = tuple(item for item in folds.get(fold, ()) if item != name)
+            folds = folds.set(fold, kept) if kept else folds.delete(fold)
+        for name in added:
+            fold = name.casefold()
+            group = folds.get(fold, ())
+            if name not in group:
+                folds = folds.set(fold, tuple(sorted((*group, name))))
+    if head_tree is not None:
+        _remember_folds(head_tree, folds)
+    return folds
 
 
 @functools.lru_cache(maxsize=32)

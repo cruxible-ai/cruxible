@@ -303,3 +303,86 @@ def test_open_kinds_still_refuse_case_fold_siblings_exactly() -> None:
                 call()
         else:
             call()
+
+
+def _git_ledger(path):
+    from cruxible_core.ledger.git import GitLedger
+
+    return GitLedger.initialize(
+        path,
+        object_format="sha1",
+        signing_key_path=path.parent / "unused-key",
+        allowed_signers_path=path.parent / "unused-signers",
+    )
+
+
+def _counting_listings(monkeypatch):
+    from cruxible_core.ledger.git import GitLedger
+
+    listed = [0]
+    child_names = GitLedger.tree_child_names
+
+    def counted(self, oid, directory):
+        names = child_names(self, oid, directory)
+        listed[0] += len(names)
+        return names
+
+    monkeypatch.setattr(GitLedger, "tree_child_names", counted)
+    return listed
+
+
+def _raw_tree(ledger, files: dict[str, bytes]) -> str:
+    """A tree Git writes without the ledger's own collision refusal."""
+
+    blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"card").decode().strip()
+    children: dict[str, dict[str, bytes]] = {}
+    rows = []
+    for path in files:
+        head, _sep, rest = path.partition("/")
+        if rest:
+            children.setdefault(head, {})[rest] = b"card"
+        else:
+            rows.append(f"100644 blob {blob}\t{head}")
+    for name, nested in children.items():
+        rows.append(f"040000 tree {_raw_tree(ledger, nested)}\t{name}")
+    listing = "".join(f"{row}\n" for row in rows).encode()
+    return ledger._git(["mktree"], input_bytes=listing).decode().strip()
+
+
+def _ledger_delta(ledger, base: dict[str, bytes], head: dict[str, bytes]):
+    base_oid, head_oid = _raw_tree(ledger, base), _raw_tree(ledger, head)
+    read_registered_delta(
+        ledger,
+        ledger.changed_entries(base_oid, head_oid),
+        base_oid=base_oid,
+        head_oid=head_oid,
+        parent_inventory=(len(base), sum(len(body) for body in base.values())),
+        limits=TreeReadLimits(),
+        artifact_kinds=KINDS,
+        include_paths=frozenset(),
+    )
+
+
+def test_an_open_directory_carries_its_folds_from_the_parent_generation(
+    tmp_path, monkeypatch
+) -> None:
+    """Card paths are checked exactly; a warm successor never re-lists its directory."""
+
+    listed = _counting_listings(monkeypatch)
+    warm = []
+    for width in (100, 2_000):
+        ledger = _git_ledger(tmp_path / f"ledger-{width}.git")
+        tree = {f"cards/flat/s{index:05d}.md": b"card" for index in range(width)}
+        grown = {**tree, "cards/flat/first.md": b"card"}
+        _ledger_delta(ledger, tree, grown)  # cold: one listing
+        listed[0] = 0
+        successor = {**grown, **{f"cards/flat/n{index:03d}.md": b"card" for index in range(20)}}
+        del successor["cards/flat/s00003.md"]
+        _ledger_delta(ledger, grown, successor)
+        warm.append(listed[0])
+        # The carried folds are exact: a name the delta removed may come back in
+        # another case, and one still held refuses its other spelling.
+        _ledger_delta(ledger, successor, {**successor, "cards/flat/S00003.md": b"card"})
+        with pytest.raises(ProjectionFormatError, match="collision-free"):
+            _ledger_delta(ledger, successor, {**successor, "cards/flat/N001.md": b"card"})
+    assert warm == [0, 0]
