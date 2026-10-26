@@ -37,6 +37,7 @@ from typing import Literal, cast, get_args
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidence
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.claim_attestation_store import (
     ClaimAttestationEventPayload,
@@ -92,6 +93,7 @@ from cruxible_client.contracts.query.results import (
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.derived.memo import memo_discard, memo_get, memo_put
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -118,6 +120,7 @@ from cruxible_core.procedures.readings import (
     procedure_reading_partition_id,
     reading_replay_key,
 )
+from cruxible_core.procedures.reference_binding import replay_procedure_references
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionV1,
@@ -132,6 +135,7 @@ from cruxible_core.procedures.resolution import (
     resolution_book_at_head,
     resolution_contract_partition_id,
 )
+from cruxible_core.providers.builds import indexed_exact_provider
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import (
     PlaybillQueryReceiptJournal,
@@ -1293,6 +1297,81 @@ def _selected_activations(
     return tuple(declared[name] for name in names)
 
 
+def _replay_measured_run(
+    instance: PlaybillInstance,
+    *,
+    accepted: AcceptedProcedure,
+    grain: ProcedureRunGrainRecordV1,
+    observation: AcceptedProjectionCoordinate,
+) -> AcceptedProcedure:
+    """Credit the authenticated plan, with no new Provider selection.
+
+    Direct V3 receipts retain full pins but not per-node choices; those come
+    from the same authenticated admission the grain loader already reads.
+    Replay resolves exact material at admission. A retired Provider cannot
+    receive new credit at the observation coordinate.
+    """
+    from cruxible_core.service.procedures.procedure_runs import _resolve_coordinate
+
+    receipt = grain.state.receipt
+    assert receipt is not None
+    provider_pins = {
+        pin.artifact_digest: pin.target
+        for pin in receipt.validated_pins
+        if pin.target.kind == "Provider"
+    }
+    providers: dict[str, ArtifactIdentity] = {}
+    for binding in grain.provider_bindings:
+        identity = provider_pins.get(binding.provider_artifact_digest)
+        if identity is None:
+            raise _refuse(
+                "measurement_run_mismatch",
+                "The run's Provider binding has no matching receipt pin.",
+                node_id=binding.node_id,
+                provider_artifact_digest=binding.provider_artifact_digest,
+            )
+        providers[binding.node_id] = identity
+    with instance.bind_accepted_projection(observation) as projection:
+        for identity in dict.fromkeys(providers.values()):
+            provider = indexed_exact_provider(projection.typed.connection, identity.qualified)
+            if provider is None or not provider.live:
+                raise _refuse(
+                    "measurement_run_mismatch",
+                    "The run's recorded Provider is no longer live at the observation coordinate.",
+                    provider=identity.qualified,
+                )
+    coordinate = _resolve_coordinate(instance, grain.state.bound_coordinate)
+    try:
+        with instance.bind_accepted_projection(coordinate) as projection:
+
+            def exact(identity: ArtifactIdentity, digest: str) -> tuple[object, str] | None:
+                row = projection.typed.envelope(identity.qualified)
+                if row is None or row.artifact_digest != digest:
+                    return None
+                source = projection.typed.source(identity.qualified)
+                return None if source is None else (source, row.artifact_digest)
+
+            replayed = replay_procedure_references(
+                accepted,
+                pins=receipt.validated_pins,
+                lookup_exact=exact,
+                providers=providers,
+                implementations={
+                    binding.node_id: binding.implementation_digest
+                    for binding in grain.provider_bindings
+                },
+            )
+            if replayed.procedure.pins != receipt.validated_pins:
+                raise ExecutionError("Recorded admission pins do not reproduce the receipt")
+            return replayed
+    except (ExecutionError, RequestRefusedError) as exc:
+        raise _refuse(
+            "measurement_run_mismatch",
+            "The run's recorded bindings do not reproduce its admission plan.",
+            detail=str(exc),
+        ) from exc
+
+
 def service_measure_playbill_procedure(
     instance: PlaybillInstance,
     *,
@@ -1340,28 +1419,14 @@ def service_measure_playbill_procedure(
             )
 
         from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-        from cruxible_core.service.procedures.procedure_runs import (
-            _accepted_procedure as bound_procedure,
-        )
-        from cruxible_core.service.procedures.procedure_runs import (
-            _resolve_coordinate,
-        )
 
         if (
             isinstance(accepted.procedure, NamedProcedureArtifact)
             and grain.state.receipt is not None
         ):
-            # Names resolve at this run's immutable admission coordinate, never
-            # at the measurement/head coordinate. One plan per request is shared
-            # by every credited grain; the receipt authenticates its exact pins.
-            reading_procedure = bound_procedure(
-                instance,
-                name=name,
-                coordinate=_resolve_coordinate(instance, grain.state.bound_coordinate),
-                bind_references=True,
+            reading_procedure = _replay_measured_run(
+                instance, accepted=accepted, grain=grain, observation=observation
             )
-            if reading_procedure.procedure.pins != grain.state.receipt.validated_pins:
-                raise FormatError("run receipt pins do not reproduce its admission coordinate")
 
     journal, stream = _journal(instance)
     reading_partition = procedure_reading_partition_id(accepted)

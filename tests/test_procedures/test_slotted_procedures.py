@@ -108,7 +108,10 @@ def test_slot_binding_selects_one_build_and_preserves_authored_bytes():
     assert not bound.procedure.definition.open_slots
     assert render_procedure(bound.authored) == original
     replayed = replay_procedure_references(
-        accepted, pins=bound.procedure.pins, lookup_exact=lambda identity, digest: sources[identity]
+        accepted,
+        pins=bound.procedure.pins,
+        lookup_exact=lambda identity, digest: sources[identity],
+        providers={"result": provider.provider.identity},
     )
     assert replayed.procedure == bound.procedure
 
@@ -146,6 +149,53 @@ def test_explicit_slot_binding_overrides_ambiguous_fit():
         bindings={"compute": provider.provider.identity},
     )
     assert bound.procedure.definition.nodes[0].provider.target == provider.provider.identity
+
+
+@pytest.mark.parametrize("unrelated_count", [10, 100])
+def test_slot_replay_reads_only_recorded_dependencies(unrelated_count):
+    from cruxible_client.contracts.errors import ExecutionError
+
+    _, accepted, provider, interface = slotted()
+    sources = {
+        provider.provider.identity: (provider.provider, provider.artifact_digest),
+        interface.registration.identity: (interface.registration, interface.artifact_digest),
+    }
+    sources.update(
+        {
+            ArtifactIdentity(kind="Provider", name=f"unrelated-{i}"): (
+                provider.provider,
+                provider.artifact_digest,
+            )
+            for i in range(unrelated_count)
+        }
+    )
+    bound = bind_procedure_references(
+        accepted,
+        lookup=sources.get,
+        slots=lambda _: pytest.fail("Explicit selection must not search by fit"),
+        bindings={"compute": provider.provider.identity},
+    )
+    reads = []
+
+    def exact(identity, digest):
+        reads.append((identity, digest))
+        return sources[identity]
+
+    replayed = replay_procedure_references(
+        accepted,
+        pins=bound.procedure.pins,
+        lookup_exact=exact,
+        providers={"result": provider.provider.identity},
+    )
+    assert replayed.procedure == bound.procedure
+    assert len(reads) == 2
+    assert {identity for identity, _ in reads} == {
+        provider.provider.identity,
+        interface.registration.identity,
+    }
+    # Even one fitting build among the pins cannot supply a missing choice.
+    with pytest.raises(ExecutionError, match="lacks a Provider occurrence binding"):
+        replay_procedure_references(accepted, pins=bound.procedure.pins, lookup_exact=exact)
 
 
 def test_line_bindings_are_law_checked_and_indexed():
