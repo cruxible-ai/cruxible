@@ -11,6 +11,7 @@ not type.
 
 from __future__ import annotations
 
+import platform
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +31,7 @@ from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_REPAIR,
     PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+    RUNTIME_DIRECTORY_EXAMPLES,
     ProviderLocalRuntimeRefused,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -56,8 +58,15 @@ def _assert_cause_and_repair(text: str) -> None:
     assert "Unix socket limit" in text
     assert "is not set, so no private per-user runtime directory is configured" in text
     assert PROVIDER_RUNTIME_DIRECTORY_REPAIR in text
+    # The byte budget and a concrete short directory for this platform.
+    system = platform.system()
+    variable = "XDG_RUNTIME_DIR" if system == "Linux" else "TMPDIR"
+    example = RUNTIME_DIRECTORY_EXAMPLES[system]
+    assert f"{variable} must name a private directory of at most 57 bytes" in text
+    assert f"such as {variable}={example}" in text
     # No path fragment: the state root, the home directory, any absolute path.
-    assert "/" not in text, text
+    # The templated example directory is the only slash.
+    assert "/" not in text.replace(example, ""), text
     assert "long-state-root" not in text
 
 

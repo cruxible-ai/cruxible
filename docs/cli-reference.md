@@ -500,9 +500,14 @@ prints a `Warning:` line naming the cause and the repair, then serves everything
 that needs no installed Provider code; `server status` keeps reporting it. Kit
 add, provider install and Procedure and Line runs that need the lane refuse
 with the same code, cause and repair, as an operator-environment refusal (HTTP
-503; an `operational_failed` run). Repair: set `XDG_RUNTIME_DIR` or `TMPDIR` to
-a short private directory owned by the daemon user (mode 0700) and restart the
-daemon, or restart it with a shorter `--state-root`.
+503; an `operational_failed` run). The cause gives the byte counts: how much
+shorter a `--state-root` must be, and the longest runtime directory the namespace
+fits under (57 bytes, since the namespace and a socket name take 46), with a
+concrete example (`TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS,
+`XDG_RUNTIME_DIR=/run/user/$UID` on Linux). A directory over that budget is
+refused before anything is created under it. Repair: set `XDG_RUNTIME_DIR` or
+`TMPDIR` to a short private directory owned by the daemon user (mode 0700) and
+restart the daemon, or restart it with a shorter `--state-root`.
 
 ### Provider runtime operational configuration
 
