@@ -246,7 +246,7 @@ w.catalog.part.category            # WorldClaimType for that field
 w.catalog.part.category.filters    # a value only this field admits
 w.catalog.part.category.tyres      # AttributeError: names no enum member 'tyres';
                                    # its literal schema admits: brakes, filters, lighting, wipers
-w.catalog.part["zz-999"]           # AbsentSubject, with the repair to create it
+w.catalog.part["zz-999"]           # AbsentSubject: raised, with the repair to create it
 
 part = w.catalog.part["bp-1142"]
 part.category                      # tuple of ClaimViews: every live Claim of that field
