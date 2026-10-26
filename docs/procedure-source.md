@@ -57,7 +57,7 @@ This document does not silently remove an existing operation.
 | [Evidence and operational work](../packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
 | [Source selectors](../packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
 | [Procedure composition](../packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
-| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` accepts a `ProcedureSource`, a `BlueprintInput` or a `BlueprintInstanceInput` beside `ProcedureInput` and `Sequence`. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
+| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` accepts a `ProcedureSource`, `ProcedureInput` or `Sequence`. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
 | [Projections and workspace](../packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
 | [Signing](../packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
 | [Lower-level client](../packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
@@ -70,8 +70,7 @@ ordinary Python objects whose methods execute during authoring.
 | Name | Role | Availability |
 |---|---|---|
 | `procedure` | Decorate a literal Procedure definition. | Implemented; signature below. |
-| `ProcedureSource` | Immutable source and binding selection; `bind`, `preview` and `build`. Declared open `slots` make it build a Blueprint. | Implemented host object. |
-| `BlueprintInput`, `BlueprintInstanceInput` | Author a Blueprint (a definition with open slots), and instantiate one by binding a provider per slot. | Authoring inputs in `cruxible_client.authoring.inputs`. |
+| `ProcedureSource` | Immutable source and binding selection; `bind`, `preview` and `build`. Declared `slots` remain open Provider slots in the Procedure it builds. | Implemented host object. |
 | `Cruxible.provider_interface` | Select one installed provider of an interface as a `ProviderBinding`. | Implemented. |
 | `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Symbolic compiler interfaces; not separately instantiated Python classes. |
 | `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Source intrinsic and result adapter. |
@@ -83,7 +82,7 @@ ordinary Python objects whose methods execute during authoring.
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved; not importable, and `with` blocks are refused. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
-| `Cruxible.procedure(definition=...)` | Consume a `ProcedureSource`, `BlueprintInput` or `BlueprintInstanceInput` as well as `ProcedureInput` and `Sequence`. | Implemented overload; returns the existing `ProcedureDraft`. |
+| `Cruxible.procedure(definition=...)` | Consume a `ProcedureSource`, `ProcedureInput` or `Sequence`. | Implemented overload; returns the existing `ProcedureDraft`. |
 | `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
 | Typed `Procedure.input/run` | Construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
@@ -259,8 +258,7 @@ to `run`. The returned run resolves `O` from that exact admitted Procedure.
 | Select a provider/query/Procedure | Existing SDK discovery and accepted-state reads. | Typed exact selection. |
 | Bind a source | Local immutable selection; no installation, invocation, or acceptance. | New `ProcedureSource`. |
 | Preview | Parse and inspect source. An explicitly supplied World may resolve schema through its pinned SDK context; no provider call or governed write. | Structured preview with errors and pending checks. |
-| Build | Require successful compilation and required binding/schema resolution. | `ProcedureInput`, or `BlueprintInput` while declared slots stay open, with retained source association. |
-| Instantiate a Blueprint | A `BlueprintInstanceInput` names the accepted Blueprint and one installed provider per slot; lowering checks each against its slot's interface. | An ordinary Procedure recording its Blueprint and bindings. |
+| Build | Require successful compilation and required binding/schema resolution. | `ProcedureInput` with any open Provider slots and retained source association. |
 | Prepare | Existing durable intent/preflight operation; daemon validates the submitted definition and source binding. | Existing `Intent`. |
 | Submit/review/approve/accept | Existing distinct governance operations. | Proposal, approval, accepted generation. |
 | Run | Existing admission, permissions, effective budgets, provider deployments, and run-lane restrictions. | Existing run state/receipt with the declared outcome. |
@@ -302,9 +300,9 @@ procedure(
 | `budget` | Required | Declared resource budget, using the current model. No hidden unlimited default. |
 | `hard_caps` | Required | Declared Procedure ceilings; effective admission policy can be stricter. |
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
-| `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. A source that builds a Blueprint takes none; each instance names its own (`BlueprintInstanceInput.acquisition_policy`). |
+| `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Slotted Procedures carry the same policy as exact Procedures. |
 | `description` | `None` | Optional human description retained with the definition. |
-| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name (a `ProviderInterface:` prefix is stripped). Each must be used as `bindings.<slot>` in the body. While any slot is unbound the source builds a **Blueprint** (a skeleton that never runs); binding every slot with `bind(slot=cx.provider_interface(...))` makes it build a Procedure. |
+| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name (a `ProviderInterface:` prefix is stripped). Each must be used as `bindings.<slot>` in the body. The source always builds a Procedure. Slots may remain open for run-time fit or Line bindings; `bind(slot=cx.provider_interface(...))` selects an exact Provider during authoring. |
 
 A Procedure's authority is not an argument: it is the most its terminals and
 invoked children can do (`observe`, `propose` or `settle`), and previews report it
@@ -349,28 +347,19 @@ decorator; reading a property has no network or execution effect.
 | `activation_policy` | Existing literal union | Declared activation policy. |
 | `acquisition_policy`, `description` | `str \| None` | Optional definition metadata. |
 | `bindings` | Readonly mapping of slot name to `BindingValue` | Explicit selections currently supplied; an absent slot remains unbound. |
-| `slots`, `open_slots`, `is_blueprint` | Mapping / tuple / bool | Declared Provider slots, those still unbound, and whether `build()` yields a Blueprint. |
+| `slots`, `open_slots` | Mapping / tuple | Declared Provider slots and those still unbound. |
 
-### Blueprints
+### Provider slots
 
-A Blueprint is a Procedure definition whose interface-typed Provider slots stay
-open; it is accepted like any definition but never runs. `cx.procedure(definition=source)`
-on a source with open slots authors one (`BlueprintInput`, kind `blueprint`).
-`cruxible get Blueprint:<name>` previews instantiation: each slot's interface and
-the installed Providers that fit it. Instantiate with
-`cx.procedure(definition=BlueprintInstanceInput(kind="blueprint_instance", name=..., blueprint=..., bindings={slot: provider}))`:
-`bindings` maps each slot to an installed Provider's name (a string, not a
-handle), lowering checks each binding against its slot's interface, and the
-result is an ordinary Procedure that records its Blueprint and bindings.
-`acquisition_policy=` names the policy an instance with Source nodes reads.
-
-A Provider fits a slot when it implements that slot's interface exactly once.
-A retired Blueprint refuses new instances, while Procedures already instantiated
-from it keep running. Both inputs are also change-set members. On the CLI,
-`cruxible authoring example blueprint` and `blueprint-instance` print templates
-for `cruxible authoring submit`; a raw-graph Blueprint marks each open Provider
-position `{"kind": "slot", "slot_name": ...}` and lists the slots in
-`definition.pin_slots`.
+A Procedure may leave Provider slots open, each naming its required interface.
+A direct run selects the single installed build that fits each slot. No fit refuses
+`cruxible.procedure.slot_binding_missing`; several fits refuse
+`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
+with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
+carry the same `bindings` mapping alongside its Procedure and parameters.
+Existing Blueprint artifacts remain readable, and their exact Procedure instances
+keep running. New definitions are Procedures with slots.
 
 ### `bind`
 
@@ -388,8 +377,9 @@ Bindings are data, never live Python callables.
 Binding can occur before complete schema resolution; final preview/build must
 reject a selected interface whose contracts or effects do not satisfy its uses.
 Every `bindings.<name>` the body uses must be bound before building, except the
-declared `slots`: those may stay open, and the source then builds a Blueprint
-(an unbound undeclared name refuses "Binding 'x' is missing or unsupported").
+declared `slots`: those may stay open in the Procedure it builds, and run
+admission selects their Providers by fit or explicit binding. An unbound
+undeclared name refuses "Binding 'x' is missing or unsupported".
 
 ### `preview`
 
@@ -412,11 +402,11 @@ are specified under [Preview and diagnostics](#preview-and-diagnostics).
 ### `build`
 
 ```text
-build(*, world: World | None = None) -> ProcedureInput | BlueprintInput
+build(*, world: World | None = None) -> ProcedureInput
 ```
 
 Uses the same inspection/compilation rules as preview. Returns the shared
-Procedure authoring input (a `BlueprintInput` while declared slots are open)
+Procedure authoring input, retaining any declared open slots
 with its retained source association when all required static checks pass. Otherwise raises `ProcedureCompositionError` carrying the
 preview. It does not return a partial executable graph after a compilation error.
 
@@ -429,7 +419,7 @@ substitute for admission. The accepted graph retains `definition.source`.
 ```text
 cx.procedure(
     *,
-    definition: ProcedureInput | BlueprintInput | BlueprintInstanceInput
+    definition: ProcedureInput
         | Sequence | ProcedureSource,
 ) -> ProcedureDraft
 ```

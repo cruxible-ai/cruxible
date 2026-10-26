@@ -134,8 +134,6 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-exact-content",
         "claim-revision",
         "procedure",
-        "blueprint",
-        "blueprint-instance",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
@@ -221,6 +219,29 @@ def test_tool_parameters_use_declared_types_except_instance_defined_query_parame
             if annotation is None or names & {"dict", "object", "Any"}:
                 offenders.append(f"{function.name}.{parameter.arg}")
     assert offenders == [], f"untyped MCP parameters: {offenders}"
+
+
+def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from cruxible_core.mcp.tools import McpProcedureBindings
+
+    schema = _schemas()["cruxible_procedure_run"].inputSchema
+    assert schema["properties"]["bindings"]["anyOf"][0] == {"$ref": "#/$defs/McpProcedureBindings"}
+    binding_schema = schema["$defs"]["McpProcedureBindings"]
+    assert binding_schema["additionalProperties"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 393,
+    }
+    assert binding_schema["propertyNames"] == {"minLength": 1, "maxLength": 256}
+    assert binding_schema["maxProperties"] == 256
+    assert McpProcedureBindings.model_validate({"fetch": "web/build"}).root == {
+        "fetch": "web/build"
+    }
+    with pytest.raises(ValidationError):
+        McpProcedureBindings.model_validate({"fetch": {"provider": "web/build"}})
 
 
 def test_depublish_names_the_stored_file_identity() -> None:

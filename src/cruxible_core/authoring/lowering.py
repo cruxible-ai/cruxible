@@ -49,8 +49,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
     AuthoringNoneClaimObject,
     AuthoringTriggerSchedule,
-    BlueprintAuthoringPayload,
-    BlueprintInstantiation,
     CaptureContractAuthoringPayload,
     CaptureLandingByNameSchedule,
     ChangeSetAuthoringPayload,
@@ -79,7 +77,6 @@ from cruxible_client.contracts.authoring.models import (
     WindowCloseAuthoringSchedule,
     WorkingSelectionObservation,
     authoring_member_identity,
-    blueprint_instantiation,
 )
 from cruxible_client.contracts.builtin_claim_types import (
     DESCRIPTOR_PREDICATES,
@@ -194,7 +191,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    BlueprintArtifact,
     ProcedureArtifact,
     ProcedureOwnedContract,
     parse_procedure,
@@ -204,13 +200,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.blueprints import (
-    BlueprintInstantiationError,
-    blueprint_digest,
-    blueprint_interfaces,
     blueprint_path,
-    instantiate_blueprint,
-    parse_blueprint,
-    render_blueprint,
 )
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -241,13 +231,10 @@ from cruxible_client.contracts.procedures.windows import (
     FixedWindow,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
     parse_provider_interface,
-    provider_interface_digest,
     provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProvider,
     ProviderV2,
     parse_provider,
     provider_digest,
@@ -2737,6 +2724,21 @@ def _lower_procedure(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayload)
+    if payload.retire:
+        target = procedure_path(str(payload.definition["name"]))
+        if target in base_tree:
+            retained_predecessor = parse_procedure(base_tree[target], path=target)
+            retired = retained_predecessor.model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(
+                        state="retired",
+                        predecessor_digest=procedure_artifact_digest(retained_predecessor).tagged,
+                    )
+                }
+            )
+            return _procedure_lowered(
+                instance, retired, retained_predecessor, path=target, base=base, base_tree=base_tree
+            )
     if "procedure_spec" in payload.definition:
         from cruxible_client.contracts.procedures.authored import ProcedureSpec, ProcedureSpecError
         from cruxible_core.authoring.procedure_spec import resolve_procedure_spec
@@ -2772,17 +2774,6 @@ def _lower_procedure(
     if not payload.retire:
         _refuse_unserved_procedure(payload.definition)
     if payload.definition.get("graph_format") == 7:
-        if isinstance(payload, BlueprintAuthoringPayload):
-            _refuse(
-                "cruxible.authoring.blueprint_graph_unsupported",
-                "$.definition.graph_format",
-                "Graph-7 Blueprints are not supported.",
-                repair_kind="replace_definition",
-                repair_description=(
-                    "author graph 6 or a ProcedureSpec; "
-                    "Blueprints fold into slotted Procedures next"
-                ),
-            )
         return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
@@ -2820,14 +2811,14 @@ def _lower_procedure(
                 policy = getattr(payload, "acquisition_policy", None)
                 if policy is not None:
                     identity = "SourceAcquisitionPolicy:" + policy
-                    for view, target in ((rows, accepted), (selected, candidate_artifacts)):
+                    for view, destination in ((rows, accepted), (selected, candidate_artifacts)):
                         row = view.connection.execute(
                             f"SELECT path,artifact_digest FROM {view.table('artifact_lookup')} "
                             "WHERE identity=?",
                             (identity,),
                         ).fetchone()
                         if row is not None:
-                            target[identity] = (row[0], row[1])
+                            destination[identity] = (row[0], row[1])
             payload = type(payload)(
                 definition=compiled.definition.model_dump(mode="json", by_alias=True),
                 activation_policy=payload.activation_policy,
@@ -2841,9 +2832,7 @@ def _lower_procedure(
                 acquisition_policy=payload.acquisition_policy,
                 retire=payload.retire,
             )
-            if base.compiler == LIGHT_ARTIFACTS_COMPILER and not isinstance(
-                payload, BlueprintAuthoringPayload
-            ):
+            if base.compiler == LIGHT_ARTIFACTS_COMPILER:
                 from cruxible_client.contracts.procedures.names import named_graph
 
                 # The compiler's transient graph may retain a native Query.
@@ -2910,19 +2899,6 @@ def _lower_procedure(
                         envelope.path,
                         envelope.artifact_digest,
                     )
-    is_blueprint = isinstance(payload, BlueprintAuthoringPayload)
-    instantiation = None if is_blueprint else blueprint_instantiation(payload.definition)
-    if instantiation is not None:
-        return _lower_blueprint_instance(
-            instance,
-            payload,
-            instantiation,
-            base=base,
-            base_tree=base_tree,
-            accepted=accepted,
-            candidate_artifacts=candidate_artifacts,
-            candidate_identities=candidate_identities,
-        )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
         if isinstance(payload, ProcedureAuthoringPayload)
@@ -3016,17 +2992,11 @@ def _lower_procedure(
             repair_kind="replace_definition",
             repair_description="Repair the indicated definition field.",
         )
-    identity = ArtifactIdentity(
-        kind="Blueprint" if is_blueprint else "Procedure", name=definition.name
-    )
-    path = blueprint_path(definition.name) if is_blueprint else procedure_path(definition.name)
-    predecessor: ProcedureArtifact | BlueprintArtifact | None = None
+    identity = ArtifactIdentity(kind="Procedure", name=definition.name)
+    path = procedure_path(definition.name)
+    predecessor: ProcedureArtifact | None = None
     if path in base_tree:
-        predecessor = (
-            parse_blueprint(base_tree[path], path=path)
-            if is_blueprint
-            else parse_procedure(base_tree[path], path=path)
-        )
+        predecessor = parse_procedure(base_tree[path], path=path)
     declared_pins = {
         binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
     }
@@ -3106,23 +3076,19 @@ def _lower_procedure(
         state="retired" if payload.retire else "live",
         predecessor_digest=(None if predecessor is None else _envelope_digest(predecessor)),
     )
-    if not is_blueprint and (definition.open_slots or definition.pin_slots):
+    if (
+        definition.open_slots or definition.pin_slots
+    ) and base.compiler != LIGHT_ARTIFACTS_COMPILER:
         _refuse(
-            "cruxible.authoring.procedure_open_slots",
+            "cruxible.authoring.procedure_definition_invalid",
             "definition",
-            "A Procedure pins every Provider exactly; open slots belong only to a Blueprint.",
-            repair_kind="author_a_blueprint",
-            repair_description=(
-                "Author it as a Blueprint (kind blueprint), then instantiate it with one "
-                "Provider per slot (kind blueprint_instance)."
-            ),
+            "Provider slots require compiler revision 36 and graph 7.",
+            repair_kind="upgrade_compiler",
+            repair_description="Upgrade the compiler and author a Procedure with slots.",
         )
     try:
-        envelope_class = BlueprintArtifact if is_blueprint else ProcedureArtifact
-        format_arguments: dict[str, Any] = (
-            {} if is_blueprint else {"artifact_format": "playbill-procedure-v2"}
-        )
-        procedure: ProcedureArtifact | BlueprintArtifact = envelope_class(
+        format_arguments: dict[str, Any] = {"artifact_format": "playbill-procedure-v2"}
+        procedure = ProcedureArtifact(
             **format_arguments,
             identity=identity,
             definition=definition,
@@ -3130,6 +3096,7 @@ def _lower_procedure(
             pins=pins,
             owned_contracts=payload.owned_contracts,
             activation_policy=payload.activation_policy,
+            blueprint=None if predecessor is None else predecessor.blueprint,
             lifecycle=lifecycle,
         )
     except ValidationError as exc:
@@ -3212,29 +3179,27 @@ def _lower_named_procedure(
     )
 
 
-def _envelope_digest(envelope: ProcedureArtifact | BlueprintArtifact) -> str:
-    if isinstance(envelope, BlueprintArtifact):
-        return blueprint_digest(envelope).tagged
+def _envelope_digest(envelope: ProcedureArtifact) -> str:
     return procedure_artifact_digest(envelope).tagged
 
 
 def _procedure_lowered(
     instance: PlaybillInstance,
-    procedure: ProcedureArtifact | BlueprintArtifact,
-    predecessor: ProcedureArtifact | BlueprintArtifact | None,
+    procedure: ProcedureArtifact,
+    predecessor: ProcedureArtifact | None,
     *,
     path: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
     if base.compiler == LIGHT_ARTIFACTS_COMPILER and int(procedure.definition.graph_format) != 7:
-        procedure = name_procedure(procedure)
+        named = name_procedure(procedure)
+        assert isinstance(named, ProcedureArtifact)
+        procedure = named
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor
         procedure_bytes = base_tree[path]
-    elif isinstance(procedure, BlueprintArtifact):
-        procedure_bytes = render_blueprint(procedure)
     else:
         procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes
@@ -3252,182 +3217,6 @@ def _procedure_lowered(
         },
         changed_members=changed,
         idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
-    )
-
-
-def _lower_blueprint_instance(
-    instance: PlaybillInstance,
-    payload: ProcedureAuthoringPayload,
-    instantiation: BlueprintInstantiation,
-    *,
-    base: AcceptedProjectionCoordinate,
-    base_tree: Mapping[str, bytes],
-    accepted: dict[str, tuple[str, str]],
-    candidate_artifacts: dict[str, tuple[str, str]],
-    candidate_identities: frozenset[str],
-) -> LoweredAuthoring:
-    """Bind one accepted Provider per Blueprint slot and lower the Procedure it yields.
-
-    Retiring an instance never re-instantiates it: the retired successor is the
-    accepted definition that ran, with its origin, whatever has become of its
-    Blueprint or Providers since.
-    """
-
-    path = procedure_path(instantiation.name)
-    predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
-    if payload.retire:
-        if predecessor is None or predecessor.blueprint is None:
-            _refuse(
-                "cruxible.authoring.blueprint_instance_missing",
-                "definition.name",
-                f"No accepted instance of a Blueprint named {instantiation.name!r} to retire.",
-                repair_kind="replace_name",
-                repair_description="Name an accepted Procedure instantiated from a Blueprint.",
-            )
-        assert predecessor is not None
-        retired = predecessor.model_copy(
-            update={
-                "lifecycle": ArtifactLifecycle(
-                    state="retired",
-                    predecessor_digest=procedure_artifact_digest(predecessor).tagged,
-                )
-            }
-        )
-        return _procedure_lowered(
-            instance, retired, predecessor, path=path, base=base, base_tree=base_tree
-        )
-    blueprint_target = blueprint_path(instantiation.blueprint)
-    blueprint_content = base_tree.get(blueprint_target)
-    if blueprint_content is None:
-        _refuse(
-            "cruxible.authoring.blueprint_missing",
-            "definition.blueprint",
-            f"No accepted or same-ChangeSet Blueprint named {instantiation.blueprint!r}.",
-            repair_kind="replace_blueprint",
-            repair_description="Name a Blueprint present at the authoring coordinate.",
-        )
-    assert blueprint_content is not None
-    blueprint = parse_blueprint(blueprint_content, path=blueprint_target)
-    _refuse_unserved_procedure(blueprint.definition.model_dump(mode="json", by_alias=True))
-    if blueprint.lifecycle.state != "live":
-        _refuse(
-            "cruxible.authoring.blueprint_retired",
-            "definition.blueprint",
-            f"Blueprint {instantiation.blueprint!r} is retired.",
-            repair_kind="replace_blueprint",
-            repair_description="Instantiate a live Blueprint.",
-        )
-    providers: dict[str, AcceptedProvider] = {}
-    for slot, name in sorted(instantiation.bindings.items()):
-        # A bare provider name binds its most recently registered live build; a
-        # build (``name/<build key>``) binds itself. Either way the instance
-        # pins one exact build.
-        from cruxible_core.errors import RequestRefusedError
-        from cruxible_core.providers.builds import resolve_in_tree
-
-        try:
-            name = resolve_in_tree(instance, base, base_tree, name).resolved
-        except RequestRefusedError as exc:
-            _refuse(
-                "cruxible.authoring.blueprint_provider_ambiguous"
-                if exc.error_code == "cruxible.provider.build_ambiguous"
-                else "cruxible.authoring.blueprint_provider_missing",
-                f"definition.bindings.{slot}",
-                f"Slot {slot!r}: {exc}",
-                repair_kind="replace_binding",
-                repair_description=(
-                    "Bind an installed Provider (or one exact build of it) that implements "
-                    f"the slot's interface (cruxible get Blueprint:{instantiation.blueprint} "
-                    "lists them)."
-                ),
-            )
-        target = provider_path(name)
-        content = base_tree.get(target)
-        if content is None:
-            _refuse(
-                "cruxible.authoring.blueprint_provider_missing",
-                f"definition.bindings.{slot}",
-                f"No accepted Provider named {name!r} for slot {slot!r}.",
-                repair_kind="replace_binding",
-                repair_description=(
-                    "Bind an installed Provider that implements the slot's interface "
-                    f"(cruxible get Blueprint:{instantiation.blueprint} lists them)."
-                ),
-            )
-        assert content is not None
-        provider = parse_provider(content, path=target)
-        if provider.lifecycle.state != "live":
-            _refuse(
-                "cruxible.authoring.blueprint_provider_missing",
-                f"definition.bindings.{slot}",
-                f"Provider {name!r} is retired.",
-                repair_kind="replace_binding",
-                repair_description="Bind a live Provider.",
-            )
-        providers[slot] = AcceptedProvider(
-            path=target, provider=provider, artifact_digest=provider_digest(provider).tagged
-        )
-    _acquisition_policy_pin(
-        payload,
-        accepted=accepted,
-        candidates=candidate_artifacts,
-        candidate_identities=candidate_identities,
-    )
-
-    def interface_lookup(
-        identity: ArtifactIdentity,
-    ) -> AcceptedProviderInterfaceRegistration | None:
-        member_path = provider_interface_path(identity.name)
-        raw = base_tree.get(member_path)
-        if raw is None:
-            return None
-        value = parse_provider_interface(raw, path=member_path)
-        return AcceptedProviderInterfaceRegistration(
-            path=member_path,
-            registration=value,
-            artifact_digest=provider_interface_digest(value).tagged,
-        )
-
-    try:
-        procedure = instantiate_blueprint(
-            blueprint,
-            blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
-            interface_registrations=blueprint_interfaces(blueprint, interface_lookup),
-            name=instantiation.name,
-            artifact_format="cruxible-procedure-v3"
-            if base.compiler == LIGHT_ARTIFACTS_COMPILER
-            else "playbill-procedure-v2",
-            providers=providers,
-            activation_policy=payload.activation_policy,
-            extra_pins=(),
-            lifecycle=ArtifactLifecycle(
-                predecessor_digest=(
-                    None if predecessor is None else procedure_artifact_digest(predecessor).tagged
-                ),
-            ),
-        )
-    except BlueprintInstantiationError as exc:
-        _refuse(
-            exc.code.replace("cruxible.blueprint.", "cruxible.authoring.blueprint_"),
-            "definition.bindings" + ("" if exc.slot is None else f".{exc.slot}"),
-            str(exc),
-            repair_kind="replace_binding",
-            repair_description=(
-                "Bind one Provider per slot that implements the slot's interface exactly "
-                f"once (cruxible get Blueprint:{instantiation.blueprint} lists them)."
-            ),
-        )
-    except (ValueError, FormatError) as exc:
-        _refuse(
-            "cruxible.authoring.procedure_definition_invalid",
-            "definition",
-            f"The instantiated Procedure is invalid: {exc}",
-            repair_kind="replace_binding",
-            repair_description="Bind Providers whose operation contracts fit the Blueprint.",
-        )
-    procedure = procedure.model_copy(update={"acquisition_policy": payload.acquisition_policy})
-    return _procedure_lowered(
-        instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
     )
 
 
@@ -3660,11 +3449,22 @@ def _render_non_procedure_member(
     )
 
 
+def _line_provider_resolver(
+    instance: PlaybillInstance, base: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
+) -> Callable[[str], str]:
+    from cruxible_core.providers.builds import resolve_in_tree
+
+    return lambda name: (
+        resolve_in_tree(instance, base, tree, name.removeprefix("Provider:")).resolved
+    )
+
+
 def _render_line_member(
     payload: LineAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
     light: bool = False,
+    resolve_provider: Callable[[str], str] | None = None,
 ) -> tuple[str, bytes, str]:
     """Lower one Line decision into the exact LineSpec its accepted closure pins.
 
@@ -3823,6 +3623,25 @@ def _render_line_member(
     line = LineSpec.model_validate(line_fields)
     if light:
         line = name_line(line)
+        bindings = {}
+        for slot, name in payload.bindings.items():
+            selected = (
+                name.removeprefix("Provider:")
+                if resolve_provider is None
+                else resolve_provider(name)
+            )
+            bindings[slot] = ArtifactNameRef(
+                target=ArtifactIdentity(kind="Provider", name=selected)
+            )
+        line = line.model_copy(update={"bindings": bindings})
+    elif payload.bindings:
+        _refuse(
+            "cruxible.line.compiler_unsupported",
+            "bindings",
+            "Line slot bindings require compiler revision 36.",
+            repair_kind="upgrade_compiler",
+            repair_description="Upgrade the compiler.",
+        )
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
@@ -5449,8 +5268,6 @@ def _member_primary_path(
         return claim_type_path(member.predicate)
     if isinstance(member, ClaimRetirementMember):
         return claim_path(member.claim_id)
-    if isinstance(member, BlueprintAuthoringPayload):
-        return blueprint_path(str(member.definition["name"]))
     if isinstance(member, ProcedureAuthoringPayload):
         return procedure_path(str(member.definition["name"]))
     if isinstance(member, ProcedureMandateAuthoringPayload):
@@ -5851,14 +5668,19 @@ def _stage_change_set_member(
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, LineAuthoringPayload):
         line_path, content, digest = _render_line_member(
-            member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+            member,
+            tree=staged_tree,
+            light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+            resolve_provider=_line_provider_resolver(instance, base, staged_tree),
         )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, TriggerAuthoringPayload):
         trigger_member_path, content, digest = _render_trigger_member(
-            member, tree=staged_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+            member,
+            tree=staged_tree,
+            light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
@@ -6661,11 +6483,16 @@ def _lower_authoring(
     ):
         path, content, digest = (
             _render_line_member(
-                intent.payload, tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+                intent.payload,
+                tree=base_tree,
+                light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+                resolve_provider=_line_provider_resolver(instance, base, base_tree),
             )
             if isinstance(intent.payload, LineAuthoringPayload)
             else _render_trigger_member(
-                intent.payload, tree=base_tree, light=base.compiler == LIGHT_ARTIFACTS_COMPILER
+                intent.payload,
+                tree=base_tree,
+                light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
             if isinstance(intent.payload, TriggerAuthoringPayload)
             else _render_subject_kind_member(intent.payload, tree=base_tree)

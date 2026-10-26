@@ -5,8 +5,7 @@ governed change (``provider move``, or a ``kit add`` that ships a new build of a
 provider the Procedure uses): each occurrence moves to the new build's
 implementation of the same interface contract, and the Procedure's dependents
 are carried with it in the same change set. A Procedure instantiated from a
-Blueprint is instantiated again, from the Blueprint's current version, with
-the moved slot bound to the new build.
+Blueprint moves its existing exact graph; the origin remains provenance.
 
 Lines take same-identity successors pinning the final live Procedure, disabled.
 Mandates take same-name propose-only successors with settle fields cleared.
@@ -97,7 +96,7 @@ _STOPPED_KINDS = {"line": "line", "procedure-mandate": "mandate"}
 
 @dataclass(frozen=True)
 class Mover:
-    """One live Procedure pinning a build that should move to another build."""
+    """One live Procedure or Line affected by a move to another build."""
 
     identity: ArtifactIdentity
     path: str
@@ -317,7 +316,7 @@ def _registration_digest(
     )
 
 
-def _reinstantiated(
+def _historical_reinstantiated(
     tree: Mapping[str, bytes],
     overlay: Mapping[str, bytes],
     path: str,
@@ -418,6 +417,75 @@ def _reinstantiated(
     return render_procedure(moved)
 
 
+def _rebound_line(
+    tree: Mapping[str, bytes],
+    overlay: Mapping[str, bytes],
+    path: str,
+    moves: Mapping[str, ProviderBuildMove],
+) -> bytes | None:
+    """Rebind only the affected Line's slots, without consulting Blueprint provenance."""
+    from cruxible_client.contracts.procedures.line_specs import (
+        NamedLineSpec,
+        line_spec_digest,
+        parse_line_spec,
+        render_line_spec,
+    )
+
+    previous = parse_line_spec(tree[path], path=path)
+    line = parse_line_spec(overlay[path], path=path) if path in overlay else previous
+    if not isinstance(line, NamedLineSpec):
+        return None
+
+    def read(target: str) -> bytes:
+        return overlay[target] if target in overlay else tree[target]
+
+    procedure_target = "procedures/" + line.procedure.target.name + ".json"
+    procedure = parse_procedure(read(procedure_target), path=procedure_target)
+    from cruxible_client.contracts.procedures.provider_slots import fitting_implementation
+
+    bindings = dict(line.bindings)
+    for slot in procedure.definition.pin_slots:
+        reference = getattr(slot, "interface")
+        target = provider_interface_path(reference.target.name)
+        interface = parse_provider_interface(read(target), path=target)
+        current = bindings.get(slot.slot_name)
+        if path in overlay and current is not None:
+            continue  # Preserve an explicit binding authored with the release.
+        candidates = []
+        for move in moves.values():
+            if current is not None and current.target != move.source.target:
+                continue
+            target_path = provider_path(move.target.target.name)
+            provider = parse_provider(read(target_path), path=target_path)
+            if (
+                isinstance(provider, ProviderV2)
+                and fitting_implementation(provider, interface) is not None
+            ):
+                candidates.append(provider.identity)
+        if len(set(candidates)) > 1:
+            raise ProviderBuildMoveRefused(
+                f"Line {line.identity.qualified} slot {slot.slot_name} has ambiguous move targets"
+            )
+        if candidates:
+            bindings[slot.slot_name] = ArtifactNameRef(target=candidates[0])
+        elif current is not None and current.target.qualified in moves:
+            raise ProviderBuildMoveRefused(f"Target build does not fit Line slot {slot.slot_name}")
+    if bindings == line.bindings:
+        return None
+    # Fit above checks every replacement against its declared slot. Admission
+    # rechecks the whole Line with its maintained dependency bucket.
+    return render_line_spec(
+        line.model_copy(
+            update={
+                "bindings": bindings,
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=line_spec_digest(previous).tagged
+                ),
+            }
+        )
+    )
+
+
 def _stopped(
     state: ArtifactDependencyStateV1, content: bytes, replacements: Mapping[str, str]
 ) -> bytes:
@@ -508,15 +576,22 @@ def settle_changes(
             )
             continue
         try:
-            reinstantiated = (
-                None if mover.path in writes else _reinstantiated(tree, writes, mover.path, moves)
-            )
-            if reinstantiated is None:
-                # Try the move alone, so a contract change refuses this one
-                # definition (it stays on its build) rather than the change.
-                move_references(mover.path, json.loads(tree[mover.path]), {}, moves)
+            if mover.path.startswith("lines/"):
+                rebound = _rebound_line(tree, writes, mover.path, moves)
+                if rebound is None:
+                    continue
+                changed[mover.path] = rebound
             else:
-                changed[mover.path] = reinstantiated
+                historical = (
+                    None
+                    if by_name or mover.path in writes
+                    else _historical_reinstantiated(tree, writes, mover.path, moves)
+                )
+                if historical is not None:
+                    changed[mover.path] = historical
+                else:
+                    # A retained Blueprint origin is provenance on revision 36.
+                    move_references(mover.path, json.loads(tree[mover.path]), {}, moves)
         except ProviderBuildMoveRefused as exc:
             unmoved.add(name)
             settled.repins.append(
@@ -622,15 +697,6 @@ def settle_changes(
                 )
             stopped.append(item)
             continue
-        if item.artifact_kind == "procedure" and item.path not in changed:
-            try:
-                reinstantiated = _reinstantiated(tree, {**writes, **changed}, item.path, moves)
-            except ProviderBuildMoveRefused as exc:
-                settled.refused.append(f"{item.identity.qualified} cannot be carried: {exc}")
-                continue
-            if reinstantiated is not None:
-                changed[item.path] = reinstantiated
-                continue
         if item.path in retiring and "retire" in item.permitted_dispositions:
             disposition = ClaimTypeDependentDisposition(
                 identity=item.identity,

@@ -1,7 +1,7 @@
 # Kits
 
 A kit is a release of definitions that one instance exports and another
-installs: vocabulary, named queries, Procedures and Blueprints, plus the
+installs: vocabulary, named queries and Procedures, plus the
 provider packages those Procedures need. A kit is how a vocabulary gets
 shared. Every garage that installs a car parts kit describes parts, vehicles
 and fitments the same way, so the same questions and the same automation work
@@ -64,15 +64,14 @@ upgrade over a local edit.
 
 ## What a kit carries
 
-A kit carries definitions from seven families:
+A kit carries definitions from six families:
 
 | Family | What it is |
 |---|---|
 | ClaimTypes | Vocabulary: what a field may hold and what evidence backs it |
 | CaptureContracts | What a retained piece of evidence must look like |
 | QueryDefinitions | Named queries |
-| Procedures | Runnable graphs, every provider slot bound to an exact provider |
-| Blueprints | Procedure skeletons whose provider slots the consumer binds |
+| Procedures | Runnable graphs with exact providers or interface-typed Provider slots |
 | ProviderInterfaces | The typed contracts provider slots name |
 | SourceAcquisitionPolicies | What a Procedure may read from outside sources |
 
@@ -95,28 +94,24 @@ A kit names the provider packages its definitions need in one of two ways:
 - **Bundled**: a kit's own domain code (for example a parser for one domain's
   feed) travels inside the kit as the package's built wheel and lock file,
   never as source. Installing the kit installs the package first, and the
-  kit's Procedures pin that exact build.
+  package supplies implementations for the kit's Procedure slots.
 - **Default**: a published, general-purpose package (for example
   `cruxible-provider-web` for `web.fetch`) is named by package and exact
   version, and the kit carries none of its files. Installing the kit installs
   it by name from the provider index, only when nothing installed already
   implements what the kit needs.
 
-## Procedures and Blueprints
+## Procedures with Provider slots
 
-A Procedure binds every provider slot to one exact provider, so it runs as
-soon as it is accepted. A kit ships a Procedure when the kit itself decides
-what fills each slot: its own bundled provider, a default provider, or a
-built-in one.
+A Procedure may name exact Providers or leave Provider slots open. Each slot
+names the ProviderInterface it requires. Kits can ship slotted Procedures so
+the consumer chooses which search service, converter or other implementation
+runs them.
 
-A Blueprint is the same definition with one or more slots left open. Each open
-slot names the ProviderInterface it needs, and a Blueprint never runs. A kit
-ships a Blueprint when the consumer should choose the provider: which search
-service, which model, which converter. The consumer instantiates it, binding
-one installed provider per slot, and gets an ordinary Procedure that records
-the Blueprint and the bindings it came from. A kit can name a default provider
-for a Blueprint's slot, so the slot has something to bind on an instance that
-has nothing better.
+At admission, a direct run selects the single installed build fitting each
+slot. When several builds fit, choose one with `--bind slot=provider`. A Line
+can record the same choices in its `bindings` mapping. The run records the
+resolved builds for replay; the accepted Procedure stays unchanged.
 
 Any implementation of a slot's interface fits it. An interface is registered
 once per instance, by its definition: a second package implementing the same
@@ -229,38 +224,30 @@ dependency is fetched. Another build under the same name and version is
 refused (`cruxible.provider.index_build_differs`) with nothing installed. A
 default is skipped (`satisfied`) when no Procedure the kit carries pins it and
 an installed provider already implements each interface the kit carries for
-it; the Blueprint's slot then takes that provider. A daemon configured with a
+it; the Procedure's slot can then use that provider. A daemon configured with a
 provider repository installs by name only from that repository, so there a
 default that is not satisfied is refused: install an implementation yourself
 and add the kit again.
 
-### Instantiate a Blueprint
+### Run a slotted Procedure
 
-`get` on a Blueprint lists each open slot with its interface and the installed
-providers that fit it:
-
-~~~bash
-cruxible get Blueprint:catalog.price-check
-~~~
-
-When nothing fits a slot, install a provider that implements its interface.
-Then bind one provider per slot:
+`get` on a Procedure renders its declared slots and their required interfaces:
 
 ~~~bash
-cruxible authoring example blueprint-instance      # a template to edit
-cruxible authoring submit - --dry-run <<'EOF'
-{"kind": "blueprint_instance",
- "name": "catalog.price-check-web",
- "blueprint": "catalog.price-check",
- "bindings": {"fetch": "cruxible-provider-web"}}
-EOF
+cruxible get Procedure:catalog.price-check
 ~~~
 
-`--dry-run` reports every refusal without saving anything: a missing or
-retired Blueprint, a provider that does not implement the slot's interface, a
-slot left unbound. Submit without `--dry-run` to land when policy and caller
-allow; `--no-accept` keeps the proposal. The result is an ordinary Procedure:
-run it with `cruxible procedure run`, or author a Line over it.
+A Procedure may leave Provider slots open, each naming its required interface.
+A direct run selects the single installed build that fits each slot. No fit refuses
+`cruxible.procedure.slot_binding_missing`; several fits refuse
+`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
+with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
+carry the same `bindings` mapping alongside its Procedure and parameters.
+Existing Blueprint artifacts remain readable, and their exact Procedure instances
+keep running. An existing Blueprint may be retired without changing its definition;
+new definitions are Procedures with slots.
+
 
 ### Check and upgrade
 
@@ -317,8 +304,9 @@ live build the default; builds registered in the same generation require an
 explicit build name until the tie is resolved. Explicit build names select that build.
 These rules also apply to retained single-path Providers: changing signing keys
 or Capture declarations preserves their runtime build's original registration order.
-A Blueprint instance moving between legacy and contract registrations binds each
-slot to the exact registration pinned by its selected build.
+Moving a retained exact Procedure updates the provider and interface references
+in its graph. Moving a slotted Procedure's provider build rebinds affected Lines
+by fit, preserving the Procedure definition.
 `cruxible provider move NAME --to newest|BUILD` moves Procedures as a governed
 change with its own preview. `cruxible provider retire NAME/BUILD` is refused
 while live definitions pin it and retains its runtime environment after retirement.
@@ -330,8 +318,9 @@ something does, it stays live until you decide: `--keep IDENTITY` keeps it,
 and `--retire-dependents IDENTITY` retires it together with its dependents.
 The preview counts dependents after the release's replacements: a query that
 the same release replaces and that no longer uses the dropped type does not count.
-Definitions the release replaces carry their dependents (Claims, Procedures,
-Blueprints) forward to the new version in the same change set.
+Definitions the release replaces carry their dependents (such as Claims and
+Procedures) forward in the same change set. Retained Blueprints may be retired,
+but their definitions cannot be edited on compiler 36.
 For a carried Claim, `get --detail evidence` and the floor's `changes/` file
 show the kit transition as the rationale for that revision.
 
@@ -375,15 +364,14 @@ Installing the kit doesn't submit it. To adopt it:
 Example automation starts at `propose`, so everything it finds is reviewed
 until you decide otherwise. The kit's README says which Lines can earn
 `settle` and how ([Lines and automation](lines-and-automation.md#earning-settle)).
-The security kit is the model: its example adopts nine Blueprint instances,
-fifteen Lines, seventeen Triggers and seven propose-only mandates in one
-reviewed change.
+The security kit provides an example of Lines over its Procedures, Triggers
+that schedule them, and propose-only mandates adopted in one reviewed change.
 
 ## Build a kit
 
 A kit is exported from an instance where its definitions are accepted. You
 name the identity prefixes the kit owns; every live definition under them, in
-the seven families above, is exported together with everything those
+the six families above, is exported together with everything those
 definitions pin.
 
 ~~~bash
@@ -443,8 +431,9 @@ The manifest records the package, its exact version and the wheel and lock
 digests (`delivery: index`), and the kit carries none of its files. Every
 Provider a carried Procedure pins must be named by `--provider` or
 `--default-provider`, as the build this instance installed. A Procedure that
-pins the default always gets it installed on `kit add`; a Blueprint slot typed
-by its interface takes whatever implementation the consumer already has.
+pins the default always gets it installed on `kit add`; a Procedure slot typed
+by its interface selects a fitting installed build at run admission. More than
+one fitting build requires an explicit binding.
 
 ### Document it
 

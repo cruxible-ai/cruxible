@@ -18,9 +18,8 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.authoring.inputs import (
-    BlueprintInput,
-    BlueprintInstanceInput,
     CarriedContractInput,
+    ProcedureInput,
 )
 from cruxible_client.contracts.kits import (
     KitBuildRequest,
@@ -195,7 +194,7 @@ def _author(world: Any) -> None:
     _accept(
         world,
         world.pb.changes(rationale="Fetch with whichever web.fetch is installed.").procedure(
-            definition=BlueprintInput(kind="blueprint", definition=definition, contracts=contracts)
+            definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
         ),
     )
 
@@ -226,17 +225,14 @@ def _instantiate_and_refuse(world: Any) -> None:
 
     _accept(
         world,
-        world.pb.changes(rationale="Fetch with the alternative.").procedure(
-            definition=BlueprintInstanceInput(
-                kind="blueprint_instance",
-                name="acme.fetch-alt",
-                blueprint=BLUEPRINT,
-                bindings={"fetch": "fetch-alt"},
-                acquisition_policy=POLICY,
-            )
+        world.pb.changes(rationale="Fetch with the alternative.").line(
+            name="acme.fetch-alt",
+            procedure=BLUEPRINT,
+            bindings={"fetch": "fetch-alt"},
+            acquisition_policy=POLICY,
         ),
     )
-    run = world.pb.accepted_procedure("acme.fetch-alt").run()
+    run = world.pb.line("acme.fetch-alt").run()
     state = _client(world.http).get_procedure_run(world.instance_id, run.run_id)
     assert run.status != "succeeded"
     rendered = state.model_dump_json()

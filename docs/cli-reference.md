@@ -1775,7 +1775,7 @@ written, then counts zero use only from that point.
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_type_succession`,
 `claim_retirement`, `subject`, `subject_kind`, `subject_succession`,
-`query_definition`, `procedure`, `blueprint`, `blueprint_instance`,
+`query_definition`, `procedure`,
 `procedure_mandate`, `acquisition_policy`, `line`, `trigger` -- and the whole intent
 lowers once, proposes once and admits or refuses together, typed to the member
 index that offends. `approval_policy` and `procedure_runtime_policy` are the
@@ -2251,14 +2251,15 @@ exactly; open slots belong only to a Blueprint. The direct lane runs `state_tap`
 only as a Line: a direct invocation carries no requested authority, no
 occurrence, and no mandate coordinate, and none is fabricated for it.
 
-A **Blueprint** is the same definition with interface-typed Provider slots left
-open (`cruxible authoring example blueprint`); it is accepted but never runs.
-`cruxible get Blueprint:NAME` lists each slot's interface and the installed
-Providers that fit it. Instantiate it with one Provider per slot
-(`cruxible authoring example blueprint-instance`, kind `blueprint_instance`):
-the result is an ordinary Procedure that records its Blueprint and bindings.
-The Line lane serves `propose_change_set`, and `settle_change_set` under a live
-settle ProcedureMandate; see `cruxible line`.
+A Procedure may leave Provider slots open, each naming its required interface.
+A direct run selects the single installed build that fits each slot. No fit refuses
+`cruxible.procedure.slot_binding_missing`; several fits refuse
+`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
+with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
+carry the same `bindings` mapping alongside its Procedure and parameters.
+Existing Blueprint artifacts remain readable, and their exact Procedure instances
+keep running. New definitions are Procedures with slots.
 
 A Source run needs a live SourceAcquisitionPolicy, the CaptureContract each
 Source node pins, and its Provider closure. Lines and Procedures use the

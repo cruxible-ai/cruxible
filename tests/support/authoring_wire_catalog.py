@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:9d65b763546323cd1ea547258314d03cb955ab0a340aa12436c2b5d1ed97d8ac"
+    "sha256:69241cb113ea70293d6b9280f2e1265713b0d391bc73e44b27bc28d992093804"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -58,8 +58,6 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "BlockSyncResult",
     "BlockSyncSuccessorCandidate",
     "BlockedCheck",
-    "BlueprintAuthoringPayload",
-    "BlueprintInstantiation",
     "CandidateStatus",
     "CaptureContractAuthoringPayload",
     "CaptureEventByNameWindow",

@@ -31,8 +31,6 @@
         "claim-exact-content",
         "claim-revision",
         "procedure",
-        "blueprint",
-        "blueprint-instance",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
@@ -4606,8 +4604,6 @@
               "claim-exact-content",
               "claim-revision",
               "procedure",
-              "blueprint",
-              "blueprint-instance",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
@@ -4659,8 +4655,6 @@
               "mapping": {
                 "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
-                "blueprint": "#/$defs/BlueprintInput",
-                "blueprint_instance": "#/$defs/BlueprintInstanceInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
                 "line": "#/$defs/LineInput",
@@ -4681,12 +4675,6 @@
               },
               {
                 "$ref": "#/$defs/ProcedureInput"
-              },
-              {
-                "$ref": "#/$defs/BlueprintInput"
-              },
-              {
-                "$ref": "#/$defs/BlueprintInstanceInput"
               },
               {
                 "$ref": "#/$defs/SubjectInput"
@@ -4943,115 +4931,6 @@
               "target"
             ],
             "title": "ArtifactRef",
-            "type": "object"
-          },
-          "BlueprintInput": {
-            "additionalProperties": false,
-            "description": "A Procedure skeleton: a definition whose Provider slots stay open.\n\nSlots are referenced as ``{\"kind\": \"slot\", \"slot_name\": ...}`` in Provider\npositions and declared in ``definition.pin_slots`` with the interface digest\nthey need. A Blueprint never runs; instantiate it with ``blueprint_instance``.",
-            "properties": {
-              "activation_policy": {
-                "default": "snapshot",
-                "enum": [
-                  "drain",
-                  "abort",
-                  "snapshot",
-                  "epoch-check"
-                ],
-                "title": "Activation Policy",
-                "type": "string"
-              },
-              "contracts": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/CarriedContractInput"
-                },
-                "title": "Contracts",
-                "type": "array"
-              },
-              "definition": {
-                "additionalProperties": true,
-                "title": "Definition",
-                "type": "object"
-              },
-              "kind": {
-                "const": "blueprint",
-                "title": "Kind",
-                "type": "string"
-              },
-              "retire": {
-                "default": false,
-                "title": "Retire",
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "kind",
-              "definition"
-            ],
-            "title": "BlueprintInput",
-            "type": "object"
-          },
-          "BlueprintInstanceInput": {
-            "additionalProperties": false,
-            "description": "An ordinary Procedure made from a Blueprint: one accepted Provider per slot.\n\n``bindings`` maps each Blueprint slot to the name of an accepted Provider\nimplementing that slot's interface (``cruxible get Blueprint:<name>`` lists\nthe Providers that fit). The Procedure records the Blueprint and bindings.",
-            "properties": {
-              "acquisition_policy": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Acquisition Policy"
-              },
-              "activation_policy": {
-                "default": "snapshot",
-                "enum": [
-                  "drain",
-                  "abort",
-                  "snapshot",
-                  "epoch-check"
-                ],
-                "title": "Activation Policy",
-                "type": "string"
-              },
-              "bindings": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "minProperties": 1,
-                "title": "Bindings",
-                "type": "object"
-              },
-              "blueprint": {
-                "title": "Blueprint",
-                "type": "string"
-              },
-              "kind": {
-                "const": "blueprint_instance",
-                "title": "Kind",
-                "type": "string"
-              },
-              "name": {
-                "title": "Name",
-                "type": "string"
-              },
-              "retire": {
-                "default": false,
-                "title": "Retire",
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "kind",
-              "name",
-              "blueprint",
-              "bindings"
-            ],
-            "title": "BlueprintInstanceInput",
             "type": "object"
           },
           "CadenceSchedule": {
@@ -5316,8 +5195,6 @@
                     "mapping": {
                       "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                       "approval_policy": "#/$defs/ApprovalPolicyInput",
-                      "blueprint": "#/$defs/BlueprintInput",
-                      "blueprint_instance": "#/$defs/BlueprintInstanceInput",
                       "claim": "#/$defs/ClaimInput",
                       "claim_retirement": "#/$defs/ClaimRetirementInput",
                       "claim_type": "#/$defs/ClaimTypeInput",
@@ -5376,12 +5253,6 @@
                     },
                     {
                       "$ref": "#/$defs/SubjectKindInput"
-                    },
-                    {
-                      "$ref": "#/$defs/BlueprintInput"
-                    },
-                    {
-                      "$ref": "#/$defs/BlueprintInstanceInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -8055,6 +7926,20 @@
                 "default": null,
                 "description": "SourceAcquisitionPolicy name; omitted uses the instance default.",
                 "title": "Acquisition Policy Name"
+              },
+              "bindings": {
+                "additionalProperties": {
+                  "maxLength": 393,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxProperties": 256,
+                "propertyNames": {
+                  "maxLength": 256,
+                  "minLength": 1
+                },
+                "title": "Bindings",
+                "type": "object"
               },
               "budgets": {
                 "anyOf": [
@@ -14953,8 +14838,6 @@
               "claim-exact-content",
               "claim-revision",
               "procedure",
-              "blueprint",
-              "blueprint-instance",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
@@ -14992,8 +14875,6 @@
               "mapping": {
                 "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
-                "blueprint": "#/$defs/BlueprintInput",
-                "blueprint_instance": "#/$defs/BlueprintInstanceInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
                 "line": "#/$defs/LineInput",
@@ -15014,12 +14895,6 @@
               },
               {
                 "$ref": "#/$defs/ProcedureInput"
-              },
-              {
-                "$ref": "#/$defs/BlueprintInput"
-              },
-              {
-                "$ref": "#/$defs/BlueprintInstanceInput"
               },
               {
                 "$ref": "#/$defs/SubjectInput"
@@ -35953,7 +35828,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -36648,7 +36526,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -63044,7 +62925,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -65758,7 +65642,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -67915,7 +67802,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -70404,7 +70294,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -72998,7 +72891,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -75839,7 +75735,10 @@
                   "trigger_capture_not_yet_observed",
                   "trigger_event_precedes_acceptance",
                   "line_binding_superseded",
-                  "line_trigger_mismatch"
+                  "line_trigger_mismatch",
+                  "cruxible.procedure.slot_binding_missing",
+                  "cruxible.procedure.slot_binding_ambiguous",
+                  "cruxible.procedure.slot_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"

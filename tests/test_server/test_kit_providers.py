@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client.artifacts import pack_artifact, unpack_artifact
-from cruxible_client.contracts.authoring.inputs import BlueprintInstanceInput
 from cruxible_client.contracts.kits import (
     KitAddRequest,
     KitBuildRequest,
@@ -309,7 +308,7 @@ def _author(world: Any, *, procedure: bool = True) -> None:
 
     from cruxible_client.authoring.examples import acquisition_policy_example
     from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_client.contracts.authoring.inputs import BlueprintInput, ProcedureInput
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
 
     example = acquisition_policy_example().acquisition_policy
     draft = world.pb.changes(rationale="Ship an increment kit.")
@@ -329,10 +328,60 @@ def _author(world: Any, *, procedure: bool = True) -> None:
                 acquisition_policy=POLICY,
             )
         )
-    definition, contracts = _graph(world, provider=None)
-    draft.procedure(
-        definition=BlueprintInput(kind="blueprint", definition=definition, contracts=contracts)
-    )
+    if hasattr(world, "instance"):
+        # Preserve the original frozen Blueprint fixture in revision-35 tests.
+        # The removed new-authoring model is not needed to construct old bytes.
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+        from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
+        from cruxible_core.authoring.lowering import lower_authoring
+        from tests.support.core_provider_world import AT
+
+        definition, contracts = _graph(world, provider="kit-call")
+        definition["name"] = BLUEPRINT
+        prototype_intent = (
+            world.pb.changes(rationale="Resolve a frozen fixture graph.")
+            .procedure(
+                definition=ProcedureInput(
+                    kind="procedure", definition=definition, contracts=contracts
+                )
+            )
+            .prepare()
+        )
+        assert not prototype_intent.refused, prototype_intent.diagnostics
+        prototype_path = f"procedures/{BLUEPRINT}.json"
+        lowered = lower_authoring(world.instance, intent=prototype_intent.intent, actor_id="owner")
+        prototype = parse_procedure(lowered.proposed_tree[prototype_path], path=prototype_path)
+        raw = prototype.definition.model_dump(mode="json", by_alias=True)
+        node = raw["nodes"][0]
+        node["provider"] = {"slot_name": "increment"}
+        node["implementation_digest"] = None
+        raw["pin_slots"] = [
+            {
+                "slot_name": "increment",
+                "pin_role": "provider",
+                "artifact_kind": "Provider",
+                "interface_digest": node["interface_digest"],
+            }
+        ]
+        frozen_definition = ProcedureDefinition.model_validate(raw)
+        frozen = BlueprintArtifact(
+            identity=ArtifactIdentity(kind="Blueprint", name=BLUEPRINT),
+            definition=frozen_definition,
+            definition_digest=compute_procedure_definition_digest(frozen_definition).tagged,
+            pins=tuple(pin for pin in prototype.pins if pin.role != "provider"),
+            owned_contracts=prototype.owned_contracts,
+            activation_policy="snapshot",
+        )
+        world.accept_members({blueprint_path(BLUEPRINT): render_blueprint(frozen)}, timestamp=AT)
+        if not procedure:
+            return
+    else:
+        definition, contracts = _graph(world, provider=None)
+        draft.procedure(
+            definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
+        )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
     submitted = intent.submit(accept="never")
@@ -427,8 +476,8 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
-            f"blueprints/{BLUEPRINT}.json",
             f"procedures/{PROCEDURE}.json",
+            f"procedures/{BLUEPRINT}.json",
             next(
                 p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
             ),
@@ -507,13 +556,11 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         other = _package(tmp_path / "local", provider_checkout, name="other-call")
         _install(consumer, other)
         draft = consumer.pb.changes(rationale="Increment with the other provider.")
-        draft.procedure(
-            definition=BlueprintInstanceInput(
-                kind="blueprint_instance",
-                name="acme.increment-other",
-                blueprint=BLUEPRINT,
-                bindings={"increment": "other-call"},
-            )
+        draft.line(
+            name="acme.increment-other",
+            procedure=BLUEPRINT,
+            bindings={"increment": "other-call"},
+            parameters={"n": 5},
         )
         intent = draft.prepare()
         assert not intent.refused, intent.diagnostics
@@ -521,7 +568,9 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert submitted._candidate_status is not None
         consumer.approve(submitted._candidate_status.proposal_id)
         consumer.pb.refresh()
-        assert _run(consumer, "acme.increment-other", 5) == {"n": 6}
+        other_run = consumer.pb.line("acme.increment-other").run()
+        assert other_run.status == "succeeded", other_run
+        assert other_run.result.model_dump() == {"n": 6}
     finally:
         for _ in opened:
             pass
@@ -880,7 +929,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
 
     from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.dependencies import dependency_pins
-    from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+    from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_core.service.kits import _builtin, service_add_kit, service_build_kit
     from tests.core_support._candidate_support import submit_member_candidate
@@ -903,12 +952,12 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
             "interface": raw["nodes"][0]["interface"],
         }
     ]
-    from cruxible_client.contracts.procedures.artifacts import NamedBlueprintArtifact
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 
     definition = NamedProcedureDefinition.model_validate(raw)
-    blueprint = NamedBlueprintArtifact(
-        identity={"kind": "Blueprint", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
+    blueprint = NamedProcedureArtifact(
+        identity={"kind": "Procedure", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
         owned_contracts=procedure.owned_contracts,
@@ -916,7 +965,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     )
     inspection = submit_member_candidate(
         instance,
-        members={blueprint_path(blueprint.identity.name): render_blueprint(blueprint)},
+        members={procedure_path(blueprint.identity.name): render_procedure(blueprint)},
         actor_id="owner",
         proposal_name="files-skeleton",
         proposal_family="procedure",
@@ -930,7 +979,7 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
 
     paths = [item.path for item in release.manifest.artifacts]
     assert "procedures/acme.files.json" in paths
-    assert "blueprints/acme.files-skeleton.json" in paths
+    assert "procedures/acme.files-skeleton.json" in paths
     assert not any(path.startswith(("providers/", "provider-interfaces/")) for path in paths)
     assert release.manifest.providers == ()
     released = parse_procedure(

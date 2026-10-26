@@ -287,7 +287,6 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
 
 
 def test_named_blueprint_instantiates_names_and_admission_refuses_ambiguous_slots():
-    from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.procedures.artifacts import (
         AcceptedProcedure,
         procedure_artifact_digest,
@@ -343,7 +342,9 @@ def test_named_blueprint_instantiates_names_and_admission_refuses_ambiguous_slot
     def lookup(identity):
         return interface.registration, interface.artifact_digest
 
-    with pytest.raises(ExecutionError, match="one fitting build"):
+    from cruxible_core.errors import RequestRefusedError
+
+    with pytest.raises(RequestRefusedError, match="one fitting build"):
         bind_procedure_references(
             slotted,
             lookup=lookup,
@@ -358,7 +359,6 @@ def test_named_blueprint_instantiates_names_and_admission_refuses_ambiguous_slot
     "path,old,new",
     [
         ("procedures/check.json", "playbill-procedure-v2", "cruxible-procedure-v3"),
-        ("blueprints/check.json", "cruxible-blueprint-v1", "cruxible-blueprint-v2"),
         (
             "query-definitions/check.json",
             "playbill-query-definition-v2",
@@ -703,36 +703,22 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
 
 
 def test_graph7_blueprint_refuses_before_writing_a_procedure(tmp_path):
-    from cruxible_client.contracts.authoring.models import BlueprintAuthoringPayload
-    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-    from cruxible_core.authoring.lowering import AuthoringLoweringError, lower_authoring
-    from cruxible_core.authoring.store import AuthoringIntentStore
-    from cruxible_core.proposals.proposals import AuthenticatedActor
-    from tests.core_support._support import initialize_local
+    from types import SimpleNamespace
 
-    instance, _ = initialize_local(tmp_path)
-    before = instance.accepted_coordinate()
-    coordinator = AuthoringIntentCoordinator(
-        instance=instance,
-        store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
+    from cruxible_client.contracts.errors import FormatError
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.proposals.proposals import _installed
+
+    context = SimpleNamespace(
+        path="blueprints/test.blueprint.json",
+        current=SimpleNamespace(compiler=LIGHT_ARTIFACTS_COMPILER),
+        acceptance_laws=ACCEPTANCE_LAWS,
+        historical_law_coordinate=None,
+        rechecking=False,
     )
-    view = coordinator.create(
-        actor=AuthenticatedActor(actor_id="owner"),
-        payload=BlueprintAuthoringPayload(
-            definition={"name": "test.blueprint", "graph_format": 7},
-            activation_policy="snapshot",
-            owned_contracts=(),
-        ),
-        canonical_timestamp="2026-10-25T12:00:00.000000Z",
-    )
-    with pytest.raises(AuthoringLoweringError) as caught:
-        lower_authoring(instance, intent=view.intent, actor_id="owner")
-    assert caught.value.code == "cruxible.authoring.blueprint_graph_unsupported"
-    assert caught.value.repairs[0].description == (
-        "author graph 6 or a ProcedureSpec; Blueprints fold into slotted Procedures next"
-    )
-    assert instance.accepted_coordinate() == before
-    assert "procedures/test.blueprint.json" not in instance.tree_at(before.git_oid)
+    with pytest.raises(FormatError, match="author a Procedure with slots"):
+        _installed(context, "cruxible-blueprint-v2")
 
 
 def test_frozen_v1_erasure_authorization_keeps_its_exact_rule_pin():

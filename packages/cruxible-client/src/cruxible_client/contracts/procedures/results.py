@@ -74,6 +74,9 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "trigger_event_precedes_acceptance",
     "line_binding_superseded",
     "line_trigger_mismatch",
+    "cruxible.procedure.slot_binding_missing",
+    "cruxible.procedure.slot_binding_ambiguous",
+    "cruxible.procedure.slot_undeclared",
 ]
 #: Codes retained runs were refused with before authority was served as verbs.
 #: A run's journal keeps the bytes it wrote; reading it serves today's code.

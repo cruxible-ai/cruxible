@@ -391,6 +391,20 @@ def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
         != compute_procedure_definition_digest(envelope.definition).tagged
     ):
         raise ValueError(f"{kind} definition digest does not reproduce")
+    if kind == "Procedure":
+        slots = {slot.slot_name: slot for slot in envelope.definition.pin_slots}
+        provider_slots = {
+            getattr(occurrence, "provider").slot_name
+            for _, occurrence in provider_occurrences(envelope.definition)
+            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef)
+        }
+        if set(envelope.definition.open_slots) != provider_slots or provider_slots != set(slots):
+            raise ValueError("Declare and use slots only in Provider positions")
+        for _, occurrence in provider_occurrences(envelope.definition):
+            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef):
+                slot = slots[getattr(occurrence, "provider").slot_name]
+                if getattr(slot, "interface", None) != getattr(occurrence, "interface"):
+                    raise ValueError("Provider slot and occurrence interfaces differ")
     contracts = {contract.identity for contract in envelope.owned_contracts}
     referenced = {
         binding.target
@@ -712,6 +726,7 @@ def _evaluate_provider_pins(
     providers: Mapping[str, AcceptedProvider],
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     by_name: bool = False,
+    bindings: Mapping[str, ArtifactNameRef] | None = None,
 ) -> tuple[str, str] | None:
     for occurrence_id, occurrence in provider_occurrences(definition):
         interface_pin = getattr(occurrence, "interface")
@@ -742,7 +757,10 @@ def _evaluate_provider_pins(
             return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRef):
-            continue
+            selected = (bindings or {}).get(provider_binding.slot_name)
+            if selected is None:
+                continue
+            provider_binding = selected
         accepted_provider = providers.get(provider_binding.target.qualified)
         if accepted_provider is None and isinstance(provider_binding, ArtifactPin):
             accepted_provider = providers.get(provider_binding.artifact_digest)

@@ -732,12 +732,15 @@ it runs directly, only as a Line (its terminals act only there), or not at
 all. A Procedure may declare measurements, which `procedure measure` evaluates
 once due and `procedure readings` reads.
 
-A **Blueprint** is the same definition with one or more provider slots left
-open, each naming the ProviderInterface it needs. It never runs.
-Instantiating it (a `blueprint_instance` authoring input) binds one installed
-provider per slot and produces an ordinary Procedure that records its
-Blueprint and bindings. `get Blueprint:NAME` lists each slot and the installed
-providers that fit it.
+A Procedure may leave Provider slots open, each naming its required interface.
+A direct run selects the single installed build that fits each slot. No fit refuses
+`cruxible.procedure.slot_binding_missing`; several fits refuse
+`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
+with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
+`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
+carry the same `bindings` mapping alongside its Procedure and parameters.
+Existing Blueprint artifacts remain readable, and their exact Procedure instances
+keep running. New definitions are Procedures with slots.
 
 A **ProviderInterface** is a typed contract (input, output, effect); a
 **Provider** is an installed package that implements interfaces. Interfaces

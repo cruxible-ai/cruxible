@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
 from pydantic import JsonValue
 
-from cruxible_client.authoring.inputs import BlueprintInput, CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.authoring.procedures import (
     CompositionDiagnostic,
     ProcedureBindingRequirement,
@@ -65,9 +65,8 @@ class ProcedureSource:
     """Retained Procedure source and its binding selections.
 
     ``slots`` (slot name -> ProviderInterface name) are open Provider slots: bind
-    each with ``bind(slot=cx.provider_interface(...))`` and the source builds a
-    Procedure; leave any open and it builds a Blueprint (a skeleton that never
-    runs, instantiated later with one installed Provider per slot).
+    each with ``bind(slot=cx.provider_interface(...))`` to select a Provider
+    explicitly, or leave them open for run admission to bind by fit.
     """
 
     _request: ProcedureSourceRequest
@@ -83,10 +82,6 @@ class ProcedureSource:
         """Declared slots no Provider is bound to yet."""
 
         return tuple(sorted(set(self.slots) - set(self._bindings)))
-
-    @property
-    def is_blueprint(self) -> bool:
-        return bool(self.open_slots)
 
     @property
     def name(self) -> str:
@@ -324,8 +319,8 @@ class ProcedureSource:
             ),
         )
 
-    def build(self, *, world: World | None = None) -> ProcedureInput | BlueprintInput:
-        """The shared authoring input: a Procedure, or a Blueprint while slots stay open."""
+    def build(self, *, world: World | None = None) -> ProcedureInput:
+        """The shared Procedure authoring input, with any open Provider slots."""
 
         preview = self.preview(world=world)
         if not preview.ready_for_prepare:
@@ -344,15 +339,6 @@ class ProcedureSource:
             )
             for c in {c.name: c for c in (request.input, request.output)}.values()
         )
-        if self.is_blueprint:
-            if self.acquisition_policy is not None:
-                raise ValueError("A Blueprint pins no acquisition policy; its instances do")
-            return BlueprintInput(
-                kind="blueprint",
-                definition=definition,
-                activation_policy=self.activation_policy,
-                contracts=contracts,
-            )
         return ProcedureInput(
             kind="procedure",
             definition=definition,

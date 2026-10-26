@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.authoring.inputs import BlueprintInstanceInput
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -24,7 +23,6 @@ from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
-    BLUEPRINT,
     PROCEDURE,
     _add,
     _author,
@@ -55,21 +53,59 @@ def _accept_members(world, members, *, timestamp):
 
 
 def _instantiate(world, name):
-    intent = (
-        world.pb.changes(rationale="Use the kit's provider.")
-        .procedure(
-            definition=BlueprintInstanceInput(
-                kind="blueprint_instance",
-                name=name,
-                blueprint=BLUEPRINT,
-                bindings={"increment": "kit-call"},
-            )
-        )
-        .prepare()
+    # This file exercises frozen, exact build succession at revision 35.
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        blueprint_interfaces,
+        instantiate_blueprint,
+        parse_blueprint,
     )
-    assert not intent.refused, intent.diagnostics
-    submitted = intent.submit(accept="never")
-    world.approve(submitted._candidate_status.proposal_id)
+    from cruxible_client.contracts.provider_interfaces import (
+        AcceptedProviderInterfaceRegistration,
+        parse_provider_interface,
+        provider_interface_digest,
+        provider_interface_path,
+    )
+    from cruxible_client.contracts.providers import (
+        AcceptedProvider,
+        parse_provider,
+        provider_digest,
+        provider_path,
+    )
+    from cruxible_core.providers.builds import resolve_in_tree
+    from tests.support.core_provider_world import AT
+    from tests.test_server.test_kit_providers import BLUEPRINT
+
+    tree = _tree(world)
+    path = "blueprints/" + BLUEPRINT + ".json"
+    blueprint = parse_blueprint(tree[path], path=path)
+    selected = resolve_in_tree(
+        world.instance, world.instance.accepted_coordinate(), tree, "kit-call"
+    ).resolved
+    ppath = provider_path(selected)
+    provider = parse_provider(tree[ppath], path=ppath)
+
+    def interface_lookup(identity):
+        ipath = provider_interface_path(identity.name)
+        interface = parse_provider_interface(tree[ipath], path=ipath)
+        return AcceptedProviderInterfaceRegistration(
+            path=ipath,
+            registration=interface,
+            artifact_digest=provider_interface_digest(interface).tagged,
+        )
+
+    instance = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name=name,
+        providers={
+            "increment": AcceptedProvider(
+                path=ppath, provider=provider, artifact_digest=provider_digest(provider).tagged
+            )
+        },
+        interface_registrations=blueprint_interfaces(blueprint, interface_lookup),
+    )
+    world.accept_members({"procedures/" + name + ".json": render_procedure(instance)}, timestamp=AT)
     world.pb.refresh()
 
 

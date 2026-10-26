@@ -126,32 +126,72 @@ def indexed_move_pinners(
     only: tuple[str, ...],
     *,
     procedures_only: bool = False,
+    include_blueprints: bool = True,
 ) -> tuple[tuple[str, str, str], ...]:
-    """Live Procedure/Blueprint pins of this name, sized by the affected pinners.
+    """Live Procedure and Line bindings affected by this build move.
 
     The derived relation excludes retired sources and has a name prefix index;
-    builds without pinners never enter this read.
+    builds without pinners never enter the explicit read. Unbound Lines use
+    target-interface incoming buckets, with a name-local predecessor lookup
+    only for each affected Line.
     """
     # Probe the unique identity index, then check the exact digest. The
     # non-unique by-digest index needs a data-dependent range-end step even
     # though the identity already determines one row.
     select = (
-        "SELECT p.source_identity,coalesce(proc.path,bp.path),p.target_identity "
+        "SELECT p.source_identity,coalesce(proc.path,bp.path,l.path),p.target_identity "
         "FROM main.provider_pinners p "
         "LEFT JOIN main.procedures proc ON proc.identity=p.source_identity "
         "LEFT JOIN main.blueprints bp ON bp.identity=p.source_identity "
+        "LEFT JOIN main.lines l ON l.identity=p.source_identity "
         "JOIN main.providers b INDEXED BY sqlite_autoindex_providers_1 "
         "ON b.identity=p.target_identity "
         "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
     )
+    if not include_blueprints:
+        select += " AND bp.identity IS NULL"
     if procedures_only:
-        select += " AND proc.identity IS NOT NULL"
+        select += " AND (proc.identity IS NOT NULL OR l.format_tag='cruxible-line-v7')"
     parameters: list[str] = [name, target]
     if only:
         select += " AND p.source_identity IN (" + ",".join("?" for _ in only) + ")"
         parameters.extend(only)
-    return tuple(
+    explicit = tuple(
         connection.execute(select + " ORDER BY p.source_identity,p.target_identity", parameters)
+    )
+    # Only ProviderInterface -> Procedure -> Line incoming buckets. This is
+    # administrative build-move work per affected Line, never per generation.
+    implicit_sql = (
+        "SELECT DISTINCT l.identity,l.path,("
+        "SELECT b.identity FROM main.providers b "
+        "JOIN main.pins bi ON bi.source_identity=b.identity "
+        "AND bi.pin_role='provider-interface' "
+        "WHERE b.provider_name=? AND b.identity!=? AND b.lifecycle='live' "
+        "AND bi.target_identity=target_interface.target_identity "
+        "ORDER BY b.registration_sequence DESC,b.identity LIMIT 1) "
+        "FROM main.pins target_interface "
+        "JOIN main.procedure_provider_slots slots "
+        "ON slots.interface_identity=target_interface.target_identity "
+        "JOIN main.procedures proc ON proc.identity=slots.source_identity "
+        "JOIN main.lines l ON l.procedure_identity=proc.identity "
+        "WHERE target_interface.source_identity=? "
+        "AND target_interface.pin_role='provider-interface' "
+        "AND proc.lifecycle='live' AND proc.format_tag='cruxible-procedure-v3' "
+        "AND l.lifecycle='live' AND l.format_tag='cruxible-line-v7'"
+    )
+    implicit_params = [name, target, target]
+    if only:
+        implicit_sql += " AND l.identity IN (" + ",".join("?" for _ in only) + ")"
+        implicit_params.extend(only)
+    implicit = tuple(connection.execute(implicit_sql, implicit_params))
+    return tuple(
+        sorted(
+            {
+                (str(row[0]), str(row[1]), str(row[2]))
+                for row in (*explicit, *implicit)
+                if row[2] is not None
+            }
+        )
     )
 
 

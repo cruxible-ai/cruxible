@@ -33,8 +33,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDisposition,
     AuthoringPayload,
     AuthoringTriggerSchedule,
-    BlueprintAuthoringPayload,
-    BlueprintInstantiation,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
@@ -76,6 +74,7 @@ from cruxible_client.contracts.procedures.authored import (
     ProcedureSpecError,
     lower_procedure_spec,
 )
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import ExhaustTapNode, ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
@@ -287,46 +286,6 @@ class ProcedureInput(_StrictInputModel):
         return cast(dict[str, object], value)
 
 
-class BlueprintInput(_StrictInputModel):
-    """A Procedure skeleton: a definition whose Provider slots stay open.
-
-    Slots are referenced as ``{"kind": "slot", "slot_name": ...}`` in Provider
-    positions and declared in ``definition.pin_slots`` with the interface digest
-    they need. A Blueprint never runs; instantiate it with ``blueprint_instance``.
-    """
-
-    kind: Literal["blueprint"]
-    definition: dict[str, object]
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    retire: bool = False
-    contracts: tuple[CarriedContractInput, ...] = ()
-
-    @field_validator("definition", mode="before")
-    @classmethod
-    def _definition(cls, value: object) -> dict[str, object]:
-        if not isinstance(value, dict):
-            raise ValueError("Blueprint input definition must be an object")
-        return cast(dict[str, object], value)
-
-
-class BlueprintInstanceInput(_StrictInputModel):
-    """An ordinary Procedure made from a Blueprint: one accepted Provider per slot.
-
-    ``bindings`` maps each Blueprint slot to the name of an accepted Provider
-    implementing that slot's interface (``cruxible get Blueprint:<name>`` lists
-    the Providers that fit). The Procedure records the Blueprint and bindings.
-    """
-
-    kind: Literal["blueprint_instance"]
-    name: str
-    blueprint: str
-    bindings: dict[str, str] = Field(min_length=1)
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    #: Semantic name of the SourceAcquisitionPolicy the Procedure pins, if it reads Sources.
-    acquisition_policy: str | None = None
-    retire: bool = False
-
-
 class SubjectInput(_StrictInputModel):
     """Create one Subject: name its kind and its key; core assigns the id.
 
@@ -468,6 +427,7 @@ class LineInput(_StrictInputModel):
     kind: Literal["line"]
     name: str
     procedure_name: str
+    bindings: ProcedureBindings = Field(default_factory=dict)
     acquisition_policy_name: str | None = Field(
         default=None,
         description=("SourceAcquisitionPolicy name; omitted uses the instance default."),
@@ -556,8 +516,6 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | LineInput
     | TriggerInput
     | SubjectKindInput
-    | BlueprintInput
-    | BlueprintInstanceInput
     | ProcedureInput,
     Field(discriminator="kind"),
     BeforeValidator(_authored_procedure_input_shape),
@@ -582,8 +540,6 @@ class ChangeSetInput(_StrictInputModel):
 AuthoringInput: TypeAlias = Annotated[
     ClaimInput
     | ProcedureInput
-    | BlueprintInput
-    | BlueprintInstanceInput
     | SubjectInput
     | SubjectSuccessionInput
     | QueryDefinitionInput
@@ -904,36 +860,6 @@ def _procedure_references(
     return value
 
 
-def _blueprint_instance_payload(value: BlueprintInstanceInput) -> ProcedureAuthoringPayload:
-    return ProcedureAuthoringPayload(
-        definition=BlueprintInstantiation(
-            name=value.name, blueprint=value.blueprint, bindings=value.bindings
-        ).model_dump(mode="json"),
-        activation_policy=value.activation_policy,
-        owned_contracts=(),
-        acquisition_policy=value.acquisition_policy,
-        retire=value.retire,
-    )
-
-
-def _blueprint_payload(value: BlueprintInput) -> BlueprintAuthoringPayload:
-    procedure = _procedure_payload(
-        ProcedureInput(
-            kind="procedure",
-            definition=value.definition,
-            activation_policy=value.activation_policy,
-            retire=value.retire,
-            contracts=value.contracts,
-        )
-    )
-    return BlueprintAuthoringPayload(
-        definition=procedure.definition,
-        activation_policy=procedure.activation_policy,
-        owned_contracts=procedure.owned_contracts,
-        retire=procedure.retire,
-    )
-
-
 def _procedure_payload(
     value: ProcedureInput,
 ) -> ProcedureAuthoringPayload:
@@ -1008,6 +934,7 @@ def _line_payload(value: LineInput) -> LineAuthoringPayload:
     return LineAuthoringPayload(
         name=value.name,
         procedure_name=value.procedure_name,
+        bindings=value.bindings,
         acquisition_policy_name=value.acquisition_policy_name,
         max_authority=value.max_authority,
         trigger_input=value.trigger_input,
@@ -1097,10 +1024,6 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         )
     if isinstance(member, ProcedureInput):
         return _procedure_payload(member)
-    if isinstance(member, BlueprintInput):
-        return _blueprint_payload(member)
-    if isinstance(member, BlueprintInstanceInput):
-        return _blueprint_instance_payload(member)
     if isinstance(member, SubjectInput):
         return _subject_creation_payload(member)
     if isinstance(member, SubjectSuccessionInput):
@@ -1160,10 +1083,6 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _claim_payload(value)
     if isinstance(value, ProcedureInput):
         return _procedure_payload(value)
-    if isinstance(value, BlueprintInput):
-        return _blueprint_payload(value)
-    if isinstance(value, BlueprintInstanceInput):
-        return _blueprint_instance_payload(value)
     if isinstance(value, SubjectInput):
         return ChangeSetAuthoringPayload(members=(_subject_creation_payload(value),))
     if isinstance(value, SubjectSuccessionInput):
@@ -1250,8 +1169,6 @@ __all__ = [
     "LineInput",
     "TriggerInput",
     "LiteralObjectInput",
-    "BlueprintInput",
-    "BlueprintInstanceInput",
     "ProcedureInput",
     "ProcedureMandateInput",
     "QueryDefinitionInput",

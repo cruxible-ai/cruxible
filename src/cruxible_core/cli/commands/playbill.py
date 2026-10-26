@@ -1785,7 +1785,7 @@ def retire_provider(build: str, dry_run: bool | None, at: str | None, output_jso
 @click.option(
     "--to", required=True, help="newest (most recently registered) or an exact build key."
 )
-@click.option("--only", multiple=True, help="Move only this Procedure or Blueprint (repeatable).")
+@click.option("--only", multiple=True, help="Move only this Procedure or Line (repeatable).")
 @change_control_options
 @json_option
 @handle_errors
@@ -4530,7 +4530,7 @@ def authoring_example_command(
     to the daemon.
 
     \b
-    Input kind family: claim | procedure | blueprint | blueprint_instance |
+    Input kind family: claim | procedure |
     subject | subject_kind | subject_succession | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
     acquisition_policy | line | trigger | change_set (tagless).
@@ -4539,7 +4539,7 @@ def authoring_example_command(
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | subject_kind | subject_succession |
     query_definition | procedure_mandate | acquisition_policy | line | trigger |
-    procedure | blueprint | blueprint_instance.
+    procedure.
     claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
@@ -7347,6 +7347,7 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 
 
 @procedure_group.command("run")
+@click.option("--bind", "bind_values", multiple=True, help="Bind a Provider slot: slot=provider.")
 @click.argument("name")
 @click.argument("input_file", type=PayloadFile())
 @click.option(
@@ -7384,6 +7385,7 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
 @handle_errors
 def run_procedure(
     name: str,
+    bind_values: tuple[str, ...],
     input_file: str,
     evaluation_time: str | None,
     at_file: str | None,
@@ -7397,6 +7399,12 @@ def run_procedure(
     admission_refused, node_refused, operational_failed, internal_failed.
     """
 
+    bindings = {}
+    for binding in bind_values:
+        slot, sep, provider = binding.partition("=")
+        if not sep or not slot or not provider or slot in bindings:
+            raise click.BadParameter("use one slot=provider per slot", param_hint="--bind")
+        bindings[slot] = provider
     resolution_contract = (
         None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
@@ -7411,6 +7419,7 @@ def run_procedure(
             trigger_event=trigger_event,
             at=None if at is None else at.model_dump(mode="json"),
             input=_read_mapping(input_file),
+            **({"bindings": bindings} if bindings else {}),
         ),
         command_name="cruxible procedure run",
     )

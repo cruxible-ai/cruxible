@@ -30,3 +30,14 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
     assert '"value": "$first.value"' in shown
     assert '"else": "halt(empty)"' in shown
     assert '"from": "last"' in shown
+
+
+def test_procedure_run_accepts_explicit_slot_bindings(tmp_path):
+    from cruxible_core.cli.commands.playbill import run_procedure
+
+    input_file = tmp_path / "input.json"
+    input_file.write_text("{}")
+    with run_procedure.make_context(
+        "run", ["test.slotted", str(input_file), "--bind", "compute=test-provider/build"]
+    ) as context:
+        assert context.params["bind_values"] == ("compute=test-provider/build",)

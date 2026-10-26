@@ -343,8 +343,8 @@ class ProviderMoveRequest(_Strict):
             raise ValueError("only must be sorted and unique")
         for identity in value:
             kind, separator, name = identity.partition(":")
-            if not separator or kind not in {"Procedure", "Blueprint"} or not name:
-                raise ValueError("only names definitions as Procedure:NAME or Blueprint:NAME")
+            if not separator or kind not in {"Procedure", "Line"} or not name:
+                raise ValueError("only names definitions as Procedure:NAME or Line:NAME")
         return value
 
 

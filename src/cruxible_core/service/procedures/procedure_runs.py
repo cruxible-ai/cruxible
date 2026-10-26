@@ -75,6 +75,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     procedure_runnability,
 )
+from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     LineSpec,
@@ -573,6 +574,7 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
+    bindings: ProcedureBindings = Field(default_factory=dict)
     input: object
 
     @field_validator("evaluation_time")
@@ -754,6 +756,7 @@ def _accepted_procedure(
     coordinate: AcceptedProjectionCoordinate,
     allow_retired: bool = False,
     bind_references: bool = False,
+    bindings: Mapping[str, str] | None = None,
 ) -> AcceptedProcedure:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -788,19 +791,49 @@ def _accepted_procedure(
             result = []
             for identity, digest in candidates:
                 provider = projection.typed.source(identity)
+                from cruxible_client.contracts.procedures.provider_slots import (
+                    fitting_implementation,
+                )
+
                 if (
                     isinstance(provider, ProviderV2)
-                    and sum(
-                        row.interface_id == registration.interface_id
-                        and row.interface_digest == interface_definition_digest(registration)
-                        for row in provider.implementations
-                    )
-                    == 1
+                    and fitting_implementation(provider, registration) is not None
                 ):
                     result.append((provider, digest))
             return tuple(result)
 
-        return bind_procedure_references(accepted, lookup=lookup, slots=fitting)
+        from cruxible_core.procedures.reference_binding import validate_slot_names
+        from cruxible_core.providers.builds import indexed_exact_provider, indexed_newest_provider
+
+        validate_slot_names(
+            bindings or {}, (slot.slot_name for slot in procedure.definition.pin_slots)
+        )
+        selected = {}
+        for slot, name in (bindings or {}).items():
+            bare = name.removeprefix("Provider:")
+            row = indexed_exact_provider(
+                projection.typed.connection, "Provider:" + bare
+            ) or indexed_newest_provider(projection.typed.connection, bare)
+            if row is None or not row.live:
+                from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+                from cruxible_core.errors import RequestRefusedError
+
+                raise RequestRefusedError(
+                    "cruxible.procedure.slot_binding_missing",
+                    f"Provider {name!r} is not installed and live.",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction.model_validate(
+                            {
+                                "target": "bindings",
+                                "required_change": "Bind a live installed Provider build.",
+                            }
+                        )
+                    ),
+                )
+            selected[slot] = ArtifactIdentity(
+                kind="Provider", name=row.identity.removeprefix("Provider:")
+            )
+        return bind_procedure_references(accepted, lookup=lookup, slots=fitting, bindings=selected)
 
 
 def _accepted_runtime_policy(
@@ -1097,7 +1130,7 @@ def _assert_line_closure_complete(
 
 
 def _exact_pin(value: ArtifactPin | ProcedurePinSlotRef) -> ArtifactPin:
-    """An accepted Procedure pins every dependency exactly; a slot is a Blueprint's."""
+    """An execution plan resolves every dependency before execution."""
 
     if isinstance(value, ArtifactPin):
         return value
@@ -3334,7 +3367,9 @@ def service_run_playbill_procedure(
     # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
     # addressed only by run_id through service_get_playbill_procedure_run.
     lane: Literal["current", "replay"] = "current"
-    accepted = _accepted_procedure(instance, name=name, coordinate=coordinate, bind_references=True)
+    accepted = _accepted_procedure(
+        instance, name=name, coordinate=coordinate, bind_references=True, bindings=request.bindings
+    )
     if caller_rung is not None:
         require_run_permission(
             "cruxible_procedure_run",
@@ -3726,6 +3761,10 @@ def _run_playbill_line(
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
         bind_references=True,
+        bindings={
+            slot: ref.target.name
+            for slot, ref in getattr(accepted_line.line, "bindings", {}).items()
+        },
     )
     require_run_permission(
         "cruxible_line_run",

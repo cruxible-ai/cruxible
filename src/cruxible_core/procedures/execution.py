@@ -2125,7 +2125,7 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
 def _exact_pin(
     binding: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef, *, label: str
 ) -> ArtifactPin:
-    """An accepted Procedure pins every dependency exactly; only a Blueprint has slots."""
+    """An execution plan resolves every dependency before execution."""
 
     if isinstance(binding, ProcedurePinSlotRef):
         raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
@@ -2325,8 +2325,6 @@ def prepare_direct_procedure_run(
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
     procedure = accepted.procedure
-    if procedure.definition.open_slots:
-        raise ExecutionError("a Blueprint's open slots cannot run; instantiate it first")
     from cruxible_core.procedures.reference_binding import authored_procedure
 
     if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:

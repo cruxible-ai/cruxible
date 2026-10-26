@@ -289,8 +289,7 @@ prints a template for any input kind.
 Every payload is one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_type_succession`, `claim_retirement`, `subject`, `subject_kind`,
-`subject_succession`, `query_definition`, `procedure`, `blueprint`,
-`blueprint_instance`, `procedure_mandate`, `acquisition_policy`, `line`,
+`subject_succession`, `query_definition`, `procedure`, `procedure_mandate`, `acquisition_policy`, `line`,
 `trigger` -- as one intent that admits or refuses whole, typed to the
 offending member index. A `subject` member creates a Subject by its declared
 kind and key (`{"kind": "subject", "subject_kind": ..., "key": {...}}`), never by

@@ -7,10 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.inputs import (
-    BlueprintInstanceInput,
-    lower_authoring_input,
-)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.get_reads import GetBlueprintCard, GetProcedureCard, GetRequest
 from cruxible_client.contracts.procedures.artifacts import (
@@ -41,7 +37,6 @@ from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
 )
-from tests.core_support._support import initialize_local
 from tests.support.procedures import procedure_artifact
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_graph_v4_provider_closure import (  # noqa: F401 - fixture
@@ -104,13 +99,10 @@ def accept_blueprint_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # 
 
     from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
 
-    # This world exercises retained single-path Providers registered before builds.
-    with monkeypatch.context() as legacy:
-        legacy.setattr(
-            "cruxible_core.runtime.instance.current_compiler_coordinate",
-            lambda: SUBJECT_IDENTITY_COMPILER,
-        )
-        instance, owner = initialize_local(tmp_path)
+    # Retained Blueprint bytes belong to their historical compiler world.
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, owner = initialize_legacy_local(tmp_path, compiler=SUBJECT_IDENTITY_COMPILER)
     interface = accepted_interface()
     provider = accepted_provider()
     blueprint = _blueprint()
@@ -206,20 +198,20 @@ def test_open_slots_belong_only_to_blueprints() -> None:
         )
 
 
-def test_blueprint_instance_input_lowers_to_a_procedure_definition_naming_it() -> None:
-    payload = lower_authoring_input(
-        BlueprintInstanceInput(
-            kind="blueprint_instance",
-            name="lookup-a",
-            blueprint="provider-blueprint",
-            bindings={"lookup": "demo-provider"},
+def test_blueprint_instance_authoring_is_removed() -> None:
+    from pydantic import TypeAdapter, ValidationError
+
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput
+
+    with pytest.raises(ValidationError, match="union_tag_invalid"):
+        TypeAdapter(AuthoringInput).validate_python(
+            {
+                "kind": "blueprint_instance",
+                "name": "lookup-a",
+                "blueprint": "provider-blueprint",
+                "bindings": {"lookup": "demo-provider"},
+            }
         )
-    )
-    assert payload.definition == {  # type: ignore[union-attr]
-        "bindings": {"lookup": "demo-provider"},
-        "blueprint": "provider-blueprint",
-        "name": "lookup-a",
-    }
 
 
 @pytest.mark.usefixtures("contracted_demo")
@@ -239,30 +231,21 @@ def test_blueprint_is_accepted_previewed_and_instantiated_through_authoring(
     ).card
     assert isinstance(card, GetBlueprintCard)
     assert [(slot.slot, slot.interface, slot.fits) for slot in card.slots] == [
-        ("lookup", interface.registration.identity.qualified, ("demo-provider",))
+        ("lookup", interface.registration.identity.qualified, ())
     ]
 
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    payload = lower_authoring_input(
-        BlueprintInstanceInput(
-            kind="blueprint_instance",
-            name="lookup-a",
-            blueprint="provider-blueprint",
-            bindings={"lookup": "demo-provider"},
-            activation_policy="drain",
-        )
-    )
-    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
-    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    procedure = parse_procedure(
-        lowered.proposed_tree[procedure_path("lookup-a")], path=procedure_path("lookup-a")
+    procedure = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="lookup-a",
+        providers={"lookup": provider},
+        activation_policy="drain",
     )
     assert procedure.blueprint is not None
     assert procedure.definition.open_slots == ()
-    _accept_tree(
-        instance, owner, lowered.proposed_tree, timestamp=TIMESTAMP, proposal_name="instance"
-    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[procedure_path("lookup-a")] = render_procedure(procedure)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="instance")
     procedure_card = service_playbill_get(
         instance,
         request=GetRequest(ref="Procedure:lookup-a", evaluation_time=datetime.now(UTC)),
@@ -395,7 +378,7 @@ def test_source_with_an_open_slot_compiles_to_a_blueprint_and_instantiates_by_re
 
 
 @pytest.mark.usefixtures("contracted_demo")
-def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bound(
+def test_procedure_source_declares_slots_and_builds_a_procedure_with_open_slots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The documented flow: declare a slot, bind it with ``cx.provider_interface(...)``."""
@@ -405,12 +388,17 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
     from cruxible_client import Cruxible
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.authoring.source import ProcedureSource, procedure
+    from cruxible_client.contracts.get_reads import GetBatchResult
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.source_requests import (
         SourceProviderSelection,
         SourceSlotSelection,
     )
-    from cruxible_core.service.discovery.orient import service_playbill_head
+    from cruxible_core.service.discovery.orient import (
+        service_playbill_head,
+        service_playbill_orient,
+    )
+    from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
     from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
 
     instance, _owner = accept_blueprint_world(tmp_path, monkeypatch)
@@ -421,6 +409,30 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
 
         def head(self, _instance_id: str, **_values: object) -> object:
             return service_playbill_head(instance)
+
+        def orient(self, _instance_id: str, **values: object) -> object:
+            return service_playbill_orient(instance, **values)
+
+        def preview_procedure_source(self, _instance_id: str, *, request) -> object:
+            return service_preview_procedure_source(instance, request=request)
+
+        def get_batch(self, _instance_id: str, *, request) -> GetBatchResult:
+            results = tuple(
+                service_playbill_get(
+                    instance,
+                    request=GetRequest(
+                        ref=ref,
+                        detail=request.detail,
+                        at=request.at,
+                        evaluation_time=request.evaluation_time,
+                        surface=request.surface,
+                        full_coordinate=True,
+                    ),
+                    access=_ACCESS,
+                )
+                for ref in request.refs
+            )
+            return GetBatchResult(coordinate=results[0].accepted_coordinate, results=results)
 
     cx = Cruxible._from_client(  # type: ignore[arg-type]  # noqa: SLF001
         _ServiceClient(), instance_id="inst", workspace=None
@@ -451,7 +463,27 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
         declare(fetch="demo.interface", other="demo.interface")
     source = declare(fetch="ProviderInterface:demo.interface")
     assert source.slots == {"fetch": "demo.interface"}
-    assert source.is_blueprint and source.open_slots == ("fetch",)
+    assert source.open_slots == ("fetch",)
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+
+    # A separate compilable program exercises build(); the declaration-only
+    # fixture above deliberately contains an unsupported expression statement.
+    @procedure(
+        name="buildable",
+        input=Request,
+        output=Result,
+        budget=_budget(providers=1),
+        hard_caps=_hard_caps(providers=1),
+        slots={"fetch": "demo.interface"},
+    )
+    def buildable(request, bindings):
+        fetched = call(bindings.fetch, input=bindings.fetch.input())  # noqa: F821, F841
+        return Result.value(done=True)
+
+    built = buildable.build(world=cx.world())
+    assert isinstance(built, ProcedureInput)
+    assert built.kind == "procedure"
+    assert built.definition["source_request"]["bindings"]["fetch"]["kind"] == "slot"
     assert source._at(SimpleNamespace()).bindings == {
         "fetch": SourceSlotSelection(interface="demo.interface")
     }
@@ -465,7 +497,7 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
             fetch=binding.model_copy(update={"interface": "ProviderInterface:other.interface"})
         )
     bound = source.bind(fetch=binding)
-    assert not bound.is_blueprint
+    assert bound.open_slots == ()
     world = SimpleNamespace(_playbill=SimpleNamespace(_assert_coordinate=lambda value: None))
     assert bound._at(world).bindings == {  # type: ignore[arg-type]
         "fetch": SourceProviderSelection(provider=binding.provider, interface=binding.interface)
@@ -476,28 +508,21 @@ def test_procedure_source_declares_slots_and_builds_a_blueprint_until_each_is_bo
 
 
 def _instance_lookup_a(tmp_path, monkeypatch, *, retire: bool = False):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.authoring.inputs import (
-        BlueprintInstanceInput,
-        lower_authoring_input,
-    )
 
     instance, owner = accept_blueprint_world(tmp_path, monkeypatch)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    payload = lower_authoring_input(
-        BlueprintInstanceInput(
-            kind="blueprint_instance",
-            name="lookup-a",
-            blueprint="provider-blueprint",
-            bindings={"lookup": "demo-provider"},
-            activation_policy="drain",
-        )
+    blueprint = _blueprint()
+    procedure = instantiate_blueprint(
+        blueprint,
+        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+        name="lookup-a",
+        providers={"lookup": accepted_provider()},
+        activation_policy="drain",
     )
-    intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
-    lowered = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    _accept_tree(
-        instance, owner, lowered.proposed_tree, timestamp=TIMESTAMP, proposal_name="instance"
-    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[procedure_path("lookup-a")] = render_procedure(procedure)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="instance")
     return instance, owner, coordinator, actor
 
 
@@ -569,25 +594,19 @@ def test_an_instance_retires_by_successor_bytes_whatever_became_of_its_blueprint
 
 @pytest.mark.usefixtures("contracted_demo")
 def test_blueprint_instance_retire_keeps_the_definition_that_ran(tmp_path, monkeypatch):
-    from cruxible_client.contracts.authoring.inputs import (
-        BlueprintInstanceInput,
-        lower_authoring_input,
-    )
 
     instance, owner, coordinator, actor = _instance_lookup_a(tmp_path, monkeypatch)
     path = procedure_path("lookup-a")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     before = parse_procedure(tree[path], path=path)
     _succeed_blueprint(instance, owner, retire=True)
-    payload = lower_authoring_input(
-        BlueprintInstanceInput(
-            kind="blueprint_instance",
-            name="lookup-a",
-            blueprint="provider-blueprint",
-            bindings={"lookup": "demo-provider"},
-            activation_policy="drain",
-            retire=True,
-        )
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
+
+    payload = ProcedureAuthoringPayload(
+        definition=before.definition.model_dump(mode="json", by_alias=True),
+        owned_contracts=before.owned_contracts,
+        activation_policy="drain",
+        retire=True,
     )
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
 
@@ -814,20 +833,10 @@ def test_the_blueprint_law_refuses_a_position_bound_to_another_interface() -> No
     ]
 
 
-def test_a_blueprint_change_set_member_authors_its_blueprint_path() -> None:
-    """A Blueprint beside other members of one change set lowers to blueprints/."""
+def test_only_procedures_are_new_graph_authoring_members() -> None:
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 
-    from cruxible_client.contracts.authoring.models import (
-        BlueprintAuthoringPayload,
-        ProcedureAuthoringPayload,
-    )
-
-    blueprint = BlueprintAuthoringPayload.model_construct(definition={"name": "acme.skeleton"})
     procedure = ProcedureAuthoringPayload.model_construct(definition={"name": "acme.increment"})
-
-    assert lowering._member_primary_path(blueprint, claim_identities={}) == blueprint_path(
-        "acme.skeleton"
-    )
     assert lowering._member_primary_path(procedure, claim_identities={}) == procedure_path(
         "acme.increment"
     )
@@ -954,3 +963,85 @@ def test_reference_moves_and_kit_lifecycle_updates_keep_the_recorded_wire_format
     assert parsed.artifact_format == artifact_format
     assert parsed.lifecycle.predecessor_digest == procedure_artifact_digest(procedure).tagged
     assert digest == procedure_artifact_digest(parsed).tagged
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_retained_blueprint_and_exact_instance_remain_readable_and_runnable(tmp_path, monkeypatch):
+    from cruxible_client.contracts.procedures.blueprints import parse_blueprint
+    from cruxible_client.contracts.provider_execution import ProviderEgressObservation
+    from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
+    from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+    from tests.test_procedures.test_procedure_execution import _actor
+    from tests.test_procedures.test_procedure_source_runs import _Operator, _WorkspaceInvoker
+
+    instance, owner, _, _ = _instance_lookup_a(tmp_path, monkeypatch)
+    original = instance.blob_at(instance.accepted_coordinate().git_oid, procedure_path("lookup-a"))
+    blueprint_bytes = instance.blob_at(
+        instance.accepted_coordinate().git_oid, blueprint_path("provider-blueprint")
+    )
+    assert (
+        render_blueprint(
+            parse_blueprint(blueprint_bytes, path=blueprint_path("provider-blueprint"))
+        )
+        == blueprint_bytes
+    )
+    _succeed_blueprint(instance, owner, retire=True)
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_propose_compiler_upgrade,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    proposal = service_propose_compiler_upgrade(
+        instance, target=LIGHT_ARTIFACTS_COMPILER, actor_id="owner", timestamp=TIMESTAMP
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    signature = _sign(
+        owner,
+        proposal.candidate.candidate_digest,
+        proposal.candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signature.attestation,
+        authenticated_submitter="owner",
+    )
+    upgrade = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert upgrade.status == "accepted"
+    assert instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+
+    class Invoker(_WorkspaceInvoker):
+        def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
+            return ProviderDriverOutcomeV1(
+                envelope=ProviderRuntimeResultEnvelopeV1(
+                    protocol_version="1.0", run_id=context.run_id, status="ok", output={"value": 42}
+                ),
+                stderr="",
+                duration_seconds=0.001,
+                egress=ProviderEgressObservation(
+                    observer_backend="test", observer_grade="attribution"
+                ),
+                verified_binding=bound.binding,
+            )
+
+    result = service_run_playbill_procedure(
+        instance,
+        name="lookup-a",
+        request=ProcedureRunRequest(input={}),
+        actor_context=_actor(),
+        provider_runtime_operator=_Operator(Invoker()),
+    )
+    assert result.status == "succeeded", result.terminal
+    assert (
+        instance.blob_at(instance.accepted_coordinate().git_oid, procedure_path("lookup-a"))
+        == original
+    )
