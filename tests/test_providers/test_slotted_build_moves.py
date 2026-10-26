@@ -200,3 +200,55 @@ def test_build_move_rebinds_only_the_selected_line_by_fit(tmp_path, unrelated_co
         instance.blob_at(instance.accepted_coordinate().git_oid, procedure.path)
         == members[procedure.path]
     )
+
+
+def test_slot_interface_index_tracks_retirement_and_revival(tmp_path):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+
+    _, accepted, _, interface = slotted()
+    instance, _ = initialize_local(tmp_path)
+    accept_tree(
+        instance,
+        {
+            accepted.path: render_procedure(accepted.procedure),
+            interface.path: render_provider_interface(interface.registration),
+        },
+        name="slotted",
+    )
+
+    def rows():
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            return tuple(
+                tuple(row)
+                for row in projection.typed.connection.execute(
+                    "SELECT source_identity,slot_name,interface_identity FROM procedure_provider_slots"
+                )
+            )
+
+    expected = (
+        (
+            accepted.procedure.identity.qualified,
+            "compute",
+            interface.registration.identity.qualified,
+        ),
+    )
+    assert rows() == expected
+    retired = accepted.procedure.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=accepted.artifact_digest
+            )
+        }
+    )
+    accept_tree(instance, {accepted.path: render_procedure(retired)}, name="retired")
+    assert rows() == ()
+    revived = retired.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="live", predecessor_digest=procedure_artifact_digest(retired).tagged
+            )
+        }
+    )
+    accept_tree(instance, {accepted.path: render_procedure(revived)}, name="revived")
+    assert rows() == expected

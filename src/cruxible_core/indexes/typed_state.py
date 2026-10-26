@@ -509,6 +509,12 @@ def schema_sql() -> str:
             "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity,target_digest) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
+            """CREATE TABLE procedure_provider_slots (
+            source_identity TEXT NOT NULL REFERENCES procedures(identity),
+            slot_name TEXT NOT NULL, interface_identity TEXT NOT NULL,
+            PRIMARY KEY(source_identity,slot_name)
+        ) STRICT""",
+            "CREATE INDEX procedure_slots_by_interface ON procedure_provider_slots(interface_identity,source_identity,slot_name)",
             """CREATE TABLE claim_type_names (
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
@@ -1019,6 +1025,18 @@ def insert_owners(
                 ),
             )
     insert_rows(connection, "provider_pinners", pinners)
+    slots: list[tuple[SQLValue, ...]] = []
+    for row in parsed.envelopes:
+        if row.kind != "procedure":
+            continue
+        source = sources[row.identity]
+        if source.lifecycle.state != "live":
+            continue
+        for slot in source.definition.pin_slots:
+            reference = getattr(slot, "interface", None)
+            if reference is not None:
+                slots.append((row.identity, slot.slot_name, reference.target.qualified))
+    insert_rows(connection, "procedure_provider_slots", slots)
     consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
         if row.kind != "claim":
