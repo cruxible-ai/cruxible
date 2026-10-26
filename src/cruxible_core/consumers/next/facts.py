@@ -75,7 +75,7 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.consumers.next import rows
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.indexes.typed_state import LIVE_SELECTED_SLOT_CLAIMS_SQL, utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.startup_progress import slow_step
 from cruxible_core.storage.read_positions import (
@@ -1286,9 +1286,7 @@ def _slot_members(
         identities = tuple(
             str(row[0])
             for row in projection.typed.connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                "AND subject_selector_scheme=? AND subject_selector_value=? "
-                "AND lifecycle='live' ORDER BY identity",
+                LIVE_SELECTED_SLOT_CLAIMS_SQL,
                 (
                     subject.artifact_path,
                     key["predicate"],

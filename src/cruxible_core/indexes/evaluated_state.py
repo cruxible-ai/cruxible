@@ -95,6 +95,16 @@ class EvaluationProofs:
     edges: Any
 
 
+# One slot's live Claim paths. ``+lifecycle`` keeps the planner on
+# ``claims_by_subject_predicate`` (one seek); ordered by ``path`` in SQL, it
+# walked ``claims_by_predicate`` over every live Claim of the predicate to skip a
+# sort of the slot's few rows. The paths are sorted by the caller instead.
+LIVE_SLOT_CLAIM_PATHS_SQL = (
+    "SELECT path FROM {claims} WHERE subject_path=? AND predicate=? "
+    "AND subject_selector_scheme=? AND subject_selector_value=? AND +lifecycle='live'"
+)
+
+
 def pin_sources_sql(prefix: str, *, consumed: bool) -> str:
     """The paths of the artifacts pinning one target identity (required pins unless ``consumed``)."""
     kind = "" if consumed else " AND edge_kind='required_pin'"
@@ -416,16 +426,19 @@ class EvaluationRows:
 
     def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         subject = statement.subject
-        paths = self.connection.execute(
-            f"SELECT path FROM {self.table('claims')} WHERE subject_path=? AND predicate=? AND subject_selector_scheme=? AND subject_selector_value=? AND lifecycle='live' ORDER BY path",
-            (
-                subject.artifact_path,
-                statement.predicate,
-                subject.selector.scheme,
-                subject.selector.value,
-            ),
+        paths = sorted(
+            str(row[0])
+            for row in self.connection.execute(
+                LIVE_SLOT_CLAIM_PATHS_SQL.format(claims=self.table("claims")),
+                (
+                    subject.artifact_path,
+                    statement.predicate,
+                    subject.selector.scheme,
+                    subject.selector.value,
+                ),
+            )
         )
-        return tuple((row[0], self.source_bytes(row[0])) for row in paths)
+        return tuple((path, self.source_bytes(path)) for path in paths)
 
     def artifact_rows(
         self, kind: str, convert: Callable[[str, bytes, str], T], *, path_key: bool = False

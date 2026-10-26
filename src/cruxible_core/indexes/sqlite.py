@@ -577,6 +577,37 @@ def projection_logical_digest(
         raise ProjectionIntegrityError("projection cannot produce a logical digest") from exc
 
 
+def claim_list_query(
+    *,
+    subject: SemanticAddress | None,
+    predicate: str | None,
+    include_retired: bool,
+    subject_kind: str | None,
+) -> tuple[str, list[object]]:
+    """The statement ``ProjectionHandle.list_claims`` selects Claim keys with."""
+
+    values: list[object] = []
+    clauses: list[str] = []
+    if subject is not None:
+        clauses.extend(("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?"))
+        values.extend((subject.artifact_path, subject.selector.scheme, subject.selector.value))
+    if predicate is not None:
+        clauses.append("predicate=?")
+        values.append(predicate)
+    if subject_kind is not None:
+        clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+        values.append(subject_kind)
+    if not include_retired:
+        # With a Subject, ``+lifecycle`` keeps the planner on
+        # ``claims_by_subject_predicate`` (a seek) and off ``claims_by_lifecycle``
+        # (a walk of every live Claim to skip sorting one Subject's rows).
+        clauses.append("+lifecycle='live'" if subject is not None else "lifecycle='live'")
+    sql = "SELECT identity FROM claims"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return sql + " ORDER BY identity", values
+
+
 def physical_file_digest(path: Path) -> Sha256Value:
     digest = hashlib.sha256()
     try:
@@ -1041,25 +1072,13 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
-        values: list[object] = []
-        clauses: list[str] = []
-        sql = "SELECT identity FROM claims"
-        if subject is not None:
-            clauses.extend(
-                ("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?")
-            )
-            values.extend((subject.artifact_path, subject.selector.scheme, subject.selector.value))
-        if predicate is not None:
-            clauses.append("predicate=?")
-            values.append(predicate)
-        if subject_kind is not None:
-            clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
-            values.append(subject_kind)
-        if not include_retired:
-            clauses.append("lifecycle='live'")
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        identities = self._connection.execute(sql + " ORDER BY identity", values).fetchall()
+        sql, values = claim_list_query(
+            subject=subject,
+            predicate=predicate,
+            include_retired=include_retired,
+            subject_kind=subject_kind,
+        )
+        identities = self._connection.execute(sql, values).fetchall()
         return self.claims(tuple(row["identity"] for row in identities))
 
     def close(self) -> None:
