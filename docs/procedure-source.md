@@ -70,7 +70,7 @@ ordinary Python objects whose methods execute during authoring.
 | Name | Role | Availability |
 |---|---|---|
 | `procedure` | Decorate a literal Procedure definition. | Implemented; signature below. |
-| `ProcedureSource` | Immutable source and binding selection; `bind`, `preview` and `build`. Declared open `slots` make it build a Blueprint. | Implemented host object. |
+| `ProcedureSource` | Immutable source and binding selection; `bind`, `preview` and `build`. Declared `slots` remain open Provider slots in the Procedure it builds. | Implemented host object. |
 | `Cruxible.provider_interface` | Select one installed provider of an interface as a `ProviderBinding`. | Implemented. |
 | `ProcedureWorld`, `ProcedureSubject`, `ClaimSelection[T]`, `ProcedureClaim[T]` | Typed, admitted-state expressions using the existing ontology. | Symbolic compiler interfaces; not separately instantiated Python classes. |
 | `query`, `ProcedureQueryResult` | Named-query state tap and structured result. | Source intrinsic and result adapter. |
@@ -302,7 +302,7 @@ procedure(
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
 | `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Slotted Procedures carry the same policy as exact Procedures. |
 | `description` | `None` | Optional human description retained with the definition. |
-| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name (a `ProviderInterface:` prefix is stripped). Each must be used as `bindings.<slot>` in the body. While any slot is unbound the source builds a **Blueprint** (a skeleton that never runs); binding every slot with `bind(slot=cx.provider_interface(...))` makes it build a Procedure. |
+| `slots` | `None` | Open Provider slots: binding name -> ProviderInterface name (a `ProviderInterface:` prefix is stripped). Each must be used as `bindings.<slot>` in the body. The source always builds a Procedure. Slots may remain open for run-time fit or Line bindings; `bind(slot=cx.provider_interface(...))` selects an exact Provider during authoring. |
 
 A Procedure's authority is not an argument: it is the most its terminals and
 invoked children can do (`observe`, `propose` or `settle`), and previews report it
@@ -377,8 +377,9 @@ Bindings are data, never live Python callables.
 Binding can occur before complete schema resolution; final preview/build must
 reject a selected interface whose contracts or effects do not satisfy its uses.
 Every `bindings.<name>` the body uses must be bound before building, except the
-declared `slots`: those may stay open, and the source then builds a Blueprint
-(an unbound undeclared name refuses "Binding 'x' is missing or unsupported").
+declared `slots`: those may stay open in the Procedure it builds, and run
+admission selects their Providers by fit or explicit binding. An unbound
+undeclared name refuses "Binding 'x' is missing or unsupported".
 
 ### `preview`
 
