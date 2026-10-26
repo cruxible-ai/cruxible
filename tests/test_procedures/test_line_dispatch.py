@@ -1130,3 +1130,91 @@ def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp
     assert dispatched.items == ()
     journal, _ = _journal(instance)
     assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
+
+
+@pytest.mark.parametrize("provider_count", [0, 2])
+def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path, provider_count):
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.procedures.line_specs import NamedLineSpec, render_line_spec
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+    from cruxible_client.contracts.providers import provider_path, render_provider
+    from cruxible_core.exhaust.payloads import read_payload
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._support import initialize_local
+    from tests.test_procedures.test_slotted_procedures import slotted
+    from tests.test_providers.test_slotted_build_moves import _other
+
+    _, procedure, provider, interface = slotted()
+    instance, _ = initialize_local(tmp_path)
+    line = NamedLineSpec(
+        identity=ArtifactIdentity(kind="Line", name="test.slotted"),
+        occurrence_epoch=1,
+        procedure=ArtifactNameRef(target=procedure.procedure.identity),
+        parameters={"value": 1},
+        max_authority="observe",
+        budgets={
+            "max_wall_clock_microseconds": 1000000,
+            "max_provider_calls": 1,
+            "max_capture_bytes": 0,
+            "max_items": 0,
+        },
+        epsilon={"$decimal": "0.1"},
+    )
+    members = {
+        procedure.path: render_procedure(procedure.procedure),
+        interface.path: render_provider_interface(interface.registration),
+        "lines/test.slotted.json": render_line_spec(line),
+        **trigger_members(
+            line_trigger(
+                "test.slotted-tick",
+                line=line.identity.name,
+                schedule=CadenceSchedule(interval_seconds=60),
+            )
+        ),
+    }
+    if provider_count:
+        other = _other(interface.registration)
+        members[provider.path] = render_provider(provider.provider)
+        members[provider_path(other.identity.name)] = render_provider(other)
+    accept_tree(instance, members, name="dispatch-slot-world")
+    now = datetime(2026, 10, 25, tzinfo=UTC)
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=now, until=now + timedelta(minutes=2)),
+        actor=_actor(instance),
+        now=now + timedelta(minutes=2),
+    )
+    assert evaluated.occurrences and evaluated.occurrences[0].pending
+    result = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(limit=1),
+        actor=_actor(instance),
+        now=now + timedelta(minutes=2),
+        caller_rung=3,
+    )
+    code = "cruxible.procedure.slot_binding_" + ("missing" if not provider_count else "ambiguous")
+    assert len(result.items) == 1 and result.items[0].status == "blocked"
+    assert result.items[0].refusal.code == code
+    store = LineDispatchStore(instance)
+    records = store.journal.select_records(store.stream, partition_id="dispatch")
+    event = read_payload(
+        instance.body_store(),
+        records[-1].record.payload_digest,
+        access=BodyAccessContext(principal_id="test", can_read_body=True),
+    )
+    assert event["kind"] == "dispatch_refused"
+    assert event["data"]["refusal"]["code"] == code
+    with store.locked() as conn:
+        row = conn.execute(
+            "SELECT disposition FROM pending WHERE occurrence_id=?",
+            (result.items[0].occurrence_id,),
+        ).fetchone()
+        assert row[0] == "pending"
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()

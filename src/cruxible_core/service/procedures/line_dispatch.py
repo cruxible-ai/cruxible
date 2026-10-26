@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -42,11 +42,12 @@ from cruxible_client.contracts.line_dispatch import (
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusal,
+    ProcedureAdmissionRefusalCode,
     ProcedureNodeRefusal,
 )
 from cruxible_client.contracts.procedures.windows import TIMED_BINDING_KINDS, FixedWindow
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.repairs import served_repair_for_refusal
+from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
@@ -54,6 +55,7 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
     schedule_is_timed,
 )
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.procedures.line_admission import (
@@ -1501,6 +1503,13 @@ def service_dispatch_line(
                             detail = str(exc)
                         else:
                             raise LineArmAuthorityLost("line_changed", _LINE_CHANGED) from exc
+                    except RequestRefusedError as exc:
+                        refusal = ProcedureAdmissionRefusal(
+                            code=cast(ProcedureAdmissionRefusalCode, exc.error_code),
+                            message=str(exc),
+                            repair=cast(ServedRepair, exc.repair),
+                        )
+                        detail = refusal.message
                     except ExecutionError as exc:
                         detail = str(exc)
                     finally:
