@@ -345,6 +345,29 @@ def car_parts(client: TestClient, instance_id: str, workspace: Path) -> Cruxible
     return _car_world(client, instance_id, workspace)
 
 
+def split_category(client: TestClient, instance_id: str, workspace: Path) -> Cruxible:
+    """Evolving your vocabulary: brakes widened to pads and rotors, a ruling in a field."""
+
+    cx = _car_world(
+        client, instance_id, workspace, category=(*BRAKES, "brake-pads", "brake-rotors")
+    )
+    ruling = (
+        "We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of "
+        "the semi-metallic bp-1142. Customers complained about brake dust and noise."
+    )
+    seeded = (
+        cx.changes(because="The ruling as first recorded.", subject=DEFAULT_PADS)
+        .set("status", "accepted")
+        .set("ruling", ruling)
+        .write()
+    )
+    assert seeded.status == "accepted", seeded
+    return cx
+
+
+DEFAULT_PADS = "catalog.decision/ceramic-pads-default"
+
+
 # -- the pages -----------------------------------------------------------------
 
 WorldBuilder = Callable[[TestClient, str, Path], Cruxible]
@@ -354,6 +377,7 @@ PAGES: dict[str, WorldBuilder] = {
     "building-team-knowledge.md": car_parts,
     "concepts.md": car_parts,
     "documents-and-notes.md": car_parts,
+    "evolving-your-vocabulary.md": split_category,
     "for-ai-agents.md": car_parts,
 }
 

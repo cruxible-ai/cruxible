@@ -61,13 +61,19 @@ landed: accepted at 38b76ed1a46e
 ~~~
 
 **2. Move the values.** Say again, in the new terms, what each `brakes` part
-is:
+is, as one write:
 
-~~~text
-$ cruxible write move-pads.yaml
-accepted (generation 42, d336bbfd5eb2)
-  set catalog.part/bp-1142 category: brakes -> brake-pads  [CLM-a7bf36ca…; verdict supported]
-  set catalog.part/bp-2210 category: brakes -> brake-pads  [CLM-8a23dd7f…; verdict supported]
+~~~python
+from cruxible_client import Cruxible
+
+cx = Cruxible.connect()
+batch = cx.changes(because="Split brakes: these two parts are brake pads.")
+for part in ("bp-1142", "bp-2210"):
+    batch.set(f"catalog.part/{part}", "category", "brake-pads")
+moved = batch.write()
+[(c.subject, c.before, c.after, c.verdict) for c in moved.changes]
+# [('catalog.part/bp-1142', 'brakes', 'brake-pads', 'supported'),
+#  ('catalog.part/bp-2210', 'brakes', 'brake-pads', 'supported')]
 ~~~
 
 **3. Drop the old value.** With nothing left on it, narrowing the list
@@ -159,16 +165,24 @@ cardinality: one
 canonical_form: [nfkc, trim, collapse_whitespace, casefold]
 ~~~
 
-Then declare the kind:
+Then declare the kind, saved as `supplier.json`:
+
+~~~json
+{
+  "kind": "subject_kind",
+  "name": "catalog.supplier",
+  "keys": ["catalog.supplier.name"],
+  "uniqueness": "unique",
+  "description": "A parts supplier, named by its name."
+}
+~~~
 
 ~~~text
 $ cruxible claim-type propose --input supplier-name.yaml --name add-supplier-name
 admitted  sha256:46e5b47f…  verdict=candidate
 landed: accepted at 8c5c4c5e53ba
 
-$ echo '{"kind": "subject_kind", "name": "catalog.supplier", "keys": ["catalog.supplier.name"],
-    "uniqueness": "unique", "description": "A parts supplier, named by its name."}' \
-    | cruxible authoring submit - --brief
+$ cruxible authoring submit supplier.json --brief
 outcome: accepted
 ...
 ~~~
@@ -211,42 +225,65 @@ filter by it, and it can't be edited like a document. Move the text into a
 document, keep a short value that points at it, and retire the long field.
 
 Here, `catalog.decision.ruling` holds each decision's full ruling. Create the
-page and name it, then make the move in one `write`: each ruling becomes a
-section with an `id`, a one-line `summary` cites its section, and the long
-Claim is retired:
+page and name it (`cruxible files add decisions docs/decisions.md`), then make
+the move in one write: each ruling becomes a section with an `id`, a one-line
+`summary` cites its section, and the long Claim is retired. Preview it with
+`dry_run=True`, then write it:
 
-~~~yaml
-because: Move decision rulings into the decisions page; keep a one-line summary that cites each.
-docs:
-  - op: append
-    id: ceramic
-    file: docs/decisions.md
-    under: [Decisions]
-    text: |
-      ## Ceramic pads by default
+~~~python
+from cruxible_client import SlotRef
 
-      We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of
-      the semi-metallic bp-1142. Customers complained about brake dust and noise ...
-changes:
-  - {op: set, subject: catalog.decision/ceramic-pads-default, field: summary,
-     value: "Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
-     evidence: {kind: section, ref: ceramic}}
-  - {op: retire, target: CLM-88af13a35fee7502bbe9d0592a1b4bfb, reason: superseded}
+batch = cx.changes(
+    because="Move decision rulings into the decisions page; keep a one-line summary that cites each.",
+    subject="catalog.decision/ceramic-pads-default",
+)
+batch.append_section("docs/decisions.md", under=("Decisions",), id="ceramic", text=(
+    "## Ceramic pads by default\n\n"
+    "We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of\n"
+    "the semi-metallic bp-1142. Customers complained about brake dust and noise ...\n"
+))
+batch.set("summary", "Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
+          evidence=batch.section("ceramic"))
+batch.retire(SlotRef(field="ruling"), reason="superseded")
+preview = batch.write(dry_run=True)
+preview.status                                    # 'would_accept'
+[(c.op, c.field, c.verdict) for c in preview.changes]
+# [('set', 'summary', 'supported'), ('retire', 'ruling', None)]
+outcome = batch.write()                           # refused if either field moved since the preview
+outcome.status                                    # 'accepted'
+~~~
+
+The write is checked against the coordinate the connection read at, so a
+field that moved after the preview refuses instead of being overwritten. For
+MCP-only clients, the same write is one `cruxible_write` call (`dry_run: true`
+previews it, and `at` names the coordinate you read at):
+
+~~~json
+{
+  "because": "Move decision rulings into the decisions page; keep a one-line summary that cites each.",
+  "subject": "catalog.decision/ceramic-pads-default",
+  "docs": [
+    {
+      "op": "append",
+      "id": "ceramic",
+      "file": "docs/decisions.md",
+      "under": ["Decisions"],
+      "text": "## Ceramic pads by default\n\nWe stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of\nthe semi-metallic bp-1142. Customers complained about brake dust and noise ...\n"
+    }
+  ],
+  "changes": [
+    {
+      "op": "set",
+      "field": "summary",
+      "value": "Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
+      "evidence": {"kind": "section", "ref": "ceramic"}
+    },
+    {"op": "retire", "target": {"field": "ruling"}, "reason": "superseded"}
+  ]
+}
 ~~~
 
 ~~~text
-$ cruxible files add decisions docs/decisions.md
-$ cruxible write move-rulings.yaml --dry-run
-would accept (generation 21, 454fd7f0f0a9)
-  doc docs/decisions.md ['Decisions', 'Ceramic pads by default']: not written (sha256:1777714a…)
-  set catalog.decision/ceramic-pads-default summary: Ceramic front pads (bp-2210) are the default for the 2019 Civic.  [CLM-…; verdict supported]
-  retire catalog.decision/ceramic-pads-default ruling: We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of the semi-metallic bp-1142. Customers… (399 chars; --detail evidence for all)  [CLM-88af13a3…]
-  ...
-next: Run the same command without --dry-run, adding --at 454fd7f0f0a9
-
-$ cruxible write move-rulings.yaml --at 454fd7f0f0a9
-accepted (generation 22, a1f869045bd6)
-...
 $ cruxible query catalog.decision --select status,summary
 subject                                status    summary                                                       flags
 catalog.decision/ceramic-pads-default  accepted  Ceramic front pads (bp-2210) are the default for the 2019 C…  -
