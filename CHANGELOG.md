@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Subject parameters bind whichever form the caller wrote.** A query's Subject
+  parameter now accepts a bare id, `kind/id` or `Subject:kind/id` wherever it is
+  used; a form that cannot match refuses with a repair instead of returning no
+  rows. A receipt whose parameter was spelled in a form that used to match
+  nothing records a different parameter digest, so a measurement that retained
+  that old, always-empty answer no longer re-verifies.
+- **A read-only daemon refuses every run and dispatch.** With
+  `--capability-ceiling read_only`, Line runs, Line dispatch and Procedure runs
+  refuse, observe-only ones included, because each retains a run journal and
+  Captures.
+- **Ledger reads and writes survive live compaction.** A request racing the
+  periodic repack no longer fails with a server error.
+- **The runtime-directory refusal names its byte budget** and a working
+  directory for macOS and Linux.
+
 - **`cruxible instance rebuild-next` repairs the next worker.** An `ADMIN`
   operator command (and `CruxibleClient.rebuild_next`) drops the `next`
   worker's facts and Claim rows and derives them again from nothing, clearing

@@ -351,7 +351,7 @@ def test_a_read_only_daemon_refuses_every_run_before_reading_its_target(
     """A run retains its journal and Captures, so a read-only ceiling refuses it.
 
     An observe-only Line or Procedure runs at read-only under a writable
-    ceiling; a read-only daemon persists nothing, whatever the target can do.
+    ceiling; a read-only daemon refuses every run, whatever the target can do.
     """
 
     client = _client_at_ceiling(monkeypatch, "read_only")
@@ -372,11 +372,14 @@ _READ_ONLY_POSTS: dict[str, str] = {
     "/api/v1/{instance_id}/coverage/resolve": "resolves observations against accepted coverage",
     "/api/v1/{instance_id}/curation/duplicates": "lists duplicate candidates",
     "/api/v1/{instance_id}/curation/list": "lists curation findings",
-    "/api/v1/{instance_id}/audit": "reads the audit view",
+    "/api/v1/{instance_id}/audit": (
+        "reads the audit view; appends an audit-run event, but changes no accepted state"
+    ),
     "/api/v1/{instance_id}/files/check": "checks a file bundle without proposing it",
     "/api/v1/{instance_id}/floor/delta": "returns floor bytes between two generations",
     "/api/v1/{instance_id}/floor/deliver-now": (
-        "renders accepted state into the attached workspace floor; no instance state changes"
+        "renders accepted state into the attached workspace's floor files and its floor"
+        " state database; changes no accepted state"
     ),
     "/api/v1/{instance_id}/floor/export": "returns the floor bytes at a coordinate",
     "/api/v1/{instance_id}/get": "reads one ref",

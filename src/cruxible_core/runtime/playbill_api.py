@@ -2303,8 +2303,8 @@ def _check_run_target_permission(
     """
 
     if get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:
-        # Every run retains its journal and Captures; a read-only daemon
-        # persists nothing, so it refuses before reading any target.
+        # Every run retains its journal and Captures, so a read-only daemon
+        # refuses every run before reading any target.
         check_permission(
             tool_name, instance_id=instance_id, required_override=PermissionMode.GOVERNED_WRITE
         )

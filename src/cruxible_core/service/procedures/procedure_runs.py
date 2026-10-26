@@ -444,9 +444,9 @@ GOVERNED_RUN_CALLER_RUNG = 1
 def run_permission_rung(target_rung: int) -> int:
     """The caller rung a run needs: governed write if it can propose or settle.
 
-    Every run also retains its journal and Captures. A daemon whose capability
-    ceiling is read-only persists nothing, so there every run needs governed
-    write, which that ceiling refuses (an observe-only run included).
+    Every run also retains its journal and Captures, so on a daemon whose
+    capability ceiling is read-only every run needs governed write, which that
+    ceiling refuses (an observe-only run included).
     """
 
     if target_rung > 1 or get_capability_ceiling() < PermissionMode.GOVERNED_WRITE:

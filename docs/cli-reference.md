@@ -2676,8 +2676,8 @@ and the ordinary Line admission checks; by default it drains every pending
 occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose
 runs can propose or settle (and `procedure run` of such a Procedure) need
 governed write; an observe-only Line or Procedure runs at read-only. A daemon
-whose capability ceiling is `read_only` refuses every run and dispatch: a run
-retains its journal and Captures, and such a daemon persists nothing. Permanent
+whose capability ceiling is `read_only` refuses every run and dispatch, because a
+run retains its journal and Captures. Permanent
 input failures close as `rejected`; changed Line bindings, and occurrences
 whose Trigger changed or no longer aims at the Line, close as `superseded`.
 Both leave the runnable queue, retaining their evidence and a typed refusal
