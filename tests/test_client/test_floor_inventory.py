@@ -5,12 +5,15 @@ from __future__ import annotations
 import random
 import unicodedata
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.authoring.floor_apply import apply_floor_delta, read_floor_manifest
 from cruxible_client.contracts import floor as floor_contracts
+from cruxible_client.contracts import floor_inventory
 from cruxible_client.contracts.floor import (
     FloorEntry,
     build_floor_manifest,
@@ -24,7 +27,7 @@ from cruxible_client.contracts.floor_inventory import (
     floor_manifest_state,
     known_floor_manifest,
 )
-from tests.support.floor_exports import TEST_NOTES, TEST_RENDERER
+from tests.support.floor_exports import TEST_NOTES, TEST_RENDERER, floor_v5_delta
 
 COORDINATE = contracts.AcceptedCoordinate(
     git_oid="4" * 64,
@@ -202,3 +205,88 @@ def test_only_a_manifest_that_reads_back_as_itself_is_remembered() -> None:
     assert nfd.content == nfc.content
     assert known_floor_manifest(nfd.content) is nfc
     assert known_floor_manifest(b"{}") is None
+
+
+# -- the cost of one delta ---------------------------------------------------------
+
+
+def _floor(size: int) -> dict[str, tuple[bytes, int]]:
+    return {
+        f"current/kind{index % 7}/subject-{index:05d}.yaml": (f"subject {index}\n".encode(), 1)
+        for index in range(size)
+    }
+
+
+def _measured_delta(tmp_path: Path, size: int, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Validations and entry constructions of one 10-path delta onto a floor of ``size`` files."""
+
+    base = _floor(size)
+    head = dict(base)
+    for index in range(0, 8):
+        subject = 2 + index * (size // 8)
+        head[f"current/kind{subject % 7}/subject-{subject:05d}.yaml"] = (b"changed\n", 2)
+    head["current/kind0/new-1.yaml"] = (b"new\n", 2)
+    del head["current/kind1/subject-00001.yaml"]
+    directory = tmp_path / f"floor-{size}"
+    assert (
+        apply_floor_delta(
+            directory, floor_v5_delta(base, coordinate=COORDINATE, generation=1)
+        ).status
+        == "applied"
+    )
+    delta = floor_v5_delta(head, coordinate=COORDINATE, generation=2, base=(1, base))
+    assert len(delta.files) + len(delta.tombstones) == 10
+    counts = {"safe_floor_path": 0, "floor_entries": 0, "manifest_renders": 0}
+    safe = floor_contracts.safe_floor_path
+    init = FloorEntry.__init__
+    render = floor_contracts.render_floor_manifest
+
+    def counted_safe(value: str) -> str:
+        counts["safe_floor_path"] += 1
+        return safe(value)
+
+    def counted_init(self: FloorEntry, **data: Any) -> None:
+        counts["floor_entries"] += 1
+        init(self, **data)
+
+    def counted_render(manifest: Any) -> bytes:
+        counts["manifest_renders"] += len(manifest.files)
+        return render(manifest)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(floor_contracts, "safe_floor_path", counted_safe)
+        patch.setattr(FloorEntry, "__init__", counted_init)
+        patch.setattr(floor_inventory, "render_floor_manifest", counted_render)
+        # The floor the apply reads back is the one the last apply wrote: found, not parsed.
+        manifest = read_floor_manifest(directory)
+        assert manifest is not None and manifest.generation == 1
+        result = apply_floor_delta(directory, delta)
+    assert result.status == "applied", result
+    assert result.file_count == size
+    on_disk = (directory / "manifest.json").read_bytes()
+    reference = _reference(
+        {
+            path: (content_digest(content), len(content), changed)
+            for path, (content, changed) in head.items()
+        },
+        2,
+    )
+    assert on_disk == render_floor_manifest(reference)
+    assert result.manifest_digest == floor_manifest_digest(reference)
+    assert result.floor_digest == reference.floor_digest
+    return counts
+
+
+def test_a_delta_validates_and_builds_only_its_own_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same 10-path delta costs the same onto 100 files as onto 5,000."""
+
+    small = _measured_delta(tmp_path, 100, monkeypatch)
+    large = _measured_delta(tmp_path, 5000, monkeypatch)
+    assert small == large, (small, large)
+    # The delta's paths, validated by the delta (files and tombstones) and the patch.
+    assert small["safe_floor_path"] <= 4 * 10, small
+    assert small["floor_entries"] <= 10, small
+    # Only the empty header is rendered through the model.
+    assert small["manifest_renders"] == 0, small
