@@ -317,3 +317,23 @@ def test_authored_slots_admit_on_36_render_and_run_with_explicit_override(tmp_pa
         provider_runtime_operator=_Operator(Invoker()),
     )
     assert chosen.status == "succeeded", chosen.terminal
+
+
+def test_explicit_binding_must_fit_its_slot_interface():
+    from tests.core_support._p2b1_support import accepted_provider
+
+    _, accepted, _, interface = slotted()
+    unfit = accepted_provider()
+    sources = {
+        unfit.provider.identity: (unfit.provider, unfit.artifact_digest),
+        interface.registration.identity: (interface.registration, interface.artifact_digest),
+    }
+    with pytest.raises(RequestRefusedError) as refused:
+        bind_procedure_references(
+            accepted,
+            lookup=sources.get,
+            slots=lambda _: (),
+            bindings={"compute": unfit.provider.identity},
+        )
+    assert refused.value.error_code == "cruxible.procedure.slot_binding_missing"
+    assert "does not fit slot 'compute'" in str(refused.value)

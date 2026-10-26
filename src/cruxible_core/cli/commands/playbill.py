@@ -1785,7 +1785,7 @@ def retire_provider(build: str, dry_run: bool | None, at: str | None, output_jso
 @click.option(
     "--to", required=True, help="newest (most recently registered) or an exact build key."
 )
-@click.option("--only", multiple=True, help="Move only this Procedure or Blueprint (repeatable).")
+@click.option("--only", multiple=True, help="Move only this Procedure or Line (repeatable).")
 @change_control_options
 @json_option
 @handle_errors

@@ -215,7 +215,11 @@ def service_move_provider(
         with instance.bind_accepted_projection(mode.head) as projection:
             connection = projection.typed.connection
             for identity, path, source in indexed_move_pinners(
-                connection, name, "Provider:" + resolution.resolved, request.only
+                connection,
+                name,
+                "Provider:" + resolution.resolved,
+                request.only,
+                include_blueprints=mode.head.compiler != LIGHT_ARTIFACTS_COMPILER,
             ):
                 kind, _, item_name = identity.partition(":")
                 movers.append(

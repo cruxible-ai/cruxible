@@ -541,6 +541,7 @@ def schema_sql() -> str:
             # build verbs read one name's rows, never every Provider.
             "CREATE INDEX providers_by_name ON providers(provider_name,identity)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
+            "CREATE INDEX lines_by_procedure ON lines(procedure_identity,identity) WHERE lifecycle='live'",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
             """CREATE TABLE promotion_subjects (
@@ -1005,7 +1006,7 @@ def insert_owners(
         source = sources.get(pin.source_identity)
         if (
             source is not None
-            and pin.source_identity.startswith(("Procedure:", "Blueprint:"))
+            and pin.source_identity.startswith(("Procedure:", "Blueprint:", "Line:"))
             and source.lifecycle.state == "live"
             and pin.target_identity.startswith("Provider:")
         ):

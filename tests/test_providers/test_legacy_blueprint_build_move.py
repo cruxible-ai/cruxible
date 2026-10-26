@@ -20,7 +20,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.providers.build_moves import _reinstantiated, build_move
+from cruxible_core.providers.build_moves import _historical_reinstantiated, build_move
 from tests.core_support._p2b1_support import accepted_interface, accepted_provider
 from tests.support.provider_builds import as_build, legacy_interface_contract
 from tests.test_integration.test_graph_v4_provider_closure import contracted_demo as contracted_demo
@@ -73,7 +73,8 @@ def legacy_blueprint_move(source=False):
 def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source, tmp_path, request):
     old, new, bp, proc, path, tree, move = legacy_blueprint_move(source)
     moved = parse_procedure(
-        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+        _historical_reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}),
+        path=path,
     )
     assert moved.definition.nodes[0].provider.target == new.identity
     # Runtime requires the selected build to pin the occurrence's exact registration.
@@ -291,7 +292,8 @@ def test_unmoved_blueprint_slot_keeps_its_exact_registration():
         }
     )
     moved = parse_procedure(
-        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+        _historical_reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}),
+        path=path,
     )
     occurrence = next(node for node in moved.definition.nodes if node.node_id == "held")
     assert occurrence.provider.target == held.provider.identity
@@ -341,7 +343,8 @@ def test_blueprint_build_move_preserves_a_named_acquisition_override(source):
     procedure = procedure.model_copy(update={"acquisition_policy": "custom-ages"})
     tree[path] = render_procedure(procedure)
     moved = parse_procedure(
-        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+        _historical_reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}),
+        path=path,
     )
     assert moved.acquisition_policy == "custom-ages"
     assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in moved.pins)

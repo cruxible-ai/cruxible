@@ -429,8 +429,8 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
-            f"procedures/{BLUEPRINT}.json",
             f"procedures/{PROCEDURE}.json",
+            f"procedures/{BLUEPRINT}.json",
             next(
                 p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
             ),

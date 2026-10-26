@@ -790,14 +790,13 @@ def _accepted_procedure(
             result = []
             for identity, digest in candidates:
                 provider = projection.typed.source(identity)
+                from cruxible_client.contracts.procedures.provider_slots import (
+                    fitting_implementation,
+                )
+
                 if (
                     isinstance(provider, ProviderV2)
-                    and sum(
-                        row.interface_id == registration.interface_id
-                        and row.interface_digest == interface_definition_digest(registration)
-                        for row in provider.implementations
-                    )
-                    == 1
+                    and fitting_implementation(provider, registration) is not None
                 ):
                     result.append((provider, digest))
             return tuple(result)

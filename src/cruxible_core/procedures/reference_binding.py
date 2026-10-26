@@ -221,6 +221,24 @@ def bind_procedure_references(
             provider, _ = resolve(ArtifactIdentity.model_validate(provider_ref["target"]))
         if not isinstance(provider, ProviderV2):
             raise ExecutionError("Provider occurrence requires an installed runtime build")
+        if slot is not None:
+            from cruxible_client.contracts.procedures.provider_slots import fitting_implementation
+            from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+            from cruxible_core.errors import RequestRefusedError
+
+            if fitting_implementation(provider, interface) is None:
+                raise RequestRefusedError(
+                    "cruxible.procedure.slot_binding_missing",
+                    f"Provider {provider.identity.qualified} does not fit slot {slot!r}.",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target="bindings",
+                            required_change=(
+                                "Bind a live build implementing the slot interface exactly once."
+                            ),
+                        )
+                    ),
+                )
         declared_interface = provider_interface_pin(provider, interface.interface_id)
         if declared_interface is None or declared_interface.target != interface_identity:
             raise ExecutionError("Provider does not declare the named interface")
