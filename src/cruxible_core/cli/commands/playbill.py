@@ -165,8 +165,8 @@ from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     check_kit_updates,
-    fetch_kit_image,
     resolve_kit,
+    resolve_kit_image,
     stage_kit_providers,
     write_kit_directory,
 )
@@ -2148,11 +2148,15 @@ def add_kit(
 @json_option
 @handle_errors
 def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None:
-    """Fetch and verify a kit from a registry into OUT, without installing it."""
+    """Fetch and verify a kit into OUT, without installing it.
+
+    REFERENCE is what ``kit add`` takes: a kit directory, an OCI image layout, or a
+    registry reference such as ``security:1.3.0``.
+    """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
     # The layout keeps the published bytes exactly, so it carries the same digest.
-    image, origin = fetch_kit_image(reference)
+    image, origin = resolve_kit_image(reference)
     bundle = unpack_artifact(KIT_ARTIFACT, image)
     if layout:
         write_layout(image, out, ref=origin)
