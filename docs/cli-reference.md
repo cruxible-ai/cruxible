@@ -1466,6 +1466,13 @@ reference). So merging Subject A into B --
 alias B with A's id, then retire A (`cruxible retire KIND/A --with-claims`) --
 sends every later reference to A to B.
 
+A named query's Subject parameter takes any of the three spellings: the bare id,
+`kind/id` or `Subject:kind/id`. The entry's Subject-id parameter selects by the
+bare id (a `Subject:kind/id` of a kind the entry does not select refuses
+`cruxible.query.parameter_type_mismatch`); a `subject_reference` parameter a
+filter compares binds as `Subject:kind/id`, so a bare id there, which names no
+kind, refuses with the same code and the repair to write `kind/id`.
+
 For a minted kind, and a grandfathered one, a change may not create a Subject
 that collides with a live Subject of its kind (a keyed kind is held to its key
 instead; see Subject kinds below):

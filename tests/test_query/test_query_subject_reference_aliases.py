@@ -19,6 +19,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryComparisonFilter,
     QueryLiteralRef,
     QueryMembershipFilter,
+    QueryParameterRef,
 )
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.write import WriteRequest
@@ -143,3 +144,71 @@ def test_condition_operands_resolve_the_same_on_live_and_cold_trees(
     for tree in (instance.immutable_tree_at(oid), instance.tree_at(oid)):
         with pytest.raises(SubjectReferenceAmbiguous):
             tree_reference_resolver(tree)(f"Subject:{PERSON}/ada-alias")
+
+
+def _parameterized(*, entry_kind: str | None = None, where: object = None) -> Any:
+    from cruxible_client.contracts.query.definitions import QueryDefinition
+    from cruxible_client.contracts.query.grammar import QueryEntry, QueryParameterDeclaration
+
+    base = typed_item_query(REVIEWER_PREDICATE, name="project.alias_forms", object_kind="subject")
+    payload = base.model_dump(mode="json")
+    payload["parameters"] = [
+        QueryParameterDeclaration(name="who", value_type="subject_reference").model_dump(
+            mode="json"
+        )
+    ]
+    if where is not None:
+        payload["where"] = where.model_dump(mode="json")  # type: ignore[attr-defined]
+    if entry_kind is not None:
+        payload["entry"] = QueryEntry(
+            binding="item",
+            subject_kinds=(entry_kind,),
+            subject_id=QueryParameterRef(parameter="who"),
+        ).model_dump(mode="json")
+    return QueryDefinition.model_validate(payload)
+
+
+@pytest.mark.parametrize("form", [f"{PERSON}/ada-alias", f"Subject:{PERSON}/ada-alias"])
+def test_a_compared_parameter_resolves_its_alias_in_either_qualified_form(
+    instance: PlaybillInstance, form: str
+) -> None:
+    where = QueryComparisonFilter(
+        left=QueryClaimValueRef(binding="item", predicate=REVIEWER_PREDICATE),
+        operator="eq",
+        right=QueryParameterRef(parameter="who"),
+        value_type="subject_reference",
+    )
+    head = instance.accepted_coordinate()
+    rows = facts((reviewer_claim(1, "wi-1", "ada"),)).model_copy(update={"coordinate": head})
+    result = evaluate_accepted_query(
+        instance,
+        accepted_query(_parameterized(where=where)),
+        coordinate=head,
+        evaluation_time=AT,
+        parameters={"who": form},
+        facts=lambda: rows,
+    )
+    assert result.verdict == "completed", result.refusal
+    assert [row.result_subject_identity for row in result.rows] == [
+        "Subject:project.work_item/wi-1"
+    ]
+
+
+@pytest.mark.parametrize(
+    "form", ["ada-alias", f"{PERSON}/ada-alias", f"Subject:{PERSON}/ada-alias"]
+)
+def test_the_entry_parameter_resolves_its_alias_in_every_form(
+    instance: PlaybillInstance, form: str
+) -> None:
+    head = instance.accepted_coordinate()
+    rows = facts(()).model_copy(update={"coordinate": head})
+    result = evaluate_accepted_query(
+        instance,
+        accepted_query(_parameterized(entry_kind=PERSON)),
+        coordinate=head,
+        evaluation_time=AT,
+        parameters={"who": form},
+        facts=lambda: rows,
+    )
+    assert result.verdict == "completed", result.refusal
+    assert [row.result_subject_identity for row in result.rows] == [f"Subject:{PERSON}/ada"]

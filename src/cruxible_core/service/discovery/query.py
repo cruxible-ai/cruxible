@@ -62,6 +62,7 @@ from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
+    bind_reference_forms,
     evaluate_artifact_query,
     evaluate_claim_query,
     query_execution_receipt,
@@ -771,6 +772,9 @@ def parameters_through_aliases(
     from cruxible_core.service.discovery.query_vocabulary import query_refusal
 
     query = definition.query
+    # Aliases resolve on the spelling each position compares (bare id at the
+    # entry, Subject:kind/id elsewhere), whichever form the caller wrote.
+    parameters = bind_reference_forms(query, parameters)
     entry = query.entry
     entry_parameter = (
         entry.subject_id.parameter
