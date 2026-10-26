@@ -67,7 +67,7 @@ from cruxible_core.service.discovery.audit import AuditError
 from cruxible_core.service.discovery.curation import CurationError
 from cruxible_core.service.discovery.next import NextError
 from cruxible_core.service.discovery.since import SinceError
-from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
+from cruxible_core.service.procedures.procedure_runs import ProcedureNotFound, ProcedureSurfaceError
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.service.refusals import (
     ALL_SERVED_REFUSAL_CODES,
@@ -310,6 +310,9 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context.update(exc.context)
     if isinstance(exc, ClaimTypeNotFoundError):
         context["predicate"] = exc.predicate
+        context["nearest"] = list(exc.nearest)
+    if isinstance(exc, ProcedureNotFound):
+        context["procedure"] = exc.name
         context["nearest"] = list(exc.nearest)
     if isinstance(exc, ProposalSelectorAmbiguousError):
         context["selector"] = exc.selector
