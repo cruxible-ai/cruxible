@@ -3,7 +3,7 @@
 This reference specifies authoring Procedures as Python source
 (`cruxible_client.authoring.source`), the contract-derived records it uses, and
 their execution semantics. The
-[base SDK reference](../packages/cruxible-client/README.md) covers connection,
+[base SDK reference](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md) covers connection,
 governance, discovery, and the `Sequence` composition frontend. Reserved or
 unsupported forms are identified explicitly below.
 
@@ -49,18 +49,18 @@ This document does not silently remove an existing operation.
 
 | Existing surface | Source authoring contract |
 |---|---|
-| [Connection and state contexts](../packages/cruxible-client/README.md#connection-and-state-context) | Unchanged: instance selection, credentials, snapshots, refresh, connection ownership. |
-| [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#api-changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
-| [Reads and discovery](../packages/cruxible-client/README.md#reads-and-discovery) | Same query evaluator and discovery/read operations. Typed query binding, parameters, results, and receipts wrap those contracts. |
-| [World and typed values](../packages/cruxible-client/README.md#world-and-typed-values) | Existing host reads remain. Compiled source receives a symbolic view of this same ontology, specified below. |
-| [Drafts, intents, proposals, approvals](../packages/cruxible-client/README.md#drafts-intents-proposals-and-approvals) | Same prepare, submit, review, approve, and accept distinctions. |
-| [Evidence and operational work](../packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
-| [Source selectors](../packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
-| [Procedure composition](../packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
-| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` accepts a `ProcedureSource`, `ProcedureInput` or `Sequence`. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
-| [Projections and workspace](../packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
-| [Signing](../packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
-| [Lower-level client](../packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
+| [Connection and state contexts](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#connection-and-state-context) | Unchanged: instance selection, credentials, snapshots, refresh, connection ownership. |
+| [Knowledge authoring](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#knowledge-authoring) and [changesets](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#api-changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |
+| [Reads and discovery](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#reads-and-discovery) | Same query evaluator and discovery/read operations. Typed query binding, parameters, results, and receipts wrap those contracts. |
+| [World and typed values](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#world-and-typed-values) | Existing host reads remain. Compiled source receives a symbolic view of this same ontology, specified below. |
+| [Drafts, intents, proposals, approvals](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#drafts-intents-proposals-and-approvals) | Same prepare, submit, review, approve, and accept distinctions. |
+| [Evidence and operational work](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
+| [Source selectors](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
+| [Procedure composition](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
+| [Procedure entry points](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` accepts a `ProcedureSource`, `ProcedureInput` or `Sequence`. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.line(name).run(...)` keep their existing authority boundaries. |
+| [Projections and workspace](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
+| [Signing](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
+| [Lower-level client](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
 
 ### New and extended public names
 
