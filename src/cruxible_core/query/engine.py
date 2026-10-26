@@ -102,6 +102,7 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectReferenceAmbiguous,
     SubjectReferenceResolver,
+    split_reference,
 )
 from cruxible_core.query.backends import (
     ClaimFactRowV1,
@@ -630,6 +631,17 @@ class _Evaluator:
                 raise _refuse(VALUE_TYPE_MISMATCH, str(exc)) from exc
         if (
             value_type == "subject_reference"
+            and isinstance(ref, QueryParameterRef)
+            and isinstance(value, str)
+            and split_reference(value) is None
+        ):
+            kinds = _entry_parameter_kinds(self._definition, ref.parameter)
+            if kinds is not None and len(kinds) == 1:
+                # The entry parameter binds the bare id the entry selects by;
+                # compared with stored Subject references it is that Subject.
+                value = f"Subject:{kinds[0]}/{value}"
+        if (
+            value_type == "subject_reference"
             and self._resolve_reference is not None
             and isinstance(ref, QueryLiteralRef | QueryParameterRef)
             and isinstance(value, str)
@@ -773,11 +785,92 @@ class _Evaluator:
 # -- the direct evaluator -------------------------------------------------
 
 
+def _entry_parameter_kinds(definition: QueryDefinition, name: str) -> tuple[str, ...] | None:
+    entry = definition.entry
+    if isinstance(entry, QueryEntry) and entry.subject_id is not None:
+        if entry.subject_id.parameter == name:
+            return entry.subject_kinds
+    return None
+
+
+def bind_reference_form(
+    definition: QueryDefinition,
+    name: str,
+    value_type: QueryValueType,
+    value: object,
+    *,
+    strict: bool = True,
+) -> object:
+    """Spell one Subject-reference parameter the way its position compares it.
+
+    A caller may write a Subject as its bare id, ``kind/id`` or
+    ``Subject:kind/id``. The entry's Subject-id parameter selects by the bare
+    id of an entry kind; a ``subject_reference`` parameter compares as
+    ``Subject:kind/id``, the spelling every stored Subject reference has. A
+    form a position cannot match refuses with its repair (``strict``; else it
+    is left as given for the evaluator to refuse). Forms that already matched
+    bind unchanged, so their parameter digests do not move.
+    """
+
+    if not isinstance(value, str):
+        return value
+    entry_kinds = _entry_parameter_kinds(definition, name)
+    if entry_kinds is None and value_type != "subject_reference":
+        return value
+    parts = split_reference(value)
+    if entry_kinds is not None:
+        if parts is None:
+            # The bare id, or an alias the entry resolves within its kinds.
+            return value
+        prefix, kind, subject_id = parts
+        if kind in entry_kinds:
+            return subject_id
+        if prefix and strict:
+            raise _refuse(
+                PARAMETER_TYPE_MISMATCH,
+                f"Parameter {name!r} selects the query entry, a {' or '.join(entry_kinds)} "
+                f"Subject, and {value!r} names a {kind}. Repair: pass the Subject of an "
+                "entry kind as its id, kind/id or Subject:kind/id.",
+            )
+        return value
+    if parts is None:
+        if strict:
+            raise _refuse(
+                PARAMETER_TYPE_MISMATCH,
+                f"Parameter {name!r} is a Subject reference compared with stored Subject "
+                f"references, and {value!r} names no Subject kind. Repair: pass it as "
+                "kind/id or Subject:kind/id.",
+            )
+        return value
+    _prefix, kind, subject_id = parts
+    return f"Subject:{kind}/{subject_id}"
+
+
+def bind_reference_forms(
+    definition: QueryDefinition, parameters: Mapping[str, object]
+) -> dict[str, object]:
+    """Every supplied Subject-reference parameter in its position's spelling; never refuses."""
+
+    declared = {item.name: item.value_type for item in definition.parameters}
+    return {
+        name: (
+            bind_reference_form(definition, name, declared[name], value, strict=False)
+            if name in declared
+            else value
+        )
+        for name, value in parameters.items()
+    }
+
+
 def resolve_query_parameters(
     definition: QueryDefinition,
     parameters: Mapping[str, object] | None,
 ) -> tuple[QueryParameterBinding, ...]:
-    """Bind caller parameters to their declarations or refuse fail-closed."""
+    """Bind caller parameters to their declarations or refuse fail-closed.
+
+    A Subject-reference parameter binds in the spelling its position compares
+    (:func:`bind_reference_form`), whichever of its forms the caller wrote.
+    """
 
     supplied = dict(parameters or {})
     declared = {item.name: item for item in definition.parameters}
@@ -796,6 +889,8 @@ def resolve_query_parameters(
             raise _refuse(PARAMETER_MISSING, f"The query requires the parameter {name!r}.")
         else:
             value = declaration.default
+        if value is not None:
+            value = bind_reference_form(definition, name, declaration.value_type, value)
         if (
             value is not None
             and not coerce_query_value(normalize_canonical(value), declaration.value_type).ok
@@ -1379,5 +1474,6 @@ __all__ = [
     "query_attempted_parameter_digest",
     "query_execution_receipt",
     "query_parameter_digest",
+    "bind_reference_forms",
     "resolve_query_parameters",
 ]

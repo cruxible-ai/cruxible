@@ -500,9 +500,14 @@ prints a `Warning:` line naming the cause and the repair, then serves everything
 that needs no installed Provider code; `server status` keeps reporting it. Kit
 add, provider install and Procedure and Line runs that need the lane refuse
 with the same code, cause and repair, as an operator-environment refusal (HTTP
-503; an `operational_failed` run). Repair: set `XDG_RUNTIME_DIR` or `TMPDIR` to
-a short private directory owned by the daemon user (mode 0700) and restart the
-daemon, or restart it with a shorter `--state-root`.
+503; an `operational_failed` run). The cause gives the byte counts: how much
+shorter a `--state-root` must be, and the longest runtime directory the namespace
+fits under (57 bytes, since the namespace and a socket name take 46), with a
+concrete example (`TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS,
+`XDG_RUNTIME_DIR=/run/user/$UID` on Linux). A directory over that budget is
+refused before anything is created under it. Repair: set `XDG_RUNTIME_DIR` or
+`TMPDIR` to a short private directory owned by the daemon user (mode 0700) and
+restart the daemon, or restart it with a shorter `--state-root`.
 
 ### Provider runtime operational configuration
 
@@ -1465,6 +1470,13 @@ rule in force (a write creates the Subject by key, a read refuses the unknown
 reference). So merging Subject A into B --
 alias B with A's id, then retire A (`cruxible retire KIND/A --with-claims`) --
 sends every later reference to A to B.
+
+A named query's Subject parameter takes any of the three spellings: the bare id,
+`kind/id` or `Subject:kind/id`. The entry's Subject-id parameter selects by the
+bare id (a `Subject:kind/id` of a kind the entry does not select refuses
+`cruxible.query.parameter_type_mismatch`); a `subject_reference` parameter a
+filter compares binds as `Subject:kind/id`, so a bare id there, which names no
+kind, refuses with the same code and the repair to write `kind/id`.
 
 For a minted kind, and a grandfathered one, a change may not create a Subject
 that collides with a live Subject of its kind (a keyed kind is held to its key
@@ -2663,7 +2675,9 @@ covered only once every tick in it was delivered.
 and the ordinary Line admission checks; by default it drains every pending
 occurrence (`--limit N` stops after N). `run` and `dispatch` of a Line whose
 runs can propose or settle (and `procedure run` of such a Procedure) need
-governed write; an observe-only Line or Procedure runs at read-only. Permanent
+governed write; an observe-only Line or Procedure runs at read-only. A daemon
+whose capability ceiling is `read_only` refuses every run and dispatch, because a
+run retains its journal and Captures. Permanent
 input failures close as `rejected`; changed Line bindings, and occurrences
 whose Trigger changed or no longer aims at the Line, close as `superseded`.
 Both leave the runnable queue, retaining their evidence and a typed refusal

@@ -74,6 +74,12 @@ PROVIDER_RUNTIME_DIRECTORY_REPAIR = DECLARED_HAND_EDIT_CHANGES[
 ]
 # The AF_UNIX path budget every control socket must fit.
 _CONTROL_SOCKET_PATH_LIMIT = 103
+#: The concrete short private directory a runtime-directory refusal names, per
+#: platform: templated for the operator's shell, never a resolved path.
+RUNTIME_DIRECTORY_EXAMPLES = {
+    "Darwin": "$(getconf DARWIN_USER_TEMP_DIR)",
+    "Linux": "/run/user/$UID",
+}
 
 
 def _runtime_directory_unavailable(cause: str) -> ProviderLocalRuntimeRefused:
@@ -554,12 +560,14 @@ class ProviderProcessLeaseStore:
 
         # Every refusal below is the lane precondition: the state root is too
         # long for its control sockets and no usable private runtime directory
-        # stands in. Messages name the variable and byte counts, never a path:
-        # a path would echo a home directory the operator did not type.
+        # stands in. Messages name the variable, byte counts and a templated
+        # example, never a resolved path: a path would echo a home directory
+        # the operator did not type.
         overlong = (
             f"the Provider control socket path under the state root needs "
             f"{sample_bytes} bytes, over the {_CONTROL_SOCKET_PATH_LIMIT}-byte "
-            "Unix socket limit"
+            f"Unix socket limit (a --state-root {sample_bytes - _CONTROL_SOCKET_PATH_LIMIT} "
+            "bytes shorter fits)"
         )
         system = platform.system()
         variable = (
@@ -570,15 +578,35 @@ class ProviderProcessLeaseStore:
             raise _runtime_directory_unavailable(
                 f"{overlong}, and this platform reads no private per-user runtime directory"
             )
+        state_root = requested.parent.resolve(strict=False)
+        state_root_key = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()[:12]
+        namespace = Path("cruxible") / state_root_key / "c"
+        socket_name = "0" * 16 + ".sock"
+        # What the namespace and a socket name add to the runtime directory.
+        suffix_bytes = len(os.fsencode(Path("/") / namespace / socket_name))
+        budget = _CONTROL_SOCKET_PATH_LIMIT - suffix_bytes
+        example = RUNTIME_DIRECTORY_EXAMPLES[system]
+        need = (
+            f"{variable} must name a private directory of at most {budget} bytes, "
+            f"such as {variable}={example}"
+        )
         if not runtime_value:
             raise _runtime_directory_unavailable(
                 f"{overlong}, and {variable} is not set, so no private per-user "
-                "runtime directory is configured"
+                f"runtime directory is configured; {need}"
             )
         runtime_root = Path(runtime_value)
+        fallback_bytes = len(os.fsencode(runtime_root / namespace / socket_name))
+        if fallback_bytes > _CONTROL_SOCKET_PATH_LIMIT:
+            # Refuse before creating anything: a rejected directory keeps no
+            # empty namespace behind.
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and {variable} names a directory of "
+                f"{fallback_bytes - suffix_bytes} bytes; {need}"
+            )
         if not runtime_root.exists():
             raise _runtime_directory_unavailable(
-                f"{overlong}, and {variable} names a directory that does not exist"
+                f"{overlong}, and {variable} names a directory that does not exist; {need}"
             )
         try:
             self._ensure_private_directory(runtime_root)
@@ -586,30 +614,32 @@ class ProviderProcessLeaseStore:
             raise _runtime_directory_unavailable(
                 f"{overlong}, and {variable} names a directory that cannot be a private "
                 "runtime directory (it must be a real directory owned by the daemon user "
-                "and not shared)"
+                f"and not shared); {need}"
             ) from exc
-        state_root = requested.parent.resolve(strict=False)
-        state_root_key = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()[:12]
         current = runtime_root
-        for component in ("cruxible", state_root_key, "c"):
-            current = current / component
-            try:
-                current.mkdir(mode=0o700)
-            except FileExistsError:
-                pass
-            except OSError as exc:
-                raise ProviderLocalRuntimeRefused(
-                    "provider_process_lease_invalid",
-                    "private Provider runtime namespace cannot be created",
-                ) from exc
-            self._ensure_private_directory(current)
-        fallback_sample = current / ("0" * 16 + ".sock")
-        fallback_bytes = len(os.fsencode(fallback_sample))
-        if fallback_bytes > _CONTROL_SOCKET_PATH_LIMIT:
-            raise _runtime_directory_unavailable(
-                f"{overlong}, and the private runtime namespace under {variable} still "
-                f"needs {fallback_bytes} bytes"
-            )
+        created: list[Path] = []
+        try:
+            for component in namespace.parts:
+                current = current / component
+                try:
+                    current.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                except OSError as exc:
+                    raise ProviderLocalRuntimeRefused(
+                        "provider_process_lease_invalid",
+                        "private Provider runtime namespace cannot be created",
+                    ) from exc
+                else:
+                    created.append(current)
+                self._ensure_private_directory(current)
+        except ProviderLocalRuntimeRefused:
+            # Leave nothing this attempt made: only directories it created, and
+            # only while empty.
+            for path in reversed(created):
+                with contextlib.suppress(OSError):
+                    path.rmdir()
+            raise
         return current
 
     def paths(self, invocation_id: str) -> tuple[Path, Path]:
@@ -1028,6 +1058,7 @@ __all__ = [
     "DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS",
     "PROVIDER_RUNTIME_DIRECTORY_REPAIR",
     "PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE",
+    "RUNTIME_DIRECTORY_EXAMPLES",
     "ProviderDescendantProcessV1",
     "ProviderLocalRuntimeRefused",
     "ProviderProcessLeaseRemovalV1",

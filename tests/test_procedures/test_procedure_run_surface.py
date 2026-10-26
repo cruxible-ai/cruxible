@@ -1927,7 +1927,8 @@ def test_a_line_run_without_a_runtime_directory_fails_operational_with_the_repai
     assert result.terminal.code == "provider_runtime_directory_unavailable"
     assert "is not set" in result.terminal.message
     assert result.terminal.message.endswith(PROVIDER_RUNTIME_DIRECTORY_REPAIR)
-    assert "/" not in result.terminal.message
+    # The templated example directory (`/run/user/$UID` on Linux) is the only slash.
+    assert "/" not in result.terminal.message.replace("/run/user/$UID", "")
     assert isinstance(result.terminal.repair, HandEditRepair)
     assert result.terminal.repair.hand_edit.required_change == PROVIDER_RUNTIME_DIRECTORY_REPAIR
     assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]

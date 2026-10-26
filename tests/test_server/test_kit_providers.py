@@ -864,7 +864,11 @@ def test_kit_add_on_a_daemon_without_a_runtime_directory_names_the_cause_and_rep
     assert message.endswith(PROVIDER_RUNTIME_DIRECTORY_REPAIR)
     assert isinstance(refused.value.repair, HandEditRepair)
     assert refused.value.repair.hand_edit.required_change == PROVIDER_RUNTIME_DIRECTORY_REPAIR
-    assert "/" not in message and "long-state-root" not in message
+    # The cause names its byte budget and a templated example directory
+    # (`/run/user/$UID` on Linux), never a resolved path.
+    assert "must name a private directory of at most 57 bytes" in message
+    assert "/" not in message.replace("/run/user/$UID", "")
+    assert "long-state-root" not in message
 
 
 @pytest.mark.parametrize("prior", ["overlapping kit", "newer release"])

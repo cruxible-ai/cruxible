@@ -102,9 +102,12 @@ and runs on an internet-facing host of a critical service: upgrade it first.
   runs the kit's checks in a separate process reached through a Unix socket
   under its state root, and that path is too long, with no `TMPDIR` (macOS)
   or `XDG_RUNTIME_DIR` (Linux) to fall back on. Everything else works, but
-  `kit add` and the checks refuse with the same cause. Set `TMPDIR` or
-  `XDG_RUNTIME_DIR` to a short private directory you own (mode 0700), or use
-  a shorter `--state-root`, and restart the daemon.
+  `kit add` and the checks refuse with the same cause. The warning names
+  the budget: the directory may be at most 57 bytes long. Set
+  `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR)` on macOS or
+  `XDG_RUNTIME_DIR=/run/user/$UID` on Linux (any short private directory you
+  own, mode 0700, works), or use a shorter `--state-root`, and restart the
+  daemon.
 - **A read returns but nothing is proposed yet.** Reading a file (an SBOM, a
   scan) returns as soon as it's captured; the import check it starts proposes
   a moment later, so list open proposals again.

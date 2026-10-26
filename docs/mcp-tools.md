@@ -485,7 +485,10 @@ and every call is capped at it.
 
 The daemon capability ceiling and bearer credential tier both apply. A
 Cruxible principal signature is an additional governance condition, not a
-replacement for transport authorization.
+replacement for transport authorization. Under a `read_only` ceiling
+`cruxible_line_run`, `cruxible_line_dispatch` and `cruxible_procedure_run`
+refuse even for an observe-only target, since every run retains its journal and
+Captures.
 
 Workspace source tools take `root_aliases` as a list of `{alias, path}` records.
 Coverage takes `bindings` as a list of `{path, source}` records. Duplicate aliases
