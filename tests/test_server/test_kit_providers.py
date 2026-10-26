@@ -328,13 +328,60 @@ def _author(world: Any, *, procedure: bool = True) -> None:
                 acquisition_policy=POLICY,
             )
         )
-    definition, contracts = _graph(
-        world, provider="kit-call" if hasattr(world, "instance") else None
-    )
-    definition["name"] = BLUEPRINT
-    draft.procedure(
-        definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
-    )
+    if hasattr(world, "instance"):
+        # Preserve the original frozen Blueprint fixture in revision-35 tests.
+        # The removed new-authoring model is not needed to construct old bytes.
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
+        from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
+        from cruxible_core.authoring.lowering import lower_authoring
+        from tests.support.core_provider_world import AT
+
+        definition, contracts = _graph(world, provider="kit-call")
+        definition["name"] = BLUEPRINT
+        prototype_intent = (
+            world.pb.changes(rationale="Resolve a frozen fixture graph.")
+            .procedure(
+                definition=ProcedureInput(
+                    kind="procedure", definition=definition, contracts=contracts
+                )
+            )
+            .prepare()
+        )
+        assert not prototype_intent.refused, prototype_intent.diagnostics
+        prototype_path = f"procedures/{BLUEPRINT}.json"
+        lowered = lower_authoring(world.instance, intent=prototype_intent.intent, actor_id="owner")
+        prototype = parse_procedure(lowered.proposed_tree[prototype_path], path=prototype_path)
+        raw = prototype.definition.model_dump(mode="json", by_alias=True)
+        node = raw["nodes"][0]
+        node["provider"] = {"slot_name": "increment"}
+        node["implementation_digest"] = None
+        raw["pin_slots"] = [
+            {
+                "slot_name": "increment",
+                "pin_role": "provider",
+                "artifact_kind": "Provider",
+                "interface_digest": node["interface_digest"],
+            }
+        ]
+        frozen_definition = ProcedureDefinition.model_validate(raw)
+        frozen = BlueprintArtifact(
+            identity=ArtifactIdentity(kind="Blueprint", name=BLUEPRINT),
+            definition=frozen_definition,
+            definition_digest=compute_procedure_definition_digest(frozen_definition).tagged,
+            pins=tuple(pin for pin in prototype.pins if pin.role != "provider"),
+            owned_contracts=prototype.owned_contracts,
+            activation_policy="snapshot",
+        )
+        world.accept_members({blueprint_path(BLUEPRINT): render_blueprint(frozen)}, timestamp=AT)
+        if not procedure:
+            return
+    else:
+        definition, contracts = _graph(world, provider=None)
+        draft.procedure(
+            definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
+        )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
     submitted = intent.submit(accept="never")
@@ -521,7 +568,9 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert submitted._candidate_status is not None
         consumer.approve(submitted._candidate_status.proposal_id)
         consumer.pb.refresh()
-        assert consumer.pb.line("acme.increment-other").run().result == {"n": 6}
+        other_run = consumer.pb.line("acme.increment-other").run()
+        assert other_run.status == "succeeded", other_run
+        assert other_run.result.model_dump() == {"n": 6}
     finally:
         for _ in opened:
             pass
