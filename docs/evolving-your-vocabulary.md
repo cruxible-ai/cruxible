@@ -283,6 +283,9 @@ previews it, and `at` names the coordinate you read at):
 }
 ~~~
 
+With `wiper-brand` moved the same way, each decision reads as its one-line
+summary:
+
 ~~~text
 $ cruxible query catalog.decision --select status,summary
 subject                                status    summary                                                       flags
