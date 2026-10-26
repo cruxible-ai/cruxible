@@ -256,13 +256,8 @@ def test_retiring_legacy_definitions_on_36_uses_admitted_successor_formats(tmp_p
         rebased=False,
         actor_id="owner",
     )
-    if family == "blueprint":
-        assert result.candidate is None
-        assert any("author a Procedure with slots" in d.message for d in result.diagnostics)
-        assert parent[path] == content
-    else:
-        assert result.diagnostics == ()
-        assert result.candidate is not None
+    assert result.diagnostics == ()
+    assert result.candidate is not None
 
 
 def test_named_line_is_unchanged_on_compatible_revision_and_stopped_only_on_retire_with(tmp_path):

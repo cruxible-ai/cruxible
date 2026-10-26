@@ -202,6 +202,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
+    BlueprintArtifact,
     ProcedureArtifact,
     ProcedureFormatError,
     evaluate_procedure_law,
@@ -1890,7 +1891,32 @@ class _MemberKind:
     format_code: str = "cruxible.proposal.member_format_invalid"
 
 
-def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
+def _blueprint_retirement(
+    successor: BlueprintArtifact,
+    previous: BlueprintArtifact | None,
+    predecessor_digest: str | None,
+) -> bool:
+    """Only retire existing Blueprint content, allowing the I2 name conversion."""
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    if (
+        previous is None
+        or previous.lifecycle.state != "live"
+        or successor.lifecycle.state != "retired"
+        or successor.lifecycle.predecessor_digest != predecessor_digest
+    ):
+        return False
+    retained = (
+        previous
+        if successor.artifact_format == previous.artifact_format
+        else name_procedure(previous)
+    )
+    return successor.model_dump(exclude={"lifecycle"}) == retained.model_dump(exclude={"lifecycle"})
+
+
+def _installed(
+    context: _MemberContext, artifact_tag: str, *, blueprint_retirement: bool = False
+) -> InstalledAcceptanceLaw:
     if context.historical_law_coordinate is None and not context.rechecking:
         from cruxible_client.contracts.laws import NAMED_REFERENCE_FORMATS
 
@@ -1900,7 +1926,10 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
             and kind.name == "blueprint"
             and context.current.compiler == LIGHT_ARTIFACTS_COMPILER
         ):
-            raise FormatError("Blueprints are read-only; author a Procedure with slots.")
+            if not blueprint_retirement:
+                raise FormatError(
+                    "Blueprints are read-only except for retirement; author a Procedure with slots."
+                )
         if kind is not None and kind.name == "provider-interface":
             light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
             if (artifact_tag == "cruxible-provider-interface-v4") != light:
@@ -1908,7 +1937,13 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
                     "New ProviderInterfaces require v4 on compiler revision 36; "
                     "upgrade the compiler or author the admitted legacy format."
                 )
-        if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
+        if (
+            kind is not None
+            and kind.name in NAMED_REFERENCE_FORMATS
+            and not (
+                kind.name == "blueprint" and context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+            )
+        ):
             named = NAMED_REFERENCE_FORMATS[kind.name]
             light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
             if (
@@ -2598,14 +2633,25 @@ def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
     )
 
     blueprint = parse_blueprint(context.content, path=context.path)
-    _installed(context, blueprint.artifact_format)
-    _verify_source(context, blueprint)
     predecessor: AcceptedBlueprint | None = None
     if context.parent_content is not None:
         previous = parse_blueprint(context.parent_content, path=context.path)
         predecessor = AcceptedBlueprint(
             path=context.path, blueprint=previous, artifact_digest=blueprint_digest(previous).tagged
         )
+    installed = _installed(
+        context,
+        blueprint.artifact_format,
+        blueprint_retirement=context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        and context.historical_law_coordinate is None
+        and not context.rechecking
+        and _blueprint_retirement(
+            blueprint,
+            None if predecessor is None else predecessor.blueprint,
+            None if predecessor is None else predecessor.artifact_digest,
+        ),
+    )
+    _verify_source(context, blueprint)
     law = evaluate_blueprint_law(
         blueprint,
         path=context.path,
@@ -2619,7 +2665,7 @@ def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted Blueprint law result is incomplete")
     return _accepted(
         context,
-        _installed(context, blueprint.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
