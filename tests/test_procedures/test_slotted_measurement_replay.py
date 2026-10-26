@@ -5,6 +5,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from cruxible_client.contracts.acquisition_policies import (
+    acquisition_policy_path,
+    render_acquisition_policy,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -12,7 +16,9 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     NamedProcedureArtifact,
@@ -29,10 +35,19 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 from cruxible_client.contracts.procedures.readings import ProcedureMeasureRequest
 from cruxible_client.contracts.provider_execution import ProviderEgressObservation
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
-from cruxible_client.contracts.providers import provider_path, render_provider
+from cruxible_client.contracts.provider_interfaces import (
+    parse_provider_interface,
+    provider_interface_path,
+    render_provider_interface,
+)
+from cruxible_client.contracts.providers import (
+    provider_expected_implementation_records,
+    provider_path,
+    render_provider,
+)
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.payloads import read_payload
+from cruxible_core.governance.seed_artifacts.workspace_file import WORKSPACE_FILE_INTERFACE_ID
 from cruxible_core.procedures.execution import accepted_procedure_pin_set_digest
 from cruxible_core.procedures.readings import ProcedureReadingV1
 from cruxible_core.procedures.reference_binding import bind_procedure_references
@@ -53,8 +68,18 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._identity_support import accept_tree
+from tests.core_support._p2b1_support import provider_v2
+from tests.support.provider_builds import as_build
 from tests.test_procedures.test_procedure_measurement_readings import _actor, _world
-from tests.test_procedures.test_procedure_source_runs import _Operator, _WorkspaceInvoker
+from tests.test_procedures.test_procedure_source_runs import (
+    RELATIVE_PATH,
+    _Operator,
+    _policy,
+    _reader,
+    _source_request,
+    _WorkspaceInvoker,
+    capture_contract,
+)
 from tests.test_procedures.test_slotted_procedures import slotted
 from tests.test_providers.test_slotted_build_moves import _other
 
@@ -63,6 +88,14 @@ NOW = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
 
 class _Invoker(_WorkspaceInvoker):
     def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):
+        if occurrence.occurrence_kind == "source":
+            return super().invoke_provider(
+                occurrence=occurrence,
+                context=context,
+                invocation_id=invocation_id,
+                bound=bound,
+                deadline=deadline,
+            )
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelopeV1(
                 protocol_version="1.0", run_id=context.run_id, status="ok", output={"value": 42}
@@ -74,7 +107,7 @@ class _Invoker(_WorkspaceInvoker):
         )
 
 
-def _slotted_world(tmp_path):
+def _slotted_world(tmp_path, *, landed=False):
     instance, _, measured = _world(tmp_path)
     _, _, first, interface = slotted()
     second = _other(interface.registration)
@@ -99,6 +132,87 @@ def _slotted_world(tmp_path):
             "budget": {"provider_calls": 1},
         }
     )
+    extra_members = {}
+    source_bindings = {}
+    if landed:
+        from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+
+        root = tmp_path / "workspace"
+        target = root / RELATIVE_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('{"value":1}')
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        path = provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)
+        source_interface = parse_provider_interface(tree[path], path=path)
+        template = provider_v2(registration=source_interface)
+        # Each wheel has its own build key, including across interface families.
+        runtime = template.runtime_artifact.model_copy(
+            update={
+                "distribution": template.runtime_artifact.distribution.model_copy(
+                    update={"sha256": "sha256:" + "e" * 64}
+                ),
+            }
+        )
+        source_provider = name_provider(
+            as_build(
+                template.model_copy(
+                    update={
+                        "runtime_artifact": runtime,
+                        "implementations": provider_expected_implementation_records(runtime),
+                    }
+                )
+            )
+        )
+        alternate_runtime = runtime.model_copy(
+            update={
+                "distribution": runtime.distribution.model_copy(
+                    update={"sha256": "sha256:" + "d" * 64}
+                ),
+            }
+        )
+        alternate = name_provider(
+            as_build(
+                template.model_copy(
+                    update={
+                        "runtime_artifact": alternate_runtime,
+                        "implementations": provider_expected_implementation_records(
+                            alternate_runtime
+                        ),
+                    }
+                )
+            )
+        )
+        contract = capture_contract()
+        source_bindings = {"fetch": ArtifactNameRef(target=source_provider.identity)}
+        extra_members = {
+            acquisition_policy_path("default"): render_acquisition_policy(_policy()),
+            provider_path(source_provider.identity.name): render_provider(source_provider),
+            provider_path(alternate.identity.name): render_provider(alternate),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        }
+        spec = ProcedureSpec.model_validate(
+            {
+                **spec.model_dump(mode="json"),
+                "slots": {"compute": "test.compute@1", "fetch": "workspace.file"},
+                "steps": [
+                    {
+                        "source": "captured",
+                        "id": "read",
+                        "contract": contract.identity.name,
+                        "interface": "workspace.file",
+                        "provider": "fetch",
+                        "request": _source_request(instance, root).model_dump(mode="json"),
+                    },
+                    {
+                        "call": "result",
+                        "interface": "test.compute@1",
+                        "provider": "compute",
+                        "input": {"value": "$captured.content.json.value"},
+                    },
+                ],
+                "budget": {"provider_calls": 2, "capture_bytes": 65536},
+            }
+        )
     payload = lower_authoring_input(lower_procedure_spec(spec))
     definition = NamedProcedureDefinition.model_validate(payload.definition)
     procedure = NamedProcedureArtifact(
@@ -113,16 +227,26 @@ def _slotted_world(tmp_path):
         identity=ArtifactIdentity(kind="Line", name="test.measured-slot"),
         occurrence_epoch=1,
         procedure=ArtifactNameRef(target=procedure.identity),
-        bindings={"compute": ArtifactNameRef(target=first.provider.identity)},
+        bindings={"compute": ArtifactNameRef(target=first.provider.identity), **source_bindings},
         parameters={"value": 1},
         max_authority="observe",
         budgets={
             "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 0,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_capture_bytes": caps.max_capture_bytes,
             "max_items": caps.max_items,
         },
         epsilon={"$decimal": "0.1"},
+        **(
+            {
+                "trigger_input": "captured",
+                "trigger_event": NamedCaptureEventSelector(
+                    capture_contract_identity=contract.identity,
+                ),
+            }
+            if landed
+            else {}
+        ),
     )
     accepted = AcceptedProcedure(
         path="procedures/" + spec.procedure + ".json",
@@ -132,6 +256,7 @@ def _slotted_world(tmp_path):
     accept_tree(
         instance,
         {
+            **extra_members,
             accepted.path: render_procedure(procedure),
             interface.path: render_provider_interface(interface.registration),
             first.path: render_provider(first.provider),
@@ -296,3 +421,83 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
         _measure(instance, accepted, run.run_id, at=admission_coordinate).rows[0].reading_status
         == "replayed"
     )
+
+
+def test_measure_replays_line_with_a_landed_slotted_source_and_call(tmp_path):
+    instance, accepted, line, first, _, _ = _slotted_world(tmp_path, landed=True)
+    with pytest.raises(RequestRefusedError) as ambiguous:
+        service_run_playbill_procedure(
+            instance,
+            name=accepted.procedure.identity.name,
+            request=ProcedureRunRequest(
+                input={"value": 1}, bindings={"compute": first.provider.identity.name}
+            ),
+            actor_context=_actor(instance),
+        )
+    assert ambiguous.value.error_code == "cruxible.procedure.slot_binding_ambiguous"
+    assert "fetch" in str(ambiguous.value)
+    invoker = _Invoker()
+    operator = _Operator(invoker)
+    producer = service_run_playbill_procedure(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureRunRequest(
+            input={"value": 1},
+            evaluation_time=NOW,
+            bindings={slot: ref.target.name for slot, ref in line.bindings.items()},
+        ),
+        actor_context=_actor(instance),
+        provider_runtime_operator=operator,
+        workspace_file_reader=_reader(instance, tmp_path / "workspace"),
+    )
+    assert producer.status == "succeeded", producer.terminal
+    assert invoker.spawn_calls == 1
+    assert _measure(instance, accepted, producer.run_id).rows[0].reading_status == "recorded"
+    event = next(o.capture_event for o in producer.outcomes if o.event_kind == "produced_capture")
+    run = service_run_playbill_line(
+        instance,
+        path_identity_digest=line.identity.name,
+        request=LineRunRequest(line=line.identity.name, event=event),
+        actor_context=_actor(instance),
+        caller_rung=2,
+        daemon_clock=_DeterministicClock(NOW + timedelta(seconds=1)),
+        provider_runtime_operator=operator,
+        # No workspace reader: the Source consumes the exact landed Capture.
+    )
+    assert run.status == "succeeded", run.terminal
+    assert invoker.spawn_calls == 1, "The Line consumes the Capture without refetching"
+    assert run.receipt is not None and run.run_id is not None
+    grain = load_playbill_procedure_run_grain(instance, run_id=run.run_id)
+    # The acquisition plan records only the Call; the supplied Source does not invoke a Provider.
+    assert [b.node_id for b in grain.provider_bindings] == ["result"]
+    assert {p.target for p in run.receipt.validated_pins if p.target.kind == "Provider"} == {
+        first.provider.identity,
+        line.bindings["fetch"].target,
+    }
+    result = _measure(instance, accepted, run.run_id)
+    assert result.rows[0].reading_status == "recorded", result
+    replayed = _replay_measured_run(
+        instance, accepted=accepted, grain=grain, observation=instance.accepted_coordinate()
+    )
+    assert replayed.procedure.pins == run.receipt.validated_pins
+    assert replayed.procedure.definition.nodes[0].provider.target == line.bindings["fetch"].target
+    assert _measure(instance, accepted, run.run_id).rows[0].reading_status == "replayed"
+    assert grain.landed_capture_input_names == frozenset({"captured"})
+    assert any(item.node_id == "read" for item in grain.node_pin_sets)
+    for broken in (
+        replace(grain, node_pin_sets=()),
+        replace(grain, landed_capture_input_names=frozenset()),
+        replace(grain, provider_bindings=()),
+        replace(
+            grain,
+            node_pin_sets=tuple(item for item in grain.node_pin_sets if item.node_id != "result"),
+        ),
+    ):
+        with pytest.raises(ProcedureMeasurementRefused) as mismatch:
+            _replay_measured_run(
+                instance,
+                accepted=accepted,
+                grain=broken,
+                observation=instance.accepted_coordinate(),
+            )
+        assert mismatch.value.error_code == "measurement_run_mismatch"

@@ -72,6 +72,7 @@ from cruxible_client.contracts.procedures.measurements import (
     ClaimStatementProcedureMeasurement,
     ProcedureMeasurementDeclaration,
 )
+from cruxible_client.contracts.procedures.models import SourceNode
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus,
     ProcedureMeasurementEligibility,
@@ -111,6 +112,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.procedures.execution import procedure_node_pin_sets
 from cruxible_core.procedures.readings import (
     ProcedureReadingV1,
     ReadingReplayKey,
@@ -1331,6 +1333,26 @@ def _replay_measured_run(
                 provider_artifact_digest=binding.provider_artifact_digest,
             )
         providers[binding.node_id] = identity
+    # A landed Capture supplies its Source without invoking that Source's
+    # Provider. Its choice is still authenticated by the admission's node pins,
+    # but deliberately absent from the external-occurrence bindings above.
+    node_pins = {item.node_id: item.pins for item in grain.node_pin_sets}
+    receipt_pins = set(receipt.validated_pins)
+    for node in accepted.procedure.definition.nodes:
+        if not isinstance(node, SourceNode) or node.as_ not in grain.landed_capture_input_names:
+            continue
+        source_pins = tuple(
+            pin
+            for pin in node_pins.get(node.node_id, ())
+            if pin.role == "provider" and pin.target.kind == "Provider"
+        )
+        if len(source_pins) != 1 or source_pins[0] not in receipt_pins:
+            raise _refuse(
+                "measurement_run_mismatch",
+                "The run's supplied Source has no matching admission Provider pin.",
+                node_id=node.node_id,
+            )
+        providers[node.node_id] = source_pins[0].target
     with instance.bind_accepted_projection(observation) as projection:
         for identity in dict.fromkeys(providers.values()):
             provider = indexed_exact_provider(projection.typed.connection, identity.qualified)
@@ -1363,6 +1385,8 @@ def _replay_measured_run(
             )
             if replayed.procedure.pins != receipt.validated_pins:
                 raise ExecutionError("Recorded admission pins do not reproduce the receipt")
+            if procedure_node_pin_sets(replayed) != grain.node_pin_sets:
+                raise ExecutionError("Recorded admission node pins do not reproduce the receipt")
             return replayed
     except (ExecutionError, RequestRefusedError) as exc:
         raise _refuse(

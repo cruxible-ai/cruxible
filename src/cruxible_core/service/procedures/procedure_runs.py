@@ -248,6 +248,7 @@ from cruxible_core.procedures.execution import (
     ProcedureAdmissionBoundPayloadV5,
     ProcedureBoundaryRefused,
     ProcedureClockProtocol,
+    ProcedureNodePinSetV1,
     ProcedureRunAdmissionV1,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
@@ -4723,6 +4724,9 @@ class ProcedureRunGrainRecordV1:
     provider_bindings: tuple[
         ProcedureProviderBindingV1 | ProcedureProviderBinding | ProcedureProviderBindingV3, ...
     ] = ()
+    #: Graph pins include supplied Sources, which have no external occurrence.
+    node_pin_sets: tuple[ProcedureNodePinSetV1, ...] = ()
+    landed_capture_input_names: frozenset[str] = frozenset()
 
 
 def load_playbill_procedure_run_grain(
@@ -4798,6 +4802,10 @@ def load_playbill_procedure_run_grain(
         node_verdicts=node_verdicts,
         selected_arms={key: tuple(value) for key, value in selected_arms.items()},
         provider_bindings=tuple(getattr(admission, "resolved_provider_bindings", ())),
+        node_pin_sets=admission.node_pin_sets,
+        landed_capture_input_names=frozenset(
+            item.input_name for item in admission.landed_capture_inputs
+        ),
     )
 
 
