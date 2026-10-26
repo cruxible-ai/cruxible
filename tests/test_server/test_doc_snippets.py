@@ -340,6 +340,7 @@ WorldBuilder = Callable[[TestClient, str, Path], Cruxible]
 
 #: doc -> the world its python blocks run against.
 PAGES: dict[str, WorldBuilder] = {
+    "building-team-knowledge.md": car_parts,
     "for-ai-agents.md": car_parts,
 }
 
