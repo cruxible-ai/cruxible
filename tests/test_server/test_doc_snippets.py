@@ -369,6 +369,32 @@ def split_category(client: TestClient, instance_id: str, workspace: Path) -> Cru
 DEFAULT_PADS = "catalog.decision/ceramic-pads-default"
 
 
+def security_incident(client: TestClient, instance_id: str, workspace: Path) -> Cruxible:
+    """The security kit's incident fields (its reference, security.incident), and one CVE."""
+
+    fields = [
+        _field("security.vulnerability.cve_id", key=True),
+        _field("security.incident.name", key=True),
+        _field("security.incident.window_start"),
+        _field(
+            "security.incident.rotation_policy", schema=_enum("all_exposed", "on_found_or_unknown")
+        ),
+        _field("security.incident.status", schema=_enum("closed", "open")),
+        _field("security.incident.vulnerability", many=True, objects=("security.vulnerability",)),
+    ]
+    kinds = {
+        "security.vulnerability": ["security.vulnerability.cve_id"],
+        "security.incident": ["security.incident.name"],
+    }
+    _define(client, instance_id, fields, kinds)
+    cx = _connect(client, instance_id, workspace)
+    cve = cx.set(
+        "security.vulnerability/CVE-2025-3248", "cve_id", "CVE-2025-3248", because="OSV lists it."
+    )
+    assert cve.status == "accepted", cve
+    return cx
+
+
 # -- the pages -----------------------------------------------------------------
 
 WorldBuilder = Callable[[TestClient, str, Path], Cruxible]
@@ -381,6 +407,7 @@ PAGES: dict[str, WorldBuilder] = {
     "evolving-your-vocabulary.md": split_category,
     "for-ai-agents.md": car_parts,
     "lines-and-automation.md": car_parts,
+    "security-walkthrough.md": security_incident,
 }
 
 #: (doc, block line) -> why that block is not run.

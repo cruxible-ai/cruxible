@@ -260,31 +260,63 @@ patched, whether you were attacked, and which keys to rotate. Here are the
 first two, for the langflow CVE.
 
 Declare an incident for it, with a window starting before the earliest known
-exploitation. Save this as `incident.yaml`:
+exploitation. The incident's Claims are one write; from Python (the
+`cruxible` install includes the SDK), in the project directory:
 
-~~~yaml
-because: Langflow 1.2.0 is exploited in the wild (CVE-2025-3248); one response for it.
-subject: security.incident/Langflow RCE
-changes:
-  - {op: set, field: window_start, value: "2025-04-01T00:00:00Z"}
-  - {op: set, field: rotation_policy, value: on_found_or_unknown}
-  - {op: set, field: status, value: open}
-  - {op: add, field: vulnerability, value: security.vulnerability/cve-2025-3248}
+~~~python
+from cruxible_client import Cruxible
+
+cx = Cruxible.connect()
+incident = cx.changes(
+    because="Langflow 1.2.0 is exploited in the wild (CVE-2025-3248); one response for it.",
+    subject="security.incident/Langflow RCE",
+)
+incident.set("window_start", "2025-04-01T00:00:00Z")
+incident.set("rotation_policy", "on_found_or_unknown")
+incident.set("status", "open")
+incident.add("vulnerability", "security.vulnerability/cve-2025-3248")
+outcome = incident.write()
+outcome.status                                    # 'accepted'
 ~~~
 
-~~~bash
-cruxible write incident.yaml
+Naming the incident by its key, `Langflow RCE`, creates it. On the CLI,
+`cruxible write FILE` takes the same write as a YAML file. For MCP-only
+clients, it is one `cruxible_write` call:
+
+~~~json
+{
+  "because": "Langflow 1.2.0 is exploited in the wild (CVE-2025-3248); one response for it.",
+  "subject": "security.incident/Langflow RCE",
+  "changes": [
+    {"op": "set", "field": "window_start", "value": "2025-04-01T00:00:00Z"},
+    {"op": "set", "field": "rotation_policy", "value": "on_found_or_unknown"},
+    {"op": "set", "field": "status", "value": "open"},
+    {
+      "op": "add",
+      "field": "vulnerability",
+      "value": "security.vulnerability/cve-2025-3248"
+    }
+  ]
+}
 ~~~
 
 Its **respond** Line asks the incident's questions and posts what it finds to
 the inbox. Save this as `respond.json`, then add the Line and turn it on:
 
 ~~~json
-{"kind": "line", "name": "security.respond.langflow-rce", "procedure_name": "security.respond",
- "max_authority": "observe",
- "parameters": {"incident": "Langflow RCE", "inventory_pull": "security.inventory-acquire",
-                "log_pull": "security.log-acquire", "credential_pull": "security.credential-acquire",
-                "record_pull": "security.fetch"}}
+{
+  "kind": "line",
+  "name": "security.respond.langflow-rce",
+  "procedure_name": "security.respond",
+  "max_authority": "observe",
+  "parameters": {
+    "incident": "Langflow RCE",
+    "inventory_pull": "security.inventory-acquire",
+    "log_pull": "security.log-acquire",
+    "credential_pull": "security.credential-acquire",
+    "record_pull": "security.fetch"
+  }
+}
 ~~~
 
 ~~~bash
@@ -298,8 +330,14 @@ Syft or Trivy SBOM of each host, tagged with its scope and hostname, works
 too):
 
 ~~~json
-{"scope": "prod", "looked_for": ["myapp"], "coverage": "full",
- "assets": [{"hostname": "app-1.example.com", "runs": ["pkg:generic/myapp@1.0.0"]}]}
+{
+  "scope": "prod",
+  "looked_for": ["myapp"],
+  "coverage": "full",
+  "assets": [
+    {"hostname": "app-1.example.com", "runs": ["pkg:generic/myapp@1.0.0"]}
+  ]
+}
 ~~~
 
 ~~~bash
@@ -315,7 +353,7 @@ Now ask:
 ~~~text
 $ cruxible line run security.respond.langflow-rce
 RUN-1c53f06b…: succeeded
-Result: {"answers": [{"question": "RQ1", "state": "found", "subject": "app-1.example.com: myapp 1.0.0", "why": "runs an affected release"}, {"question": "RQ2", "state": "found", "subject": "app-1.example.com: myapp 1.0.0", "why": "no patch"}], ...}
+Result: {"answers": [{"question": "RQ1", "state": "found", …}, {"question": "RQ2", "state": "found", …}], …}
 ...
 
 $ cruxible inbox list --line security.respond.langflow-rce
@@ -349,8 +387,11 @@ nothing. Here, fetching a CVE record from a host that doesn't resolve, with
 this saved as `cve.json`:
 
 ~~~json
-{"url": "https://cve-records.invalid/api/cve/CVE-2025-3248",
- "logical_source": "cve.record", "max_bytes": 1048576}
+{
+  "url": "https://cve-records.invalid/api/cve/CVE-2025-3248",
+  "logical_source": "cve.record",
+  "max_bytes": 1048576
+}
 ~~~
 
 ~~~text
