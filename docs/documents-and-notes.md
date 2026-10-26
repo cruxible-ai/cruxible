@@ -134,9 +134,8 @@ written.hint
 
 Document changes are applied only once the write is accepted (or is waiting
 for approval); a refused write or a dry run (`--dry-run`, `dry_run=True`)
-touches no file. Files under
-`.cruxible` and `.git` can't be written this way, and neither can a projection
-block (see below).
+touches no file. Files under `.cruxible` and `.git` can't be written this way,
+and neither can a projection block (see below).
 
 ## Citing what's already written
 
