@@ -137,3 +137,84 @@ def test_the_claim_match_memo_is_bounded_by_the_bytes_it_keeps(monkeypatch) -> N
     kept = sum(len(p) + len(c) for p, c in derived_state._CLAIM_MATCH_FACTS)
     assert kept <= 64 * 1024
     assert kept == derived_state._claim_match_bytes
+
+
+def test_lowering_indexes_each_staged_claim_once(tmp_path: Path, monkeypatch) -> None:
+    """A write's slot index work grows with its Claims, not with their square.
+
+    Lowering looks up slots through forks of the tree it stages into; an index
+    brought up to date only at lookup re-indexed every Claim staged since the
+    forked tree's last lookup, so a 1,000-Claim change did ~25x the index work
+    of a 200-Claim one. Creating a work item by key stages its key and title
+    Claims: 100 and 500 changes stage 200 and 1,000 Claims.
+    """
+
+    from cruxible_client.contracts import persistent
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    instance, _owner = seed_write_surface(tmp_path)
+    sets = [0]
+    original = persistent.PersistentMap.set
+
+    def counted(self, *args, **kwargs):
+        sets[0] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(persistent.PersistentMap, "set", counted)
+    measured = {}
+    for changes in (100, 500):
+        sets[0] = 0
+        request = WriteRequest.model_validate(
+            {
+                "because": "lowering index work",
+                "dry_run": True,
+                "changes": [
+                    {"op": "set", "subject": f"{KIND}/n{changes}-{i:04d}", "field": "title"}
+                    | {"value": f"item {i}"}
+                    for i in range(changes)
+                ],
+            }
+        )
+        outcome = service_playbill_write(instance, request=request, caller=caller())
+        assert outcome.status == "would_accept", outcome.refusal
+        measured[changes] = sets[0]
+    # Linear is 5x (with a log factor from the persistent maps' depth); the
+    # per-lookup re-index measured 4.3k vs 19.5k fixed and ~25x unfixed.
+    assert measured[500] <= 6.5 * measured[100], measured
+
+
+def test_a_long_unlooked_staging_chain_stays_exact_and_bounded(tmp_path: Path) -> None:
+    """Sealing past the chain limit resolves the base: lookups stay exact, the chain short."""
+
+    from cruxible_core.derived import derived_state
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    instance = PlaybillInstance.open(fixture.managed_root, trust_root=fixture.instance.trust_root)
+    head = instance.immutable_tree_at(instance.accepted_history()[-1].oid)
+    other = build_fixture(tmp_path / "other", replace(PROFILE, seed="edited-claims-other"))
+    other_instance = PlaybillInstance.open(other.managed_root, trust_root=other.instance.trust_root)
+    other_tree = other_instance.tree_at(other_instance.accepted_history()[-1].oid)
+    additions = sorted(
+        (path, content)
+        for path, content in other_tree.items()
+        if path.startswith("claims/") and path not in head
+    )
+    assert additions
+    tree = head.fork()
+    depths = []
+    for step in range(3 * derived_state._CLAIM_CHAIN_LIMIT):  # noqa: SLF001
+        path, content = additions[step % len(additions)]
+        if path in tree:
+            del tree[path]
+        else:
+            tree[path] = content
+        sealed = tree.snapshot()
+        depths.append(sealed._claim_depth)  # noqa: SLF001
+        tree = sealed.fork()
+    assert max(depths) <= derived_state._CLAIM_CHAIN_LIMIT + 1  # noqa: SLF001
+    cold = SnapshotTree(dict(sealed.items()))
+    for path, content in additions:
+        statement = parse_claim(content, path=path).statement
+        assert sealed.claim_items(statement) == cold.claim_items(statement)
