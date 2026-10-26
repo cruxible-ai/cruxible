@@ -506,6 +506,34 @@ def test_stored_v3_keeps_template_data_and_literal_null():
     assert "node_id" not in compact
 
 
+def test_decompile_shows_budget_durations_compactly_without_moving_stored_bytes():
+    from cruxible_client.contracts.temporal import (
+        format_iso_duration_microseconds,
+        parse_iso_duration_microseconds,
+    )
+
+    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    authored = decompile_procedure(original)
+    assert authored.budget.wall_clock == "PT120S"
+    assert authored.caps is not None and authored.caps.wall_clock == "PT300S"
+    # Display only: each text parses back to the stored microseconds (the corpus
+    # round trip above keeps every Procedure's stored bytes and digest).
+    assert parse_iso_duration_microseconds(authored.budget.wall_clock) == (
+        original.definition.budget.wall_clock.microseconds
+    )
+    for value, text in [
+        (0, "PT0S"),
+        (1, "PT0.000001S"),
+        (1_500_000, "PT1.5S"),
+        (120_000_000, "PT120S"),
+        (86_400_123_400, "PT86400.1234S"),
+    ]:
+        assert format_iso_duration_microseconds(value) == text
+        assert parse_iso_duration_microseconds(text) == value
+    with pytest.raises(ValueError, match="nonnegative"):
+        format_iso_duration_microseconds(-1)
+
+
 def test_decompile_inventory_recognizes_return_and_halt_patterns():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     authored = decompile_procedure(original)

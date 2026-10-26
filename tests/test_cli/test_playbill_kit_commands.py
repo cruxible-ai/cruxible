@@ -431,3 +431,90 @@ def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:
     assert result.stderr == (
         "Error: cruxible.kit.not_found: ghcr.io/acme/kit:1 is not published (HTTP 404)\n"
     )
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_kit_pull_from_a_kit_directory_writes_what_a_registry_pull_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.artifacts import pack_artifact
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+    from cruxible_client.kits import KIT_ARTIFACT, write_kit_directory
+
+    files = {
+        "README.md": b"# acme\n",
+        "walkthroughs.md": b"# walkthroughs\n",
+        "examples/automation.json": b"{}\n",
+        "reference.md": b"# reference\n",
+        "skills/acme-triage/SKILL.md": b"---\nname: acme-triage\n---\n",
+    }
+    plain = _bundle()
+    bundle = KitBundle(
+        manifest=plain.manifest.model_copy(
+            update={
+                "files": tuple(
+                    kit_file_entry(path, content) for path, content in sorted(files.items())
+                )
+            }
+        ),
+        artifacts=plain.artifacts,
+        files=tuple(KitFileBytes.of(path, content) for path, content in sorted(files.items())),
+    )
+    image = pack_artifact(KIT_ARTIFACT, bundle)
+    monkeypatch.setattr(
+        "cruxible_client.kits.fetch_kit_image",
+        lambda source, registry=None: (image, f"ghcr.io/cruxible-ai/kits/acme@{image.digest}"),
+    )
+    runner = CliRunner()
+    pulled = runner.invoke(cli, [*BASE, "pull", "acme:1.0.0", "--out", str(tmp_path / "reg")])
+    assert pulled.exit_code == 0, pulled.output
+
+    source = tmp_path / "acme"
+    write_kit_directory(bundle, source)
+    (source / "source").mkdir()
+    (source / "source" / "build.py").write_text("print()\n")  # not kit content
+    local = runner.invoke(cli, [*BASE, "pull", str(source), "--out", str(tmp_path / "local")])
+    assert local.exit_code == 0, local.output
+    assert local.output == "acme: 1 artifacts\n"
+    expected = _tree(tmp_path / "reg")
+    assert "walkthroughs.md" in expected and "skills/acme-triage/SKILL.md" in expected
+    assert _tree(tmp_path / "local") == expected
+
+    # A layout from the directory carries the release's digest, and pulls back the same files.
+    as_layout = runner.invoke(
+        cli, [*BASE, "pull", str(source), "--out", str(tmp_path / "layout"), "--layout", "--json"]
+    )
+    assert as_layout.exit_code == 0, as_layout.output
+    from cruxible_client.artifacts import read_layout
+
+    assert read_layout(tmp_path / "layout").digest == image.digest
+    again = runner.invoke(
+        cli, [*BASE, "pull", str(tmp_path / "layout"), "--out", str(tmp_path / "again")]
+    )
+    assert again.exit_code == 0, again.output
+    assert _tree(tmp_path / "again") == expected
+
+
+def test_kit_pull_from_a_bad_path_refuses_with_the_kit_forms(tmp_path: Path) -> None:
+    runner = CliRunner()
+    missing = runner.invoke(cli, [*BASE, "pull", "./no-such-kit", "--out", str(tmp_path / "out")])
+    assert missing.exit_code != 0
+    assert "cruxible.kit.source_invalid: no kit directory or layout at ./no-such-kit" in (
+        missing.stderr
+    )
+    assert "a kit is a kit directory (holding cruxible-kit.json)" in missing.stderr
+
+    (tmp_path / "empty").mkdir()
+    empty = runner.invoke(
+        cli, [*BASE, "pull", str(tmp_path / "empty"), "--out", str(tmp_path / "out")]
+    )
+    assert empty.exit_code != 0
+    assert "holds no cruxible-kit.json" in empty.stderr
+    assert not (tmp_path / "out").exists()

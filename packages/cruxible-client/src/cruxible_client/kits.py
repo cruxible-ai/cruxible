@@ -38,6 +38,7 @@ from cruxible_client.artifacts import (
     Reference,
     RegistryClient,
     is_layout,
+    pack_artifact,
     pack_files,
     parse_reference,
     read_layout,
@@ -82,6 +83,9 @@ class KitSourceError(ConfigError):
 def kit_reference(source: str) -> Reference:
     """``source`` as a registry reference, or a typed refusal naming the kit forms."""
 
+    if source.startswith((".", "/", "~")):
+        # A path, never a registry name: one that reached here names nothing on disk.
+        raise KitSourceError(f"no kit directory or layout at {source}")
     try:
         return parse_reference(source)
     except ValueError as exc:
@@ -358,22 +362,18 @@ def fetch_kit_image(
     return image, str(ref.pinned(image.digest))
 
 
-def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundle, str]:
-    """A bundle from a kit directory, an OCI layout, or a registry reference.
+def _local_kit(path: Path) -> tuple[KitBundle, ArtifactImage | None, str] | None:
+    """A kit read from a local directory or layout (with the layout's image), or
+    ``None`` when ``path`` names nothing on disk."""
 
-    Returns the bundle and where it came from; a registry source is reported
-    pinned to the manifest digest actually pulled.
-    """
-
-    path = Path(source).expanduser()
     if path.is_dir():
         if is_layout(path):
             image = read_layout(path)
-            return unpack_artifact(KIT_ARTIFACT, image), f"{path.name}@{image.digest}"
+            return unpack_artifact(KIT_ARTIFACT, image), image, f"{path.name}@{image.digest}"
         if not (path / KIT_MANIFEST_FILE).is_file():
             raise KitSourceError(f"directory {path} holds no {KIT_MANIFEST_FILE}")
         try:
-            return read_kit_directory(path), path.name
+            return read_kit_directory(path), None, path.name
         except ValidationError as exc:
             raise KitSourceError(
                 f"{path / KIT_MANIFEST_FILE} is not a kit manifest: {validation_summary(exc)}"
@@ -382,8 +382,38 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
             raise KitSourceError(str(exc)) from exc
     if path.exists():
         raise KitSourceError(f"{path} is a file, not a kit directory or layout")
+    return None
+
+
+def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundle, str]:
+    """A bundle from a kit directory, an OCI layout, or a registry reference.
+
+    Returns the bundle and where it came from; a registry source is reported
+    pinned to the manifest digest actually pulled.
+    """
+
+    local = _local_kit(Path(source).expanduser())
+    if local is not None:
+        bundle, _, origin = local
+        return bundle, origin
     image, origin = fetch_kit_image(source, registry=registry)
     return unpack_artifact(KIT_ARTIFACT, image), origin
+
+
+def resolve_kit_image(
+    source: str, *, registry: RegistryClient | None = None
+) -> tuple[ArtifactImage, str]:
+    """The kit artifact a source names, read the way :func:`resolve_kit` reads it.
+
+    A layout keeps its exact bytes; a kit directory is packed deterministically
+    (the same digest its release has); a registry reference is pulled and verified.
+    """
+
+    local = _local_kit(Path(source).expanduser())
+    if local is None:
+        return fetch_kit_image(source, registry=registry)
+    bundle, image, origin = local
+    return (image if image is not None else pack_artifact(KIT_ARTIFACT, bundle)), origin
 
 
 #: How long the update check waits on a registry before reporting it unavailable.

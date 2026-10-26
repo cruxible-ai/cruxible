@@ -319,7 +319,8 @@ def _accepted_procedure(
     path = procedure_path(name)
     content = instance.blob_at(coordinate.git_oid, path)
     if content is None:
-        raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
+        with instance.bind_accepted_projection(coordinate) as projection:
+            raise ProcedureNotFound.among(name, projection.typed.procedure_inventory())
     procedure = parse_procedure(content, path=path)
     if procedure.lifecycle.state == "retired":
         # A retired Procedure is read through `get`; nothing measures or reads its standing.

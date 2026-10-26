@@ -36,6 +36,7 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNode,
     TransformNode,
 )
+from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 
 
 def _name(pin: Any) -> str:
@@ -330,14 +331,14 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             contracts=contracts,
             steps=steps,
             budget=dict(
-                wall_clock=f"PT{budget.wall_clock.microseconds / 1_000_000:.6f}S",
+                wall_clock=format_iso_duration_microseconds(budget.wall_clock.microseconds),
                 provider_calls=budget.max_provider_calls,
                 capture_bytes=budget.max_capture_bytes,
                 result_bytes=budget.max_result_bytes,
                 items=budget.max_items,
             ),
             caps=dict(
-                wall_clock=f"PT{caps.max_wall_clock.microseconds / 1_000_000:.6f}S",
+                wall_clock=format_iso_duration_microseconds(caps.max_wall_clock.microseconds),
                 provider_calls=caps.max_provider_calls,
                 capture_bytes=caps.max_capture_bytes,
                 result_bytes=caps.max_result_bytes,

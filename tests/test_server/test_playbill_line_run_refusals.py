@@ -194,6 +194,51 @@ def test_the_sibling_procedure_run_route_refuses_typed_in_the_same_family(
     payload = response.json()
     assert payload["error_type"] == "ProcedureNotFound"
     assert payload["message"] != "internal server error"
+    assert payload["repair"] == {
+        "operation": "cruxible.orient",
+        "arguments": {"section": "procedures"},
+    }
+    assert payload["context"] == {"procedure": "no-such-procedure", "nearest": []}
+
+
+def test_an_unknown_procedure_names_the_nearest_accepted_ones_and_the_repair(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, reviewer_key_path = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    accepted = _slotless_procedure("served-line-triage")
+    _accept_members(
+        instance,
+        reviewer_key_path,
+        {accepted.path: render_procedure(accepted.procedure)},
+        timestamp="2026-09-03T09:00:00.000000Z",
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/procedures/served-line-triag/runs",
+        json={
+            "tag": "playbill-procedure-run-request-v2",
+            "evaluation_time": None,
+            "input": {},
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    payload = response.json()
+    assert payload["error_type"] == "ProcedureNotFound"
+    assert payload["context"] == {
+        "procedure": "served-line-triag",
+        "nearest": ["served-line-triage"],
+    }
+    assert payload["message"] == (
+        "cruxible.procedure.not_found: no accepted Procedure named 'served-line-triag'; "
+        "nearest: served-line-triage; run `cruxible orient --section procedures` for every "
+        "accepted Procedure"
+    )
+    assert payload["repair"] == {
+        "operation": "cruxible.orient",
+        "arguments": {"section": "procedures"},
+    }
 
 
 def test_an_instant_outside_the_daemon_skew_bound_refuses_typed_over_http(

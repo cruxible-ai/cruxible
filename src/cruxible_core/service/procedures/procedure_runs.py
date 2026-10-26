@@ -6,7 +6,7 @@ import difflib
 import json
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -218,7 +218,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.indexes.typed_state import ProcedureInventoryRow, utc_microseconds
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_OVERSIZED,
     ACQUISITION_REFUSED,
@@ -314,6 +314,7 @@ from cruxible_core.service.procedures.resolution_contracts import (
     capture_event_time,
     require_current_investigation,
 )
+from cruxible_core.service.read_refusals import nearest as read_nearest
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
@@ -347,8 +348,31 @@ class ProcedureSurfaceError(CruxibleError):
 
 
 class ProcedureNotFound(ProcedureSurfaceError):
+    """No accepted Procedure has this name; names the nearest live ones."""
+
     code = "cruxible.procedure.not_found"
     http_status = 404
+
+    def __init__(self, name: str, *, nearest: tuple[str, ...] = ()) -> None:
+        self.name = name
+        self.nearest = nearest
+        self.repair = RepairOperation(
+            operation="cruxible.orient", arguments={"section": "procedures"}
+        )
+        hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
+        super().__init__(
+            f"{self.code}: no accepted Procedure named {name!r}{hint}; run "
+            "`cruxible orient --section procedures` for every accepted Procedure"
+        )
+
+    @classmethod
+    def among(cls, name: str, inventory: Iterable[ProcedureInventoryRow]) -> ProcedureNotFound:
+        """The refusal for ``name``, naming the nearest live Procedures in ``inventory``."""
+
+        live = (
+            row.identity.removeprefix("Procedure:") for row in inventory if row.lifecycle == "live"
+        )
+        return cls(name, nearest=read_nearest(name, live))
 
 
 class ProcedureRetired(ProcedureSurfaceError):
@@ -763,7 +787,7 @@ def _accepted_procedure(
     with instance.bind_accepted_projection(coordinate) as projection:
         envelope = projection.typed.envelope(f"Procedure:{name}")
         if envelope is None:
-            raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
+            raise ProcedureNotFound.among(name, projection.typed.procedure_inventory())
         procedure = projection.typed.source(envelope.identity)
         assert procedure is not None
         if procedure.lifecycle.state == "retired" and not allow_retired:

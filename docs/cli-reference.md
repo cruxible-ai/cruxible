@@ -1122,7 +1122,9 @@ release gives the same manifest digest.
 There is no `kit push`: official kits are published by Cruxible's release
 tooling, which never moves an existing version tag to different content.
 `pull` fetches and verifies a kit into a kit directory (or, with `--layout`, an OCI image
-layout for offline transfer) without installing it. Every blob is checked
+layout for offline transfer) without installing it. Its `REFERENCE` takes the
+same forms as `KIT`: from a kit directory or layout it writes the same files a
+pull of that release from a registry writes. Every blob is checked
 against its digest, a digest reference must match the manifest pulled, and blobs
 are cached by digest under `CRUXIBLE_ARTIFACT_CACHE` (default
 `~/.cache/cruxible/artifacts`) and re-hashed on every use; responses are bounded
