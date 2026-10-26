@@ -446,9 +446,11 @@ covers, in order:
   that answers it (`cruxible query --name NAME`).
 - **How it models your world**: its kinds and how they relate, ideally as a
   diagram, with which values are observed and which are judged.
+- **How it runs on its own**: the example change set, the Lines and Triggers
+  it authors, and how its Lines graduate. It may come before the install
+  steps, as the security kit's does, since those steps adopt it.
 - **Install and first answers**: the commands from `kit add` to a first
   answer, and what stays the user's job.
-- **Automation**: the example change set, and how its Lines graduate.
 - **Upgrading**: what each release changes, and what an upgrade asks of the
   user (Lines to re-enable, grants to re-author).
 - **Operating notes**: the network hosts it reaches, how stale a source may
@@ -456,14 +458,18 @@ covers, in order:
 
 Beside it, a `reference.md` lists every kind, field, saved query and
 Procedure the kit defines. Generate it from the definitions, as the security
-kit does, so it can't drift from what the kit installs.
+kit does, so it can't drift from what the kit installs. A larger kit can move
+long material into companion pages beside the README (the security kit has
+`walkthroughs.md`, `intake.md` and `in-depth.md`), listed in the manifest
+like `reference.md`, with a closing **Where next** section in the README
+that links each one.
 
 ### Share it
 
 The kit directory holds `cruxible-kit.json` (the manifest), `artifacts/`
 (one file per definition), `providers/` (the bundled wheels and lock
 files) and the inert files the manifest lists, at their own paths (README,
-`reference.md`, `examples/`, `skills/<name>/`). Other files in the directory
+`reference.md` and any companion pages, `examples/`, `skills/<name>/`). Other files in the directory
 (build scripts, tests) are never read. Each skill installs as its own
 `<kit>-<skill>/` directory (the name stays as is when it already starts with
 the kit's id), so a skill's relative links reach only its own files and its

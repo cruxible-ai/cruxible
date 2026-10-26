@@ -332,7 +332,7 @@ approves, closing it only when a fresh scan shows the host moved, auditing
 your logs for the incident's window, and rotating the credentials the service
 holds. Each step is proved by evidence, never by a self-report. The kit's
 <!-- publish: kit tag -->
-[Respond to an incident](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/README.md#respond-to-an-incident)
+[Respond to an incident](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/walkthroughs.md#respond-to-an-incident)
 walks through all of it.
 
 ## When a fetch fails: unknown is not "none"
@@ -389,9 +389,14 @@ asked questions whose answers carry their evidence. From here:
   checks make. [Keeping knowledge current](keeping-knowledge-current.md)
   explains each kind of row.
 - The [security kit's README](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/README.md)
-  covers the rest of what it answers: your CI's publish paths, what your
-  registries serve, findings in your own code, and recording your own
-  judgments about whether a vulnerability really affects you.
+  covers the rest of what it answers. Its
+  [walkthroughs](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/walkthroughs.md#your-systems-the-hardening-questions)
+  take your CI's publish paths, what your registries serve and [findings in
+  your own code](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/walkthroughs.md#your-codes-findings)
+  end to end, and [Analyst
+  judgments](https://github.com/cruxible-ai/cruxible-kits/blob/security-1.3.0/kits/security/in-depth.md#analyst-judgments)
+  covers recording your own judgments about whether a vulnerability really
+  affects you.
 - [Concepts](concepts.md) explains the ideas behind what you just did, and the
   guides cover each in depth, starting with [Building team
   knowledge](building-team-knowledge.md).
