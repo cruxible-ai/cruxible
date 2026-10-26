@@ -3458,17 +3458,29 @@ class _BatchBlobReader:
     def seal(self) -> None:
         """Seal accepted objects/refs while the activation lock excludes successors."""
         self.flush(final=True)
+        # Live compaction may pack and prune these refs once their writer has
+        # released the review lock: `pack-refs --prune` deletes the loose files
+        # and the directories it empties. Their values then live in
+        # packed-refs, which Git syncs itself (core.fsync=reference); sync the
+        # directory that names it instead.
+        packed = False
         for path in sorted(self._transaction.files):
             try:
                 fd = os.open(path, os.O_RDONLY)
             except FileNotFoundError:
+                packed = True
                 continue
             try:
                 os.fsync(fd)
             finally:
                 os.close(fd)
         for path in sorted(self._transaction.directories):
-            _fsync_directory(path)
+            try:
+                _fsync_directory(path)
+            except FileNotFoundError:
+                packed = True
+        if packed:
+            _fsync_directory(self.path)
         self._transaction.sealed.update(self._transaction.pending)
         self._transaction.pending.clear()
         self._transaction.retained_keeps.extend(self._transaction.keeps)

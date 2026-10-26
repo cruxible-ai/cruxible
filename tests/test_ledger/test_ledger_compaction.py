@@ -132,3 +132,59 @@ def test_the_daemon_start_pass_skips_a_ledger_with_few_loose_objects(
     monkeypatch.setattr(instance_module, "LEDGER_START_COMPACTION_LOOSE_OBJECTS", loose)
     assert instance.compact_ledger_at_start() is True
     assert _loose(instance) == 0
+
+
+def test_a_write_racing_live_compaction_never_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compaction's repack retires packs, and its pack-refs prunes refs, mid-write.
+
+    The hooks interleave both deterministically. Git publishes the consolidated
+    pack first; every superseded durable index is then retired just before the
+    writer's discovery opens it. `pack-refs --all --prune` runs just before the
+    accepting request seals the refs it wrote, deleting their loose files and
+    the directories it empties, as a stride compaction taking the review and
+    activation locks between the ref write and the seal does.
+    """
+
+    import pathlib
+
+    from cruxible_core.ledger import git as git_module
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked", "done"):
+        _write(instance, _set(WI1, "status", value))
+    _leave_open(instance)
+    instance.settled_workspace_advertisement()
+    directory = instance._ledger.path / "objects" / "pack"
+    old = {path for path in directory.glob("*.idx") if not path.with_suffix(".keep").exists()}
+    assert len(old) > 1
+    _git(instance, "repack", "-a", "-q")  # published; retirement follows below
+    real_read = pathlib.Path.read_bytes
+    retired: list[Path] = []
+
+    def read_bytes(self: Path) -> bytes:
+        if self in old:
+            old.discard(self)
+            self.unlink()
+            self.with_suffix(".pack").unlink()
+            retired.append(self)
+        return real_read(self)
+
+    real_seal = git_module._BatchBlobReader.seal
+    packed: list[str] = []
+
+    def seal(self: Any) -> None:
+        if self._transaction.directories and not packed:
+            packed.append(_git(instance, "pack-refs", "--all", "--prune"))
+            assert any(not path.exists() for path in self._transaction.directories)
+        real_seal(self)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(git_module._BatchBlobReader, "seal", seal)
+    _write(instance, _set(WI1, "status", "ready"))
+    assert retired, "the write never met a retiring pack"
+    assert packed, "the write never sealed a packed ref"
+    _write(instance, _set(WI2, "title", "Two again"))
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == instance.accepted_coordinate()

@@ -145,3 +145,110 @@ def test_metadata_batch_checks_pack_directory_once(tmp_path, monkeypatch):
         oid: ("blob", len(body)) for oid, (_, body) in objects.items()
     }
     assert calls == [32]
+
+
+def _packed_ledger(tmp_path, batches):
+    """A ledger whose reachable blobs sit in one durable pack per batch."""
+
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format="sha256",
+        signing_key_path=tmp_path / "unused",
+        allowed_signers_path=tmp_path / "unused",
+    )
+    tree: dict[str, bytes] = {}
+    for batch in range(batches):
+        tree.update({f"b{batch}/item{i}": f"{batch}:{i}".encode() for i in range(5)})
+        root = ledger._write_tree(dict(tree))
+    commit = ledger._git(["commit-tree", root, "-m", "root"]).decode().strip()
+    ledger._git(["update-ref", "refs/heads/main", commit])
+    blobs = {ledger._blob_oid(body): body for body in tree.values()}
+    return ledger, blobs
+
+
+def _retire_while_walking(monkeypatch, ledger):
+    """Interleave a live `git repack -a -d` with discovery, step by step.
+
+    Git publishes the consolidated pack first, then retires each replaced
+    pair. The hook does the same around the reader: the first index read
+    publishes the consolidated pack, and every superseded index is retired just
+    before the reader opens it, so each walk of the old listing meets a vanished
+    durable index. Deterministic: no thread, no sleep.
+    """
+
+    import pathlib
+
+    directory = ledger.path / "objects" / "pack"
+    old = {path for path in directory.glob("*.idx") if not path.with_suffix(".keep").exists()}
+    assert len(old) > 1
+    real = pathlib.Path.read_bytes
+    published: list[bool] = []
+
+    def read_bytes(self):
+        if self in old:
+            if not published:
+                ledger._git(["repack", "-a", "-q"])
+                published.append(True)
+            old.discard(self)
+            self.unlink()
+            self.with_suffix(".pack").unlink()
+        return real(self)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", read_bytes)
+    return published
+
+
+@pytest.mark.parametrize("operation", ["read", "infos", "write"])
+def test_discovery_survives_a_concurrent_repack_retiring_durable_indexes(
+    tmp_path, monkeypatch, operation
+):
+    import hashlib
+
+    ledger, blobs = _packed_ledger(tmp_path, batches=4)
+    store = PackStore(ledger.path)
+    published = _retire_while_walking(monkeypatch, ledger)
+    if operation == "read":
+        assert {oid: store.read(oid) for oid in blobs} == {
+            oid: ("blob", body) for oid, body in blobs.items()
+        }
+    elif operation == "infos":
+        assert store.infos(tuple(blobs)) == {
+            oid: ("blob", len(body)) for oid, body in blobs.items()
+        }
+    else:
+        body = b"written during a repack"
+        oid = hashlib.sha256(f"blob {len(body)}\x00".encode() + body).hexdigest()
+        store.write({oid: ("blob", body)})
+        assert store.read(oid) == ("blob", body)
+        assert {item: store.read(item) for item in blobs} == {
+            item: ("blob", value) for item, value in blobs.items()
+        }
+    assert published, "the hook never interleaved a repack"
+    store.close()
+
+
+def test_metadata_finds_a_loose_object_packed_and_pruned_beneath_it(tmp_path, monkeypatch):
+    import pathlib
+
+    ledger, blobs = _packed_ledger(tmp_path, batches=1)
+    body = b"loose until the repack"
+    oid = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=body).decode().strip()
+    tree = ledger._git(["mktree"], input_bytes=f"100644 blob {oid}\tx\n".encode()).decode().strip()
+    commit = ledger._git(["commit-tree", tree, "-m", "x"]).decode().strip()
+    ledger._git(["update-ref", "refs/heads/loose", commit])
+    store = PackStore(ledger.path)
+    assert store.info(next(iter(blobs))) is not None  # discovery is warm
+    loose = ledger.path / "objects" / oid[:2] / oid[2:]
+    assert loose.is_file()
+    real = pathlib.Path.open
+
+    def open_(self, *args, **kwargs):
+        if self == loose and loose.exists():
+            # `repack -a -d` packs the loose object, then prunes the loose copy.
+            ledger._git(["repack", "-a", "-d", "-q"])
+            assert not loose.exists()
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "open", open_)
+    assert store.info(oid) == ("blob", len(body))
+    store.close()

@@ -31,6 +31,10 @@ _EMPTY_TREES = {
 }
 
 
+# Bounded relisting of a pack directory that a concurrent repack rewrites.
+_DISCOVERY_ATTEMPTS = 8
+
+
 def _hash(data: bytes, width: int) -> bytes:
     return hashlib.new("sha1" if width == 20 else "sha256", data).digest()
 
@@ -76,13 +80,48 @@ class PackStore:
         stamp = _stamp(self.directory)
         if stamp == self.stamp:
             return
-        locations: dict[str, tuple[Path, int]] = {}
-        members: dict[Path, dict[str, int]] = {}
+        # A concurrent `git repack -d` (live compaction) publishes its
+        # consolidated pack before it retires the packs it replaces, so a pair
+        # that vanishes mid-walk had its replacement on disk first. When the
+        # listing gained no index meanwhile, that replacement was walked; when
+        # it did, walk the fresh listing. Each repack adds one index, so this
+        # settles at once; the bound only refuses a directory churning forever.
+        listing = self._listing()
+        for _ in range(_DISCOVERY_ATTEMPTS):
+            locations, members, vanished = self._walk(listing, width)
+            if not vanished:
+                break
+            relisted = self._listing()
+            if set(relisted) <= set(listing):
+                break
+            listing = relisted
+        else:
+            raise GitError("Git pack directory kept changing during discovery")
+        self.locations = locations
+        self.members = members
+        # Close stale mappings on an explicit external repack. In-process writes
+        # register their own locations without this population walk.
+        for mapped in self.maps.values():
+            mapped.close()
+        self.maps.clear()
+        self.stamp = stamp
+
+    def _listing(self) -> list[Path]:
         # On cold discovery, durable packs win duplicate-object locations.
-        for index in sorted(
+        return sorted(
             self.directory.glob("*.idx"),
             key=lambda item: not item.with_suffix(".pending").exists(),
-        ):
+        )
+
+    def _walk(
+        self, listing: list[Path], width: int
+    ) -> tuple[dict[str, tuple[Path, int]], dict[Path, dict[str, int]], bool]:
+        """Index one listing; report whether any listed pair vanished beneath it."""
+
+        locations: dict[str, tuple[Path, int]] = {}
+        members: dict[Path, dict[str, int]] = {}
+        vanished = False
+        for index in listing:
             pending_index = index.with_suffix(".pending").exists()
             try:
                 indexed: dict[str, int] = {}
@@ -106,23 +145,22 @@ class PackStore:
                         )[0]
                     indexed[oid] = offset
                 if not pack_path.is_file():
-                    raise GitError("Git pack file is unavailable")
+                    # Git itself skips an index whose pack is gone: a repack
+                    # retires the pair file by file.
+                    raise FileNotFoundError(pack_path)
                 locations.update((oid, (pack_path, offset)) for oid, offset in indexed.items())
                 members[pack_path] = indexed
+            except FileNotFoundError:
+                # Retired by a concurrent repack after the listing was taken.
+                vanished = True
+                continue
             except (OSError, ValueError, IndexError, struct.error, GitError):
                 if not pending_index:
                     raise
                 # Advisory publication can disappear or tear before acceptance.
                 # Its objects are absent; a durable pack is still authoritative.
                 continue
-        self.locations = locations
-        self.members = members
-        # Close stale mappings on an explicit external repack. In-process writes
-        # register their own locations without this population walk.
-        for mapped in self.maps.values():
-            mapped.close()
-        self.maps.clear()
-        self.stamp = stamp
+        return locations, members, vanished
 
     def write(
         self,
@@ -266,7 +304,14 @@ class PackStore:
             result: dict[str, tuple[str, int] | None] = {}
             for oid in oids:
                 try:
-                    result[oid] = self._info(oid)
+                    try:
+                        result[oid] = self._info(oid)
+                    except FileNotFoundError:
+                        # A concurrent repack retired the pack between
+                        # discovery and mapping; its replacement holds the oid.
+                        self.stamp = None
+                        self._discover(len(oid) // 2)
+                        result[oid] = self._info(oid)
                 except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError):
                     if not self.is_pending(oid):
                         raise
@@ -289,6 +334,12 @@ class PackStore:
                         break
                     header.extend(inflater.decompress(chunk, 1))
         except FileNotFoundError:
+            # A concurrent repack packs loose objects, then prunes them: a
+            # changed pack directory is walked again (one stat when unchanged).
+            self._discover(width)
+            location = self.locations.get(oid)
+            if location is not None:
+                return self._info_at(*location, width=width, depth=0)
             return ("tree", 0) if oid in _EMPTY_TREES else None
         raw_kind, separator, raw_size = bytes(header).partition(b"\x00")[0].partition(b" ")
         if b"\x00" not in header or not separator or raw_kind.decode() not in _CODES:
