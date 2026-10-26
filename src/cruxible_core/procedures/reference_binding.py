@@ -327,7 +327,11 @@ def replay_procedure_references(
     implementations: dict[str, str] | None = None,
     providers: Mapping[str, ArtifactIdentity] | None = None,
 ) -> BoundAcceptedProcedure:
-    """Rebuild from recorded digests. There is no accepted-head/name resolver."""
+    """Rebuild from recorded digests and per-occurrence Provider choices.
+
+    Slots require the recorded choice even when only one Provider pin fits.
+    There is no accepted-head/name resolver or new selection by fit.
+    """
     versions: dict[ArtifactIdentity, str] = {}
     for pin in pins:
         if pin.target in versions and versions[pin.target] != pin.artifact_digest:
@@ -352,17 +356,9 @@ def replay_procedure_references(
         return cache[identity]
 
     def slots(interface: ArtifactIdentity) -> tuple[tuple[Any, str], ...]:
-        candidates = []
-        for identity in versions:
-            if identity.kind != "Provider":
-                continue
-            selected = exact(identity)
-            assert selected is not None
-            provider = selected[0]
-            reference = provider_interface_pin(provider, interface.name.partition("/")[0])
-            if reference is not None and reference.target == interface:
-                candidates.append(selected)
-        return tuple(candidates)
+        raise ExecutionError(
+            f"Recorded admission lacks a Provider occurrence binding for {interface.qualified}"
+        )
 
     return bind_procedure_references(
         accepted,

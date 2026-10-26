@@ -4719,6 +4719,10 @@ class ProcedureRunGrainRecordV1:
     node_verdicts: Mapping[str, str]
     #: Every arm a guard selected in this run, in journal order.
     selected_arms: Mapping[str, tuple[str, ...]]
+    #: Authenticated admission choices, also retained for direct V3 receipts.
+    provider_bindings: tuple[
+        ProcedureProviderBindingV1 | ProcedureProviderBinding | ProcedureProviderBindingV3, ...
+    ] = ()
 
 
 def load_playbill_procedure_run_grain(
@@ -4793,6 +4797,7 @@ def load_playbill_procedure_run_grain(
         finalized=finalized,
         node_verdicts=node_verdicts,
         selected_arms={key: tuple(value) for key, value in selected_arms.items()},
+        provider_bindings=tuple(getattr(admission, "resolved_provider_bindings", ())),
     )
 
 
