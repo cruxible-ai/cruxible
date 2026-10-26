@@ -222,7 +222,8 @@ def test_slot_interface_index_tracks_retirement_and_revival(tmp_path):
             return tuple(
                 tuple(row)
                 for row in projection.typed.connection.execute(
-                    "SELECT source_identity,slot_name,interface_identity FROM procedure_provider_slots"
+                    "SELECT source_identity,slot_name,interface_identity "
+                    "FROM procedure_provider_slots"
                 )
             )
 
