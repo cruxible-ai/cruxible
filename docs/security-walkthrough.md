@@ -231,7 +231,7 @@ answer, which says which fix to take:
 ~~~text
 $ cruxible get CLM-45ec491a… --detail evidence      # the assessment's status Claim
 value: affected
-capture CAP-3e551f0536d5  CaptureContract:security.osv-query-v1 v1  source=osv.dev.query  ...  evidence: admitted
+capture CAP-3e551f0536d5  CaptureContract:security.fetched-v1 v1  source=osv.dev.query  ...  evidence: admitted
 rationale: OSV lists CVE-2025-3248 as affecting pkg:pypi/langflow@1.2.0 (GHSA-rvqx-wpfh-mfx7, fixed in 1.3.0); pkg:pypi/langflow@1.2.0 (PYSEC-2025-36, fixed in 1.3.0).
 ~~~
 
@@ -284,7 +284,7 @@ the inbox. Save this as `respond.json`, then add the Line and turn it on:
  "max_authority": "observe",
  "parameters": {"incident": "Langflow RCE", "inventory_pull": "security.inventory-acquire",
                 "log_pull": "security.log-acquire", "credential_pull": "security.credential-acquire",
-                "record_pull": "security.cve-record-acquire"}}
+                "record_pull": "security.fetch"}}
 ~~~
 
 ~~~bash
@@ -345,14 +345,20 @@ Every answer is one of three things, and it matters which:
 
 A failed fetch never becomes "not affected". When a check can't reach its
 source (the network is down, or a host blocks it), the run fails and proposes
-nothing. Here, fetching a CVE record from a host that doesn't resolve:
+nothing. Here, fetching a CVE record from a host that doesn't resolve, with
+this saved as `cve.json`:
+
+~~~json
+{"url": "https://cve-records.invalid/api/cve/CVE-2025-3248",
+ "logical_source": "cve.record", "max_bytes": 1048576}
+~~~
 
 ~~~text
-$ cruxible procedure run security.cve-record-acquire cve.json
+$ cruxible procedure run security.fetch cve.json
 RUN-fb30fa54…: operational_failed
 Refused: provider_execution_error: Provider execution failed for an operational reason.
 Repair: hand edit refusal/provider_execution_error: Read the failure cause. A transport error (connect, DNS, timeout): rerun once the target is reachable. An HTTP status: revise the URL input, then rerun.
-Cause: record: ConnectError: could not resolve 'cve-records.invalid': ...
+Cause: fetch: ConnectError: could not resolve 'cve-records.invalid': ...
 Next: terminal
 ...
 ~~~
