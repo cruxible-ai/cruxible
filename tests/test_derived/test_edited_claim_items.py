@@ -291,3 +291,52 @@ def test_sealing_past_the_chain_limit_parses_nothing_and_keeps_final_semantics(
     for item_path, item in additions:
         statement = parse_claim(item, path=item_path).statement
         assert sealed.claim_items(statement) == cold.claim_items(statement)
+
+
+def test_staging_distinct_claims_across_compactions_visits_each_path_a_bounded_number_of_times():
+    """Seal and fork after each distinct Claim, no lookups: path work stays near n log n.
+
+    Each compaction once carried every earlier owed path into the new bottom
+    and the next one copied and re-sorted them all, so work grew with the
+    cumulative change: ~20x for 5x the Claims. Paths here count every hash and
+    comparison made on them, wherever the staging does it.
+    """
+
+    from cruxible_core.derived import derived_state
+    from cruxible_core.derived.derived_state import fork_tree
+
+    visits = [0]
+
+    class CountedPath(str):
+        __slots__ = ()
+
+        def __hash__(self) -> int:
+            visits[0] += 1
+            return str.__hash__(self)
+
+        def __eq__(self, other: object) -> bool:
+            visits[0] += 1
+            return str.__eq__(self, other)
+
+        def __lt__(self, other: str) -> bool:
+            visits[0] += 1
+            return str.__lt__(self, other)
+
+        def __gt__(self, other: str) -> bool:
+            visits[0] += 1
+            return str.__gt__(self, other)
+
+    def staged(count: int) -> int:
+        tree = fork_tree({"claims/00/CLM-" + "0" * 32 + ".json": b"{}"})
+        visits[0] = 0
+        for index in range(count):
+            tree[CountedPath(f"claims/{index % 256:02x}/CLM-{index:032x}.json")] = b"{}"
+            tree = tree.snapshot().fork()
+        return visits[0]
+
+    limit = derived_state._CLAIM_CHAIN_LIMIT  # noqa: SLF001
+    small, large = staged(4 * limit), staged(20 * limit)  # 3 and 19 compactions
+    # Measured 14,199 vs 93,787 (6.6x: every staged row is also a persistent-map
+    # set, a log factor deeper at 5x); the per-compaction copy made it 14,221 vs
+    # 186,574 (13x). Counts are deterministic.
+    assert large <= 7 * small, (small, large)

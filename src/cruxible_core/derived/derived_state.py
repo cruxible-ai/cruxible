@@ -245,6 +245,7 @@ class SnapshotTree(Mapping[str, bytes]):
         claim_index: _ClaimEditIndex | None = None,
         claim_base: SnapshotTree | None = None,
         claim_own: tuple[str, ...] = (),
+        claim_carried: PersistentMap[bool] | None = None,
     ) -> None:
         # Rows hold bytes or a BlobRef whose bytes are read from Git on demand.
         # Sizes below are logical file bytes; ``_resident_bytes`` is what the
@@ -292,6 +293,12 @@ class SnapshotTree(Mapping[str, bytes]):
         self._claim_index: _ClaimEditIndex | None = claim_index
         self._claim_base: SnapshotTree | None = claim_base
         self._claim_own: tuple[str, ...] = claim_own
+        # Claim paths a compacted chain still owes this snapshot, which has no
+        # base: shared from snapshot to snapshot, never copied, so compacting
+        # again visits only what was staged since (see ``_compacted_claim_chain``).
+        self._claim_carried: PersistentMap[bool] = (
+            claim_carried if claim_carried is not None else PersistentMap()
+        )
         # Unresolved snapshots this one extends, counted when it was made (0 once
         # it is resolved itself).
         self._claim_depth: int = 0 if claim_base is None else claim_base._claim_depth + 1
@@ -422,11 +429,15 @@ class SnapshotTree(Mapping[str, bytes]):
                         (path for path in self._edits if path.startswith("claims/")),
                         self._edits,
                     )
-                elif self._claim_own:
-                    index = index.updated(self._claim_own, self._edits)
+                else:
+                    if len(self._claim_carried):
+                        index = index.updated(self._claim_carried, self._edits)
+                    if self._claim_own:
+                        index = index.updated(self._claim_own, self._edits)
             else:
                 index = cast(_ClaimEditIndex, prior).updated(self._claim_own, self._edits)
             self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_carried = PersistentMap()
             self._claim_depth = 0
             return index
 
@@ -437,6 +448,7 @@ class SnapshotTree(Mapping[str, bytes]):
         )
         with self._lock:
             self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_carried = PersistentMap()
             self._claim_depth = 0
         return index
 
@@ -629,12 +641,13 @@ class CandidateTree(MutableMapping[str, bytes]):
             base = self._claim_base
             claim_index: _ClaimEditIndex | None = None if base is not None else _ClaimEditIndex()
             staged = self._claim_staged
+            carried: PersistentMap[bool] | None = None
             if base is not None and base._claim_depth >= _CLAIM_CHAIN_LIMIT:
                 # A chain no lookup resolves holds every snapshot along it.
                 # Compact it without parsing anything: extend the chain's
                 # resolved bottom by every Claim path staged along it, each
                 # re-decided from this tree's own bytes when a lookup needs it.
-                claim_index, staged, base = _compacted_claim_chain(base, staged)
+                claim_index, carried, base = _compacted_claim_chain(base)
             self._cached = SnapshotTree(
                 self._rows,
                 parent=self._parent,
@@ -646,6 +659,7 @@ class CandidateTree(MutableMapping[str, bytes]):
                 claim_index=claim_index,
                 claim_base=base,
                 claim_own=tuple(sorted(staged)),
+                claim_carried=carried,
             )
             self._claim_base, self._claim_staged = self._cached, set()
         return self._cached
@@ -661,24 +675,33 @@ class CandidateTree(MutableMapping[str, bytes]):
 
 
 def _compacted_claim_chain(
-    base: SnapshotTree, staged: set[str]
-) -> tuple[_ClaimEditIndex | None, set[str], None]:
+    base: SnapshotTree,
+) -> tuple[_ClaimEditIndex | None, PersistentMap[bool], None]:
     """(index, Claim paths still owed, no base) for a snapshot cut off ``base``'s chain.
 
     The index is the chain's bottom's (None: built from the snapshot's complete
-    edits); the paths are every one staged along the chain and since. Owing a
-    path the snapshot did not edit only drops it from the edited index, which
-    is where an unedited path belongs.
+    edits). The owed paths are the bottom's carried ones, shared as they are,
+    plus each path staged along the chain above it: only this chain's own
+    segments are visited, never what an earlier compaction carried, so staging
+    n Claims costs O(n log n) however many compactions it crosses. Owing a path
+    the snapshot did not edit only drops it from the edited index, which is
+    where an unedited path belongs. The snapshot's own staged paths stay its own.
     """
-    keys = set(staged)
-    node: SnapshotTree | None = base
-    index: _ClaimEditIndex | None = None
-    while node is not None:
+    segments: list[tuple[str, ...]] = []
+    node = base
+    while True:
         with node._lock:
-            following, own, index = node._claim_base, node._claim_own, node._claim_index
-        keys.update(own)
+            following = node._claim_base
+            segments.append(node._claim_own)
+            if following is None:
+                index, carried = node._claim_index, node._claim_carried
+        if following is None:
+            break
         node = following
-    return index, keys, None
+    for segment in segments:
+        for path in segment:
+            carried = carried.set(path, True)
+    return index, carried, None
 
 
 def fork_tree(tree: Mapping[str, bytes]) -> CandidateTree:
