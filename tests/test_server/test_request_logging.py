@@ -487,6 +487,10 @@ def test_log_runtime_request_swallows_broken_pipe_from_dead_sink(
             pass
 
 
-def test_configure_request_logging_is_callable() -> None:
-    """configure_request_logging stays importable and runs without error."""
+def test_configure_request_logging_is_callable(request_log_buffer: io.StringIO) -> None:
+    """configure_request_logging stays importable and runs without error.
+
+    ``request_log_buffer`` restores the default renderer on teardown, so the
+    daemon's JSON configuration does not leak into later test files.
+    """
     configure_request_logging()
