@@ -16,8 +16,10 @@ then applies the same change to both and counts its work, never its time:
 - ``line.propose_100``: one Line run proposing a Claim on each of 100 items;
 - ``proposal.activate_100``: activating that proposal.
 
-Counters are the scale guard's (``_counters.py``) plus four of this file's, each
-counted on the measuring thread inside the window:
+Counters are the scale guard's (``_counters.py``), with SQL counted on projection
+pieces too (opened through their descriptor's ``/dev/fd`` alias, outside the
+state root, which the scale guard's tracing does not see), plus four of this
+file's, each counted on the measuring thread inside the window:
 
 - ``realpaths``: calls of ``os.path.realpath``;
 - ``piece_bytes_hashed``: bytes of whole projection pieces hashed
@@ -29,12 +31,17 @@ counted on the measuring thread inside the window:
 The rule, for every route and counter: ``LARGE <= SMALL * 1.5 + SLACK``. A
 counter that still grows for a reason outside this guard's fixes is a strict
 xfail naming it, so a fix turns it into an XPASS failure that forces the mark off.
+Work that grows with the change but not with the instance (per-read path
+resolution, per-member re-indexing, per-Claim projection binds) is invisible to
+that ratio, so a few counters also carry an absolute ceiling (``CEILINGS``).
+Also ``tick.facts``: the next facts catching up over the routes' generations.
 
 Run alone with ``CRUXIBLE_PER_CHANGE_REPORT=<path>`` to write every measurement.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -74,11 +81,18 @@ from tests.test_scale import _counters, _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
 from tests.test_scale._worlds import World, settle_advertisement
 
-SMALL, LARGE = 500, 5_000
+# ``CRUXIBLE_PER_CHANGE_SIZES=50,100`` runs the same guard on miniature worlds.
+SMALL, LARGE = (
+    tuple(int(size) for size in os.environ["CRUXIBLE_PER_CHANGE_SIZES"].split(","))
+    if os.environ.get("CRUXIBLE_PER_CHANGE_SIZES")
+    else (500, 5_000)
+)
 BATCH = 500
 ITEMS = 100
 LINE = "cost-propose"
+CREATE = "cost-create"
 
+_DESCRIPTOR_ALIASES = ("/dev/fd", "/proc/self/fd")
 EXTRA = ("realpaths", "piece_bytes_hashed", "git_listed_names", "persistent_sets")
 ALL = (*COUNTERS, *EXTRA)
 RATIO = 1.5
@@ -105,28 +119,38 @@ assert tuple(SLACK) == ALL
 # -- the worlds ---------------------------------------------------------------------
 
 
-def _definitions(world: World) -> dict[str, bytes]:
-    """A propose Line whose Procedure proposes a priority Claim on each of 100 items."""
+def _created(index: int) -> dict[str, object]:
+    """A Subject created by its key, as an import Line creates one per exported row."""
 
+    return {
+        "tag": "playbill-procedure-subject-proposal-item-v1",
+        "subject_kind": KIND,
+        "key": {"slug": f"made-{index:03d}"},
+        "rationale": "Listed in the export.",
+        "source": {
+            "tag": "playbill-self-source-body-v1",
+            "content_base64": base64.b64encode(f"made {index}\n".encode()).decode(),
+        },
+    }
+
+
+def _propose_line(
+    name: str, templates: tuple[dict[str, object], ...], namespace: tuple[str, ...]
+) -> dict[str, bytes]:
     procedure = _worlds._procedure(  # noqa: SLF001
-        LINE,
+        name,
         terminal=ProposeChangeSetNode(
-            node_id="propose",
-            candidate_templates=tuple(
-                _worlds._item(world.subject(index), "high")  # noqa: SLF001
-                for index in range(ITEMS)
-            ),
-            result="$steps.result",
+            node_id="propose", candidate_templates=templates, result="$steps.result"
         ),
         capability=2,
     )
-    line = _worlds._line(f"{LINE}-line", procedure, authority="propose")  # noqa: SLF001
+    line = _worlds._line(f"{name}-line", procedure, authority="propose")  # noqa: SLF001
     mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{LINE}-mandate"),
+        identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{name}-mandate"),
         procedure=_worlds._pin(procedure),  # noqa: SLF001
         grants="propose",
         resource_ceiling=procedure.procedure.definition.hard_caps,
-        namespace=("claims",),
+        namespace=namespace,
         valid_from=_worlds._FAR_PAST,  # noqa: SLF001
         expires_at=_worlds._FAR_FUTURE,  # noqa: SLF001
     )
@@ -134,6 +158,26 @@ def _definitions(world: World) -> dict[str, bytes]:
         procedure.path: render_procedure(procedure.procedure),
         line_spec_path(line.identity.name): render_line_spec(line),
         procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+    }
+
+
+def _definitions(world: World) -> dict[str, bytes]:
+    """Two propose Lines: a priority Claim on each of 100 items; 100 new items by key."""
+
+    return {
+        **_propose_line(
+            LINE,
+            tuple(
+                _worlds._item(world.subject(index), "high")  # noqa: SLF001
+                for index in range(ITEMS)
+            ),
+            ("claims",),
+        ),
+        **_propose_line(
+            CREATE,
+            tuple(_created(index) for index in range(ITEMS)),
+            ("claims", f"subjects/{KIND}"),
+        ),
     }
 
 
@@ -167,6 +211,8 @@ def _build(directory: Path, name: str, items: int) -> World:
         assert outcome.status == "accepted", outcome
         settle_advertisement(world.instance)
     _worlds.accept_members(world, _definitions(world), name=f"cost-definitions-{name}")
+    # The next facts are built once here, so the measured tick is a catch-up.
+    _worlds.tick(world, "facts")
     return world
 
 
@@ -282,32 +328,42 @@ def _create_100(world: World) -> object:
     return outcome
 
 
-def _propose_100(world: World) -> object:
-    digest = _worlds.line_digest(LINE)
-    state = playbill_api.playbill_line_run(
-        world.instance_id, digest, request=LineRunRequest(line=digest)
-    )
-    assert state.status == "succeeded", state.terminal
-    (egress,) = state.terminal_egress
-    assert egress.verdict == "delivered", egress
-    world.terminal_proposals[LINE] = egress.proposal_id
-    return state
+def _run(name: str) -> Callable[[World], object]:
+    def run(world: World) -> object:
+        digest = _worlds.line_digest(name)
+        state = playbill_api.playbill_line_run(
+            world.instance_id, digest, request=LineRunRequest(line=digest)
+        )
+        assert state.status == "succeeded", state.terminal
+        (egress,) = state.terminal_egress
+        assert egress.verdict == "delivered", egress
+        world.terminal_proposals[name] = egress.proposal_id
+        return state
+
+    return run
 
 
-def _activate_100(world: World) -> object:
-    proposal_id = world.terminal_proposals[LINE]
-    assert proposal_id is not None
-    receipt = playbill_api.playbill_activate(world.instance_id, proposal_id)
-    assert receipt.status == "accepted", receipt
-    world.generation += 1
-    return receipt
+def _activate(name: str) -> Callable[[World], object]:
+    def run(world: World) -> object:
+        proposal_id = world.terminal_proposals[name]
+        assert proposal_id is not None
+        receipt = playbill_api.playbill_activate(world.instance_id, proposal_id)
+        assert receipt.status == "accepted", receipt
+        world.generation += 1
+        return receipt
+
+    return run
 
 
 ROUTES: dict[str, Callable[[World], object]] = {
     "write.trivial": _trivial,
     "write.create_100": _create_100,
-    "line.propose_100": _propose_100,
-    "proposal.activate_100": _activate_100,
+    "line.propose_100": _run(LINE),
+    "proposal.activate_100": _activate(LINE),
+    "line.create_100": _run(CREATE),
+    "proposal.activate_create_100": _activate(CREATE),
+    # The next facts catching up over every generation the routes above accepted.
+    "tick.facts": lambda world: _worlds.tick(world, "facts"),
 }
 
 _PIECE_DIGEST = (
@@ -320,7 +376,12 @@ _PIECE_DIGEST = (
 #: route -> counter -> why it still grows (file:line): each is a strict xfail.
 GROWS: dict[str, dict[str, str]] = {
     route: {"piece_bytes_hashed": _PIECE_DIGEST}
-    for route in ("write.trivial", "write.create_100", "proposal.activate_100")
+    for route in (
+        "write.trivial",
+        "write.create_100",
+        "proposal.activate_100",
+        "proposal.activate_create_100",
+    )
 }
 
 
@@ -368,6 +429,11 @@ def session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session]:
         ):
             patch.delenv(name, raising=False)
         patch.setattr(PlaybillInstance, "_start_advertiser_locked", lambda self: None)
+        # A projection piece is opened through its verified descriptor's alias
+        # (``/dev/fd/N``), which is not under the state root: count those
+        # connections' SQL too, or every projection read would go unseen.
+        prefixes = _counters._prefixes  # noqa: SLF001
+        patch.setattr(_counters, "_prefixes", lambda path: (*prefixes(path), *_DESCRIPTOR_ALIASES))
         reset_permissions()
         reset_registry()
         reset_runtime_credential_store()
@@ -425,4 +491,43 @@ def test_one_change_costs_the_same_at_ten_times_the_instance(
         f"(allowed {small * RATIO + SLACK[counter]:g}); LARGE callers and heaviest statements: "
         + json.dumps(measured["large"]["callers"], indent=1)[:1500]
         + json.dumps(measured["large"]["statements"], indent=1)[:1500]
+    )
+
+
+#: Absolute ceilings in LARGE for work that grows with the change rather than the
+#: instance, so the ratio above cannot see it regress: twice what this build
+#: measured (in parentheses), well under what the unfixed build did (after it).
+#: Raise one deliberately, with the reason, never to make a run pass.
+CEILINGS: dict[str, dict[str, int]] = {
+    # The repository key resolved per ledger read (ledger/git.py _repository_key).
+    "write.create_100": {
+        "realpaths": 2 * 1_089,  # unfixed 7,375
+        # Lowering re-indexed every staged Claim per member (derived/derived_state.py).
+        "persistent_sets": 2 * 10_612,  # unfixed 25,774
+    },
+    "line.create_100": {"persistent_sets": 2 * 6_169},  # unfixed 20,802
+    "proposal.activate_100": {"realpaths": 2 * 222},  # unfixed 2,454
+    "proposal.activate_create_100": {"realpaths": 2 * 222},  # unfixed 4,354
+    "tick.facts": {
+        "realpaths": 2 * 2_071,  # unfixed 20,059
+        # The catch-up bound the projection per derived Claim and slot (next/facts.py).
+        "sql_vm_steps": 2 * 1_115_454,  # unfixed 7,362,786
+    },
+}
+assert all(set(counters) <= set(ALL) for counters in CEILINGS.values())
+
+
+@pytest.mark.parametrize(
+    ("route", "counter"),
+    [(route, counter) for route, counters in CEILINGS.items() for counter in counters],
+)
+def test_one_change_stays_under_its_measured_ceiling(
+    session: Session, route: str, counter: str
+) -> None:
+    if route in session.failed:
+        raise session.failed[route]
+    large = session.measured[route]["large"][counter]
+    assert large <= CEILINGS[route][counter], (
+        f"{route} {counter}: LARGE {large} over its ceiling {CEILINGS[route][counter]}; "
+        + json.dumps(session.measured[route]["large"]["callers"], indent=1)[:1500]
     )
