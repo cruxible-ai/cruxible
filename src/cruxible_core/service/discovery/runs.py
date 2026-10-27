@@ -89,6 +89,18 @@ def final_status(payload: object) -> RunStatus:
     return "internal_failed"
 
 
+def final_elapsed_us(payload: object) -> int | None:
+    """The observed wall time, in microseconds, an ``attempt_finalized`` payload records.
+
+    ``None`` when the payload is lost or records none.
+    """
+
+    budget = payload.get("budget") if isinstance(payload, Mapping) else None
+    observed = budget.get("observed") if isinstance(budget, Mapping) else None
+    wall = observed.get("wall_clock_microseconds") if isinstance(observed, Mapping) else None
+    return wall if isinstance(wall, int) and not isinstance(wall, bool) and wall >= 0 else None
+
+
 def run_identity(
     instance: PlaybillInstance, admission_digest: str
 ) -> tuple[str, str | None] | None:
@@ -422,11 +434,8 @@ def procedure_run_card(
             GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
         )
         egress = state.terminal_egress
-        final = run_payload(instance, locator.final_payload_digest)
-        budget = final.get("budget") if isinstance(final, Mapping) else None
-        observed = budget.get("observed") if isinstance(budget, Mapping) else None
-        wall = observed.get("wall_clock_microseconds") if isinstance(observed, Mapping) else None
-        if isinstance(wall, int) and wall >= 0:
+        wall = final_elapsed_us(run_payload(instance, locator.final_payload_digest))
+        if wall is not None:
             elapsed, basis = wall, "measured_wall_clock"
     line = getattr(bound, "line_identity", None)
     trigger = _run_trigger(instance, run_id, bound, viewer)

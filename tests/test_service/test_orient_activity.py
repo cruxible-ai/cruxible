@@ -30,6 +30,7 @@ from cruxible_core.exhaust import ProcedureExhaustWriter
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.exhaust.line_inbox import InboxPosting, LineInboxStore
 from cruxible_core.service.discovery.orient import _keyset_cursor, service_playbill_orient
+from cruxible_core.service.discovery.runs import procedure_run_card
 from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.service.procedures.line_dispatch import (
     service_dispatch_line,
@@ -256,6 +257,12 @@ def test_every_source_lists_its_events_merged_newest_first(world) -> None:  # ty
     assert finished.status == "succeeded" and finished.line == started.line == line
     assert started.procedure == finished.procedure == "Procedure:trigger-method"
     assert finished.at == started.at
+    # How long it took: the final record's observed wall time, as the run card reads it.
+    card = procedure_run_card(
+        instance, str(run), evaluation_time=READ_TIME, render=lambda ref, _view: ref
+    )
+    assert card.elapsed_basis == "measured_wall_clock"
+    assert finished.elapsed_us == card.elapsed_us and finished.elapsed_us is not None
     assert (due.ref, due.line) == (line, line) and due.trigger is not None
     assert landed.ref == f"Capture:{_DIGEST}" and landed.contract is not None
     # The landing names a Capture the store does not hold: its source is unreadable.
@@ -302,6 +309,8 @@ def test_a_record_landing_between_pages_is_never_repeated_or_skipped(tmp_path: P
     assert late == []
     (older,) = [row for row in walked if getattr(row, "run", None) == "RUN-older"]
     assert older.event == "run_finished" and older.unavailable
+    # A final record that measures no wall time serves none.
+    assert older.elapsed_us is None and "elapsed_us" not in older.model_dump(mode="json")
     assert [row for row in walked if row is not older] == before
     fresh = service_playbill_orient(instance, section="activity", limit=2).activity
     assert fresh is not None and {row.event for row in fresh} == {"inbox_posted", "capture_landed"}
@@ -339,6 +348,8 @@ def test_lost_payloads_list_as_unavailable_rows(tmp_path: Path) -> None:
     assert started.unavailable and started.procedure is None and started.run == names["run"]
     finished = next(row for row in rows if row.event == "run_finished")
     assert finished.unavailable and finished.status == "succeeded" and finished.procedure is None
+    # The final payload itself survives: its elapsed time still reads.
+    assert finished.elapsed_us is not None
     lost = [row for row in rows if row.event == "record_unavailable"]
     assert [row.journal for row in lost] == ["line_dispatch"]
     assert lost[0].at == pending[0].record.recorded_at
@@ -668,6 +679,13 @@ def test_the_cli_prints_one_line_per_event(world) -> None:  # type: ignore[no-un
     assert any(
         line.startswith("  cruxible orient --section activity --cursor ") for line in rendered
     )
+    deeper = service_playbill_orient(instance, section="activity", limit=5, surface="cli")
+    (finished,) = [
+        line
+        for line in _render_orient(deeper.model_dump(mode="json")).splitlines()
+        if line.startswith("2026-") and line.split("  ")[1] == "run_finished"
+    ]
+    assert "status=succeeded" in finished and "elapsed_us=" in finished
 
 
 @pytest.mark.parametrize(
