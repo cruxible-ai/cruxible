@@ -316,7 +316,19 @@ def test_tree_reads_resolve_the_repository_and_its_commit_once(tmp_path, monkeyp
     assert realpaths == []
     assert reads == []
     # A replacement at the same path is still noticed: it is resolved afresh.
-    shutil.rmtree(ledger.path)
+    # The old directory is moved aside, not deleted, so it keeps its inode and
+    # the replacement cannot be handed the same one (as ext4 may after a delete).
+    before = ledger_git._repository_key(ledger.path)
+    ledger.path.rename(tmp_path / "ledger-old.git")
     _ledger(tmp_path / "ledger.git")
-    ledger_git._repository_key(ledger.path)
+    after = ledger_git._repository_key(ledger.path)
     assert len(realpaths) == 1
+    assert after[1:] != before[1:]
+    # So is a link pointed at another repository: the same spelling, another key.
+    link = tmp_path / "current.git"
+    link.symlink_to(tmp_path / "ledger-old.git", target_is_directory=True)
+    assert ledger_git._repository_key(link)[1:] == before[1:]
+    link.unlink()
+    link.symlink_to(tmp_path / "ledger.git", target_is_directory=True)
+    assert ledger_git._repository_key(link)[1:] == after[1:]
+    assert len(realpaths) == 3
