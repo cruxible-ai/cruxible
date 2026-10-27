@@ -3971,7 +3971,9 @@ the current head, and pages by key: each source is read through its own index,
 at most a page plus one row each, and only the page's rows read payloads, so a
 page costs its rows; a record landing between pages is never repeated or
 skipped. A run records every event at its evaluation instant, so a finish
-carries its start's `at`. A record whose payload is lost still lists, marked
+carries its start's `at`. A generation is placed no later than the one
+accepted after it, whatever its candidate timestamp says (its `at` is still
+that timestamp). A record whose payload is lost still lists, marked
 `unavailable` (or as `record_unavailable` when what it said is unknown).
 `--section graph` pages the Subject graph for a whole-graph view: first the
 live Subjects (`graph.nodes`, each `{subject, kind}` with `subject` the
