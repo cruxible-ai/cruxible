@@ -44731,12 +44731,25 @@
           },
           "OrientActivityRunFinished": {
             "additionalProperties": false,
-            "description": "A Procedure run finished with ``status``, in the runs section's vocabulary.\n\n``at`` is the run's evaluation instant, not the wall time it finished:\nevery record of a run carries that one instant (the executor's\ndeterministic clock), so a finish lists beside its start, above it.\n``unavailable`` marks a lost payload: a lost final payload reads as\n``operational_failed``, as the runs section shows it.",
+            "description": "A Procedure run finished with ``status``, in the runs section's vocabulary.\n\n``at`` is the run's evaluation instant, not the wall time it finished:\nevery record of a run carries that one instant (the executor's\ndeterministic clock), so a finish lists beside its start, above it.\n``elapsed_us`` is how long the run took: the attempt's observed wall time\nin microseconds, as its final record measured it (the run card's\n``measured_wall_clock`` elapsed); ``at`` stays the evaluation instant.\nIt is absent when the final payload is lost or records none.\n``unavailable`` marks a lost payload: a lost final payload reads as\n``operational_failed``, as the runs section shows it.",
             "properties": {
               "at": {
                 "format": "date-time",
                 "title": "At",
                 "type": "string"
+              },
+              "elapsed_us": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Elapsed Us"
               },
               "event": {
                 "const": "run_finished",

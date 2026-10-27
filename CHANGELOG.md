@@ -11,6 +11,11 @@
   history. A lost payload lists as an unavailable row. The Line dispatch and
   inbox projections gain rebuildable activity tables, derived once from the
   journal on first open.
+- **An activity `run_finished` row says how long the run took.** It carries
+  `elapsed_us`, the attempt's observed wall time from its final record (the
+  run card's measured elapsed), read from the payload the row already decodes
+  for `status`; `at` stays the run's evaluation instant. It is absent when the
+  final payload is lost or records none.
 - **Subject parameters bind whichever form the caller wrote.** A query's Subject
   parameter now accepts a bare id, `kind/id` or `Subject:kind/id` wherever it is
   used; a form that cannot match refuses with a repair instead of returning no

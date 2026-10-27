@@ -3963,7 +3963,8 @@ that generation left it.
 and the operational journals: one row per `event` -- `generation_accepted`,
 `occurrence_due`, `occurrence_lapsed`, `line_state_changed` (a Line's
 enablement moving between `running`, `stopped` and `disabled`), `run_started`,
-`run_finished` (with the runs section's `status`), `capture_landed`,
+`run_finished` (with the runs section's `status` and `elapsed_us`, the
+run's observed wall time), `capture_landed`,
 `capture_erased`, `inbox_posted` (a new item) and `inbox_disposed` -- each with
 its `at` and the `ref` that reads it (`ProcedureRun:`, `Line:`, `Capture:`, the
 proposal, or the inbox item's `INB-` id). It is operational state, read live at

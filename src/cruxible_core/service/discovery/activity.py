@@ -67,6 +67,7 @@ from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.generation_rows import generation_row
 from cruxible_core.service.discovery.ledger_times import GenerationTime, newest_generations
 from cruxible_core.service.discovery.runs import (
+    final_elapsed_us,
     final_status,
     procedure_run_journal,
     procedure_run_stream,
@@ -243,6 +244,7 @@ def _run_row(page: _Page, source: str, locator: EventLocator) -> OrientActivity:
             procedure=None if identity is None else identity[0],
             line=line,
             status=final_status(payload),
+            elapsed_us=final_elapsed_us(payload),
             unavailable=lost or identity is None,
         )
     if lost or not isinstance(payload, Mapping):

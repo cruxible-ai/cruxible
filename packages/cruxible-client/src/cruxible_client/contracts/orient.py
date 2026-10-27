@@ -492,6 +492,10 @@ class OrientActivityRunFinished(_OrientActivityRow):
     ``at`` is the run's evaluation instant, not the wall time it finished:
     every record of a run carries that one instant (the executor's
     deterministic clock), so a finish lists beside its start, above it.
+    ``elapsed_us`` is how long the run took: the attempt's observed wall time
+    in microseconds, as its final record measured it (the run card's
+    ``measured_wall_clock`` elapsed); ``at`` stays the evaluation instant.
+    It is absent when the final payload is lost or records none.
     ``unavailable`` marks a lost payload: a lost final payload reads as
     ``operational_failed``, as the runs section shows it.
     """
@@ -502,6 +506,7 @@ class OrientActivityRunFinished(_OrientActivityRow):
     procedure: str | None = Field(default=None, exclude_if=_is_none)
     line: str | None = Field(default=None, exclude_if=_is_none)
     status: RunStatus
+    elapsed_us: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
 
 
