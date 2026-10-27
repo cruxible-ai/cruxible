@@ -332,3 +332,35 @@ def test_tree_reads_resolve_the_repository_and_its_commit_once(tmp_path, monkeyp
     link.symlink_to(tmp_path / "ledger.git", target_is_directory=True)
     assert ledger_git._repository_key(link)[1:] == after[1:]
     assert len(realpaths) == 3
+
+
+def test_a_repository_renamed_under_a_retargeted_link_is_read_where_it_now_is(
+    tmp_path, monkeypatch
+):
+    """Same directory, same inode, a new resolved path: the key follows it, still flat."""
+
+    import os
+
+    origin = tmp_path / "origin.git"
+    ledger = _ledger(origin)
+    oid = _write(ledger, b"kept")
+    link = tmp_path / "current.git"
+    link.symlink_to(origin, target_is_directory=True)
+    through_link = GitLedger(
+        link, signing_key_path=tmp_path / "k", allowed_signers_path=tmp_path / "s"
+    )
+    assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    origin.rename(tmp_path / "moved.git")
+    link.unlink()
+    link.symlink_to(tmp_path / "moved.git", target_is_directory=True)
+    assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    assert ledger_git._repository_key(link)[0] == os.path.realpath(tmp_path / "moved.git")
+    # Once re-resolved, reads stay at one stat pair each: no further resolution.
+    realpaths = []
+    resolve = os.path.realpath
+    monkeypatch.setattr(
+        ledger_git.os.path, "realpath", lambda path: realpaths.append(path) or resolve(path)
+    )
+    for _ in range(50):
+        assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    assert realpaths == []

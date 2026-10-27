@@ -3654,11 +3654,14 @@ _REPOSITORY_KEYS_LOCK = threading.Lock()
 def _repository_key(path: Path) -> tuple[str, int, int]:
     """This exact repository directory: a replacement at the same path differs.
 
-    Resolved once per spelling: every later call is one ``stat`` of the path as
-    spelled (symlinks followed), and only a directory that is no longer the
-    remembered one (a replacement, or a link pointed elsewhere) is resolved
-    again. Resolving costs a system call per path component, and the ledger
-    asks for this key on every tree, listing and object read.
+    Resolved once per spelling: every later call is two ``stat`` calls, of the
+    path as spelled (symlinks followed) and of the remembered resolved path, and
+    the remembered key stands only while both still name the remembered
+    directory. A replacement, a link pointed elsewhere, or the same directory
+    reached at another resolved path (renamed and relinked; readers are opened
+    at the resolved path) is resolved again. Resolving costs a system call per
+    path component, and the ledger asks for this key on every tree, listing and
+    object read.
     """
 
     spelled = os.fspath(path)
@@ -3666,7 +3669,12 @@ def _repository_key(path: Path) -> tuple[str, int, int]:
     with _REPOSITORY_KEYS_LOCK:
         remembered = _REPOSITORY_KEYS.get(spelled)
     if remembered is not None and remembered[1:] == (identity.st_dev, identity.st_ino):
-        return remembered
+        try:
+            located = os.stat(remembered[0])
+        except OSError:
+            located = None
+        if located is not None and remembered[1:] == (located.st_dev, located.st_ino):
+            return remembered
     resolved = os.path.realpath(spelled)
     identity = os.stat(resolved)
     key = (resolved, identity.st_dev, identity.st_ino)
