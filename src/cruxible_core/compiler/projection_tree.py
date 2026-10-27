@@ -205,10 +205,14 @@ def _refuse_case_fold_siblings(
     for change in changes:
         parts = change.path.split("/")
         if change.status == "D" and change.oid is None:
-            # The deepest name the head no longer holds leaves its directory.
-            if parts[0] in case_rigid_tops:
-                continue
+            # The shallowest name the head no longer holds leaves its directory
+            # (which the head still holds). Below a case-rigid top no directory's
+            # folds are kept, but the top itself is a root name: its removal is
+            # always recorded, or the root's carried folds would keep it.
+            rigid = parts[0] in case_rigid_tops
             for depth in range(len(parts)):
+                if depth and rigid:
+                    break
                 prefix = "/".join(parts[: depth + 1])
                 if not repository.tree_has_path(head_oid, prefix):
                     removed.setdefault("/".join(parts[:depth]), set()).add(parts[depth])
@@ -342,6 +346,12 @@ def _case_rigid_tops(artifact_kinds: ArtifactKindRegistry) -> frozenset[str]:
     holds unregistered paths and is never rigid. Any pattern this analysis cannot
     read leaves no directory rigid, so every level is checked exactly.
     """
+    # The inference assumes the parent tree passed these same gates under this
+    # same registry, which ``populate_successor`` guarantees: a delta is read
+    # only when the parent's compiler (hence its registry) is the successor's,
+    # and a cold build gates the whole tree with ``read_registered_tree``. A
+    # parent gated under another registry could hold names these patterns do
+    # not admit, so no caller may read a delta across compilers.
     by_top: dict[str, list[str]] = {}
     for entry in artifact_kinds.entries():
         try:

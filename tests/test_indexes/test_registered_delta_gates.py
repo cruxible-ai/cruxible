@@ -386,3 +386,47 @@ def test_an_open_directory_carries_its_folds_from_the_parent_generation(
         with pytest.raises(ProjectionFormatError, match="collision-free"):
             _ledger_delta(ledger, successor, {**successor, "cards/flat/N001.md": b"card"})
     assert warm == [0, 0]
+
+
+def test_a_root_name_removed_from_a_rigid_top_leaves_the_root_folds_exact(tmp_path) -> None:
+    """One delta drops the last path under a rigid top and adds a root name sharing its fold.
+
+    The root's folds are carried from the parent's, so the removed top-level name
+    must leave them even though nothing below a rigid top is folded.
+    """
+
+    import re
+
+    from cruxible_client.contracts.artifacts import ArtifactKindRegistry, ArtifactPathKind
+    from cruxible_core.compiler.projection_tree import _case_rigid_tops
+
+    kinds = ArtifactKindRegistry(
+        (
+            ArtifactPathKind("subject", re.compile(r"^notes/[a-z]+\.json$")),
+            ArtifactPathKind("document", re.compile(r"^NOTES/[a-z]+\.json$")),
+            ArtifactPathKind("line", re.compile(r"^other/[a-z]+\.json$")),
+        )
+    )
+    assert {"notes", "other"} <= _case_rigid_tops(kinds)
+    ledger = _git_ledger(tmp_path / "ledger.git")
+
+    def delta(base: dict[str, bytes], head: dict[str, bytes]) -> None:
+        base_oid, head_oid = _raw_tree(ledger, base), _raw_tree(ledger, head)
+        read_registered_delta(
+            ledger,
+            ledger.changed_entries(base_oid, head_oid),
+            base_oid=base_oid,
+            head_oid=head_oid,
+            parent_inventory=(len(base), 4 * len(base)),
+            limits=TreeReadLimits(),
+            artifact_kinds=kinds,
+            include_paths=frozenset(),
+        )
+
+    first = {"notes/a.json": b"card"}
+    second = {**first, "other/a.json": b"card"}
+    delta(first, second)  # a new root name: the root's folds are remembered
+    third = {"other/a.json": b"card", "NOTES/a.json": b"card"}
+    delta(second, third)  # "notes" left the root as "NOTES" joined it: no collision
+    with pytest.raises(ProjectionFormatError, match="collision-free"):
+        delta(third, {**third, "notes/b.json": b"card"})  # and it is still held

@@ -108,6 +108,8 @@ def populate_successor(
         raise ProjectionIntegrityError("an accepted rebuild cannot consume a candidate delta")
     if bundle.projection_coordinate(base=base) != assembler.accepted:
         raise ProjectionIntegrityError("derived-index delta names another successor")
+    # Also what lets the delta reader infer case-rigid directories from this
+    # registry (projection_tree._case_rigid_tops): the parent passed the same one.
     if base.compiler != assembler.accepted.compiler:
         return None
     if not isinstance(bundle.record, (ChangeSetRecordV2, ChangeSetRecordV3)):
