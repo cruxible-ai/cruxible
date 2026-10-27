@@ -55,7 +55,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
         "(default replace: a statement-changing revision keeps only the evidence it cites) "
-        "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
+        "and evidence_requirement (kept at self). On compiler revision 36 it also restates "
+        "v3 evidence policies as v4 (same admission), which an edit needs first. "
+        "It only proposes; dry_run proposes nothing."
     ),
     "cruxible_kit_remove": (
         "Use when you want to retire what a kit installed. It lands at once when the approval "

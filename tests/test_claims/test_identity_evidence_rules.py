@@ -518,7 +518,10 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
 
     result = service_upgrade_claim_types(
         world.instance,
-        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
+        # Named, so the seeded builtins' policy restatement stays out of it.
+        request=ClaimTypeUpgradeRequest(
+            claim_types=(PREDICATE,), dry_run=False, revision_evidence="accumulate"
+        ),
         actor_id="owner",
         timestamp=world.timestamp(),
     )

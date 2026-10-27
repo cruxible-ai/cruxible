@@ -111,6 +111,7 @@ from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import (
     COMPILER_REVISION_LABELS,
+    LIGHT_ARTIFACTS_COMPILER,
     artifact_kinds_for_compiler,
     current_compiler_coordinate,
 )
@@ -673,7 +674,9 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     ),
     "provider_lane": frozenset({"not_reported", "available", "unavailable"}),
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
-    "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
+    "compiler": frozenset(
+        {"current", "upgrade_available", "no_upgrade_path", "claim_type_upgrade_available"}
+    ),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
     "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
     "triggers": frozenset({"not_observed", "scheduled", "unscheduled"}),
@@ -853,6 +856,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.proposal.activate": "proposal activate",
     "cruxible.compiler.upgrade": "compiler upgrade",
+    "cruxible.claim-type.upgrade": "claim-type upgrade",
     "cruxible.line.enable": "line enable",
     "cruxible.line.evaluate": "line evaluate",
     "cruxible.line.dispatch": "line dispatch",
@@ -944,6 +948,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.proposal.activate": "cruxible_proposal_activate",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
+    "cruxible.claim-type.upgrade": "cruxible_claim_type_upgrade",
     "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.evaluate": "cruxible_line_evaluate",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
@@ -1366,6 +1371,9 @@ def _mcp_repair_call(
 
     if operation == "cruxible.compiler.upgrade":
         return _mcp_call("cruxible_compiler_upgrade")
+    if operation == "cruxible.claim-type.upgrade":
+        # The bare request previews every ClaimType the upgrade would change.
+        return _mcp_call("cruxible_claim_type_upgrade", request={})
     if operation == "cruxible.line.enable" and text("line"):
         return _mcp_call("cruxible_line_enable", line=text("line"))
     if operation == "cruxible.line.evaluate" and text("line") and text("since") and text("until"):
@@ -1508,6 +1516,8 @@ def _sdk_repair_call(
         return "cx.inbox()" + _sdk_call(".list", line=line, status="unread")
     if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
+    if operation == "cruxible.claim-type.upgrade":
+        return _sdk_call("cx.upgrade_claim_types")
     if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
@@ -1645,6 +1655,9 @@ def _repair_command(
     elif operation == "cruxible.compiler.upgrade":
         # No operands: the command targets the compiler the daemon runs, which
         # is the one this repair names in its facet's detail.
+        pass
+    elif operation == "cruxible.claim-type.upgrade":
+        # No operands: the bare command previews every ClaimType it would change.
         pass
     elif operation == "cruxible.line.evaluate":
         line, since, until = values.get("line"), values.get("since"), values.get("until")
@@ -5378,7 +5391,7 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
         "running_compiler_revision": COMPILER_REVISION_LABELS.get(running),
     }
     if accepted == running:
-        return PlaybillNextHealthV1(state="current", detail=detail)
+        return _claim_type_upgrade_health(instance, detail)
     try:
         upgrade_law(accepted, running)
     except ValueError:
@@ -5393,6 +5406,46 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     return PlaybillNextHealthV1(
         state="upgrade_available",
         detail=detail,
+        repair=upgrade.model_copy(
+            update={"command": _repair_command(upgrade.operation, arguments=upgrade.arguments)}
+        ),
+    )
+
+
+def _claim_type_upgrade_health(
+    instance: PlaybillInstance, detail: Mapping[str, object]
+) -> PlaybillNextHealthV1:
+    """A current compiler, or the ClaimType upgrade it leaves to run.
+
+    Compiler revision 36 writes only v4 identity evidence policies. A ClaimType
+    accepted with a v3 policy keeps working as it is, but is edited only after
+    the governed `claim-type upgrade` restates its policy. The genesis seeds a
+    new instance starts with are not counted: nothing is pending on an instance
+    the moment it is created.
+    """
+
+    head = instance.accepted_coordinate()
+    if head.compiler != LIGHT_ARTIFACTS_COMPILER:
+        return PlaybillNextHealthV1(state="current", detail=detail)
+    pending = instance.pending_policy_restatements(head.git_oid)
+    if not pending.count:
+        return PlaybillNextHealthV1(state="current", detail=detail)
+    upgrade = PlaybillNextRepairV1(
+        operation="cruxible.claim-type.upgrade",
+        target=instance.descriptor.instance_id,
+        required_change="propose_approve_and_activate_the_claim_type_upgrade",
+    )
+    return PlaybillNextHealthV1(
+        state="claim_type_upgrade_available",
+        detail={
+            **detail,
+            "count": pending.count,
+            "claim_types": list(pending.first),
+            "message": (
+                "these ClaimTypes state a v3 evidence policy and keep working as they are; "
+                "editing one waits for `cruxible claim-type upgrade` to restate it as v4"
+            ),
+        },
         repair=upgrade.model_copy(
             update={"command": _repair_command(upgrade.operation, arguments=upgrade.arguments)}
         ),

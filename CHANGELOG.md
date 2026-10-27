@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Old v3 evidence policies keep working after the revision-36 compiler
+  upgrade.** The rule that revision 36 writes v4 identity evidence policies now
+  judges only the ClaimTypes a write creates or changes. Rechecking an
+  unchanged referrer, as the first write after the upgrade does when it
+  installs the v3 coordinator self-source contract, no longer refuses every
+  write with `Broken referrer ClaimType:…`. `cruxible claim-type upgrade`
+  restates each live v3 policy as v4 on revision 36 (`restated` in its result),
+  in the same reviewed change set as any v7 move, carrying every Claim with its
+  backing intact. The restatement admits exactly the same evidence, or the
+  ClaimType is refused with `cruxible.claim_type.policy_restatement_inexact`.
+  `next` reports the compiler facet as `claim_type_upgrade_available` while any
+  ClaimType you authored is pending (the unedited genesis builtins are not
+  counted), and its repair is `cruxible claim-type upgrade`. The refusal for a
+  ClaimType written in the wrong format names `cruxible claim-type upgrade` on
+  revision 36 and `cruxible compiler upgrade` below it.
 - **`orient --section activity`: what just happened, newest first.** One
   orient section pages accepted generations, Line occurrences and enablement
   changes, runs started and finished, Captures landed and erased, and inbox

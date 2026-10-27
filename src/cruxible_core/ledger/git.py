@@ -2512,6 +2512,29 @@ class GitLedger:
         is a deletion plus additions, exactly as Git reports it.
         """
 
+        return self._diff_trees("", self._root_tree(base_oid), self._root_tree(target_oid))
+
+    def directory_changes(
+        self, directory: str, base_tree: str | None, target_tree: str | None
+    ) -> tuple[GitTreeChange, ...]:
+        """The member changes between two tree objects of one directory.
+
+        ``base_tree`` and ``target_tree`` are that directory's tree object IDs
+        (None when absent), as ``directory_tree_oid`` reports them. Paths are
+        reported under ``directory``. Nothing outside the directory is read, so
+        unrelated changes elsewhere in the commits cost nothing.
+        """
+
+        if not directory or directory.endswith("/"):
+            raise GitError("directory changes name a directory without a trailing slash")
+        for oid in (base_tree, target_tree):
+            if oid is not None:
+                self._validate_oid(oid)
+        return self._diff_trees(directory + "/", base_tree, target_tree)
+
+    def _diff_trees(
+        self, root_prefix: str, base_tree: str | None, target_tree: str | None
+    ) -> tuple[GitTreeChange, ...]:
         repository = _repository_key(self.path)
         changes: list[GitTreeChange] = []
 
@@ -2572,7 +2595,7 @@ class GitLedger:
                             )
                         )
 
-        compare("", self._root_tree(base_oid), self._root_tree(target_oid))
+        compare(root_prefix, base_tree, target_tree)
         changes.sort(key=lambda change: change.path.encode("utf-8"))
         return tuple(changes)
 

@@ -486,6 +486,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.proposal.approve",
     "cruxible.proposal.activate",
     "cruxible.compiler.upgrade",
+    "cruxible.claim-type.upgrade",
     "cruxible.line.enable",
     "cruxible.line.evaluate",
     "cruxible.line.dispatch",

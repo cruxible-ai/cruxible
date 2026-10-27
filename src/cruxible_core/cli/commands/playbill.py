@@ -4116,7 +4116,10 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
     "--claim-type",
     "claim_types",
     multiple=True,
-    help="Predicate to upgrade; repeat for more. Default: every live ClaimType before v7.",
+    help=(
+        "Predicate to upgrade; repeat for more. Default: every live ClaimType before v7 "
+        "and, on compiler revision 36, every one with a v3 evidence policy."
+    ),
 )
 @click.option(
     "--revision-evidence",
@@ -4143,8 +4146,10 @@ def upgrade_claim_types(
 
     v7 states what a ClaimType's Claims need (evidence_requirement, kept at
     self) and what a statement-changing revision keeps (revision_evidence).
-    Every Claim is carried with its backing intact. It previews by default;
-    commit the preview with ``--commit --at OID``, then approve as usual.
+    On compiler revision 36 the same change set restates each v3 evidence
+    policy as v4, admitting exactly the same evidence. Every Claim is carried
+    with its backing intact. It previews by default; commit the preview with
+    ``--commit --at OID``, then approve as usual.
     """
 
     request = ClaimTypeUpgradeRequest.model_validate(
@@ -4170,8 +4175,10 @@ def upgrade_claim_types(
         )
         for version in item.widened_versions:
             click.echo(f"    now also admits {version}")
+    for restated in result.restated:
+        click.echo(f"  restated {restated.claim_type}: evidence policy v3 -> v4 (same admission)")
     for name in result.unchanged:
-        click.echo(f"  already v7 {name}")
+        click.echo(f"  already current {name}")
     for refusal in result.refused:
         click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
     if result.carried_claims:
@@ -8409,7 +8416,7 @@ _NEXT_STATUS_ATTENTION = {
     "ledger_mirror": {"behind", "never_published"},
     "provider_lane": {"unavailable"},
     "procedure_catalog": {"missing"},
-    "compiler": {"upgrade_available"},
+    "compiler": {"upgrade_available", "claim_type_upgrade_available"},
     "line_dispatch": {"due"},
     "consumers": {"lagging"},
     "triggers": {"unscheduled"},

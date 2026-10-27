@@ -70,6 +70,11 @@ def test_the_upgrade_moves_v6_to_v7_replace_and_carries_claims_byte_identical(
         entry.revision_evidence_after,
         entry.evidence_requirement,
     ) == (f"ClaimType:{PREDICATE}", "playbill-claim-type-v6", "accumulate", "replace", "self")
+    # On revision 36 the same change set restates the seeded v3-policy builtins.
+    assert [item.claim_type for item in result.restated] == [  # type: ignore[attr-defined]
+        "ClaimType:semantic.alias",
+        "ClaimType:semantic.distinct_from",
+    ]
     assert result.carried_claims == 1  # type: ignore[attr-defined]
     world.activate_proposal(result.proposal_id)  # type: ignore[attr-defined]
 

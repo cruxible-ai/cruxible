@@ -1,4 +1,8 @@
-"""Proposing the move of accepted ClaimTypes to ClaimType v7, as one reviewed change set."""
+"""Proposing the move of accepted ClaimTypes to ClaimType v7, as one reviewed change set.
+
+On compiler revision 36 the same change set also restates each v3 identity
+evidence policy as v4, which admits exactly the same evidence.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +30,8 @@ class ClaimTypeUpgradeRequest(_Model):
     tag: Literal["playbill-claim-type-upgrade-request-v1"] = (
         "playbill-claim-type-upgrade-request-v1"
     )
-    #: Predicates to upgrade; empty upgrades every live ClaimType before v7.
+    #: Predicates to upgrade; empty upgrades every live ClaimType before v7 and,
+    #: on compiler revision 36, every live ClaimType with a v3 evidence policy.
     claim_types: tuple[str, ...] = ()
     revision_evidence: RevisionEvidence = "replace"
     #: Previews by default: the change set carries every dependent Claim.
@@ -60,9 +65,35 @@ class ClaimTypeUpgrade(_Model):
     widened_versions: tuple[str, ...] = ()
 
 
+class ClaimTypePolicyRestatement(_Model):
+    """One ClaimType whose v3 identity evidence policy is restated as v4.
+
+    The v4 policy admits exactly the evidence the v3 one did: the same rules,
+    roles, admission, subject binding and attestation requirement, naming the
+    same contracts with no logical-source restriction. Compiler revision 36
+    writes only v4, so a ClaimType is edited after this restatement.
+    """
+
+    claim_type: str
+    from_policy: Literal["playbill-claim-evidence-admission-policy-v3"] = (
+        "playbill-claim-evidence-admission-policy-v3"
+    )
+    to_policy: Literal["cruxible-claim-evidence-admission-policy-v4"] = (
+        "cruxible-claim-evidence-admission-policy-v4"
+    )
+
+
+ClaimTypeUpgradeRefusalCode = Literal["cruxible.claim_type.policy_restatement_inexact"]
+
+
 class ClaimTypeUpgradeRefusal(_Model):
     claim_type: str
     reason: str
+    #: Set when a v3 evidence policy cannot be restated as v4 without changing
+    #: what it admits; the ClaimType is left as it is.
+    code: ClaimTypeUpgradeRefusalCode | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ClaimTypeUpgradeResult(_Model):
@@ -71,7 +102,10 @@ class ClaimTypeUpgradeResult(_Model):
     status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
     proposal_id: str | None = None
     upgraded: tuple[ClaimTypeUpgrade, ...] = ()
-    #: ClaimTypes already at v7.
+    #: ClaimTypes whose v3 evidence policy this change set restates as v4
+    #: (compiler revision 36 only); one moving to v7 may be listed here too.
+    restated: tuple[ClaimTypePolicyRestatement, ...] = ()
+    #: ClaimTypes already at v7 with no evidence policy to restate.
     unchanged: tuple[str, ...] = ()
     refused: tuple[ClaimTypeUpgradeRefusal, ...] = ()
     carried_claims: int = Field(default=0, ge=0)
@@ -82,7 +116,9 @@ class ClaimTypeUpgradeResult(_Model):
 
 
 __all__ = [
+    "ClaimTypePolicyRestatement",
     "ClaimTypeUpgradeRefusal",
+    "ClaimTypeUpgradeRefusalCode",
     "ClaimTypeUpgradeRequest",
     "ClaimTypeUpgradeResult",
     "ClaimTypeUpgrade",

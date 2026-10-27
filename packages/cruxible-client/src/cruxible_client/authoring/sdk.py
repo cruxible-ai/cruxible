@@ -2930,7 +2930,9 @@ class Cruxible:
 
         Names no ClaimType to move every live one before v7. v7 states what a
         statement-changing revision keeps (``revision_evidence``, default
-        ``replace``); every Claim is carried with its backing intact. The change
+        ``replace``). On compiler revision 36 the same change set restates each
+        v3 evidence policy as v4, admitting exactly the same evidence (an edit
+        needs it first). Every Claim is carried with its backing intact. The change
         set carries every dependent Claim, so it previews by default and
         proposes nothing; commit that preview with ``dry_run=False,
         at=result.coordinate.git_oid``. Approve as usual.
