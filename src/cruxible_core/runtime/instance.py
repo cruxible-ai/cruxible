@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import os
 import secrets
@@ -359,6 +360,36 @@ def _generation_at(recovered: RecoveredInstanceState, sequence: int) -> Recovere
 _ACCEPTING_ADMISSIONS: OrderedDict[str, tuple[AcceptingAdmission | None]] = OrderedDict()
 
 
+_V3_POLICY_TAG = "playbill-claim-evidence-admission-policy-v3"
+
+
+@functools.lru_cache(maxsize=1)
+def _genesis_seed_digests() -> frozenset[tuple[str, str]]:
+    from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS
+
+    return frozenset((path, digest) for seed in GENESIS_SEED_SETS for path, digest in seed.files)
+
+
+def _pending_restatement(path: str, content: bytes) -> str | None:
+    """The identity of a live ClaimType stating a v3 policy, unless an unedited seed."""
+
+    import hashlib
+
+    from cruxible_client.contracts.claim_types import parse_claim_type
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
+
+    if _V3_POLICY_TAG.encode("ascii") not in content:
+        return None
+    if (path, hashlib.sha256(content).hexdigest()) in _genesis_seed_digests():
+        return None
+    claim_type = parse_claim_type(content, path=path)
+    if claim_type.lifecycle.state == "live" and isinstance(
+        claim_type.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3
+    ):
+        return claim_type.identity.qualified
+    return None
+
+
 class PlaybillInstance:
     """A verified opt-in Cruxible substrate rooted outside agent workspaces."""
 
@@ -395,10 +426,13 @@ class PlaybillInstance:
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
-        # Live v3-policy ClaimTypes per claim-types directory tree object.
-        self._policy_restatements: BoundedCache[tuple[str, ...]] = self.derived.memo(
-            "policy-restatements", max_entries=64, max_bytes=4 * 1024 * 1024
+        # Live v3-policy ClaimTypes (path -> identity) per claim-types directory
+        # tree object, with the commit they were read at; the last one read is
+        # the base the next ClaimType change is carried forward from.
+        self._policy_restatements: BoundedCache[tuple[str, tuple[tuple[str, str], ...]]] = (
+            self.derived.memo("policy-restatements", max_entries=64, max_bytes=4 * 1024 * 1024)
         )
+        self._policy_restatement_base: str | None = None
         # Parsed Claim law evidence per (path, accepting sequence).
         self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
             "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -2517,43 +2551,53 @@ class PlaybillInstance:
 
         Compiler revision 36 writes only v4 policies, so these wait for the
         governed `claim-type upgrade` before an edit. The unedited genesis seeds
-        are left out: a new instance has nothing pending. The answer is
-        remembered by the ``claim-types`` directory's tree object, so a write
-        that changes no ClaimType reuses it; a miss searches only that
-        directory's blobs, inside Git, and parses only the ones naming v3.
+        are left out: a new instance has nothing pending.
+
+        The membership is remembered by the ``claim-types`` directory's tree
+        object, so a write that changes no ClaimType reuses it. A ClaimType
+        change carries the last membership forward by Git's structural diff and
+        classifies only the ClaimType paths that diff names, so the cost follows
+        the change, never the number of ClaimTypes. Only a cold read (nothing
+        remembered) searches the directory, inside Git, for the v3 tag.
         """
-
-        import hashlib
-
-        from cruxible_client.contracts.claim_types import parse_claim_type
-        from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
-        from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS
 
         self.coordinate_for_oid(oid)
         directory = self._ledger.directory_tree_oid(oid, "claim-types")
         if directory is None:
             return ()
         held = self._policy_restatements.get(directory)
-        if held is not None:
-            return held
-        paths = self._ledger.tree_paths_containing_literal(
-            oid, literal="playbill-claim-evidence-admission-policy-v3", paths=("claim-types",)
-        )
-        seeds = {(path, digest) for seed in GENESIS_SEED_SETS for path, digest in seed.files}
-        found: list[str] = []
-        for path, content in sorted(self._ledger.blobs_at(oid, paths).items()):
-            if (path, hashlib.sha256(content).hexdigest()) in seeds:
-                continue
-            claim_type = parse_claim_type(content, path=path)
-            if claim_type.lifecycle.state == "live" and isinstance(
-                claim_type.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3
-            ):
-                found.append(claim_type.identity.qualified)
-        answer = tuple(sorted(found, key=lambda item: item.encode("utf-8")))
-        self._policy_restatements.put(
-            directory, answer, weight=sum(len(item) for item in answer) + 64
-        )
-        return answer
+        if held is None:
+            base = self._policy_restatement_base
+            previous = None if base is None else self._policy_restatements.get(base)
+            members: dict[str, str]
+            if previous is None:
+                paths = self._ledger.tree_paths_containing_literal(
+                    oid, literal=_V3_POLICY_TAG, paths=("claim-types",)
+                )
+                changed: dict[str, bytes | None] = dict(self._ledger.blobs_at(oid, paths))
+                members = {}
+            else:
+                previous_oid, carried = previous
+                names = [
+                    change.path
+                    for change in self._ledger.changed_entries(previous_oid, oid)
+                    if change.path.startswith("claim-types/")
+                ]
+                present = self._ledger.blobs_at(oid, names)
+                changed = {path: present.get(path) for path in names}
+                members = dict(carried)
+            for path, content in changed.items():
+                identity = None if content is None else _pending_restatement(path, content)
+                if identity is None:
+                    members.pop(path, None)
+                else:
+                    members[path] = identity
+            held = (oid, tuple(sorted(members.items())))
+            self._policy_restatements.put(
+                directory, held, weight=sum(len(a) + len(b) for a, b in held[1]) + 128
+            )
+        self._policy_restatement_base = directory
+        return tuple(sorted((identity for _path, identity in held[1]), key=str.encode))
 
     def _require_proposal_object(self, oid: str, proposal_id: str | None) -> None:
         if self._ledger.object_exists(oid):

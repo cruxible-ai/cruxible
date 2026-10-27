@@ -122,7 +122,9 @@ def _write(instance: PlaybillInstance, subject: str, value: str) -> Any:
     return service_playbill_write(instance, request=request, caller=caller())
 
 
-def _approve_and_activate(instance: PlaybillInstance, owner: Any, proposal_id: str) -> None:
+def _approve_and_activate(
+    instance: PlaybillInstance, owner: Any, proposal_id: str, *, refresh: bool = True
+) -> None:
     candidate = service_inspect_playbill_proposal(
         instance, proposal_id=proposal_id
     ).proposal.candidate
@@ -139,7 +141,26 @@ def _approve_and_activate(instance: PlaybillInstance, owner: Any, proposal_id: s
         instance, proposal_id=proposal_id, activated_by="owner"
     )
     assert activated.status == "accepted"
-    instance.refresh()
+    if refresh:
+        instance.refresh()
+
+
+def _land(instance: PlaybillInstance, owner: Any, tree: dict[str, bytes], *, name: str) -> None:
+    """Propose, approve and activate as a daemon does: no refresh afterwards."""
+
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert result.candidate is not None, result.evaluation.diagnostics
+    _approve_and_activate(instance, owner, result.admission.proposal_id, refresh=False)
 
 
 def _upgrade_compiler(instance: PlaybillInstance, owner: Any) -> None:
@@ -306,7 +327,8 @@ def test_the_claim_type_upgrade_restates_v3_policies_and_next_names_it(
     result = _upgrade_claim_types(instance, dry_run=False, at=dry.coordinate.git_oid)
     assert result.status == "proposed", result
     assert result.restated == dry.restated
-    _approve_and_activate(instance, owner, result.proposal_id)
+    # Activated as a daemon does (no refresh): next carries its warm pending set.
+    _approve_and_activate(instance, owner, result.proposal_id, refresh=False)
 
     after = _tree(instance)
     for item in dry.restated:
@@ -365,3 +387,74 @@ def test_a_v3_policy_v4_cannot_state_exactly_is_refused_with_a_typed_reason(
     assert refusal.code == "cruxible.claim_type.policy_restatement_inexact"
     assert "self_asserted" in refusal.reason
     assert "cruxible claim-type propose" in refusal.reason
+
+
+@pytest.mark.parametrize("extra", [5, 50])
+def test_the_first_next_after_one_claim_type_edit_costs_the_edit(
+    revision_35: tuple[PlaybillInstance, Any, str], monkeypatch: pytest.MonkeyPatch, extra: int
+) -> None:
+    """The pending set is carried forward by the change, not re-read whole."""
+
+    import cruxible_core.runtime.instance as instance_module
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+
+    instance, owner, _claim_id = revision_35
+    tree = _tree(instance)
+    pending = [SLUG, STATUS] + [f"project.work_item.legacy_{index:02d}" for index in range(extra)]
+    for predicate in pending[2:]:
+        tree[claim_type_path(predicate)] = render_claim_type(_v3_type(predicate))
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="legacy-types")
+    _upgrade_compiler(instance, owner)
+    current = "project.work_item.current"
+    v4 = _v3_type(current).model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(
+                    ClaimEvidenceAdmissionRule(
+                        rule_id="self",
+                        claim_roles=("normative", "observation"),
+                        capture_contracts=(
+                            {"contract": COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1.identity.name},
+                        ),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+    tree = _tree(instance)
+    tree[claim_type_path(current)] = render_claim_type(v4)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="current-type")
+    expected = sorted(f"ClaimType:{item}" for item in pending)[:20]
+    warm = service_playbill_next(instance, request=_request(instance)).status.compiler
+    assert warm.detail["count"] == len(pending) and warm.detail["claim_types"] == expected
+
+    tree = _tree(instance)
+    tree[claim_type_path(current)] = render_claim_type(
+        v4.model_copy(
+            update={
+                "description": "Edited once.",
+                "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(v4).tagged),
+            }
+        )
+    )
+    _land(instance, owner, tree, name="describe")
+
+    classified: list[str] = []
+    classify = getattr(instance_module, "_pending_restatement", None)
+
+    def counted(path: str, content: bytes) -> str | None:
+        classified.append(path)
+        assert classify is not None
+        return classify(path, content)
+
+    def no_search(*_args: object, **_kwargs: object) -> tuple[str, ...]:
+        raise AssertionError("a warm pending set is never searched for again")
+
+    monkeypatch.setattr(instance_module, "_pending_restatement", counted, raising=False)
+    monkeypatch.setattr(type(instance._ledger), "tree_paths_containing_literal", no_search)
+    after = service_playbill_next(instance, request=_request(instance)).status.compiler
+    assert after.detail["count"] == len(pending) and after.detail["claim_types"] == expected
+    # Flat in the number of ClaimTypes: only the edited one is read again.
+    assert classified == [claim_type_path(current)]
