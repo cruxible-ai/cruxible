@@ -63,7 +63,9 @@ def procedure_run_journal(instance: PlaybillInstance) -> LocalJournalBackend | N
     return LocalJournalBackend(root) if root.is_dir() else None
 
 
-def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
+def procedure_run_stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
+    """The Procedure-run journal stream of this instance."""
+
     from cruxible_core.service.procedures.procedure_runs import _stream as run_stream
 
     return run_stream(instance)
@@ -87,14 +89,32 @@ def final_status(payload: object) -> RunStatus:
     return "internal_failed"
 
 
+def run_identity(
+    instance: PlaybillInstance, admission_digest: str
+) -> tuple[str, str | None] | None:
+    """A run's (Procedure, Line) from its ``admission_bound`` payload; ``None`` when it is lost."""
+
+    payload = read_payload(instance.body_store(), admission_digest, access=_ACCESS)
+    if isinstance(payload, UnavailablePayload):
+        return None
+    admission = parse_admission_payload(payload).admission
+    line = getattr(admission, "line_identity", None)
+    return admission.procedure_identity.qualified, None if line is None else line.qualified
+
+
+def run_payload(instance: PlaybillInstance, digest: str) -> object:
+    """One run record's payload, or ``UnavailablePayload`` when it is lost."""
+
+    return read_payload(instance.body_store(), digest, access=_ACCESS)
+
+
 def run_row(instance: PlaybillInstance, locator: RunLocator) -> RunRow:
     """One located run as a row, reading its admission and (if any) final payloads."""
 
-    bodies = instance.body_store()
-    payload = read_payload(bodies, locator.admission_payload_digest, access=_ACCESS)
-    if isinstance(payload, UnavailablePayload):
-        started = parse_datetime(locator.admitted_at)
-        assert started is not None
+    started = parse_datetime(locator.admitted_at)
+    assert started is not None
+    identity = run_identity(instance, locator.admission_payload_digest)
+    if identity is None:
         return RunRow(
             run=locator.run_id,
             procedure="unavailable",
@@ -102,19 +122,15 @@ def run_row(instance: PlaybillInstance, locator: RunLocator) -> RunRow:
             started_at=started,
             nodes_done=locator.nodes_done,
         )
-    admission = parse_admission_payload(payload).admission
     status: RunStatus = "running"
     if locator.final_payload_digest is not None:
-        status = final_status(read_payload(bodies, locator.final_payload_digest, access=_ACCESS))
-    line = getattr(admission, "line_identity", None)
-    started = parse_datetime(locator.admitted_at)
-    assert started is not None
+        status = final_status(run_payload(instance, locator.final_payload_digest))
     return RunRow(
         run=locator.run_id,
-        procedure=admission.procedure_identity.qualified,
+        procedure=identity[0],
         status=status,
         started_at=started,
-        line=None if line is None else line.qualified,
+        line=identity[1],
         nodes_done=locator.nodes_done,
     )
 
@@ -139,7 +155,7 @@ def run_rows(
         return (), None
     partition = None if line is None else procedure_line_partition(line)
     locators, more = journal.index.run_locators(
-        _stream(instance),
+        procedure_run_stream(instance),
         limit=limit,
         partition_id=partition,
         running_only=running_only,
@@ -158,7 +174,7 @@ def run_counts(
     if journal is None:
         return 0, 0
     partition = None if line is None else procedure_line_partition(line)
-    return journal.index.run_counts(_stream(instance), partition_id=partition)
+    return journal.index.run_counts(procedure_run_stream(instance), partition_id=partition)
 
 
 # -- one run, with live progress -------------------------------------------------------
@@ -170,7 +186,7 @@ def run_ids_with_prefix(instance: PlaybillInstance, prefix: str, *, limit: int) 
     journal = procedure_run_journal(instance)
     if journal is None:
         return ()
-    return journal.index.run_ids_with_prefix(_stream(instance), prefix, limit=limit)
+    return journal.index.run_ids_with_prefix(procedure_run_stream(instance), prefix, limit=limit)
 
 
 def _graph(
@@ -202,20 +218,18 @@ def _graph(
     return kinds, edges, first
 
 
-def _payload(instance: PlaybillInstance, digest: str) -> object:
-    return read_payload(instance.body_store(), digest, access=_ACCESS)
-
-
 def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
     """One journaled run's admission, or ``None`` when the journal holds no such run."""
 
     journal = procedure_run_journal(instance)
     if journal is None:
         return None
-    locators, _more = journal.index.run_locators(_stream(instance), limit=1, run_id=run_id)
+    locators, _more = journal.index.run_locators(
+        procedure_run_stream(instance), limit=1, run_id=run_id
+    )
     if not locators:
         return None
-    payload = _payload(instance, locators[0].admission_payload_digest)
+    payload = run_payload(instance, locators[0].admission_payload_digest)
     return (
         None
         if isinstance(payload, UnavailablePayload)
@@ -328,14 +342,14 @@ def procedure_run_card(
     locators = (
         ()
         if journal is None
-        else journal.index.run_locators(_stream(instance), limit=1, run_id=run_id)[0]
+        else journal.index.run_locators(procedure_run_stream(instance), limit=1, run_id=run_id)[0]
     )
     if not locators:
         raise ProcedureRunNotFoundForRead(run_id)
     assert journal is not None
     (locator,) = locators
-    stream = _stream(instance)
-    admission_payload = _payload(instance, locator.admission_payload_digest)
+    stream = procedure_run_stream(instance)
+    admission_payload = run_payload(instance, locator.admission_payload_digest)
     if isinstance(admission_payload, UnavailablePayload):
         from cruxible_core.service.procedures.procedure_runs import (
             service_get_playbill_procedure_run,
@@ -367,7 +381,7 @@ def procedure_run_card(
     )
     nodes: list[GetRunNode] = []
     for stored in reversed(fired):
-        payload = _payload(instance, stored.record.payload_digest)
+        payload = run_payload(instance, stored.record.payload_digest)
         values = payload if isinstance(payload, Mapping) else {}
         nodes.append(
             GetRunNode(
@@ -408,7 +422,7 @@ def procedure_run_card(
             GetRunOutcome.model_validate(item.model_dump(mode="json")) for item in state.outcomes
         )
         egress = state.terminal_egress
-        final = _payload(instance, locator.final_payload_digest)
+        final = run_payload(instance, locator.final_payload_digest)
         budget = final.get("budget") if isinstance(final, Mapping) else None
         observed = budget.get("observed") if isinstance(budget, Mapping) else None
         wall = observed.get("wall_clock_microseconds") if isinstance(observed, Mapping) else None
@@ -546,7 +560,7 @@ def _current_node(
         branch = journal.index.select(
             stream, run_id=run_id, event_kind="branch_evaluated", descending=True, limit=1
         )
-        payload = _payload(instance, branch[0].record.payload_digest) if branch else None
+        payload = run_payload(instance, branch[0].record.payload_digest) if branch else None
         arm = payload.get("selected_arm") if isinstance(payload, Mapping) else None
         target = out.get(str(arm)) if arm is not None else None
     return None if target is None or target.startswith("$") else target

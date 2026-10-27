@@ -28,6 +28,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
@@ -62,7 +63,137 @@ CREATE INDEX IF NOT EXISTS evaluated_by_line ON evaluated(line_id,epoch);
 CREATE TABLE IF NOT EXISTS open_proposals (
  line_id TEXT NOT NULL, node_id TEXT NOT NULL, proposal_id TEXT NOT NULL,
  signature TEXT NOT NULL, superseded TEXT, PRIMARY KEY(line_id,node_id));
+-- What the activity feed lists, one row per transition it names (by journal
+-- position), newest first through activity_recent; each Line's name and last
+-- enablement state, which says whether a transition changed it; and the last
+-- transition the rows were derived from, which may trail progress when a
+-- binary that keeps no activity rows applied transitions: those are derived
+-- on the next open.
+CREATE TABLE IF NOT EXISTS activity (
+ sequence INTEGER PRIMARY KEY, at TEXT NOT NULL, event TEXT NOT NULL, line TEXT,
+ fields TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS activity_recent ON activity(at, sequence);
+CREATE TABLE IF NOT EXISTS activity_lines (
+ line_id TEXT PRIMARY KEY, line TEXT NOT NULL, state TEXT);
+CREATE TABLE IF NOT EXISTS activity_progress (
+ singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 """
+#: Transitions derived per transaction when activity rows trail the projection:
+#: the write lock is released between chunks, so a concurrent opener waits for
+#: one chunk, never the whole journal.
+_ACTIVITY_CHUNK = 512
+
+
+@dataclass(frozen=True)
+class DispatchActivity:
+    """One dispatch transition the activity feed lists, at its journal position.
+
+    ``event`` is ``occurrence_due``, ``occurrence_lapsed``,
+    ``line_state_changed`` or ``record_unavailable`` (a transition whose
+    payload is lost); ``fields`` are that event's own.
+    """
+
+    position: int
+    recorded_at: str
+    event: str
+    line: str | None
+    fields: dict[str, Any]
+
+
+def _activity_mark(conn: sqlite3.Connection) -> int:
+    """The last transition the activity rows were derived from (0 before any)."""
+
+    row = conn.execute("SELECT sequence FROM activity_progress WHERE singleton=1").fetchone()
+    return 0 if row is None else int(row[0])
+
+
+def _line_state(conn: sqlite3.Connection, line_id: str) -> tuple[str | None, str | None]:
+    row = conn.execute(
+        "SELECT line,state FROM activity_lines WHERE line_id=?", (line_id,)
+    ).fetchone()
+    return (None, None) if row is None else (row[0], row[1])
+
+
+def _note_activity(
+    conn: sqlite3.Connection, event: dict[str, Any] | None, sequence: int, at: str
+) -> None:
+    """Record the activity row one transition names, if it names one.
+
+    A pending occurrence is due work, a lapsed tick is listed, and a session,
+    stop or rollover is listed only when it changes the Line's enablement
+    state, read as the ``lines`` section reads it: an active segment is
+    ``running``; a stopped one is ``disabled`` when deliberately disabled or
+    stopped with no reason, else ``stopped``. A daemon restart's rollover
+    leaves a running Line running. ``None`` is a transition whose payload is
+    lost. Every transition moves the activity high-water mark, and one at or
+    below it was derived already: its row is never written again.
+    """
+
+    if sequence <= _activity_mark(conn):
+        return
+    conn.execute("INSERT OR REPLACE INTO activity_progress VALUES(1,?)", (sequence,))
+
+    def note(name: str, line: str | None, fields: dict[str, Any]) -> None:
+        conn.execute(
+            "INSERT OR IGNORE INTO activity VALUES(?,?,?,?,?)",
+            (
+                sequence,
+                at,
+                name,
+                line,
+                json.dumps({key: value for key, value in fields.items() if value is not None}),
+            ),
+        )
+
+    if event is None:
+        note("record_unavailable", None, {})
+        return
+    kind, data = event["kind"], event["data"]
+    if kind == "pending":
+        line_id, line = data["line_identity_digest"], data["line"]
+        conn.execute(
+            "INSERT INTO activity_lines VALUES(?,?,NULL) ON CONFLICT(line_id) "
+            "DO UPDATE SET line=excluded.line",
+            (line_id, line),
+        )
+        occurrence = data["occurrence"]
+        note(
+            "occurrence_due",
+            line,
+            {
+                "trigger": data.get("trigger"),
+                "occurrence": occurrence["occurrence_id"],
+                "eligible_at": occurrence["eligible_at"],
+            },
+        )
+    elif kind == "closed" and data["status"] == "lapsed":
+        line, _state = _line_state(conn, data["line_id"])
+        if line is not None:
+            note("occurrence_lapsed", line, {"occurrence": data["occurrence_id"]})
+    elif kind in {"session", "stop", "rollover"}:
+        segment = data["opened"] if kind == "rollover" else data
+        reason = segment.get("stop_reason") if kind == "stop" else None
+        state = (
+            "running"
+            if kind != "stop"
+            else "disabled"
+            if reason in {None, "disabled"}
+            else "stopped"
+        )
+        line_id, line = segment["line_id"], segment["line"]
+        _known, previous = _line_state(conn, line_id)
+        conn.execute("INSERT OR REPLACE INTO activity_lines VALUES(?,?,?)", (line_id, line, state))
+        if previous != state:
+            note(
+                "line_state_changed",
+                line,
+                {
+                    "previous": previous,
+                    "state": state,
+                    "reason": reason,
+                    "detail": segment.get("detail") if kind == "stop" else None,
+                },
+            )
 
 
 @dataclass(frozen=True)
@@ -134,10 +265,27 @@ class LineDispatchStore:
                 if columns and not {"disposition", "session_id", "trigger_id"} <= columns:
                     conn.executescript(
                         "BEGIN IMMEDIATE; DROP TABLE pending; DROP TABLE sessions; "
-                        "DROP TABLE progress;" + _SCHEMA + "COMMIT;"
+                        "DROP TABLE progress; DROP TABLE IF EXISTS activity; "
+                        "DROP TABLE IF EXISTS activity_lines; "
+                        "DROP TABLE IF EXISTS activity_progress;" + _SCHEMA + "COMMIT;"
                     )
                 conn.executescript(_SCHEMA)
+                if not is_previewing():
+                    # Activity rows trailing what the projection applied (a
+                    # projection from before them, or transitions an older
+                    # binary applied): derive the gap from the journal, a chunk
+                    # per transaction. A preview's in-memory copy is discarded,
+                    # so it never derives.
+                    row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
+                    self._derive_activity(conn, through=row[0] if row else 0)
+                # Replay under the write lock, from the progress read under it:
+                # another process may have advanced the projection since.
+                conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
+                if not is_previewing():
+                    mark = _activity_mark(conn)
+                    if row is not None and mark < row[0]:
+                        self._derive_range(conn, mark, row[0])
                 start = row[0] + 1 if row else 1
                 self._preview_sequence = start - 1
                 for stored in (
@@ -154,7 +302,9 @@ class LineDispatchStore:
                             principal_id="line-dispatch-projection", can_read_body=True
                         ),
                     )
+                    at = str(format_datetime(stored.record.recorded_at))
                     if isinstance(payload, UnavailablePayload):
+                        _note_activity(conn, None, stored.record.sequence, at)
                         conn.execute(
                             "INSERT OR REPLACE INTO progress VALUES(1,?)", (stored.record.sequence,)
                         )
@@ -162,7 +312,7 @@ class LineDispatchStore:
                         continue
                     if not isinstance(payload, dict):
                         raise ValueError("invalid Line dispatch transition")
-                    self._apply(conn, payload, stored.record.sequence)
+                    self._apply(conn, payload, stored.record.sequence, at)
                     self._preview_sequence = stored.record.sequence
                 conn.commit()
                 yield conn
@@ -170,7 +320,59 @@ class LineDispatchStore:
             finally:
                 conn.close()
 
-    def _apply(self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int) -> None:
+    def _derive_activity(self, conn: sqlite3.Connection, *, through: int) -> None:
+        """Derive the activity rows of transitions after the high-water mark, through ``through``.
+
+        One transaction per chunk of ``_ACTIVITY_CHUNK`` transitions, each
+        re-reading the mark under the write lock, so concurrent openers share
+        the work and none waits for more than one chunk.
+        """
+
+        while True:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                mark = _activity_mark(conn)
+                if mark >= through or self.journal is None:
+                    conn.commit()
+                    return
+                self._derive_range(conn, mark, min(through, mark + _ACTIVITY_CHUNK))
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+
+    def _derive_range(self, conn: sqlite3.Connection, mark: int, last: int) -> None:
+        """Derive transitions ``(mark, last]``, inside the caller's write transaction."""
+
+        if mark == 0:
+            conn.execute("DELETE FROM activity")
+            conn.execute("DELETE FROM activity_lines")
+            conn.execute("DELETE FROM activity_progress")
+        if self.journal is None or mark == last:
+            return
+        for stored in self.journal.select_records(
+            self.stream, partition_id="dispatch", first_sequence=mark + 1, last_sequence=last
+        ):
+            payload = read_payload(
+                self.instance.body_store(),
+                stored.record.payload_digest,
+                access=BodyAccessContext(
+                    principal_id="line-dispatch-projection", can_read_body=True
+                ),
+            )
+            _note_activity(
+                conn,
+                payload if isinstance(payload, dict) else None,
+                stored.record.sequence,
+                str(format_datetime(stored.record.recorded_at)),
+            )
+        # The range is covered whole, so the mark always advances.
+        conn.execute("INSERT OR REPLACE INTO activity_progress VALUES(1,?)", (last,))
+
+    def _apply(
+        self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int, at: str
+    ) -> None:
+        _note_activity(conn, event, sequence, at)
         kind, data = event["kind"], event["data"]
         if kind in {"session", "coverage", "stop", "rollover"}:
             for segment in (data["stopped"], data["opened"]) if kind == "rollover" else (data,):
@@ -282,7 +484,7 @@ class LineDispatchStore:
             # What the commit would record, applied to this preview's in-memory
             # projection only: no journal record and no body are written.
             self._preview_sequence += 1
-            self._apply(conn, event, self._preview_sequence)
+            self._apply(conn, event, self._preview_sequence, str(format_datetime(now)))
             return
         journal = self.journal
         assert journal is not None
@@ -315,8 +517,41 @@ class LineDispatchStore:
             payload=event,
             expected_head=head,
         )
-        self._apply(conn, event, stored.record.sequence)
+        self._apply(
+            conn, event, stored.record.sequence, str(format_datetime(stored.record.recorded_at))
+        )
         conn.commit()
+
+    def activity(
+        self, *, limit: int, before: tuple[str, int] | None = None
+    ) -> tuple[DispatchActivity, ...]:
+        """The newest activity rows, strictly ``before`` an (instant, position) key.
+
+        One range of ``activity_recent``: a page costs its rows, whatever the
+        journal holds.
+        """
+
+        with self.locked() as conn:
+            rows = rows_before(
+                conn,
+                select="sequence,at,event,line,fields",
+                source="activity INDEXED BY activity_recent",
+                where="1",
+                args=(),
+                columns=("at", "sequence"),
+                bound=before,
+                limit=limit,
+            )
+        return tuple(
+            DispatchActivity(
+                position=int(row[0]),
+                recorded_at=str(row[1]),
+                event=str(row[2]),
+                line=None if row[3] is None else str(row[3]),
+                fields=json.loads(row[4]),
+            )
+            for row in rows
+        )
 
     def open_proposal(self, line_id: str, node_id: str) -> LineOpenProposal | None:
         """The proposal this Line's terminal last submitted; one keyed row."""

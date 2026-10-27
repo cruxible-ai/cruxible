@@ -63,6 +63,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
@@ -76,8 +77,9 @@ _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: The projection's layout; a projection written under another one is rebuilt
 #: from the journal, which it only ever caches.
 #: 4: an identical re-sighting keeps its decision; older projections replay once.
-_SCHEMA_VERSION = 4
-_TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete")
+#: 5: the activity rows (new items and decisions, by journal position).
+_SCHEMA_VERSION = 5
+_TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete", "activity")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
@@ -95,6 +97,12 @@ CREATE TABLE IF NOT EXISTS postings (
  run_id TEXT NOT NULL, node_id TEXT NOT NULL, item_key TEXT NOT NULL, item_id TEXT NOT NULL,
  PRIMARY KEY(run_id, node_id, item_key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS unread (line TEXT PRIMARY KEY, count INTEGER NOT NULL);
+-- What the activity feed lists: each new item and each decision, by journal
+-- position (a posting batch's items in order), newest first through activity_recent.
+CREATE TABLE IF NOT EXISTS activity (
+ sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, at TEXT NOT NULL, event TEXT NOT NULL,
+ fields TEXT NOT NULL, PRIMARY KEY(sequence, ordinal)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS activity_recent ON activity(at, sequence, ordinal);
 """
 
 
@@ -119,6 +127,35 @@ class InboxItemNotFound(LookupError):
         super().__init__(selector)
         self.selector = selector
         self.ambiguous = ambiguous
+
+
+@dataclass(frozen=True)
+class InboxActivity:
+    """One inbox transition the activity feed lists, at its journal position.
+
+    ``event`` is ``inbox_posted`` (a new item), ``inbox_disposed`` or
+    ``record_unavailable`` (the lost payload the inbox stopped at); ``fields``
+    are that event's own. ``ordinal`` orders the items of one posting.
+    """
+
+    position: int
+    ordinal: int
+    recorded_at: str
+    event: str
+    fields: dict[str, Any]
+
+
+def _note_activity(
+    conn: sqlite3.Connection,
+    position: tuple[int, int],
+    at: str,
+    event: str,
+    fields: dict[str, Any],
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO activity VALUES(?,?,?,?,?)",
+        (*position, at, event, canonical_bytes(fields).decode("utf-8")),
+    )
 
 
 @dataclass(frozen=True)
@@ -283,6 +320,7 @@ class LineInboxStore:
                             principal_id="line-inbox-projection", can_read_body=True
                         ),
                     )
+                    at = str(format_datetime(stored.record.recorded_at))
                     if isinstance(payload, UnavailablePayload):
                         # Stop before applying any dependents. Persist a single
                         # incomplete marker so warm reads never scan the tail
@@ -290,11 +328,14 @@ class LineInboxStore:
                         conn.execute(
                             "INSERT OR REPLACE INTO incomplete VALUES(1,?)", (payload.digest,)
                         )
+                        _note_activity(
+                            conn, (stored.record.sequence, 0), at, "record_unavailable", {}
+                        )
                         conn.commit()
                         raise InboxUnavailable(payload.digest)
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Line inbox transition")
-                    self._apply(conn, payload, stored.record.sequence)
+                    self._apply(conn, payload, stored.record.sequence, at)
                     self._preview_sequence = stored.record.sequence
                 conn.commit()
                 yield conn
@@ -304,13 +345,38 @@ class LineInboxStore:
 
     # -- projection --------------------------------------------------------
 
-    def _apply(self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int) -> None:
+    def _apply(
+        self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int, at: str
+    ) -> None:
         kind, data = event["kind"], event["data"]
         if kind == "posted":
-            for posting in data["items"]:
-                self._apply_posting(conn, posting)
+            for ordinal, posting in enumerate(data["items"]):
+                if self._apply_posting(conn, posting):
+                    _note_activity(
+                        conn,
+                        (sequence, ordinal),
+                        at,
+                        "inbox_posted",
+                        {
+                            "item": posting["item_id"],
+                            "line": posting["line"],
+                            "procedure": posting["procedure"],
+                            "run": posting["run_id"],
+                        },
+                    )
         elif kind == "disposition":
-            self._apply_disposition(conn, data)
+            line = self._apply_disposition(conn, data)
+            _note_activity(
+                conn,
+                (sequence, 0),
+                at,
+                "inbox_disposed",
+                {
+                    "item": data["item_id"],
+                    "line": line,
+                    "disposition": data["disposition"]["disposition"],
+                },
+            )
         else:
             raise ValueError("unknown Line inbox transition")
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
@@ -324,14 +390,16 @@ class LineInboxStore:
         )
         conn.execute("DELETE FROM unread WHERE line=? AND count<=0", (line,))
 
-    def _apply_posting(self, conn: sqlite3.Connection, posting: dict[str, Any]) -> None:
+    def _apply_posting(self, conn: sqlite3.Connection, posting: dict[str, Any]) -> bool:
+        """Apply one posting; ``True`` when it made a new item, not a sighting of one."""
+
         item_id = posting["item_id"]
         cursor = conn.execute(
             "INSERT OR IGNORE INTO postings VALUES(?,?,?,?)",
             (posting["run_id"], posting["node_id"], posting["item_key"], item_id),
         )
         if cursor.rowcount == 0:
-            return  # The same run delivered this item already.
+            return False  # The same run delivered this item already.
         sighting = InboxSighting(
             run_id=posting["run_id"],
             posted_at=_instant(posting["posted_at"]),
@@ -369,7 +437,7 @@ class LineInboxStore:
                 ),
             )
             self._bump_unread(conn, envelope.line, 1)
-            return
+            return True
         current = InboxItemEnvelope.model_validate_json(row["envelope"])
         # A sighting may land out of order (a recovered run); the first and the
         # bounded recent window are kept by when each run posted.
@@ -398,9 +466,13 @@ class LineInboxStore:
                 item_id,
             ),
         )
+        return False
 
-    def _apply_disposition(self, conn: sqlite3.Connection, data: dict[str, Any]) -> None:
-        """Record one decision: the current one in the envelope, each as its own row."""
+    def _apply_disposition(self, conn: sqlite3.Connection, data: dict[str, Any]) -> str:
+        """Record one decision: the current one in the envelope, each as its own row.
+
+        Returns the item's Line.
+        """
 
         item_id = data["item_id"]
         disposition = _DISPOSITION.validate_python(data["disposition"])
@@ -429,6 +501,7 @@ class LineInboxStore:
         )
         if row["status"] == "unread":
             self._bump_unread(conn, current.line, -1)
+        return current.line
 
     # -- writes ------------------------------------------------------------
 
@@ -445,7 +518,7 @@ class LineInboxStore:
         event = {"tag": _EVENT_TAG, "kind": kind, "data": data}
         if is_previewing():
             self._preview_sequence += 1
-            self._apply(conn, event, self._preview_sequence)
+            self._apply(conn, event, self._preview_sequence, str(format_datetime(now)))
             return
         journal = self._journal(create=True)
         assert journal is not None
@@ -476,7 +549,9 @@ class LineInboxStore:
             payload=event,
             expected_head=head,
         )
-        self._apply(conn, event, stored.record.sequence)
+        self._apply(
+            conn, event, stored.record.sequence, str(format_datetime(stored.record.recorded_at))
+        )
         conn.commit()
 
     def post(
@@ -655,6 +730,49 @@ class LineInboxStore:
         )
         return items, next_cursor
 
+    def activity(
+        self, *, limit: int, before: tuple[str, int, int] | None = None
+    ) -> tuple[InboxActivity, ...]:
+        """The newest activity rows, strictly ``before`` an (instant, position, ordinal) key.
+
+        One range of ``activity_recent``: a page costs its rows. An incomplete
+        inbox still answers: its rows up to the lost payload, then that
+        payload's own ``record_unavailable`` row, never the records after it.
+        """
+
+        def page(conn: sqlite3.Connection) -> list[Any]:
+            return rows_before(
+                conn,
+                select="sequence,ordinal,at,event,fields",
+                source="activity INDEXED BY activity_recent",
+                where="1",
+                args=(),
+                columns=("at", "sequence", "ordinal"),
+                bound=before,
+                limit=limit,
+            )
+
+        try:
+            with self.locked() as conn:
+                rows = page(conn)
+        except InboxUnavailable:
+            with _LOCK:
+                conn = self._open_projection()
+                try:
+                    rows = page(conn)
+                finally:
+                    conn.close()
+        return tuple(
+            InboxActivity(
+                position=int(row[0]),
+                ordinal=int(row[1]),
+                recorded_at=str(row[2]),
+                event=str(row[3]),
+                fields=json.loads(row[4]),
+            )
+            for row in rows
+        )
+
     def unread_by_line(self) -> tuple[tuple[str, int], ...]:
         """Each Line with unread items and how many, by Line."""
 
@@ -677,6 +795,7 @@ def _same_decision(current: InboxDisposition | None, new: InboxDisposition) -> b
 
 
 __all__ = [
+    "InboxActivity",
     "InboxItemNotFound",
     "InboxUnavailable",
     "InboxPageEntry",

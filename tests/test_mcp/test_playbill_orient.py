@@ -98,6 +98,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "generations",
         "graph",
         "pins",
+        "activity",
     ]
     # `at` is a git OID (or unique prefix) or a generation number, never a free-form dict.
     assert {member.get("type") for member in schema["properties"]["at"]["anyOf"]} == {

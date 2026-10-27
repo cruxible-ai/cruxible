@@ -35,6 +35,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_key,
     journal_stream_strings,
 )
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.indexes.resident import ResidentConnections
 from cruxible_core.indexes.sql_batch import insert_rows
 
@@ -272,6 +273,21 @@ class RunLocator:
     @property
     def key(self) -> RunLocatorKey:
         return (self.index_identity, self.row_id)
+
+
+@dataclass(frozen=True)
+class EventLocator:
+    """One indexed record as a newest-first event read locates it, without its payload.
+
+    ``position`` is the record's sequence in its partition.
+    """
+
+    record_id: int
+    recorded_at: str
+    partition_id: str
+    position: int
+    run_id: str | None
+    payload_digest: str
 
 
 #: This process's resident connection to each journal index file (setup once per
@@ -724,6 +740,59 @@ class JournalIndex:
             ),
             len(rows) > limit,
         )
+
+    def newest_events(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        event_kind: str,
+        limit: int,
+        before: tuple[str, str, int] | None = None,
+    ) -> tuple[EventLocator, ...]:
+        """One kind's records, newest record instant first: a locator read.
+
+        One range of ``records_event`` in its own order (instant, partition,
+        sequence), starting strictly ``before`` that key when one is given, so a
+        page costs its rows and never the records newer or older than it. The
+        key is the journal's own (it survives an index rebuild), and a record
+        appended later with a newer instant never lands behind it. No payload
+        is read.
+        """
+
+        with self.connection() as conn:
+            rows = rows_before(
+                conn,
+                select="id,recorded_at,partition_id,sequence,run_id,payload_digest",
+                source="records INDEXED BY records_event",
+                where="stream=? AND event_kind=?",
+                args=(_key(stream), event_kind),
+                columns=("recorded_at", "partition_id", "sequence"),
+                bound=before,
+                limit=limit,
+            )
+        return tuple(
+            EventLocator(
+                record_id=int(row[0]),
+                recorded_at=str(row[1]),
+                partition_id=str(row[2]),
+                position=int(row[3]),
+                run_id=None if row[4] is None else str(row[4]),
+                payload_digest=str(row[5]),
+            )
+            for row in rows
+        )
+
+    def run_admission_digest(self, stream: JournalStreamIdentityV1, run_id: str) -> str | None:
+        """The payload digest of one run's ``admission_bound`` record: one index seek."""
+
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT payload_digest FROM records INDEXED BY records_run_kind "
+                "WHERE stream=? AND run_id=? AND event_kind='admission_bound' "
+                "ORDER BY sequence LIMIT 1",
+                (_key(stream), run_id),
+            ).fetchone()
+        return None if row is None else str(row[0])
 
     def running(
         self, stream: JournalStreamIdentityV1, *, page_size: int = 256

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`orient --section activity`: what just happened, newest first.** One
+  orient section pages accepted generations, Line occurrences and enablement
+  changes, runs started and finished, Captures landed and erased, and inbox
+  items posted and decided, merged newest first, each row an `event` with the
+  `ref` that reads it. It is read live at the current head and pages by key,
+  each source through its own index, so a page costs its rows, never the
+  history. A lost payload lists as an unavailable row. The Line dispatch and
+  inbox projections gain rebuildable activity tables, derived once from the
+  journal on first open.
 - **Subject parameters bind whichever form the caller wrote.** A query's Subject
   parameter now accepts a bare id, `kind/id` or `Subject:kind/id` wherever it is
   used; a form that cannot match refuses with a repair instead of returning no
