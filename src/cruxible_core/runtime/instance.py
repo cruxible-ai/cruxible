@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import itertools
 import json
 import os
 import secrets
@@ -15,6 +16,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import Context, ContextVar
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -53,6 +55,7 @@ from cruxible_client.contracts.errors import (
     SigningKeyError,
 )
 from cruxible_client.contracts.ledger_mirror import validate_mirror_url
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
@@ -361,6 +364,27 @@ _ACCEPTING_ADMISSIONS: OrderedDict[str, tuple[AcceptingAdmission | None]] = Orde
 
 
 _V3_POLICY_TAG = "playbill-claim-evidence-admission-policy-v3"
+#: How many pending identities an answer names; ``count`` says how many in all.
+PENDING_RESTATEMENTS_SHOWN = 20
+
+
+@dataclass(frozen=True, slots=True)
+class PendingPolicyRestatements:
+    """Live ClaimTypes waiting for `claim-type upgrade` to restate a v3 policy."""
+
+    count: int
+    #: The first ``PENDING_RESTATEMENTS_SHOWN`` identities, in byte order.
+    first: tuple[str, ...]
+
+
+_NO_PENDING_RESTATEMENTS = PendingPolicyRestatements(count=0, first=())
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingRestatementEntry:
+    by_path: PersistentMap[str]
+    by_identity: PersistentMap[str]
+    answer: PendingPolicyRestatements
 
 
 @functools.lru_cache(maxsize=1)
@@ -426,11 +450,10 @@ class PlaybillInstance:
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
-        # Live v3-policy ClaimTypes (path -> identity) per claim-types directory
-        # tree object, with the commit they were read at; the last one read is
-        # the base the next ClaimType change is carried forward from.
-        self._policy_restatements: BoundedCache[tuple[str, tuple[tuple[str, str], ...]]] = (
-            self.derived.memo("policy-restatements", max_entries=64, max_bytes=4 * 1024 * 1024)
+        # Live v3-policy ClaimTypes per claim-types directory tree object; the
+        # tree last read is the base the next ClaimType change is carried from.
+        self._policy_restatements: BoundedCache[_PendingRestatementEntry] = self.derived.memo(
+            "policy-restatements", max_entries=64, max_bytes=4 * 1024 * 1024
         )
         self._policy_restatement_base: str | None = None
         # Parsed Claim law evidence per (path, accepting sequence).
@@ -2546,58 +2569,69 @@ class PlaybillInstance:
         self.coordinate_for_oid(oid)
         return self._ledger.blobs_at(oid, paths)
 
-    def pending_policy_restatements(self, oid: str) -> tuple[str, ...]:
+    def pending_policy_restatements(self, oid: str) -> PendingPolicyRestatements:
         """Live ClaimTypes at ``oid`` stating a v3 identity evidence policy.
 
         Compiler revision 36 writes only v4 policies, so these wait for the
         governed `claim-type upgrade` before an edit. The unedited genesis seeds
         are left out: a new instance has nothing pending.
 
-        The membership is remembered by the ``claim-types`` directory's tree
-        object, so a write that changes no ClaimType reuses it. A ClaimType
-        change carries the last membership forward by Git's structural diff and
-        classifies only the ClaimType paths that diff names, so the cost follows
-        the change, never the number of ClaimTypes. Only a cold read (nothing
-        remembered) searches the directory, inside Git, for the v3 tag.
+        The answer is remembered by the ``claim-types`` directory's tree object,
+        so a write that changes no ClaimType returns it as it is. A ClaimType
+        change carries the last membership read forward by diffing the two
+        directory trees alone: only the ClaimType paths that changed are read
+        and classified, and the ordered membership is updated per path, so the
+        cost follows the change, never the number of ClaimTypes or the writes
+        elsewhere in between. Only a cold read (nothing remembered) searches the
+        directory, inside Git, for the v3 tag.
         """
 
         self.coordinate_for_oid(oid)
         directory = self._ledger.directory_tree_oid(oid, "claim-types")
         if directory is None:
-            return ()
+            return _NO_PENDING_RESTATEMENTS
         held = self._policy_restatements.get(directory)
         if held is None:
             base = self._policy_restatement_base
             previous = None if base is None else self._policy_restatements.get(base)
-            members: dict[str, str]
-            if previous is None:
+            changed: dict[str, bytes | None]
+            by_path: PersistentMap[str]
+            by_identity: PersistentMap[str]
+            if base is None or previous is None:
                 paths = self._ledger.tree_paths_containing_literal(
                     oid, literal=_V3_POLICY_TAG, paths=("claim-types",)
                 )
-                changed: dict[str, bytes | None] = dict(self._ledger.blobs_at(oid, paths))
-                members = {}
+                changed = dict(self._ledger.blobs_at(oid, paths))
+                by_path, by_identity = PersistentMap(), PersistentMap()
             else:
-                previous_oid, carried = previous
                 names = [
                     change.path
-                    for change in self._ledger.changed_entries(previous_oid, oid)
-                    if change.path.startswith("claim-types/")
+                    for change in self._ledger.directory_changes("claim-types", base, directory)
                 ]
                 present = self._ledger.blobs_at(oid, names)
                 changed = {path: present.get(path) for path in names}
-                members = dict(carried)
+                by_path, by_identity = previous.by_path, previous.by_identity
             for path, content in changed.items():
+                old = by_path.get(path)
+                if old is not None:
+                    by_path, by_identity = by_path.delete(path), by_identity.delete(old)
                 identity = None if content is None else _pending_restatement(path, content)
-                if identity is None:
-                    members.pop(path, None)
-                else:
-                    members[path] = identity
-            held = (oid, tuple(sorted(members.items())))
-            self._policy_restatements.put(
-                directory, held, weight=sum(len(a) + len(b) for a, b in held[1]) + 128
+                if identity is not None:
+                    by_path = by_path.set(path, identity)
+                    by_identity = by_identity.set(identity, path)
+            held = _PendingRestatementEntry(
+                by_path=by_path,
+                by_identity=by_identity,
+                answer=PendingPolicyRestatements(
+                    count=len(by_identity),
+                    first=tuple(itertools.islice(by_identity, PENDING_RESTATEMENTS_SHOWN)),
+                ),
             )
+            # The ordered maps share their nodes with the previous entry; only
+            # the paths this change touched are new, so a flat weight suffices.
+            self._policy_restatements.put(directory, held, weight=1024)
         self._policy_restatement_base = directory
-        return tuple(sorted((identity for _path, identity in held[1]), key=str.encode))
+        return held.answer
 
     def _require_proposal_object(self, oid: str, proposal_id: str | None) -> None:
         if self._ledger.object_exists(oid):

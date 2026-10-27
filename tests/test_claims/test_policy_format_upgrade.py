@@ -389,12 +389,23 @@ def test_a_v3_policy_v4_cannot_state_exactly_is_refused_with_a_typed_reason(
     assert "cruxible claim-type propose" in refusal.reason
 
 
-@pytest.mark.parametrize("extra", [5, 50])
+@pytest.mark.parametrize(("extra", "writes"), [(25, 3), (60, 12)])
 def test_the_first_next_after_one_claim_type_edit_costs_the_edit(
-    revision_35: tuple[PlaybillInstance, Any, str], monkeypatch: pytest.MonkeyPatch, extra: int
+    revision_35: tuple[PlaybillInstance, Any, str],
+    monkeypatch: pytest.MonkeyPatch,
+    extra: int,
+    writes: int,
 ) -> None:
-    """The pending set is carried forward by the change, not re-read whole."""
+    """The pending set follows the change: not the ClaimTypes, not other writes.
 
+    Both sizes pend more ClaimTypes than an answer names, so every count below
+    is the same at both: a warm read walks nothing, the update after one
+    ClaimType edit classifies that ClaimType alone, sees only its own path
+    (never the unrelated writes since the last read) and walks only the names
+    the answer shows.
+    """
+
+    import cruxible_client.contracts.persistent as persistent
     import cruxible_core.runtime.instance as instance_module
     from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 
@@ -427,8 +438,77 @@ def test_the_first_next_after_one_claim_type_edit_costs_the_edit(
     tree[claim_type_path(current)] = render_claim_type(v4)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="current-type")
     expected = sorted(f"ClaimType:{item}" for item in pending)[:20]
-    warm = service_playbill_next(instance, request=_request(instance)).status.compiler
+
+    # Count, only inside the pending read, what it classifies, walks and diffs.
+    counts = {"classified": 0, "walked": 0, "changed_paths": 0, "searched": 0}
+    inside = [False]
+    classify = getattr(instance_module, "_pending_restatement", None)
+    nodes = persistent._nodes
+    ledger_type = type(instance._ledger)
+    diffs = {
+        name: getattr(ledger_type, name)
+        for name in ("changed_entries", "directory_changes")
+        if hasattr(ledger_type, name)
+    }
+    search = ledger_type.tree_paths_containing_literal
+    read = instance_module.PlaybillInstance.pending_policy_restatements
+
+    def counted_classify(path: str, content: bytes) -> str | None:
+        counts["classified"] += 1
+        assert classify is not None
+        return classify(path, content)
+
+    def counted_nodes(root: Any) -> Any:
+        for node in nodes(root):
+            counts["walked"] += inside[0]
+            yield node
+
+    def counted_diff(name: str) -> Any:
+        def run(self: Any, *args: Any, **kwargs: Any) -> Any:
+            changes = diffs[name](self, *args, **kwargs)
+            counts["changed_paths"] += len(changes) if inside[0] else 0
+            return changes
+
+        return run
+
+    def counted_search(self: Any, *args: Any, **kwargs: Any) -> Any:
+        counts["searched"] += inside[0]
+        return search(self, *args, **kwargs)
+
+    def counted_read(self: Any, oid: str) -> Any:
+        inside[0] = True
+        try:
+            return read(self, oid)
+        finally:
+            inside[0] = False
+
+    monkeypatch.setattr(instance_module, "_pending_restatement", counted_classify, raising=False)
+    monkeypatch.setattr(persistent, "_nodes", counted_nodes)
+    for name in diffs:
+        monkeypatch.setattr(ledger_type, name, counted_diff(name))
+    monkeypatch.setattr(ledger_type, "tree_paths_containing_literal", counted_search)
+    monkeypatch.setattr(
+        instance_module.PlaybillInstance, "pending_policy_restatements", counted_read
+    )
+
+    def facet() -> Any:
+        for key in counts:
+            counts[key] = 0
+        return service_playbill_next(instance, request=_request(instance)).status.compiler
+
+    warm = facet()
     assert warm.detail["count"] == len(pending) and warm.detail["claim_types"] == expected
+    # An unchanged head answers from what it remembers, walking nothing.
+    again = facet()
+    assert again.detail == warm.detail
+    assert counts == {"classified": 0, "walked": 0, "changed_paths": 0, "searched": 0}
+    # Writes elsewhere change no ClaimType; each read after one walks nothing.
+    for index in range(writes):
+        assert _write(instance, f"project.work_item/wi-{100 + index}", "ready").status == (
+            "accepted"
+        )
+        assert facet().detail == warm.detail
+        assert counts == {"classified": 0, "walked": 0, "changed_paths": 0, "searched": 0}
 
     tree = _tree(instance)
     tree[claim_type_path(current)] = render_claim_type(
@@ -440,21 +520,8 @@ def test_the_first_next_after_one_claim_type_edit_costs_the_edit(
         )
     )
     _land(instance, owner, tree, name="describe")
-
-    classified: list[str] = []
-    classify = getattr(instance_module, "_pending_restatement", None)
-
-    def counted(path: str, content: bytes) -> str | None:
-        classified.append(path)
-        assert classify is not None
-        return classify(path, content)
-
-    def no_search(*_args: object, **_kwargs: object) -> tuple[str, ...]:
-        raise AssertionError("a warm pending set is never searched for again")
-
-    monkeypatch.setattr(instance_module, "_pending_restatement", counted, raising=False)
-    monkeypatch.setattr(type(instance._ledger), "tree_paths_containing_literal", no_search)
-    after = service_playbill_next(instance, request=_request(instance)).status.compiler
+    after = facet()
     assert after.detail["count"] == len(pending) and after.detail["claim_types"] == expected
-    # Flat in the number of ClaimTypes: only the edited one is read again.
-    assert classified == [claim_type_path(current)]
+    # Flat in the ClaimTypes and the writes in between: the one edited ClaimType
+    # is diffed and classified, and only the names the answer shows are walked.
+    assert counts == {"classified": 1, "walked": 20, "changed_paths": 1, "searched": 0}

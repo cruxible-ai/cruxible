@@ -5412,10 +5412,6 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     )
 
 
-#: The pending ClaimTypes a compiler facet names; ``count`` says how many in all.
-_PENDING_CLAIM_TYPES_SHOWN = 20
-
-
 def _claim_type_upgrade_health(
     instance: PlaybillInstance, detail: Mapping[str, object]
 ) -> PlaybillNextHealthV1:
@@ -5432,7 +5428,7 @@ def _claim_type_upgrade_health(
     if head.compiler != LIGHT_ARTIFACTS_COMPILER:
         return PlaybillNextHealthV1(state="current", detail=detail)
     pending = instance.pending_policy_restatements(head.git_oid)
-    if not pending:
+    if not pending.count:
         return PlaybillNextHealthV1(state="current", detail=detail)
     upgrade = PlaybillNextRepairV1(
         operation="cruxible.claim-type.upgrade",
@@ -5443,8 +5439,8 @@ def _claim_type_upgrade_health(
         state="claim_type_upgrade_available",
         detail={
             **detail,
-            "count": len(pending),
-            "claim_types": list(pending[:_PENDING_CLAIM_TYPES_SHOWN]),
+            "count": pending.count,
+            "claim_types": list(pending.first),
             "message": (
                 "these ClaimTypes state a v3 evidence policy and keep working as they are; "
                 "editing one waits for `cruxible claim-type upgrade` to restate it as v4"
