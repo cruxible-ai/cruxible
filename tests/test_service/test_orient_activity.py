@@ -426,6 +426,60 @@ def test_transitions_an_older_binary_applied_are_derived_on_the_next_open(
     assert (row.previous, row.state) == ("stopped", "running")
 
 
+def test_a_concurrent_opener_never_rewrites_rows_it_already_derived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another opener advances the projection while this one derives: nothing is replayed twice.
+
+    The interleaving is deterministic: right after this opener's chunked
+    derive commits (releasing the write lock), another opener enables and then
+    disables the Line. This opener must read progress again under its own
+    write lock, so it replays neither transition, and the rows the other
+    opener wrote keep the states they were derived against.
+    """
+
+    from cruxible_core.service.procedures.line_dispatch import service_disable_line
+
+    instance, _procedure, names = _world(tmp_path)
+    service_playbill_orient(instance, section="activity", limit=1)
+    real = LineDispatchStore._derive_activity
+    interleaved: list[bool] = []
+    enabled_at = READ_TIME + timedelta(minutes=5)
+    disabled_at = enabled_at + timedelta(minutes=1)
+    replayed: list[int] = []
+    real_apply = LineDispatchStore._apply
+
+    def derive(self: LineDispatchStore, conn: Any, *, through: int) -> None:
+        real(self, conn, through=through)
+        if not interleaved:
+            interleaved.append(True)
+            name = names["line"].removeprefix("Line:")
+            service_enable_line(
+                instance,
+                name,
+                principal=LOCAL,
+                actor=_actor(instance),
+                now=enabled_at,
+                daemon_id="daemon",
+            )
+            service_disable_line(instance, name, actor=_actor(instance), now=disabled_at)
+            interleaved.append(False)
+
+    def apply(self: LineDispatchStore, conn: Any, event: Any, sequence: int, at: str) -> None:
+        if interleaved == [True, False]:
+            replayed.append(sequence)
+        real_apply(self, conn, event, sequence, at)
+
+    monkeypatch.setattr(LineDispatchStore, "_derive_activity", derive)
+    monkeypatch.setattr(LineDispatchStore, "_apply", apply)
+    rows = service_playbill_orient(instance, section="activity", limit=2).activity
+    assert interleaved == [True, False] and replayed == []
+    assert rows is not None
+    disabled, enabled = rows
+    assert (disabled.at, disabled.previous, disabled.state) == (disabled_at, "running", "disabled")
+    assert (enabled.at, enabled.previous, enabled.state) == (enabled_at, "stopped", "running")
+
+
 def _accept_at(instance: Any, owner: Any, name: str, timestamp: str) -> int:
     from tests.support.queries import subject_query_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
