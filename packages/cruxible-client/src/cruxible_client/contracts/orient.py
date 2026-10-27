@@ -28,6 +28,7 @@ from cruxible_client.contracts.claim_types import (
     EvidenceRequirement,
     RevisionEvidence,
 )
+from cruxible_client.contracts.line_dispatch import LineEnablementStopReason
 from cruxible_client.contracts.operational_reads import (
     LineEnablementState,
     LiveView,
@@ -406,12 +407,15 @@ class OrientGeneration(_StrictOrientModel):
 
 
 class _OrientActivityRow(_StrictOrientModel):
-    """What every activity row carries: when it happened, as its own record says."""
+    """What every activity row carries: when it happened, as its own record says.
 
-    #: The instant the record behind the row was recorded: a journal record's
-    #: own instant, or a generation's acceptance time. A Procedure run records
-    #: every event at its evaluation instant, so a run's finish and its Captures
-    #: carry the instant it started.
+    ``at`` is the instant the record behind the row carries, never the read's
+    clock; each event's docstring says which. Rows are newest first by it,
+    except that a generation is placed no later than the one accepted before
+    it in sequence, whatever its own time says.
+    """
+
+    #: The record's own instant: a journal record's, or a generation's acceptance.
     at: datetime
 
 
@@ -420,7 +424,10 @@ class OrientActivityGenerationAccepted(_OrientActivityRow):
 
     ``ref`` (and ``proposal``) is the proposal whose admission accepted it, which
     ``get`` reads; genesis has neither. ``because`` is cut at 500 characters
-    (``because_truncated``).
+    (``because_truncated``). ``at`` is its acceptance time (the accepted
+    candidate's timestamp, or genesis's commit time); a candidate's timestamp
+    need not follow sequence, so the row is placed no later than the
+    generation accepted after it.
     """
 
     event: Literal["generation_accepted"] = "generation_accepted"
@@ -439,7 +446,8 @@ class OrientActivityOccurrenceDue(_OrientActivityRow):
     """A Trigger made one occurrence of a Line pending work, eligible from ``eligible_at``.
 
     ``trigger`` is the Trigger that derived it, absent for an explicit
-    evaluation that names none. ``ref`` is the Line.
+    evaluation that names none. ``ref`` is the Line. ``at`` is when the
+    evaluation that found it recorded it pending.
     """
 
     event: Literal["occurrence_due"] = "occurrence_due"
@@ -451,7 +459,10 @@ class OrientActivityOccurrenceDue(_OrientActivityRow):
 
 
 class OrientActivityOccurrenceLapsed(_OrientActivityRow):
-    """A pending timed tick lapsed as a new enablement opened; a retry still runs it."""
+    """A pending timed tick lapsed as a new enablement opened; a retry still runs it.
+
+    ``at`` is when the enablement that lapsed it was recorded.
+    """
 
     event: Literal["occurrence_lapsed"] = "occurrence_lapsed"
     ref: str
@@ -462,8 +473,9 @@ class OrientActivityOccurrenceLapsed(_OrientActivityRow):
 class OrientActivityRunStarted(_OrientActivityRow):
     """A Procedure run was admitted; ``ref`` (``ProcedureRun:<run>``) reads it.
 
-    ``unavailable`` marks a run whose admission payload is lost: the run is
-    still listed, without its Procedure or Line.
+    ``at`` is the run's evaluation instant, the ``started_at`` the runs
+    section shows. ``unavailable`` marks a run whose admission payload is
+    lost: the run is still listed, without its Procedure or Line.
     """
 
     event: Literal["run_started"] = "run_started"
@@ -477,6 +489,9 @@ class OrientActivityRunStarted(_OrientActivityRow):
 class OrientActivityRunFinished(_OrientActivityRow):
     """A Procedure run finished with ``status``, in the runs section's vocabulary.
 
+    ``at`` is the run's evaluation instant, not the wall time it finished:
+    every record of a run carries that one instant (the executor's
+    deterministic clock), so a finish lists beside its start, above it.
     ``unavailable`` marks a lost payload: a lost final payload reads as
     ``operational_failed``, as the runs section shows it.
     """
@@ -494,8 +509,10 @@ class OrientActivityCaptureLanded(_OrientActivityRow):
     """A run landed a Capture: ``capture`` is its handle, ``ref`` its ``Capture:<digest>``.
 
     ``contract`` names the CaptureContract it was taken under and
-    ``logical_source`` the external source it read, when it read one.
-    ``unavailable`` marks a lost payload: the landing is listed by its run alone.
+    ``logical_source`` the external source it read, when it read one. ``at``
+    is the landing run's evaluation instant, like its start and finish.
+    ``unavailable`` marks a lost payload or an unreadable Capture: the landing
+    is listed by its run alone.
     """
 
     event: Literal["capture_landed"] = "capture_landed"
@@ -512,7 +529,8 @@ class OrientActivityInboxPosted(_OrientActivityRow):
     """A Line's run posted a new inbox item; ``ref`` is its id, which ``inbox get`` reads.
 
     Only a new item is listed: a run posting the same payload again counts a
-    sighting on the item and is not new work.
+    sighting on the item and is not new work. ``at`` is when the posting was
+    recorded: a run posts at its own evaluation instant.
     """
 
     event: Literal["inbox_posted"] = "inbox_posted"
@@ -523,7 +541,10 @@ class OrientActivityInboxPosted(_OrientActivityRow):
 
 
 class OrientActivityInboxDisposed(_OrientActivityRow):
-    """An agent recorded a decision on an inbox item: acknowledged, dismissed or linked."""
+    """An agent recorded a decision on an inbox item: acknowledged, dismissed or linked.
+
+    ``at`` is when the decision was recorded.
+    """
 
     event: Literal["inbox_disposed"] = "inbox_disposed"
     ref: str
@@ -534,11 +555,14 @@ class OrientActivityInboxDisposed(_OrientActivityRow):
 class OrientActivityLineStateChanged(_OrientActivityRow):
     """A Line's enablement moved from ``previous`` to ``state``; ``ref`` is the Line.
 
-    Enabling makes it ``running``; a stop makes it ``stopped`` (``reason`` says
-    why) or, when deliberately disabled, ``disabled``. ``previous`` is absent
-    the first time a Line is enabled. A daemon restart keeps a running Line
+    The states read as the ``lines`` section reads them: enabling makes a Line
+    ``running``; a stop makes it ``stopped`` (``reason`` says why), or
+    ``disabled`` when deliberately disabled or stopped with no reason (a
+    segment ending before its successor opens). ``previous`` is absent the
+    first time a Line is enabled. A daemon restart keeps a running Line
     running and is not listed; ``stalled`` is read from due work, never
-    recorded, so it never appears here.
+    recorded, so it never appears here. ``at`` is when the enable or stop was
+    recorded.
     """
 
     event: Literal["line_state_changed"] = "line_state_changed"
@@ -546,15 +570,15 @@ class OrientActivityLineStateChanged(_OrientActivityRow):
     line: str
     previous: LineEnablementState | None = Field(default=None, exclude_if=_is_none)
     state: LineEnablementState
-    reason: str | None = Field(default=None, exclude_if=_is_none)
+    reason: LineEnablementStopReason | None = Field(default=None, exclude_if=_is_none)
     detail: str | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientActivityCaptureErased(_OrientActivityRow):
     """A Capture's retained body was erased, by ``by``; ``ref`` is the Capture.
 
-    ``unavailable`` marks a lost erasure payload: the erasure is listed without
-    the Capture it names.
+    ``at`` is when the erasure was recorded. ``unavailable`` marks a lost
+    erasure payload: the erasure is listed without the Capture it names.
     """
 
     event: Literal["capture_erased"] = "capture_erased"
@@ -568,9 +592,9 @@ class OrientActivityCaptureErased(_OrientActivityRow):
 class OrientActivityRecordUnavailable(_OrientActivityRow):
     """A Line dispatch or inbox record whose payload is lost: what it recorded is unknown.
 
-    A lost inbox payload also stops the inbox before the records after it
-    (``cruxible.inbox.unavailable``), so none of those are listed until it is
-    restored.
+    ``at`` is the lost record's own instant. A lost inbox payload also stops
+    the inbox before the records after it (``cruxible.inbox.unavailable``),
+    so none of those are listed until it is restored.
     """
 
     event: Literal["record_unavailable"] = "record_unavailable"

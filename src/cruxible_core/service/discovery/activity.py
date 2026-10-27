@@ -18,9 +18,16 @@ Order and paging. A row's key is ``(at, source, partition, position,
 ordinal)``, newest first. The cursor carries the last row's key: each
 journal source continues strictly below it, so a row recorded between pages
 (newer than the key) is never repeated, and nothing below the key is skipped.
-Accepted generations are read by sequence, because acceptance times need not
-follow sequence; the cursor carries the next sequence to read, and the merge
-places each generation by its acceptance time.
+Accepted generations are read by sequence, and their acceptance times need
+not follow sequence (a candidate's timestamp is checked for spelling, not for
+order). A generation is therefore placed by an effective key: its acceptance
+time clamped to no later than the one above it in the walk, a running minimum
+from the walk's first head down, which the cursor carries (with the next
+sequence to read) so a later page continues the same keys. Its ``at`` stays
+its true acceptance time. A generation accepted after the walk's first page
+is placed by its true time and listed if that is below the page boundary,
+like a journal record landing between pages; each later page reads those
+generations (the ones accepted during the walk), never the history below.
 
 Missing payloads follow the best-effort exhaust rule: the row still appears,
 marked ``unavailable`` (``record_unavailable`` when what the record said is
@@ -89,27 +96,40 @@ _RUN_SOURCES: Mapping[str, str] = {
 
 @dataclass(frozen=True)
 class ActivityPosition:
-    """Where a page stopped: its last row's key, and the next generation to read.
+    """Where a page stopped: its last row's key, and where the ledger walk stands.
 
-    ``ledger_next`` is ``-1`` once genesis was listed.
+    ``ledger_next`` is the next generation to read (``-1`` once genesis was
+    listed), ``ledger_clamp`` the effective acceptance time of the last one
+    listed (``None`` before any), and ``ledger_top`` the head the walk began at.
     """
 
     key: ActivityKey
     ledger_next: int
+    ledger_clamp: str | None
+    ledger_top: int
 
     def encode(self) -> list[str]:
-        return [*self.key[:3], str(self.key[3]), str(self.key[4]), str(self.ledger_next)]
+        return [
+            *self.key[:3],
+            str(self.key[3]),
+            str(self.key[4]),
+            str(self.ledger_next),
+            self.ledger_clamp or "",
+            str(self.ledger_top),
+        ]
 
     @classmethod
     def decode(cls, values: tuple[str, ...]) -> ActivityPosition | None:
         """The position a cursor carries, or ``None`` when it is not one."""
 
-        if len(values) != 6:
+        if len(values) != 8:
             return None
-        at, source, partition, position, ordinal, ledger = values
+        at, source, partition, position, ordinal, ledger, clamp, top = values
         try:
             key = (at, source, partition, int(position), int(ordinal))
-            return cls(key=key, ledger_next=int(ledger))
+            return cls(
+                key=key, ledger_next=int(ledger), ledger_clamp=clamp or None, ledger_top=int(top)
+            )
         except ValueError:
             return None
 
@@ -118,7 +138,7 @@ class ActivityPosition:
 class _Candidate:
     key: ActivityKey
     build: Callable[[], OrientActivity]
-    #: The generation a ledger row lists.
+    #: The generation a ledger row of the walk's own history lists (not a late one).
     generation: int | None = None
 
 
@@ -180,14 +200,50 @@ class _Page:
 # -- sources ------------------------------------------------------------------------------
 
 
+def _generation_candidate(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    records: Any,
+    reasons: ChangeReasons,
+    sequence: int,
+) -> tuple[str, Callable[[], OrientActivity]]:
+    """One generation's true acceptance time (a row key) and the row it lists."""
+
+    location = history.generation(sequence)
+    at = str(format_datetime(generation_accepted_at(instance, history, records, location)))
+
+    def build() -> OrientActivity:
+        row = generation_row(instance, history, records, reasons, location)
+        return OrientActivityGenerationAccepted(
+            at=row.accepted_at,
+            ref=row.proposal,
+            sequence=row.sequence,
+            git_oid=row.git_oid,
+            proposal=row.proposal,
+            proposer=row.proposer,
+            approvals=row.approvals,
+            because=row.because,
+            because_truncated=row.because_truncated,
+            members=row.members,
+        )
+
+    return at, build
+
+
 def _ledger(
     instance: PlaybillInstance,
     history: HistoryReader,
     *,
     top: int,
+    clamp: str | None,
     limit: int,
 ) -> list[_Candidate]:
-    """Accepted generations from ``top`` down: their acceptance times are the row keys."""
+    """Accepted generations from ``top`` down, keyed by a running minimum of their times.
+
+    Each key is the generation's acceptance time, clamped to no later than the
+    key above it (``clamp`` for the first): sorted by sequence, the keys are
+    sorted newest first however the acceptance times run.
+    """
 
     if top < 0:
         return []
@@ -195,26 +251,32 @@ def _ledger(
     reasons = ChangeReasons(instance)
     rows: list[_Candidate] = []
     for sequence in range(top, max(top - limit - 1, -1), -1):
-        location = history.generation(sequence)
-        at = str(format_datetime(generation_accepted_at(instance, history, records, location)))
-
-        def build(location: Any = location) -> OrientActivity:
-            row = generation_row(instance, history, records, reasons, location)
-            return OrientActivityGenerationAccepted(
-                at=row.accepted_at,
-                ref=row.proposal,
-                sequence=row.sequence,
-                git_oid=row.git_oid,
-                proposal=row.proposal,
-                proposer=row.proposer,
-                approvals=row.approvals,
-                because=row.because,
-                because_truncated=row.because_truncated,
-                members=row.members,
-            )
-
-        rows.append(_Candidate((at, "ledger", "", sequence, 0), build, generation=sequence))
+        at, build = _generation_candidate(instance, history, records, reasons, sequence)
+        clamp = at if clamp is None or at < clamp else clamp
+        rows.append(_Candidate((clamp, "ledger", "", sequence, 0), build, generation=sequence))
     return rows
+
+
+def _ledger_since(
+    instance: PlaybillInstance, history: HistoryReader, *, after: ActivityPosition | None
+) -> list[_Candidate]:
+    """Generations accepted after the walk's first page that sort below its boundary.
+
+    Keyed by their true acceptance times, as a journal record landing between
+    pages is: one newer than the boundary is never listed by this walk.
+    """
+
+    if after is None or history.sequence <= after.ledger_top:
+        return []
+    records = instance.retained_record_reader()
+    reasons = ChangeReasons(instance)
+    rows = []
+    for sequence in range(history.sequence, after.ledger_top, -1):
+        at, build = _generation_candidate(instance, history, records, reasons, sequence)
+        key: ActivityKey = (at, "ledger", "", sequence, 0)
+        if key < after.key:
+            rows.append(_Candidate(key, build))
+    return sorted(rows, key=lambda item: item.key, reverse=True)
 
 
 def _run_row(page: _Page, source: str, locator: EventLocator) -> OrientActivity:
@@ -385,9 +447,12 @@ def activity_page(
         page = _Page(instance, stack)
         built: dict[int, OrientActivity] = {}
         with instance.accepted_history_reader() as history:
-            ledger_next = history.sequence if after is None else after.ledger_next
+            top = history.sequence if after is None else after.ledger_top
+            ledger_next = top if after is None else after.ledger_next
+            clamp = None if after is None else after.ledger_clamp
             sources = [
-                _ledger(instance, history, top=ledger_next, limit=limit),
+                _ledger(instance, history, top=ledger_next, clamp=clamp, limit=limit),
+                _ledger_since(instance, history, after=after),
                 *_runs(page, after=after, limit=limit),
                 _dispatch(instance, after=after, limit=limit),
                 _inbox(instance, after=after, limit=limit),
@@ -397,16 +462,19 @@ def activity_page(
             # A generation row reads the history it was located in; the rest
             # read their payloads once the history reader is released.
             for index, item in enumerate(kept):
-                if item.generation is not None:
+                if item.key[1] == "ledger":
                     built[index] = item.build()
         rows = tuple(
             built[index] if index in built else item.build() for index, item in enumerate(kept)
         )
     if not more or not kept:
         return rows, None
-    listed = [item.generation for item in kept if item.generation is not None]
+    listed = [item for item in kept if item.generation is not None]
     return rows, ActivityPosition(
-        key=kept[-1].key, ledger_next=min(listed) - 1 if listed else ledger_next
+        key=kept[-1].key,
+        ledger_next=listed[-1].key[3] - 1 if listed else ledger_next,
+        ledger_clamp=listed[-1].key[0] if listed else clamp,
+        ledger_top=top,
     )
 
 

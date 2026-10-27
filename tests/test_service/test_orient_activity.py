@@ -363,16 +363,136 @@ def test_an_incomplete_inbox_lists_up_to_its_lost_payload(tmp_path: Path) -> Non
     assert inbox[0].at == decided.record.recorded_at
 
 
-def test_a_projection_from_before_the_feed_derives_its_rows_once(world) -> None:  # type: ignore[no-untyped-def]
+def test_a_projection_from_before_the_feed_derives_its_rows_in_chunks(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_core.exhaust import line_dispatch
+    from cruxible_core.storage.preview_fence import previewing
+
     instance, _procedure, _names = world
     whole = service_playbill_orient(instance, section="activity", limit=100).activity
     store = LineDispatchStore(instance)
-    connection = sqlite3.connect(store.path)
-    connection.executescript(
-        "DROP TABLE activity; DROP TABLE activity_lines; PRAGMA user_version=0;"
-    )
-    connection.close()
+
+    def forget() -> None:
+        connection = sqlite3.connect(store.path)
+        connection.executescript(
+            "DROP TABLE activity; DROP TABLE activity_lines; DROP TABLE activity_progress;"
+        )
+        connection.close()
+
+    def mark() -> object:
+        connection = sqlite3.connect(store.path)
+        try:
+            return connection.execute("SELECT sequence FROM activity_progress").fetchone()
+        except sqlite3.OperationalError:
+            return None  # no table: nothing was derived into the file
+        finally:
+            connection.close()
+
+    forget()
+    # A preview's copy is discarded: it never derives, and the file keeps no mark.
+    with previewing(), store.locked():
+        pass
+    assert mark() is None
+    monkeypatch.setattr(line_dispatch, "_ACTIVITY_CHUNK", 2)
     assert service_playbill_orient(instance, section="activity", limit=100).activity == whole
+    with store.locked() as conn:
+        progress = conn.execute("SELECT sequence FROM progress").fetchone()[0]
+    assert mark() == (progress,)
+
+
+def test_transitions_an_older_binary_applied_are_derived_on_the_next_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binary that keeps no activity rows leaves a gap; the next open derives it."""
+
+    from cruxible_core.exhaust import line_dispatch
+
+    instance, _procedure, names = _world(tmp_path)
+    service_playbill_orient(instance, section="activity", limit=1)
+    enabled_at = READ_TIME + timedelta(minutes=5)
+    monkeypatch.setattr(line_dispatch, "_note_activity", lambda *_args: None)
+    service_enable_line(
+        instance,
+        names["line"].removeprefix("Line:"),
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=enabled_at,
+        daemon_id="daemon",
+    )
+    monkeypatch.undo()
+    (row, *_rest) = service_playbill_orient(instance, section="activity", limit=5).activity or ()
+    assert row.event == "line_state_changed" and row.at == enabled_at
+    assert (row.previous, row.state) == ("stopped", "running")
+
+
+def _accept_at(instance: Any, owner: Any, name: str, timestamp: str) -> int:
+    from tests.support.queries import subject_query_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(subject_query_members(name))
+    _accept_tree(instance, owner, tree, timestamp=timestamp, proposal_name=name)
+    return instance.accepted_history()[-1].sequence
+
+
+def _out_of_order(tmp_path: Path) -> tuple[Any, Any, Any]:
+    """Generations whose acceptance stamps run backwards, between journal records."""
+
+    instance, _line, procedure, owner = line_world(
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
+    )
+    for name, minute in (("late-a", 40), ("late-b", 10), ("late-c", 50)):
+        _accept_at(instance, owner, name, f"2026-08-24T15:{minute}:00.000000Z")
+    for minute in (20, 45, 55):
+        at = datetime.fromisoformat(f"2026-08-24T15:{minute}:00+00:00")
+        _synthetic(instance, procedure, "attempt_finalized", run=f"j{minute}", at=at)
+    return instance, procedure, owner
+
+
+def _identity(row: Any) -> tuple[str, object]:
+    return row.event, getattr(row, "sequence", None) or getattr(row, "run", None)
+
+
+def test_out_of_order_acceptance_times_walk_like_one_page(tmp_path: Path) -> None:
+    instance, _procedure, _owner = _out_of_order(tmp_path)
+    whole = list(service_playbill_orient(instance, section="activity", limit=100).activity or ())
+    assert len({_identity(row) for row in whole}) == len(whole)
+    generations = [row.sequence for row in whole if row.event == "generation_accepted"]
+    assert generations == sorted(generations, reverse=True)
+    order = [_identity(row) for row in whole]
+    head = generations[0]
+    # 15:50, then 15:10 placed by its own time; 15:40 below it is placed no later.
+    assert order.index(("run_finished", "RUN-j55")) < order.index(("generation_accepted", head))
+    assert order.index(("generation_accepted", head)) < order.index(("run_finished", "RUN-j45"))
+    assert order.index(("run_finished", "RUN-j20")) < order.index(("generation_accepted", head - 1))
+    assert whole[order.index(("generation_accepted", head - 2))].at.minute == 40
+    for limit in (1, 2, 3):
+        assert _walk(instance, limit=limit) == whole
+
+
+def test_a_generation_accepted_between_pages_is_listed_once_when_below_the_boundary(
+    tmp_path: Path,
+) -> None:
+    instance, _procedure, owner = _out_of_order(tmp_path)
+    before = list(service_playbill_orient(instance, section="activity", limit=100).activity or ())
+    first = service_playbill_orient(instance, section="activity", limit=2)
+    assert first.activity is not None and first.next_cursor is not None
+    older = _accept_at(instance, owner, "between-old", "2026-08-24T15:30:00.000000Z")
+    newer = _accept_at(instance, owner, "between-new", "2026-08-24T17:00:00.000000Z")
+    rest: list[Any] = []
+    cursor = first.next_cursor
+    while cursor is not None:
+        page = service_playbill_orient(instance, section="activity", limit=1, cursor=cursor)
+        rest.extend(page.activity or ())
+        cursor = page.next_cursor
+    walked = [*first.activity, *rest]
+    listed = [row.sequence for row in walked if row.event == "generation_accepted"]
+    assert listed.count(older) == 1 and newer not in listed
+    assert [row for row in walked if getattr(row, "sequence", None) != older] == before
+    order = [_identity(row) for row in walked]
+    assert order.index(("run_finished", "RUN-j45")) < order.index(("generation_accepted", older))
+    assert order.index(("generation_accepted", older)) < order.index(("run_finished", "RUN-j20"))
 
 
 # -- cost -------------------------------------------------------------------------------------

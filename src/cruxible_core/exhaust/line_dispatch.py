@@ -63,17 +63,24 @@ CREATE TABLE IF NOT EXISTS open_proposals (
  line_id TEXT NOT NULL, node_id TEXT NOT NULL, proposal_id TEXT NOT NULL,
  signature TEXT NOT NULL, superseded TEXT, PRIMARY KEY(line_id,node_id));
 -- What the activity feed lists, one row per transition it names (by journal
--- position), newest first through activity_recent; and each Line's name and
--- last enablement state, which says whether a transition changed it.
+-- position), newest first through activity_recent; each Line's name and last
+-- enablement state, which says whether a transition changed it; and the last
+-- transition the rows were derived from, which may trail progress when a
+-- binary that keeps no activity rows applied transitions: those are derived
+-- on the next open.
 CREATE TABLE IF NOT EXISTS activity (
  sequence INTEGER PRIMARY KEY, at TEXT NOT NULL, event TEXT NOT NULL, line TEXT,
  fields TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS activity_recent ON activity(at, sequence);
 CREATE TABLE IF NOT EXISTS activity_lines (
  line_id TEXT PRIMARY KEY, line TEXT NOT NULL, state TEXT);
+CREATE TABLE IF NOT EXISTS activity_progress (
+ singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 """
-#: The projection's ``user_version`` once its activity rows cover the whole journal.
-_ACTIVITY_VERSION = 1
+#: Transitions derived per transaction when activity rows trail the projection:
+#: the write lock is released between chunks, so a concurrent opener waits for
+#: one chunk, never the whole journal.
+_ACTIVITY_CHUNK = 512
 
 
 @dataclass(frozen=True)
@@ -106,10 +113,14 @@ def _note_activity(
 
     A pending occurrence is due work, a lapsed tick is listed, and a session,
     stop or rollover is listed only when it changes the Line's enablement
-    state: a stop with no reason (its successor segment follows) and a daemon
-    restart's rollover leave a running Line running. ``None`` is a transition
-    whose payload is lost.
+    state, read as the ``lines`` section reads it: an active segment is
+    ``running``; a stopped one is ``disabled`` when deliberately disabled or
+    stopped with no reason, else ``stopped``. A daemon restart's rollover
+    leaves a running Line running. ``None`` is a transition whose payload is
+    lost. Every transition moves the activity high-water mark.
     """
+
+    conn.execute("INSERT OR REPLACE INTO activity_progress VALUES(1,?)", (sequence,))
 
     def note(name: str, line: str | None, fields: dict[str, Any]) -> None:
         conn.execute(
@@ -151,9 +162,13 @@ def _note_activity(
     elif kind in {"session", "stop", "rollover"}:
         segment = data["opened"] if kind == "rollover" else data
         reason = segment.get("stop_reason") if kind == "stop" else None
-        if kind == "stop" and reason is None:
-            return
-        state = "running" if kind != "stop" else "disabled" if reason == "disabled" else "stopped"
+        state = (
+            "running"
+            if kind != "stop"
+            else "disabled"
+            if reason in {None, "disabled"}
+            else "stopped"
+        )
         line_id, line = segment["line_id"], segment["line"]
         _known, previous = _line_state(conn, line_id)
         conn.execute("INSERT OR REPLACE INTO activity_lines VALUES(?,?,?)", (line_id, line, state))
@@ -240,15 +255,17 @@ class LineDispatchStore:
                     conn.executescript(
                         "BEGIN IMMEDIATE; DROP TABLE pending; DROP TABLE sessions; "
                         "DROP TABLE progress; DROP TABLE IF EXISTS activity; "
-                        "DROP TABLE IF EXISTS activity_lines;" + _SCHEMA + "COMMIT;"
+                        "DROP TABLE IF EXISTS activity_lines; "
+                        "DROP TABLE IF EXISTS activity_progress;" + _SCHEMA + "COMMIT;"
                     )
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
-                if conn.execute("PRAGMA user_version").fetchone()[0] < _ACTIVITY_VERSION:
-                    # A projection written before the activity rows: derive them
-                    # once from the journal it has applied, then keep them current.
+                if not is_previewing():
+                    # Activity rows trailing what the projection applied (a
+                    # projection from before them, or transitions an older
+                    # binary applied): derive the gap from the journal. A
+                    # preview's in-memory copy is discarded, so it never derives.
                     self._derive_activity(conn, through=row[0] if row else 0)
-                    conn.execute(f"PRAGMA user_version={_ACTIVITY_VERSION}")
                 start = row[0] + 1 if row else 1
                 self._preview_sequence = start - 1
                 for stored in (
@@ -284,28 +301,55 @@ class LineDispatchStore:
                 conn.close()
 
     def _derive_activity(self, conn: sqlite3.Connection, *, through: int) -> None:
-        """Derive the activity rows of the journal's first ``through`` transitions."""
+        """Derive the activity rows of transitions after the high-water mark, through ``through``.
 
-        conn.execute("DELETE FROM activity")
-        conn.execute("DELETE FROM activity_lines")
-        if self.journal is None or through == 0:
-            return
-        for stored in self.journal.select_records(
-            self.stream, partition_id="dispatch", first_sequence=1, last_sequence=through
-        ):
-            payload = read_payload(
-                self.instance.body_store(),
-                stored.record.payload_digest,
-                access=BodyAccessContext(
-                    principal_id="line-dispatch-projection", can_read_body=True
-                ),
-            )
-            _note_activity(
-                conn,
-                payload if isinstance(payload, dict) else None,
-                stored.record.sequence,
-                str(format_datetime(stored.record.recorded_at)),
-            )
+        One transaction per chunk of ``_ACTIVITY_CHUNK`` transitions, each
+        re-reading the mark under the write lock, so concurrent openers share
+        the work and none waits for more than one chunk.
+        """
+
+        while True:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT sequence FROM activity_progress WHERE singleton=1"
+                ).fetchone()
+                mark = 0 if row is None else int(row[0])
+                if mark > through:
+                    mark = 0  # rows past what the projection holds: derive again
+                if mark == 0:
+                    conn.execute("DELETE FROM activity")
+                    conn.execute("DELETE FROM activity_lines")
+                    conn.execute("DELETE FROM activity_progress")
+                if mark >= through or self.journal is None:
+                    conn.commit()
+                    return
+                last = min(through, mark + _ACTIVITY_CHUNK)
+                for stored in self.journal.select_records(
+                    self.stream,
+                    partition_id="dispatch",
+                    first_sequence=mark + 1,
+                    last_sequence=last,
+                ):
+                    payload = read_payload(
+                        self.instance.body_store(),
+                        stored.record.payload_digest,
+                        access=BodyAccessContext(
+                            principal_id="line-dispatch-projection", can_read_body=True
+                        ),
+                    )
+                    _note_activity(
+                        conn,
+                        payload if isinstance(payload, dict) else None,
+                        stored.record.sequence,
+                        str(format_datetime(stored.record.recorded_at)),
+                    )
+                # The chunk is covered whole, so the mark always advances.
+                conn.execute("INSERT OR REPLACE INTO activity_progress VALUES(1,?)", (last,))
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     def _apply(
         self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int, at: str
