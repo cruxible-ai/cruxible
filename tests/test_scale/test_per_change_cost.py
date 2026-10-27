@@ -1,4 +1,4 @@
-"""Per-change cost at adoption size: one change costs the same at 500 and 5,000 work items.
+"""Per-change cost at adoption size: one change costs the same at ten times the instance.
 
 ``test_scale_guard`` holds every route to its change between worlds of about 20
 and 200 work items. Several costs only show at adoption size: a case-fold check
@@ -6,9 +6,17 @@ that walked a flat directory per added path, a slot lookup the planner turned
 into a walk of a predicate, lowering that re-indexed every staged Claim per
 member, a catch-up that re-bound the projection per Claim, ledger reads that
 resolved the repository path and re-read a commit per call. This guard builds
-two worlds of one shape, SMALL (500 work items) and LARGE (5,000), each grown
-by bulk writes of 500 creates (a Subject, its key Claim and a title Claim each),
-then applies the same change to both and counts its work, never its time:
+two worlds of one shape, SMALL and LARGE (ten times SMALL), each grown by bulk
+writes of up to 500 creates (a Subject, its key Claim and a title Claim each),
+then applies the same change to both and counts its work, never its time.
+
+Sizes: by default 100 and 1,000 work items, so the ordinary run (CI included)
+stays near the scale guard's cost. The adoption-size run, 500 and 5,000 (about
+five minutes of world building), is opt-in like the repository's other heavy
+suites: ``CRUXIBLE_RUN_ADOPTION_SCALE_TESTS=1``. ``CRUXIBLE_PER_CHANGE_SIZES=a,b``
+picks any other pair (``a`` at least 100: the Lines name 100 existing items).
+
+Routes:
 
 - ``write.trivial``: one title revision;
 - ``write.create_100``: one write creating 100 work items, activated (100 new
@@ -81,11 +89,13 @@ from tests.test_scale import _counters, _worlds
 from tests.test_scale._counters import COUNTERS, counting, trace_sqlite
 from tests.test_scale._worlds import World, settle_advertisement
 
-# ``CRUXIBLE_PER_CHANGE_SIZES=50,100`` runs the same guard on miniature worlds.
+_ADOPTION_SCALE_ENV = "CRUXIBLE_RUN_ADOPTION_SCALE_TESTS"
 SMALL, LARGE = (
     tuple(int(size) for size in os.environ["CRUXIBLE_PER_CHANGE_SIZES"].split(","))
     if os.environ.get("CRUXIBLE_PER_CHANGE_SIZES")
     else (500, 5_000)
+    if os.environ.get(_ADOPTION_SCALE_ENV, "").lower() in {"1", "true", "yes", "on"}
+    else (100, 1_000)
 )
 BATCH = 500
 ITEMS = 100
@@ -495,17 +505,22 @@ def test_one_change_costs_the_same_at_ten_times_the_instance(
 
 
 #: Absolute ceilings in LARGE for work that grows with the change rather than the
-#: instance, so the ratio above cannot see it regress: twice what this build
-#: measured (in parentheses), well under what the unfixed build did (after it).
-#: Raise one deliberately, with the reason, never to make a run pass.
+#: instance, so the ratio above cannot see it regress. Each is what this build
+#: measured at 5,000 work items with headroom for run-to-run variation (a
+#: quarter where the count is steady, twice where it is not), and well under what
+#: the unfixed build did (the comment): a regression that brings back even part
+#: of the growth fails. Smaller worlds measure no more. Raise one deliberately,
+#: with the reason, never to make a run pass.
 CEILINGS: dict[str, dict[str, int]] = {
     # The repository key resolved per ledger read (ledger/git.py _repository_key).
     "write.create_100": {
         "realpaths": 2 * 1_089,  # unfixed 7,375
         # Lowering re-indexed every staged Claim per member (derived/derived_state.py).
-        "persistent_sets": 2 * 10_612,  # unfixed 25,774
+        # Measured 10,260-10,616 over five runs; one O(n^2) re-index of the
+        # change's 200 Claims alone adds ~15k.
+        "persistent_sets": 12_500,  # unfixed 25,774
     },
-    "line.create_100": {"persistent_sets": 2 * 6_169},  # unfixed 20,802
+    "line.create_100": {"persistent_sets": 7_500},  # measured 6,139-6,169; unfixed 20,802
     "proposal.activate_100": {"realpaths": 2 * 222},  # unfixed 2,454
     "proposal.activate_create_100": {"realpaths": 2 * 222},  # unfixed 4,354
     "tick.facts": {
