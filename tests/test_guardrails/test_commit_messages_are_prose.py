@@ -52,7 +52,7 @@ DIRECT_COMMIT_OBJECT_READ = ("cat-file", "commit")
 COMMIT_HEADER_READERS = {
     "parent_of": (b"parent ",),
     "accepting_admission": (b"cruxible-accepting-admission ",),
-    "_commit_tree": (b"tree ",),
+    "_tree_of": (b"tree ",),
     "main_history": (b"parent ",),
     "commit_timestamps": ("author ", "committer "),
     "_extend_archive_members": (b"parent ",),

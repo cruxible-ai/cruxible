@@ -127,7 +127,7 @@ from cruxible_core.coverage.indexes import (
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.indexes.typed_state import LIVE_SELECTED_SLOT_CLAIMS_SQL, utc_microseconds
 from cruxible_core.query.backends import claim_row_visibility
 from cruxible_core.query.impact import (
     SOURCE_CONTRADICTED,
@@ -2564,9 +2564,7 @@ def _with_slot_contenders(
         for claim in claims:
             subject = claim.statement.subject
             for (identity,) in projection.typed.connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                "AND subject_selector_scheme=? AND subject_selector_value=? "
-                "AND lifecycle='live' ORDER BY identity",
+                LIVE_SELECTED_SLOT_CLAIMS_SQL,
                 (
                     subject.artifact_path,
                     claim.statement.predicate,

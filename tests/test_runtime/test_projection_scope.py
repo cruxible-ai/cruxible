@@ -164,3 +164,26 @@ def test_a_write_reads_the_same_answers_with_far_fewer_binds(
 
     assert same_answer(scoped) == same_answer(unscoped)
     assert scoped_binds < len(binds), (scoped_binds, len(binds))
+
+
+def test_a_bind_only_scope_reuses_handles_and_keeps_nothing_else(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long consumer pass binds once, without a request carrier or derived values."""
+
+    from cruxible_client.contracts import content_memo
+    from cruxible_core.runtime import instance as runtime_instance
+
+    head = instance.accepted_coordinate()
+    binds = _counted_binds(instance, monkeypatch)
+    with instance.projection_bind_scope():
+        pool = runtime_instance._PROJECTION_POOL.get()
+        assert pool is not None
+        assert pool.values() is None  # no holder may keep a derived value
+        assert content_memo._REQUEST_CARRIER.get() is None  # no parses carried
+        for _ in range(3):
+            with instance.bind_accepted_projection(head) as handle:
+                assert not handle._closed
+        with instance.projection_scope():  # a request inside it joins the pool
+            assert runtime_instance._PROJECTION_POOL.get() is pool
+    assert len(binds) == 1 and handle._closed

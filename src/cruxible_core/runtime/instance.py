@@ -2623,7 +2623,7 @@ class PlaybillInstance:
             # Still one accepted generation: refused exactly as a fresh bind is.
             # Within one recovered epoch the answer cannot change, so a request
             # re-verifies a reused coordinate once per epoch, not once per lookup.
-            memo = pool.values()
+            memo = pool.verified_coordinates()
             verified = ("verified-coordinate", *key)
             recovered = self._recovered
             if memo is None or memo.get(verified) is not recovered:
@@ -2659,6 +2659,27 @@ class PlaybillInstance:
         try:
             with self._ledger.request_pack(), artifact_request():
                 yield
+        finally:
+            _PROJECTION_POOL.reset(token)
+            pool.close()
+
+    @contextmanager
+    def projection_bind_scope(self) -> Iterator[None]:
+        """Reuse bound projections on this thread, and keep nothing else.
+
+        For a pass whose reads span the whole population (a consumer's cold
+        catch-up): unlike ``projection_scope`` it opens no request carrier and
+        lets no holder keep derived values, so what the pass parses is held no
+        longer than its own work holds it. Inside a request scope it joins it.
+        """
+
+        if _PROJECTION_POOL.get() is not None:
+            yield
+            return
+        pool = ProjectionPool(derived_values=False)
+        token = _PROJECTION_POOL.set(pool)
+        try:
+            yield
         finally:
             _PROJECTION_POOL.reset(token)
             pool.close()

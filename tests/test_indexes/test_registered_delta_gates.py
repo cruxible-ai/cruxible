@@ -194,3 +194,239 @@ def test_rejected_deltas_never_read_a_payload() -> None:
                 include_paths=frozenset({"cards/big.json", "cards/a.json"}),
             )
     assert repository.read == []
+
+
+class _CountingRepository(_Repository):
+    """Counts the directory listings the collision check asks for and the names it walks."""
+
+    def __init__(self, base: tuple[str, ...], head: tuple[str, ...], blobs: dict[str, bytes]):
+        super().__init__(base, head, blobs)
+        self.listings: list[str] = []
+        self.listed_names = 0
+
+    def tree_child_names(self, oid, directory):
+        names = super().tree_child_names(oid, directory)
+        self.listings.append(directory)
+        self.listed_names += len(names)
+        return names
+
+
+def _flat_delta(directory: str, siblings: int, added: int, *, suffix: str = ".json"):
+    content = b"{}"
+    existing = tuple(f"{directory}/s{index:05d}{suffix}" for index in range(siblings))
+    new = tuple(f"{directory}/n{index:05d}{suffix}" for index in range(added))
+    repository = _CountingRepository(existing, existing + new, {_oid(content): content})
+    changes = tuple(_change(path, content) for path in new)
+    read_registered_delta(
+        repository,
+        changes,
+        base_oid="base",
+        head_oid="head",
+        parent_inventory=(siblings, 2 * siblings),
+        limits=TreeReadLimits(),
+        artifact_kinds=KINDS,
+        include_paths=frozenset(),
+    )
+    return repository
+
+
+def test_adding_to_a_flat_case_rigid_directory_costs_the_same_at_any_width() -> None:
+    # Subject file names are lowercase by grammar: no sibling can share a fold, so
+    # neither width lists the directory, and the work is the delta's alone.
+    counts = [
+        (repository.listings, repository.listed_names)
+        for repository in (
+            _flat_delta("subjects/project.work_item", width, 20) for width in (100, 5_000)
+        )
+    ]
+    assert counts[0] == counts[1] == ([], 0)
+
+
+def test_an_open_directory_is_listed_once_per_delta_however_many_names_it_gains() -> None:
+    # Card paths are unregistered: their directory is checked exactly, once.
+    repository = _flat_delta("cards/flat", 300, 40)
+    assert repository.listings == ["cards/flat"]
+    assert repository.listed_names == 340
+
+
+def test_case_rigid_tops_follow_the_registered_grammars() -> None:
+    from cruxible_client.contracts.artifacts import ArtifactKindRegistry, ArtifactPathKind
+    from cruxible_core.compiler.projection_tree import _case_rigid_tops
+
+    tops = _case_rigid_tops(KINDS)
+    # ``CLM-`` is upper case, but each of its positions admits one case only.
+    assert {"subjects", "claims", "changesets", "attestations", "governance"} <= tops
+    assert "cards" not in tops
+    import re
+
+    mixed = ArtifactKindRegistry(
+        (
+            ArtifactPathKind("subject", re.compile(r"^notes/[a-z]+\.json$")),
+            ArtifactPathKind("document", re.compile(r"^notes/[A-Z]+\.json$")),
+            ArtifactPathKind("line", re.compile(r"^marks/[A-Za-z]{3}\.json$")),
+            ArtifactPathKind("claim", re.compile(r"^upper/X[0-9]{2}\.json$")),
+        )
+    )
+    # Two positional or case-free kinds sharing a directory, or one admitting both
+    # cases at a position, leave it open; one positional kind alone is rigid.
+    assert _case_rigid_tops(mixed) == frozenset({"upper"})
+    unanchored = ArtifactKindRegistry(
+        (ArtifactPathKind("subject", re.compile(r"^[a-z]+/x\.json$")),)
+    )
+    assert _case_rigid_tops(unanchored) == frozenset()
+
+
+def test_open_kinds_still_refuse_case_fold_siblings_exactly() -> None:
+    import re
+
+    from cruxible_client.contracts.artifacts import ArtifactKindRegistry, ArtifactPathKind
+
+    kinds = ArtifactKindRegistry(
+        (ArtifactPathKind("subject", re.compile(r"^notes/[A-Za-z]+\.json$")),)
+    )
+    content = b"{}"
+    base = tuple(f"notes/s{'a' * index}.json" for index in range(1, 50)) + ("notes/Abc.json",)
+    for added, refused in (("notes/abc.json", True), ("notes/abd.json", False)):
+        repository = _Repository(base, (*base, added), {_oid(content): content})
+        call = lambda: read_registered_delta(  # noqa: E731
+            repository,
+            (_change(added, content),),
+            base_oid="base",
+            head_oid="head",
+            parent_inventory=(len(base), 2 * len(base)),
+            limits=TreeReadLimits(),
+            artifact_kinds=kinds,
+            include_paths=frozenset(),
+        )
+        if refused:
+            with pytest.raises(ProjectionFormatError, match="collision-free"):
+                call()
+        else:
+            call()
+
+
+def _git_ledger(path):
+    from cruxible_core.ledger.git import GitLedger
+
+    return GitLedger.initialize(
+        path,
+        object_format="sha1",
+        signing_key_path=path.parent / "unused-key",
+        allowed_signers_path=path.parent / "unused-signers",
+    )
+
+
+def _counting_listings(monkeypatch):
+    from cruxible_core.ledger.git import GitLedger
+
+    listed = [0]
+    child_names = GitLedger.tree_child_names
+
+    def counted(self, oid, directory):
+        names = child_names(self, oid, directory)
+        listed[0] += len(names)
+        return names
+
+    monkeypatch.setattr(GitLedger, "tree_child_names", counted)
+    return listed
+
+
+def _raw_tree(ledger, files: dict[str, bytes]) -> str:
+    """A tree Git writes without the ledger's own collision refusal."""
+
+    blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"card").decode().strip()
+    children: dict[str, dict[str, bytes]] = {}
+    rows = []
+    for path in files:
+        head, _sep, rest = path.partition("/")
+        if rest:
+            children.setdefault(head, {})[rest] = b"card"
+        else:
+            rows.append(f"100644 blob {blob}\t{head}")
+    for name, nested in children.items():
+        rows.append(f"040000 tree {_raw_tree(ledger, nested)}\t{name}")
+    listing = "".join(f"{row}\n" for row in rows).encode()
+    return ledger._git(["mktree"], input_bytes=listing).decode().strip()
+
+
+def _ledger_delta(ledger, base: dict[str, bytes], head: dict[str, bytes]):
+    base_oid, head_oid = _raw_tree(ledger, base), _raw_tree(ledger, head)
+    read_registered_delta(
+        ledger,
+        ledger.changed_entries(base_oid, head_oid),
+        base_oid=base_oid,
+        head_oid=head_oid,
+        parent_inventory=(len(base), sum(len(body) for body in base.values())),
+        limits=TreeReadLimits(),
+        artifact_kinds=KINDS,
+        include_paths=frozenset(),
+    )
+
+
+def test_an_open_directory_carries_its_folds_from_the_parent_generation(
+    tmp_path, monkeypatch
+) -> None:
+    """Card paths are checked exactly; a warm successor never re-lists its directory."""
+
+    listed = _counting_listings(monkeypatch)
+    warm = []
+    for width in (100, 2_000):
+        ledger = _git_ledger(tmp_path / f"ledger-{width}.git")
+        tree = {f"cards/flat/s{index:05d}.md": b"card" for index in range(width)}
+        grown = {**tree, "cards/flat/first.md": b"card"}
+        _ledger_delta(ledger, tree, grown)  # cold: one listing
+        listed[0] = 0
+        successor = {**grown, **{f"cards/flat/n{index:03d}.md": b"card" for index in range(20)}}
+        del successor["cards/flat/s00003.md"]
+        _ledger_delta(ledger, grown, successor)
+        warm.append(listed[0])
+        # The carried folds are exact: a name the delta removed may come back in
+        # another case, and one still held refuses its other spelling.
+        _ledger_delta(ledger, successor, {**successor, "cards/flat/S00003.md": b"card"})
+        with pytest.raises(ProjectionFormatError, match="collision-free"):
+            _ledger_delta(ledger, successor, {**successor, "cards/flat/N001.md": b"card"})
+    assert warm == [0, 0]
+
+
+def test_a_root_name_removed_from_a_rigid_top_leaves_the_root_folds_exact(tmp_path) -> None:
+    """One delta drops the last path under a rigid top and adds a root name sharing its fold.
+
+    The root's folds are carried from the parent's, so the removed top-level name
+    must leave them even though nothing below a rigid top is folded.
+    """
+
+    import re
+
+    from cruxible_client.contracts.artifacts import ArtifactKindRegistry, ArtifactPathKind
+    from cruxible_core.compiler.projection_tree import _case_rigid_tops
+
+    kinds = ArtifactKindRegistry(
+        (
+            ArtifactPathKind("subject", re.compile(r"^notes/[a-z]+\.json$")),
+            ArtifactPathKind("document", re.compile(r"^NOTES/[a-z]+\.json$")),
+            ArtifactPathKind("line", re.compile(r"^other/[a-z]+\.json$")),
+        )
+    )
+    assert {"notes", "other"} <= _case_rigid_tops(kinds)
+    ledger = _git_ledger(tmp_path / "ledger.git")
+
+    def delta(base: dict[str, bytes], head: dict[str, bytes]) -> None:
+        base_oid, head_oid = _raw_tree(ledger, base), _raw_tree(ledger, head)
+        read_registered_delta(
+            ledger,
+            ledger.changed_entries(base_oid, head_oid),
+            base_oid=base_oid,
+            head_oid=head_oid,
+            parent_inventory=(len(base), 4 * len(base)),
+            limits=TreeReadLimits(),
+            artifact_kinds=kinds,
+            include_paths=frozenset(),
+        )
+
+    first = {"notes/a.json": b"card"}
+    second = {**first, "other/a.json": b"card"}
+    delta(first, second)  # a new root name: the root's folds are remembered
+    third = {"other/a.json": b"card", "NOTES/a.json": b"card"}
+    delta(second, third)  # "notes" left the root as "NOTES" joined it: no collision
+    with pytest.raises(ProjectionFormatError, match="collision-free"):
+        delta(third, {**third, "notes/b.json": b"card"})  # and it is still held

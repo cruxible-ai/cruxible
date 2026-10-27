@@ -75,7 +75,7 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.consumers.next import rows
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.indexes.typed_state import LIVE_SELECTED_SLOT_CLAIMS_SQL, utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.startup_progress import slow_step
 from cruxible_core.storage.read_positions import (
@@ -1286,9 +1286,7 @@ def _slot_members(
         identities = tuple(
             str(row[0])
             for row in projection.typed.connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                "AND subject_selector_scheme=? AND subject_selector_value=? "
-                "AND lifecycle='live' ORDER BY identity",
+                LIVE_SELECTED_SLOT_CLAIMS_SQL,
                 (
                     subject.artifact_path,
                     key["predicate"],
@@ -2072,7 +2070,17 @@ def catch_up(instance: Any, *, now: datetime) -> None:
         original = _read_cursors(connection)
     if original is not None and original.heads == heads.key():
         return
-    with reading_at(heads.positions), recording_body_identities():
+    # One catch-up step reads the accepted head hundreds of times (per derived
+    # Claim, per resolved slot): inside the scope each read reuses one bound
+    # projection instead of binding and verifying the piece again. Bind-only: a
+    # cold catch-up derives every Claim, and a request scope would hold every
+    # parse and derivation it made until the pass ends.
+    scope = getattr(instance, "projection_bind_scope", None)
+    with (
+        nullcontext() if scope is None else scope(),
+        reading_at(heads.positions),
+        recording_body_identities(),
+    ):
         _catch_up_to(instance, heads, original, now=now, swept=swept)
 
 
