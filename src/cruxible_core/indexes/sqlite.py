@@ -577,6 +577,37 @@ def projection_logical_digest(
         raise ProjectionIntegrityError("projection cannot produce a logical digest") from exc
 
 
+def claim_list_query(
+    *,
+    subject: SemanticAddress | None,
+    predicate: str | None,
+    include_retired: bool,
+    subject_kind: str | None,
+) -> tuple[str, list[object]]:
+    """The statement ``ProjectionHandle.list_claims`` selects Claim keys with."""
+
+    values: list[object] = []
+    clauses: list[str] = []
+    if subject is not None:
+        clauses.extend(("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?"))
+        values.extend((subject.artifact_path, subject.selector.scheme, subject.selector.value))
+    if predicate is not None:
+        clauses.append("predicate=?")
+        values.append(predicate)
+    if subject_kind is not None:
+        clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+        values.append(subject_kind)
+    if not include_retired:
+        # With a Subject, ``+lifecycle`` keeps the planner on
+        # ``claims_by_subject_predicate`` (a seek) and off ``claims_by_lifecycle``
+        # (a walk of every live Claim to skip sorting one Subject's rows).
+        clauses.append("+lifecycle='live'" if subject is not None else "lifecycle='live'")
+    sql = "SELECT identity FROM claims"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return sql + " ORDER BY identity", values
+
+
 def physical_file_digest(path: Path) -> Sha256Value:
     digest = hashlib.sha256()
     try:
@@ -1041,25 +1072,13 @@ class ProjectionHandle:
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
-        values: list[object] = []
-        clauses: list[str] = []
-        sql = "SELECT identity FROM claims"
-        if subject is not None:
-            clauses.extend(
-                ("subject_path=?", "subject_selector_scheme=?", "subject_selector_value=?")
-            )
-            values.extend((subject.artifact_path, subject.selector.scheme, subject.selector.value))
-        if predicate is not None:
-            clauses.append("predicate=?")
-            values.append(predicate)
-        if subject_kind is not None:
-            clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
-            values.append(subject_kind)
-        if not include_retired:
-            clauses.append("lifecycle='live'")
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        identities = self._connection.execute(sql + " ORDER BY identity", values).fetchall()
+        sql, values = claim_list_query(
+            subject=subject,
+            predicate=predicate,
+            include_retired=include_retired,
+            subject_kind=subject_kind,
+        )
+        identities = self._connection.execute(sql, values).fetchall()
         return self.claims(tuple(row["identity"] for row in identities))
 
     def close(self) -> None:
@@ -1106,8 +1125,12 @@ class ProjectionPool:
     (projection eviction) is deferred to scope exit with ``after_close``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, derived_values: bool = True) -> None:
         self._idle: dict[object, list[ProjectionHandle]] = {}
+        # Whether holders may keep derived values for the pool's lifetime; a
+        # bind-only pool (a long consumer pass) keeps none, only its handles.
+        self._derived_values = derived_values
+        self._verified: dict[object, object] = {}
         # id(handle) -> (handle, key, checked_out) for every live adopted handle.
         self._tracked: dict[int, tuple[ProjectionHandle, object, bool]] = {}
         self._owners: list[object] = []
@@ -1127,7 +1150,15 @@ class ProjectionPool:
         Holders key them by exactly the inputs they were derived from and
         re-check whatever can move within a request before reusing one.
         """
-        return self._values if self._on_thread() else None
+        return self._values if self._derived_values and self._on_thread() else None
+
+    def verified_coordinates(self) -> dict[object, object] | None:
+        """The coordinates this request already re-verified, on its own thread only.
+
+        Kept by every pool, bind-only or not: a reused handle re-verifies its
+        coordinate once per recovered epoch, never per lookup.
+        """
+        return self._verified if self._on_thread() else None
 
     def after_close(self, key: object, run: Callable[[], object]) -> bool:
         """Run ``run`` once at scope exit, after the pool's handles release their holds.
@@ -1205,6 +1236,7 @@ class ProjectionPool:
             self._idle.clear()
             self._owners.clear()
             self._values.clear()
+            self._verified.clear()
             deferred = list(self._after_close.values())
             self._after_close.clear()
         try:

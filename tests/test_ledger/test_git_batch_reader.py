@@ -268,3 +268,99 @@ def test_bytes_replaced_on_disk_are_refused_under_their_original_id(tmp_path, ob
     tree = SnapshotTree({"claims/x.json": BlobRef(oid, len(original), ledger.read_blobs)})
     with pytest.raises(GitError, match="do not hash to their ID"):
         tree["claims/x.json"]
+
+
+def test_tree_reads_resolve_the_repository_and_its_commit_once(tmp_path, monkeypatch):
+    """Per-read work on one ledger is a stat, never a path resolution or a commit re-read."""
+
+    import os
+
+    ledger = _ledger(tmp_path / "ledger.git")
+    tree = ledger._write_tree({f"subjects/k/s{i:03d}.json": b"{}" for i in range(50)})
+    commit = (
+        ledger._git(
+            ["commit-tree", tree, "-m", "x"],
+            environment={
+                "GIT_AUTHOR_NAME": "a",
+                "GIT_AUTHOR_EMAIL": "a@a",
+                "GIT_COMMITTER_NAME": "a",
+                "GIT_COMMITTER_EMAIL": "a@a",
+            },
+        )
+        .decode()
+        .strip()
+    )
+    ledger.list_tree(commit)  # one whole listing remembered, as an activation has
+    realpaths = []
+    resolve = os.path.realpath
+    monkeypatch.setattr(
+        ledger_git.os.path, "realpath", lambda path: realpaths.append(path) or resolve(path)
+    )
+    reads = []
+    commit_tree = GitLedger._commit_tree
+    monkeypatch.setattr(
+        GitLedger,
+        "_commit_tree",
+        lambda self, oid: reads.append(oid) or commit_tree(self, oid),
+    )
+    objects = ledger_git._BatchBlobReader.objects
+    monkeypatch.setattr(
+        ledger_git._BatchBlobReader,
+        "objects",
+        lambda self, oids: reads.extend(oids) or objects(self, oids),
+    )
+    for index in range(200):
+        assert ledger.tree_has_path(commit, f"subjects/k/s{index % 50:03d}.json")
+        assert len(ledger.tree_child_names(commit, "subjects/k")) == 50
+        assert ledger._root_tree(commit) == tree
+    assert realpaths == []
+    assert reads == []
+    # A replacement at the same path is still noticed: it is resolved afresh.
+    # The old directory is moved aside, not deleted, so it keeps its inode and
+    # the replacement cannot be handed the same one (as ext4 may after a delete).
+    before = ledger_git._repository_key(ledger.path)
+    ledger.path.rename(tmp_path / "ledger-old.git")
+    _ledger(tmp_path / "ledger.git")
+    after = ledger_git._repository_key(ledger.path)
+    assert len(realpaths) == 1
+    assert after[1:] != before[1:]
+    # So is a link pointed at another repository: the same spelling, another key.
+    link = tmp_path / "current.git"
+    link.symlink_to(tmp_path / "ledger-old.git", target_is_directory=True)
+    assert ledger_git._repository_key(link)[1:] == before[1:]
+    link.unlink()
+    link.symlink_to(tmp_path / "ledger.git", target_is_directory=True)
+    assert ledger_git._repository_key(link)[1:] == after[1:]
+    assert len(realpaths) == 3
+
+
+def test_a_repository_renamed_under_a_retargeted_link_is_read_where_it_now_is(
+    tmp_path, monkeypatch
+):
+    """Same directory, same inode, a new resolved path: the key follows it, still flat."""
+
+    import os
+
+    origin = tmp_path / "origin.git"
+    ledger = _ledger(origin)
+    oid = _write(ledger, b"kept")
+    link = tmp_path / "current.git"
+    link.symlink_to(origin, target_is_directory=True)
+    through_link = GitLedger(
+        link, signing_key_path=tmp_path / "k", allowed_signers_path=tmp_path / "s"
+    )
+    assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    origin.rename(tmp_path / "moved.git")
+    link.unlink()
+    link.symlink_to(tmp_path / "moved.git", target_is_directory=True)
+    assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    assert ledger_git._repository_key(link)[0] == os.path.realpath(tmp_path / "moved.git")
+    # Once re-resolved, reads stay at one stat pair each: no further resolution.
+    realpaths = []
+    resolve = os.path.realpath
+    monkeypatch.setattr(
+        ledger_git.os.path, "realpath", lambda path: realpaths.append(path) or resolve(path)
+    )
+    for _ in range(50):
+        assert through_link.read_blobs([oid]) == {oid: b"kept"}
+    assert realpaths == []

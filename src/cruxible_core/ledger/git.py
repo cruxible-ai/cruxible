@@ -2580,8 +2580,7 @@ class GitLedger:
         """The tree a commit names, or ``oid`` itself when it is a tree."""
 
         self._validate_oid(oid)
-        tree = self._commit_tree(oid)
-        return oid if tree is None else tree
+        return self._commit_root(_repository_key(self.path), oid)
 
     def _checked_oid(self, oid: str) -> str:
         self._validate_oid(oid)
@@ -2666,6 +2665,19 @@ class GitLedger:
         entries = self._directory_entries(oid, directory)
         return () if entries is None else tuple(sorted(entries, key=_tree_order_key(entries)))
 
+    def directory_tree_oid(self, oid: str, directory: str) -> str | None:
+        """The tree object ID of one directory ("" is the root), or None if it is absent."""
+
+        if not directory:
+            self._validate_oid(oid)
+            return self._commit_root(_repository_key(self.path), oid)
+        parent, _separator, name = directory.rpartition("/")
+        entries = self._directory_entries(oid, parent)
+        entry = None if entries is None else entries.get(name)
+        if entry is None or entry[0] != b"40000":
+            return None
+        return entry[1]
+
     def _directory_entries(
         self, oid: str, directory: str
     ) -> Mapping[str, tuple[bytes, str]] | None:
@@ -2679,15 +2691,8 @@ class GitLedger:
 
         self._validate_oid(oid)
         repository = _repository_key(self.path)
-        with _PARSED_TREES_LOCK:
-            root = _COMMIT_ROOTS.get((repository, oid), _UNREAD)
-        if root is _UNREAD:
-            root = self._commit_tree(oid) or oid
-            with _PARSED_TREES_LOCK:
-                _COMMIT_ROOTS[(repository, oid)] = root
-                while len(_COMMIT_ROOTS) > _COMMIT_ROOTS_CAPACITY:
-                    _COMMIT_ROOTS.popitem(last=False)
-        entries = self._parsed_tree(repository, str(root))
+        root = self._commit_root(repository, oid)
+        entries = self._parsed_tree(repository, root)
         for part in directory.split("/") if directory else ():
             entry = entries.get(part)
             if entry is None or entry[0] != b"40000":
@@ -2724,12 +2729,33 @@ class GitLedger:
                 _PARSED_TREE_ENTRIES -= len(evicted)
         return entries
 
+    def _commit_root(self, repository: tuple[str, int, int], oid: str) -> str:
+        """The root tree a commit names, or ``oid`` itself when it is a tree; remembered.
+
+        An object ID names its bytes, so the answer never changes: read the
+        commit once per repository rather than on every tree read.
+        """
+
+        with _PARSED_TREES_LOCK:
+            root = _COMMIT_ROOTS.get((repository, oid), _UNREAD)
+        if root is _UNREAD:
+            found = _batch_reader(self.path).objects((oid,))[oid]
+            if found is None:
+                return oid  # absent here: nothing about it to remember
+            root = self._tree_of(oid, found) or oid
+            with _PARSED_TREES_LOCK:
+                _COMMIT_ROOTS[(repository, oid)] = root
+                while len(_COMMIT_ROOTS) > _COMMIT_ROOTS_CAPACITY:
+                    _COMMIT_ROOTS.popitem(last=False)
+        return str(root)
+
     def _remembered_whole_listing(self, oid: str) -> _Listing | None:
         """Whichever whole listing of this object is remembered, sized or not."""
 
         self._validate_oid(oid)
         repository = _repository_key(self.path)
-        for candidate in (oid, self._commit_tree(oid)):
+        root = self._commit_root(repository, oid)
+        for candidate in (oid, None if root == oid else root):
             if candidate is None:
                 continue
             with _TREE_LISTINGS_LOCK:
@@ -2766,7 +2792,8 @@ class GitLedger:
             # entry beneath it when it names a directory.
             whole = _remembered_listing(repository, oid, with_sizes=with_sizes)
             if whole is None:
-                tree = self._commit_tree(oid)
+                root = self._commit_root(repository, oid)
+                tree = None if root == oid else root
                 if tree is not None:
                     whole = _remembered_listing(repository, tree, with_sizes=with_sizes)
             if whole is None:
@@ -2777,7 +2804,8 @@ class GitLedger:
             return tuple(cached)
         # A commit lists as its root tree, and the tree is usually what this
         # process just wrote or listed: resolve it from the commit's own bytes.
-        tree = self._commit_tree(oid)
+        root = self._commit_root(repository, oid)
+        tree = None if root == oid else root
         if tree is not None:
             cached = _remembered_listing(repository, tree, with_sizes=with_sizes)
             if cached is not None:
@@ -2793,7 +2821,9 @@ class GitLedger:
     def _commit_tree(self, oid: str) -> str | None:
         """The root tree a commit names, or None when the object is not a commit."""
 
-        found = _batch_reader(self.path).objects((oid,))[oid]
+        return self._tree_of(oid, _batch_reader(self.path).objects((oid,))[oid])
+
+    def _tree_of(self, oid: str, found: tuple[str, bytes] | None) -> str | None:
         if found is None or found[0] != "commit":
             return None
         first = found[1].split(b"\n", 1)[0]
@@ -3616,12 +3646,44 @@ _BATCH_READERS: OrderedDict[tuple[str, int, int], _BatchBlobReader] = OrderedDic
 _BATCH_READERS_LOCK = threading.Lock()
 
 
-def _repository_key(path: Path) -> tuple[str, int, int]:
-    """This exact repository directory: a replacement at the same path differs."""
+_REPOSITORY_KEYS_CAPACITY = 64
+_REPOSITORY_KEYS: OrderedDict[str, tuple[str, int, int]] = OrderedDict()
+_REPOSITORY_KEYS_LOCK = threading.Lock()
 
-    resolved = os.path.realpath(path)
+
+def _repository_key(path: Path) -> tuple[str, int, int]:
+    """This exact repository directory: a replacement at the same path differs.
+
+    Resolved once per spelling: every later call is two ``stat`` calls, of the
+    path as spelled (symlinks followed) and of the remembered resolved path, and
+    the remembered key stands only while both still name the remembered
+    directory. A replacement, a link pointed elsewhere, or the same directory
+    reached at another resolved path (renamed and relinked; readers are opened
+    at the resolved path) is resolved again. Resolving costs a system call per
+    path component, and the ledger asks for this key on every tree, listing and
+    object read.
+    """
+
+    spelled = os.fspath(path)
+    identity = os.stat(spelled)
+    with _REPOSITORY_KEYS_LOCK:
+        remembered = _REPOSITORY_KEYS.get(spelled)
+    if remembered is not None and remembered[1:] == (identity.st_dev, identity.st_ino):
+        try:
+            located = os.stat(remembered[0])
+        except OSError:
+            located = None
+        if located is not None and remembered[1:] == (located.st_dev, located.st_ino):
+            return remembered
+    resolved = os.path.realpath(spelled)
     identity = os.stat(resolved)
-    return (resolved, identity.st_dev, identity.st_ino)
+    key = (resolved, identity.st_dev, identity.st_ino)
+    with _REPOSITORY_KEYS_LOCK:
+        _REPOSITORY_KEYS[spelled] = key
+        _REPOSITORY_KEYS.move_to_end(spelled)
+        while len(_REPOSITORY_KEYS) > _REPOSITORY_KEYS_CAPACITY:
+            _REPOSITORY_KEYS.popitem(last=False)
+    return key
 
 
 _ARCHIVE_MEMBERS: OrderedDict[tuple[tuple[str, int, int], str], PersistentMap[bool]] = OrderedDict()
@@ -3916,7 +3978,7 @@ def _after_fork_in_parent() -> None:
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
     global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK, _PACKED_REFS_LOCK, _CONFIG_READS_LOCK
-    global _PARSED_TREES_LOCK, _ENCODED_TREES_LOCK
+    global _PARSED_TREES_LOCK, _ENCODED_TREES_LOCK, _REPOSITORY_KEYS_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -3932,6 +3994,7 @@ def _after_fork_in_child() -> None:
     _CONFIG_READS_LOCK = threading.Lock()
     _PARSED_TREES_LOCK = threading.Lock()
     _ENCODED_TREES_LOCK = threading.Lock()
+    _REPOSITORY_KEYS_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):

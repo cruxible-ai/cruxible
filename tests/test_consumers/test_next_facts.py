@@ -812,3 +812,51 @@ def test_the_tally_answers_through_the_overlay_and_folds_only_cold_or_disabled(
     monkeypatch.delenv("CRUXIBLE_DISABLED_CONSUMERS")
     _catch_up(instance, fresh)
     assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) == tally
+
+
+def test_a_catch_up_binds_the_accepted_projection_once_however_many_claims_it_derives(
+    tmp_path: Path,
+) -> None:
+    """Each derived Claim and resolved slot reads the head; one catch-up binds it once.
+
+    Unscoped, every read bound and verified the piece afresh: about eight binds
+    per derived Claim, 17 s per 1k generation on a 20k instance.
+    """
+
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    binds = Counter()
+    bind = PlaybillInstance._bind_accepted_projection
+
+    def counted(self, coordinate):  # type: ignore[no-untyped-def]
+        binds["binds"] += 1
+        return bind(self, coordinate)
+
+    measured = {}
+    with patch.object(PlaybillInstance, "_bind_accepted_projection", counted):
+        for size in (5, 40):
+            (tmp_path / f"world-{size}").mkdir()
+            instance, _owner = seed_write_surface(tmp_path / f"world-{size}")
+            for step, tag in enumerate(("cold", "incremental")):
+                request = WriteRequest.model_validate(
+                    {
+                        "because": "next facts binds",
+                        "changes": [
+                            {"op": "set", "subject": f"{KIND}/{tag}-{i:03d}", "field": "title"}
+                            | {"value": f"{tag} {i}"}
+                            for i in range(size)
+                        ],
+                    }
+                )
+                outcome = service_playbill_write(instance, request=request, caller=caller())
+                assert outcome.status == "accepted", outcome.refusal
+                binds.clear()
+                with _counted() as work:
+                    _catch_up(instance, datetime.now(UTC))
+                # Every new Claim (title and key) was derived: the catch-up did its work.
+                assert len(work.claims) >= 2 * size, (size, tag, len(work.claims))
+                measured[(size, step)] = binds["binds"]
+    assert max(measured.values()) <= 2, measured

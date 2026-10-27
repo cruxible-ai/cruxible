@@ -41,7 +41,7 @@ from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.indexes.typed_state import LIVE_SELECTED_SLOT_CLAIMS_SQL, utc_microseconds
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.captures import CanonicalDuration
@@ -242,9 +242,7 @@ class RowContext:
             identities = tuple(
                 str(row[0])
                 for row in projection.typed.connection.execute(
-                    "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                    "AND subject_selector_scheme=? AND subject_selector_value=? "
-                    "AND lifecycle='live' ORDER BY identity",
+                    LIVE_SELECTED_SLOT_CLAIMS_SQL,
                     (
                         subject.artifact_path,
                         key["predicate"],

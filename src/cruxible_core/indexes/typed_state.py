@@ -400,6 +400,13 @@ LIVE_SLOT_CLAIM_DIGESTS_SQL = (
     "SELECT identity, artifact_digest FROM claims WHERE subject_path=? "
     "AND predicate=? AND qualifier IS ? AND +lifecycle='live' ORDER BY identity"
 )
+# Live Claims of one exactly selected slot (Subject path and selector, predicate),
+# any qualifier, on the same index.
+LIVE_SELECTED_SLOT_CLAIMS_SQL = (
+    "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+    "AND subject_selector_scheme=? AND subject_selector_value=? "
+    "AND +lifecycle='live' ORDER BY identity"
+)
 LIVE_SUBJECT_PREDICATE_CLAIMS_SQL = (
     "SELECT identity FROM claims WHERE subject_path=? AND predicate=? AND +lifecycle='live'"
 )
