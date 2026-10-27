@@ -528,30 +528,33 @@ def service_export_playbill_floor(
     parts = tuple(sorted(set(include)))
 
     render = floor_render_at(instance, coordinate)
-    files = dict(render.files)
     if "discovery" not in parts:
-        manifest = render.manifest()
-    else:
-        # The index's files carry their digests; only the cards are hashed here.
-        inventory = {
-            path: (*render.digests[path], changed) for path, (_content, changed) in files.items()
+        # The index's own manifest, carried from the render before.
+        return {
+            MANIFEST_PATH: render.manifest_content(),
+            **{path: render.files[path][0] for path in render.inventory},
         }
-        for path, content in _discovery_files(
-            instance,
-            coordinate=coordinate,
-            accepted=accepted,
-            access=body_access,
-            external_readers=external_readers,
-        ).items():
-            files[path] = (content, render.generation)
-            inventory[path] = (_content_digest(content), len(content), render.generation)
-        manifest = build_floor_manifest(
-            renderer=render.renderer,
-            coordinate=render.inputs.coordinate,
-            generation=render.generation,
-            notes_digest=render.notes_digest,
-            files=inventory,
-        )
+    files = dict(render.files)
+    # The index's files carry their digests; only the cards are hashed here.
+    inventory = {
+        path: (*render.digests[path], changed) for path, (_content, changed) in files.items()
+    }
+    for path, content in _discovery_files(
+        instance,
+        coordinate=coordinate,
+        accepted=accepted,
+        access=body_access,
+        external_readers=external_readers,
+    ).items():
+        files[path] = (content, render.generation)
+        inventory[path] = (_content_digest(content), len(content), render.generation)
+    manifest = build_floor_manifest(
+        renderer=render.renderer,
+        coordinate=render.inputs.coordinate,
+        generation=render.generation,
+        notes_digest=render.notes_digest,
+        files=inventory,
+    )
     return {
         MANIFEST_PATH: render_floor_manifest(manifest),
         **{item.path: files[item.path][0] for item in manifest.files},

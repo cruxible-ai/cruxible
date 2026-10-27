@@ -633,3 +633,38 @@ def test_warm_indexes_hold_live_claims_only_and_match_a_cold_build(tmp_path: Any
         assert target not in warm.inputs.live_incoming
         assert target in warm.inputs.pointed_latest
     assert _bytes(warm) == _bytes(cold)
+
+
+def test_a_warm_advance_patches_the_manifest_instead_of_rebuilding_it(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """The manifest moves with the files the advance wrote: those paths alone are validated."""
+
+    from cruxible_client.contracts import floor as floor_contracts
+    from cruxible_client.contracts.floor_inventory import FloorInventory
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, *(_set(f"{KIND}/bulk-{index}", "title", f"T{index}") for index in range(40)))
+    first = advance_floor_index(instance)
+    first.manifest_digest
+    validated: list[str] = []
+    safe = floor_contracts.safe_floor_path
+
+    def counting(value: str) -> str:
+        validated.append(value)
+        return safe(value)
+
+    def refused(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("a warm advance rebuilt the whole manifest")
+
+    monkeypatch.setattr(floor_contracts, "safe_floor_path", counting)
+    monkeypatch.setattr(FloorInventory, "build", refused)
+    _write(instance, _set(f"{KIND}/bulk-3", "status", "ready"))
+    warm = advance_floor_index(instance)
+    digest = warm.manifest_digest
+    monkeypatch.undo()
+    step = warm.steps[-1]
+    assert sorted(validated) == sorted(step.written)
+    assert len(validated) < len(warm.files)
+    assert warm.manifest() == _cold(instance).manifest()
+    assert digest == _cold(instance).manifest_digest

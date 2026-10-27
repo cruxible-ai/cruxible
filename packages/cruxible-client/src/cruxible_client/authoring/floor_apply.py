@@ -47,7 +47,7 @@ import json
 import os
 import secrets
 import stat
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,11 +61,16 @@ from cruxible_client.contracts.floor import (
     FLOOR_STAGING_NAME,
     FloorApplyResult,
     FloorDelta,
+    FloorEntry,
     FloorManifest,
-    build_floor_manifest,
-    floor_manifest_digest,
     floor_path_key,
-    render_floor_manifest,
+)
+from cruxible_client.contracts.floor_inventory import (
+    FloorInventory,
+    FloorManifestState,
+    floor_manifest_state,
+    floor_manifest_state_of,
+    known_floor_manifest,
 )
 
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
@@ -249,6 +254,8 @@ class _Installed:
     # The client's own files, by the spelling they were found under.
     local: set[str] = field(default_factory=set)
     manifest: bytes | None = None
+    # The floor ``manifest`` names, when it is a valid manifest (deltas only).
+    state: FloorManifestState | None = None
 
 
 def _walk(root: int) -> _Installed:
@@ -324,11 +331,13 @@ def _inspect(
     if not stat.S_ISREG(manifest_stat.st_mode):
         raise _Mismatch(FLOOR_MANIFEST_PATH)
     installed.manifest = _read_at(root, FLOOR_MANIFEST_PATH)
-    local = _manifest(installed.manifest)
+    local = _manifest_state(installed.manifest)
     if local is None:
         return installed
+    installed.state = local
     verified = min(manifest_stat.st_mtime_ns, os.fstat(root).st_mtime_ns) - _RECENT_NS
-    expected = {item.path: (item.content_digest, item.byte_length) for item in local.files}
+    # Every file must be stat-ed anyway; one map by path keeps that pass to a probe each.
+    expected = local.inventory.by_path()
     by_parent: dict[tuple[str, ...], set[str]] = {}
     for path in (*expected, *delta_files, *tombstones):
         parts, name = _split(path)
@@ -407,7 +416,7 @@ def _check_entry(
     directory: int,
     path: str,
     name: str,
-    expected: dict[str, tuple[str, int]],
+    expected: Mapping[str, FloorEntry],
     delta_files: set[str],
     tombstones: set[str],
     verified: int,
@@ -439,38 +448,53 @@ def _check_entry(
     if not untouched:
         installed.files[path] = ""  # a removed path still present
         return
-    digest, size = expected[path]
-    if metadata.st_size != size:
+    entry = expected[path]
+    if metadata.st_size != entry.byte_length:
         raise _Mismatch(path)
     if _changed(metadata) >= verified:
         # Changed since the floor was last verified: read it again.
-        if "sha256:" + hashlib.sha256(_read_at(directory, name)).hexdigest() != digest:
+        if "sha256:" + hashlib.sha256(_read_at(directory, name)).hexdigest() != (
+            entry.content_digest
+        ):
             raise _Mismatch(path)
-    installed.files[path] = digest
+    installed.files[path] = entry.content_digest
 
 
-def _manifest(content: bytes | None) -> FloorManifest | None:
+def _manifest_state(content: bytes | None) -> FloorManifestState | None:
+    """The floor ``content`` names, or None when it is no valid manifest.
+
+    The manifest a recent apply (or render) produced is found by its bytes,
+    already validated; any other is parsed and validated whole.
+    """
+
     if content is None:
         return None
+    known = known_floor_manifest(content)
+    if known is not None:
+        return known
     try:
-        return FloorManifest.model_validate(json.loads(content))
+        state = floor_manifest_state_of(FloorManifest.model_validate(json.loads(content)))
     except ValueError:
         return None
+    # Naming it remembers it: the next read of these bytes finds it.
+    state.digest  # noqa: B018
+    return state
 
 
 def read_floor_manifest(floor_dir: Path) -> FloorManifest | None:
-    """The directory's v5 manifest, or None when it holds no valid one."""
+    """The directory's v6 manifest, or None when it holds no valid one."""
 
     try:
         root = os.open(floor_dir, _DIRECTORY)
     except OSError:
         return None
     try:
-        return _manifest(_read_at(root, FLOOR_MANIFEST_PATH))
+        state = _manifest_state(_read_at(root, FLOOR_MANIFEST_PATH))
     except (OSError, FloorApplyError):
         return None
     finally:
         os.close(root)
+    return None if state is None else state.manifest
 
 
 @contextmanager
@@ -503,7 +527,7 @@ def _mismatch(delta: FloorDelta, message: str) -> FloorApplyResult:
 
 def _result(
     delta: FloorDelta,
-    head: FloorManifest,
+    head: FloorManifestState,
     status: Literal["applied", "unchanged"],
     written: int,
     removed: int,
@@ -516,33 +540,22 @@ def _result(
         floor_digest=head.floor_digest,
         written=written,
         removed=removed,
-        file_count=len(head.files),
+        file_count=len(head.inventory),
     )
 
 
-def _head_files(
-    delta: FloorDelta, local: FloorManifest | None
-) -> dict[str, tuple[str, int, int]] | None:
-    """The head inventory the delta builds from this directory, or None for no base."""
+def _holds_base(delta: FloorDelta, local: FloorManifestState | None) -> bool:
+    """Whether the directory's floor is the delta's base, or already its head."""
 
-    if delta.kind == "full":
-        return {}
     if local is None:
-        return None
-    local_digest = floor_manifest_digest(local)
+        return False
+    local_digest = local.digest
     holds_base = (
         local.generation == delta.base_generation
         and local.renderer == delta.renderer
         and local_digest == delta.base_manifest_digest
     )
-    if not holds_base and local_digest != delta.head_manifest_digest:
-        return None
-    removed = set(delta.tombstones)
-    return {
-        item.path: (item.content_digest, item.byte_length, item.changed_at)
-        for item in local.files
-        if item.path not in removed
-    }
+    return holds_base or local_digest == delta.head_manifest_digest
 
 
 def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
@@ -560,33 +573,42 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
                 installed = _inspect(root, set(decoded), set(delta.tombstones))
             except _Mismatch as exc:
                 return _mismatch(delta, f"the installed floor differs from its manifest at {exc}")
-        head_files = _head_files(delta, _manifest(installed.manifest))
-        if head_files is None:
+        local = installed.state
+        if delta.kind == "delta" and not _holds_base(delta, local):
             return _mismatch(
                 delta,
                 "the floor directory holds neither the delta's base "
                 f"(generation {delta.base_generation}) nor its head",
             )
-        for item in delta.files:
-            head_files[item.path] = (item.sha256, len(decoded[item.path]), item.changed_at)
+        files = {
+            item.path: (item.sha256, len(decoded[item.path]), item.changed_at)
+            for item in delta.files
+        }
         try:
-            head = build_floor_manifest(
+            # The head is the base floor minus the tombstones plus the delta's
+            # files (a full floor: just its files). Only the paths the delta
+            # names are validated; every other entry is the base's, as it was
+            # validated when it entered.
+            if local is None or delta.kind == "full":
+                inventory = FloorInventory.build(files)
+            else:
+                inventory = local.inventory.patch(files, delta.tombstones)
+            head = floor_manifest_state(
+                inventory,
                 renderer=delta.renderer,
                 coordinate=delta.head.coordinate(),
                 generation=delta.head.generation,
                 notes_digest=delta.head.notes_digest,
-                files=head_files,
             )
         except ValueError as exc:
             raise FloorApplyError(f"the floor this delta builds is invalid: {exc}") from exc
         # The floor the delta builds from this directory is exactly the head it
         # names. At an installed head this proves every replayed file, every
         # tombstone and the whole coordinate against the installed manifest.
-        if floor_manifest_digest(head) != delta.head_manifest_digest:
+        if head.digest != delta.head_manifest_digest:
             raise FloorApplyError(
                 "the floor this delta builds differs from its head manifest digest"
             )
-        wanted = {item.path: item.content_digest for item in head.files}
         stale_directories: set[str] = set()
         if delta.kind == "delta":
             # Only the delta's own entries were read. Each file it writes may
@@ -608,6 +630,7 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
                 if path in installed.files or path in installed.others
             }
         else:
+            wanted = set(head.inventory)
             # Installed entries are matched to the floor by exact spelling only.
             # Anything spelled otherwise -- a case or normalization alias of a
             # floor file, the manifest or a directory -- is never taken for it:
@@ -622,9 +645,9 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
         writes = {
             path: content
             for path, content in decoded.items()
-            if installed.files.get(path) != wanted[path]
+            if installed.files.get(path) != files[path][0]
         }
-        manifest_bytes = render_floor_manifest(head)
+        manifest_bytes = head.content
         if (
             not writes
             and not removals
