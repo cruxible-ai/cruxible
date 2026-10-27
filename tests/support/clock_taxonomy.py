@@ -379,6 +379,16 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("OrientResult", "generation"): "SETTLEMENT ORDER",
     ("OrientGeneration", "sequence"): "SETTLEMENT ORDER",
     ("OrientGeneration", "accepted_at"): "ASSERTION TIME",
+    # The activity feed: each row's own record instant (a journal record's, or a
+    # generation's acceptance), the generation a ledger row lists, and the
+    # instant a due occurrence is eligible from.
+    ("_OrientActivityRow", "at"): "ASSERTION TIME",
+    ("OrientActivityGenerationAccepted", "sequence"): "SETTLEMENT ORDER",
+    ("OrientActivityOccurrenceDue", "eligible_at"): "VALIDITY WINDOW",
+    ("EventLocator", "recorded_at"): "ASSERTION TIME",
+    ("DispatchActivity", "recorded_at"): "ASSERTION TIME",
+    ("InboxActivity", "recorded_at"): "ASSERTION TIME",
+    ("_Candidate", "generation"): "SETTLEMENT ORDER",
     # The get read: its evaluation instant, and the times it reads back.
     ("GetRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("GetResult", "evaluation_time"): "EVALUATION INSTANT",

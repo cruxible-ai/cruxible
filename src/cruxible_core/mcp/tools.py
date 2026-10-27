@@ -549,7 +549,10 @@ def register_tools(
         section: Annotated[
             contracts.OrientSection | None,
             Field(
-                description="Page one family as rows; graph: Subjects+edges; pins: what pins what."
+                description=(
+                    "Page one family as rows; graph: Subjects+edges; pins: what pins what; "
+                    "activity: what just happened, newest first."
+                )
             ),
         ] = None,
         limit: Annotated[

@@ -9130,6 +9130,19 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             )
             if row.get("because"):
                 lines.append(f"  because: {printable(row['because'])}")
+    if section == "activity":
+        for row in result["activity"]:
+            # One line per event: when, what, what it opens, then its own fields.
+            fields = (
+                f"{key}={','.join(value) if isinstance(value, list) else printable(str(value))}"
+                for key, value in row.items()
+                if key not in {"at", "event", "ref", "because"}
+            )
+            lines.append(
+                "  ".join((row["at"], row["event"], row.get("ref") or "-", *fields)).rstrip()
+            )
+            if row.get("because"):
+                lines.append(f"  because: {printable(row['because'])}")
     if section == "subject_kinds":
         for row in result["subject_kinds"]:
             rule = (
@@ -9187,8 +9200,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     type=click.Choice(list(get_args(contracts.OrientSection))),
     default=None,
     help=(
-        "Page one artifact family, graph (live Subjects, then the Claims between them) "
-        "or pins (what each live definition pins)."
+        "Page one artifact family, graph (live Subjects, then the Claims between them), "
+        "pins (what each live definition pins) or activity (what just happened, newest first)."
     ),
 )
 @click.option(

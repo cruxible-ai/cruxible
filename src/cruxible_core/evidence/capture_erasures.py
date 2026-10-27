@@ -40,7 +40,10 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend, journal_log_path
+from cruxible_core.exhaust.journal_index import EventLocator
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     CAPTURE_ERASURE_JOURNAL_FAMILY,
     JournalEventKindV1,
@@ -322,6 +325,33 @@ class CaptureErasureStore:
                         sequence=int(row[0]),
                     )
         return found
+
+    def newest(
+        self, *, limit: int, before: tuple[str, str, int] | None = None
+    ) -> tuple[EventLocator, ...]:
+        """The newest erasure records' locators, strictly ``before`` a journal key.
+
+        One range of the journal index, newest instant first; no payload is
+        read (``read_record`` reads one).
+        """
+
+        journal = self._journal(create=False)
+        if journal is None:
+            return ()
+        journal.index.catch_up(self.stream, (_PARTITION,))
+        return journal.index.newest_events(
+            self.stream, event_kind=_EVENT_KIND, limit=limit, before=before
+        )
+
+    def read_record(self, locator: EventLocator) -> CaptureErasureRecord | UnavailablePayload:
+        """The erasure one located record names; a lost payload reads as unavailable."""
+
+        payload = read_payload(self._body_store(), locator.payload_digest, access=_ACCESS)
+        if isinstance(payload, UnavailablePayload):
+            return payload
+        recorded_at = parse_datetime(locator.recorded_at)
+        assert recorded_at is not None
+        return _record(payload, recorded_at)
 
     def head_sequence(self) -> int:
         """The journal's newest sequence (0 before any record): where a follower starts."""

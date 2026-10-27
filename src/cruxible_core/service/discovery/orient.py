@@ -42,7 +42,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.orient import (
     ORIENT_ATTENTION_TOP,
-    ORIENT_BECAUSE_MAX_CHARS,
     ORIENT_DEFAULT_LIMIT,
     ORIENT_DEFAULT_QUERIES,
     ORIENT_KIND_FIELDS,
@@ -54,7 +53,6 @@ from cruxible_client.contracts.orient import (
     OrientClaimCounts,
     OrientDocument,
     OrientEnablements,
-    OrientGeneration,
     OrientInterface,
     OrientInterfaceProvider,
     OrientKind,
@@ -88,6 +86,7 @@ from cruxible_core.indexes.query_selection import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
@@ -95,6 +94,7 @@ from cruxible_core.service.discovery.discovery import (
     accepted_provider_interfaces,
 )
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.generation_rows import generation_row
 from cruxible_core.service.discovery.graph import GraphKey, graph_page
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.next import (
@@ -946,6 +946,16 @@ def service_playbill_orient(
             limit=limit,
             surface=surface,
         )
+    # What just happened reads each journal's own index and the ledger, never the vocabulary.
+    if section == "activity":
+        return _activity_section(
+            instance,
+            base,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # The ledger timeline reads the history index alone, never the vocabulary.
     if section == "generations":
         return _generations_section(
@@ -1575,47 +1585,15 @@ def _generations_section(
         )
     reasons = ChangeReasons(instance)
     records = instance.retained_record_reader()
-    rows: list[OrientGeneration] = []
     with instance.accepted_history_reader(at=served) as history:
         top = history.sequence if after is None else int(after[0]) - 1
         locations = [
             history.generation(sequence) for sequence in range(top, max(top - limit, -1), -1)
         ]
         reasons.prefetch(item for item in locations if item.sequence > 0)
-        for location in locations:
-            if location.sequence == 0:
-                rows.append(
-                    OrientGeneration(
-                        sequence=0,
-                        git_oid=location.git_oid,
-                        accepted_at=instance.accepted_evaluation_time(location.git_oid),
-                    )
-                )
-                continue
-            facts = history.read_generation_facts(location.sequence, records)
-            admission = reasons.admission(location)
-            because = None if admission is None else admission.rationale or None
-            cut = because is not None and len(because) > ORIENT_BECAUSE_MAX_CHARS
-            rows.append(
-                OrientGeneration(
-                    sequence=location.sequence,
-                    git_oid=location.git_oid,
-                    accepted_at=datetime.strptime(facts.timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-                        tzinfo=UTC
-                    ),
-                    changeset_digest=location.source_record_digest,
-                    proposal=None if admission is None else admission.proposal_id,
-                    proposer=location.actor_id,
-                    approvals=tuple(dict.fromkeys(facts.approval_signers)),
-                    because=(
-                        because[: ORIENT_BECAUSE_MAX_CHARS - 1] + "…"
-                        if cut and because is not None
-                        else because
-                    ),
-                    because_truncated=cut,
-                    members=facts.member_count,
-                )
-            )
+        rows = [
+            generation_row(instance, history, records, reasons, location) for location in locations
+        ]
     last = rows[-1].sequence if rows else 0
     next_cursor = (
         _keyset_cursor(view="generations", served=served, last_key=[str(last)])
@@ -1631,6 +1609,60 @@ def _generations_section(
         **base,
         section="generations",
         generations=tuple(rows),
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _activity_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """What just happened, newest first: operational state read live, like the runs.
+
+    Each source reads at most ``limit + 1`` index rows through its own index
+    and only the page's rows read payloads (``service.discovery.activity``), so
+    a page costs its rows; it continues by key, so a record landing between
+    pages is never repeated or skipped.
+    """
+
+    after = _keyset_after(continuation)
+    position = None if after is None else ActivityPosition.decode(after)
+    if after is not None and position is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    rows, stop = activity_page(instance, limit=limit, after=position)
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="activity", served=served, last_key=stop.encode())
+    )
+    calls: list[_Call] = []
+    first = next(
+        (
+            ref
+            for row in rows
+            if (ref := getattr(row, "ref", None)) is not None and not ref.startswith("INB-")
+        ),
+        None,
+    )
+    if first is not None:
+        calls.append(_Call("get", (("ref", first),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "activity"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="activity",
+        live=live_view(instance, ("activity",)),
+        activity=rows,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

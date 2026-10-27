@@ -17,7 +17,7 @@ sent as nulls, so the default answer stays small on a real instance.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,7 @@ from cruxible_client.contracts.claim_types import (
     RevisionEvidence,
 )
 from cruxible_client.contracts.operational_reads import (
+    LineEnablementState,
     LiveView,
     OrientCapture,
     OrientCaptureContract,
@@ -36,6 +37,7 @@ from cruxible_client.contracts.operational_reads import (
     OrientMandate,
     OrientPrediction,
     RunRow,
+    RunStatus,
 )
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.principals import AuthoringRefusal
@@ -62,6 +64,7 @@ OrientSection: TypeAlias = Literal[
     "generations",
     "graph",
     "pins",
+    "activity",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -402,6 +405,195 @@ class OrientGeneration(_StrictOrientModel):
     members: int = Field(default=0, ge=0)
 
 
+class _OrientActivityRow(_StrictOrientModel):
+    """What every activity row carries: when it happened, as its own record says."""
+
+    #: The instant the record behind the row was recorded: a journal record's
+    #: own instant, or a generation's acceptance time. A Procedure run records
+    #: every event at its evaluation instant, so a run's finish and its Captures
+    #: carry the instant it started.
+    at: datetime
+
+
+class OrientActivityGenerationAccepted(_OrientActivityRow):
+    """The ledger accepted a generation; the fields are an ``OrientGeneration``'s.
+
+    ``ref`` (and ``proposal``) is the proposal whose admission accepted it, which
+    ``get`` reads; genesis has neither. ``because`` is cut at 500 characters
+    (``because_truncated``).
+    """
+
+    event: Literal["generation_accepted"] = "generation_accepted"
+    ref: str | None = Field(default=None, exclude_if=_is_none)
+    sequence: int = Field(ge=0)
+    git_oid: str
+    proposal: str | None = Field(default=None, exclude_if=_is_none)
+    proposer: str | None = Field(default=None, exclude_if=_is_none)
+    approvals: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    because: str | None = Field(default=None, exclude_if=_is_none)
+    because_truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+    members: int = Field(default=0, ge=0)
+
+
+class OrientActivityOccurrenceDue(_OrientActivityRow):
+    """A Trigger made one occurrence of a Line pending work, eligible from ``eligible_at``.
+
+    ``trigger`` is the Trigger that derived it, absent for an explicit
+    evaluation that names none. ``ref`` is the Line.
+    """
+
+    event: Literal["occurrence_due"] = "occurrence_due"
+    ref: str
+    line: str
+    trigger: str | None = Field(default=None, exclude_if=_is_none)
+    occurrence: str
+    eligible_at: datetime
+
+
+class OrientActivityOccurrenceLapsed(_OrientActivityRow):
+    """A pending timed tick lapsed as a new enablement opened; a retry still runs it."""
+
+    event: Literal["occurrence_lapsed"] = "occurrence_lapsed"
+    ref: str
+    line: str
+    occurrence: str
+
+
+class OrientActivityRunStarted(_OrientActivityRow):
+    """A Procedure run was admitted; ``ref`` (``ProcedureRun:<run>``) reads it.
+
+    ``unavailable`` marks a run whose admission payload is lost: the run is
+    still listed, without its Procedure or Line.
+    """
+
+    event: Literal["run_started"] = "run_started"
+    ref: str
+    run: str
+    procedure: str | None = Field(default=None, exclude_if=_is_none)
+    line: str | None = Field(default=None, exclude_if=_is_none)
+    unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class OrientActivityRunFinished(_OrientActivityRow):
+    """A Procedure run finished with ``status``, in the runs section's vocabulary.
+
+    ``unavailable`` marks a lost payload: a lost final payload reads as
+    ``operational_failed``, as the runs section shows it.
+    """
+
+    event: Literal["run_finished"] = "run_finished"
+    ref: str
+    run: str
+    procedure: str | None = Field(default=None, exclude_if=_is_none)
+    line: str | None = Field(default=None, exclude_if=_is_none)
+    status: RunStatus
+    unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class OrientActivityCaptureLanded(_OrientActivityRow):
+    """A run landed a Capture: ``capture`` is its handle, ``ref`` its ``Capture:<digest>``.
+
+    ``contract`` names the CaptureContract it was taken under and
+    ``logical_source`` the external source it read, when it read one.
+    ``unavailable`` marks a lost payload: the landing is listed by its run alone.
+    """
+
+    event: Literal["capture_landed"] = "capture_landed"
+    ref: str | None = Field(default=None, exclude_if=_is_none)
+    capture: str | None = Field(default=None, exclude_if=_is_none)
+    contract: str | None = Field(default=None, exclude_if=_is_none)
+    logical_source: str | None = Field(default=None, exclude_if=_is_none)
+    run: str
+    line: str | None = Field(default=None, exclude_if=_is_none)
+    unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class OrientActivityInboxPosted(_OrientActivityRow):
+    """A Line's run posted a new inbox item; ``ref`` is its id, which ``inbox get`` reads.
+
+    Only a new item is listed: a run posting the same payload again counts a
+    sighting on the item and is not new work.
+    """
+
+    event: Literal["inbox_posted"] = "inbox_posted"
+    ref: str
+    line: str
+    procedure: str
+    run: str
+
+
+class OrientActivityInboxDisposed(_OrientActivityRow):
+    """An agent recorded a decision on an inbox item: acknowledged, dismissed or linked."""
+
+    event: Literal["inbox_disposed"] = "inbox_disposed"
+    ref: str
+    line: str
+    disposition: Literal["acknowledged", "dismissed", "linked"]
+
+
+class OrientActivityLineStateChanged(_OrientActivityRow):
+    """A Line's enablement moved from ``previous`` to ``state``; ``ref`` is the Line.
+
+    Enabling makes it ``running``; a stop makes it ``stopped`` (``reason`` says
+    why) or, when deliberately disabled, ``disabled``. ``previous`` is absent
+    the first time a Line is enabled. A daemon restart keeps a running Line
+    running and is not listed; ``stalled`` is read from due work, never
+    recorded, so it never appears here.
+    """
+
+    event: Literal["line_state_changed"] = "line_state_changed"
+    ref: str
+    line: str
+    previous: LineEnablementState | None = Field(default=None, exclude_if=_is_none)
+    state: LineEnablementState
+    reason: str | None = Field(default=None, exclude_if=_is_none)
+    detail: str | None = Field(default=None, exclude_if=_is_none)
+
+
+class OrientActivityCaptureErased(_OrientActivityRow):
+    """A Capture's retained body was erased, by ``by``; ``ref`` is the Capture.
+
+    ``unavailable`` marks a lost erasure payload: the erasure is listed without
+    the Capture it names.
+    """
+
+    event: Literal["capture_erased"] = "capture_erased"
+    ref: str | None = Field(default=None, exclude_if=_is_none)
+    capture: str | None = Field(default=None, exclude_if=_is_none)
+    contract: str | None = Field(default=None, exclude_if=_is_none)
+    by: str | None = Field(default=None, exclude_if=_is_none)
+    unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class OrientActivityRecordUnavailable(_OrientActivityRow):
+    """A Line dispatch or inbox record whose payload is lost: what it recorded is unknown.
+
+    A lost inbox payload also stops the inbox before the records after it
+    (``cruxible.inbox.unavailable``), so none of those are listed until it is
+    restored.
+    """
+
+    event: Literal["record_unavailable"] = "record_unavailable"
+    journal: Literal["line_dispatch", "line_inbox"]
+
+
+#: One row of the activity feed, by ``event``.
+OrientActivity: TypeAlias = Annotated[
+    OrientActivityGenerationAccepted
+    | OrientActivityOccurrenceDue
+    | OrientActivityOccurrenceLapsed
+    | OrientActivityRunStarted
+    | OrientActivityRunFinished
+    | OrientActivityCaptureLanded
+    | OrientActivityInboxPosted
+    | OrientActivityInboxDisposed
+    | OrientActivityLineStateChanged
+    | OrientActivityCaptureErased
+    | OrientActivityRecordUnavailable,
+    Field(discriminator="event"),
+]
+
+
 class OrientGraphNode(_StrictOrientModel):
     """One live Subject: ``subject`` is its ``kind/id`` ref, which ``get`` reads."""
 
@@ -493,8 +685,9 @@ class OrientResult(_StrictOrientModel):
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the principal registry (``principals``),
       the governed policies in force (``policies``), the accepted generations
-      newest first (``generations``), the Subject graph (``graph``) or the
-      pins between live definitions (``pins``), paged.
+      newest first (``generations``), the Subject graph (``graph``), the
+      pins between live definitions (``pins``) or what just happened, newest
+      first (``activity``), paged.
       The default map counts the operational families under ``artifacts`` and
       never inlines their rows.
 
@@ -548,6 +741,10 @@ class OrientResult(_StrictOrientModel):
     # The required pins of live definitions (section "pins"), by source then
     # ordinal, keyset-paged; never a Claim's, a Subject's or an attestation's.
     pins: tuple[OrientPin, ...] | None = Field(default=None, exclude_if=_is_none)
+    # What just happened, newest first (section "activity"): accepted generations,
+    # Line occurrences and enablement changes, run starts and finishes, Captures
+    # landed and erased, inbox postings and decisions. Read live, keyset-paged.
+    activity: tuple[OrientActivity, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line enablements and
@@ -568,6 +765,18 @@ __all__ = [
     "ORIENT_SAMPLE_SUBJECTS",
     "UNDECLARED_KIND_IDENTITY",
     "Head",
+    "OrientActivity",
+    "OrientActivityCaptureErased",
+    "OrientActivityCaptureLanded",
+    "OrientActivityGenerationAccepted",
+    "OrientActivityInboxDisposed",
+    "OrientActivityInboxPosted",
+    "OrientActivityLineStateChanged",
+    "OrientActivityOccurrenceDue",
+    "OrientActivityOccurrenceLapsed",
+    "OrientActivityRecordUnavailable",
+    "OrientActivityRunFinished",
+    "OrientActivityRunStarted",
     "OrientEnablements",
     "OrientArtifactCounts",
     "OrientAttention",
