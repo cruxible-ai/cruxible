@@ -44326,7 +44326,7 @@
           },
           "OrientActivityGenerationAccepted": {
             "additionalProperties": false,
-            "description": "The ledger accepted a generation; the fields are an ``OrientGeneration``'s.\n\n``ref`` (and ``proposal``) is the proposal whose admission accepted it, which\n``get`` reads; genesis has neither. ``because`` is cut at 500 characters\n(``because_truncated``). ``at`` is its acceptance time (the accepted\ncandidate's timestamp, or genesis's commit time); a candidate's timestamp\nneed not follow sequence, so the row is placed no later than the\ngeneration accepted after it.",
+            "description": "The ledger accepted a generation; the fields are an ``OrientGeneration``'s.\n\n``ref`` (and ``proposal``) is the proposal whose admission accepted it, which\n``get`` reads; genesis has neither. ``because`` is cut at 500 characters\n(``because_truncated``). ``at`` is its acceptance time (the accepted\ncandidate's timestamp, or genesis's commit time); a candidate's timestamp\nneed not follow sequence, so the row is placed at the latest acceptance\ntime at or below it in sequence.",
             "properties": {
               "approvals": {
                 "default": [],

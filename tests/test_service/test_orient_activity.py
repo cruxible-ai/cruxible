@@ -462,11 +462,18 @@ def test_out_of_order_acceptance_times_walk_like_one_page(tmp_path: Path) -> Non
     assert generations == sorted(generations, reverse=True)
     order = [_identity(row) for row in whole]
     head = generations[0]
-    # 15:50, then 15:10 placed by its own time; 15:40 below it is placed no later.
-    assert order.index(("run_finished", "RUN-j55")) < order.index(("generation_accepted", head))
-    assert order.index(("generation_accepted", head)) < order.index(("run_finished", "RUN-j45"))
-    assert order.index(("run_finished", "RUN-j20")) < order.index(("generation_accepted", head - 1))
-    assert whole[order.index(("generation_accepted", head - 2))].at.minute == 40
+    # Stamps 15:40, 15:10, 15:50 by sequence: 15:10 is placed at 15:40, the
+    # latest at or below it, and each row keeps its own stamp as ``at``.
+    expected = [
+        ("run_finished", "RUN-j55"),
+        ("generation_accepted", head),
+        ("run_finished", "RUN-j45"),
+        ("generation_accepted", head - 1),
+        ("generation_accepted", head - 2),
+        ("run_finished", "RUN-j20"),
+    ]
+    assert [item for item in order if item in expected] == expected
+    assert [whole[order.index(item)].at.minute for item in expected] == [55, 50, 45, 10, 40, 20]
     for limit in (1, 2, 3):
         assert _walk(instance, limit=limit) == whole
 
@@ -476,9 +483,12 @@ def test_a_generation_accepted_between_pages_is_listed_once_when_below_the_bound
 ) -> None:
     instance, _procedure, owner = _out_of_order(tmp_path)
     before = list(service_playbill_orient(instance, section="activity", limit=100).activity or ())
-    first = service_playbill_orient(instance, section="activity", limit=2)
+    head = before[1].sequence
+    first = service_playbill_orient(instance, section="activity", limit=1)
     assert first.activity is not None and first.next_cursor is not None
+    # Placed at 15:50 (the latest stamp at or below it): below the boundary, listed once.
     older = _accept_at(instance, owner, "between-old", "2026-08-24T15:30:00.000000Z")
+    # Placed at 17:00: above the boundary, listed by a fresh read, never by this walk.
     newer = _accept_at(instance, owner, "between-new", "2026-08-24T17:00:00.000000Z")
     rest: list[Any] = []
     cursor = first.next_cursor
@@ -491,8 +501,60 @@ def test_a_generation_accepted_between_pages_is_listed_once_when_below_the_bound
     assert listed.count(older) == 1 and newer not in listed
     assert [row for row in walked if getattr(row, "sequence", None) != older] == before
     order = [_identity(row) for row in walked]
-    assert order.index(("run_finished", "RUN-j45")) < order.index(("generation_accepted", older))
-    assert order.index(("generation_accepted", older)) < order.index(("run_finished", "RUN-j20"))
+    assert order[:3] == [
+        ("run_finished", "RUN-j55"),
+        ("generation_accepted", older),
+        ("generation_accepted", head),
+    ]
+    fresh = service_playbill_orient(instance, section="activity", limit=1).activity
+    assert fresh is not None and fresh[0].sequence == newer
+
+
+def test_generations_accepted_mid_walk_are_read_once_and_pages_stay_flat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Many generations accepted between pages: each is read once, and a page reads its rows."""
+
+    from cruxible_core.service.discovery import activity, ledger_times
+
+    reads: Counter[str] = Counter()
+    real_time, real_row = ledger_times.generation_accepted_at, activity.generation_row
+
+    def timed(*args: Any) -> Any:
+        reads["indexed"] += 1
+        return real_time(*args)
+
+    def row(*args: Any) -> Any:
+        reads["rows"] += 1
+        return real_row(*args)
+
+    monkeypatch.setattr(ledger_times, "generation_accepted_at", timed)
+    monkeypatch.setattr(activity, "generation_row", row)
+    observed = []
+    for accepted in (5, 50):
+        root = tmp_path / f"accepted-{accepted}"
+        root.mkdir()
+        instance, _procedure, owner = _out_of_order(root)
+        first = service_playbill_orient(instance, section="activity", limit=1)
+        for index in range(accepted):
+            _accept_at(instance, owner, f"mid-{index}", f"2026-08-24T16:{index:02d}:00.000000Z")
+        reads.clear()
+        second = service_playbill_orient(
+            instance, section="activity", limit=1, cursor=first.next_cursor
+        )
+        caught_up = dict(reads)
+        reads.clear()
+        third = service_playbill_orient(
+            instance, section="activity", limit=1, cursor=second.next_cursor
+        )
+        rows = [_identity(row) for row in (*(second.activity or ()), *(third.activity or ()))]
+        observed.append((caught_up, dict(reads), rows))
+    (small_up, small_page, small_rows), (large_up, large_page, large_rows) = observed
+    # The first read after the acceptances reads each new generation into the index once.
+    assert (small_up["indexed"], large_up["indexed"]) == (5, 50)
+    # Every later page reads only its own rows, however many were accepted mid-walk.
+    assert small_page == large_page and small_page.get("indexed", 0) == 0
+    assert small_rows == large_rows
 
 
 # -- cost -------------------------------------------------------------------------------------

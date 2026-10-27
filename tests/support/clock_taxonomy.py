@@ -388,7 +388,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("EventLocator", "recorded_at"): "ASSERTION TIME",
     ("DispatchActivity", "recorded_at"): "ASSERTION TIME",
     ("InboxActivity", "recorded_at"): "ASSERTION TIME",
-    ("_Candidate", "generation"): "SETTLEMENT ORDER",
     # The get read: its evaluation instant, and the times it reads back.
     ("GetRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("GetResult", "evaluation_time"): "EVALUATION INSTANT",

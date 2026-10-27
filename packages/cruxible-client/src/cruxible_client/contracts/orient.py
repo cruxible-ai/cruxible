@@ -411,8 +411,8 @@ class _OrientActivityRow(_StrictOrientModel):
 
     ``at`` is the instant the record behind the row carries, never the read's
     clock; each event's docstring says which. Rows are newest first by it,
-    except that a generation is placed no later than the one accepted before
-    it in sequence, whatever its own time says.
+    except that a generation is placed no earlier than any accepted before it
+    in sequence, whatever its own time says.
     """
 
     #: The record's own instant: a journal record's, or a generation's acceptance.
@@ -426,8 +426,8 @@ class OrientActivityGenerationAccepted(_OrientActivityRow):
     ``get`` reads; genesis has neither. ``because`` is cut at 500 characters
     (``because_truncated``). ``at`` is its acceptance time (the accepted
     candidate's timestamp, or genesis's commit time); a candidate's timestamp
-    need not follow sequence, so the row is placed no later than the
-    generation accepted after it.
+    need not follow sequence, so the row is placed at the latest acceptance
+    time at or below it in sequence.
     """
 
     event: Literal["generation_accepted"] = "generation_accepted"

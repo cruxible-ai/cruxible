@@ -18,16 +18,15 @@ Order and paging. A row's key is ``(at, source, partition, position,
 ordinal)``, newest first. The cursor carries the last row's key: each
 journal source continues strictly below it, so a row recorded between pages
 (newer than the key) is never repeated, and nothing below the key is skipped.
-Accepted generations are read by sequence, and their acceptance times need
-not follow sequence (a candidate's timestamp is checked for spelling, not for
-order). A generation is therefore placed by an effective key: its acceptance
-time clamped to no later than the one above it in the walk, a running minimum
-from the walk's first head down, which the cursor carries (with the next
-sequence to read) so a later page continues the same keys. Its ``at`` stays
-its true acceptance time. A generation accepted after the walk's first page
-is placed by its true time and listed if that is below the page boundary,
-like a journal record landing between pages; each later page reads those
-generations (the ones accepted during the walk), never the history below.
+Accepted generations are read through a small rebuildable index
+(``ledger_times``) keyed by ``placed``: a generation's acceptance time raised
+to the latest at or below it in sequence, because a candidate's timestamp
+need not follow sequence. The key never decreases with sequence and depends
+only on the history below each generation, so the ledger pages by key like a
+journal: a generation accepted between pages lands above the boundary unless
+its placed time is older, and is then listed once. Its ``at`` stays its true
+acceptance time. Each generation is read into that index once, by the first
+read after its acceptance.
 
 Missing payloads follow the best-effort exhaust rule: the row still appears,
 marked ``unavailable`` (``record_unavailable`` when what the record said is
@@ -54,7 +53,7 @@ from cruxible_client.contracts.orient import (
     OrientActivityRunFinished,
     OrientActivityRunStarted,
 )
-from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.evidence.capture_erasures import CaptureErasureStore, erasure_journal_present
 from cruxible_core.exhaust.capture_selectors import landing_logical_source
 from cruxible_core.exhaust.journal_index import EventLocator
@@ -65,10 +64,8 @@ from cruxible_core.indexes.history.history_index import HistoryReader
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.generation_rows import (
-    generation_accepted_at,
-    generation_row,
-)
+from cruxible_core.service.discovery.generation_rows import generation_row
+from cruxible_core.service.discovery.ledger_times import GenerationTime, newest_generations
 from cruxible_core.service.discovery.runs import (
     final_status,
     procedure_run_journal,
@@ -96,40 +93,22 @@ _RUN_SOURCES: Mapping[str, str] = {
 
 @dataclass(frozen=True)
 class ActivityPosition:
-    """Where a page stopped: its last row's key, and where the ledger walk stands.
-
-    ``ledger_next`` is the next generation to read (``-1`` once genesis was
-    listed), ``ledger_clamp`` the effective acceptance time of the last one
-    listed (``None`` before any), and ``ledger_top`` the head the walk began at.
-    """
+    """Where a page stopped: its last row's key."""
 
     key: ActivityKey
-    ledger_next: int
-    ledger_clamp: str | None
-    ledger_top: int
 
     def encode(self) -> list[str]:
-        return [
-            *self.key[:3],
-            str(self.key[3]),
-            str(self.key[4]),
-            str(self.ledger_next),
-            self.ledger_clamp or "",
-            str(self.ledger_top),
-        ]
+        return [*self.key[:3], str(self.key[3]), str(self.key[4])]
 
     @classmethod
     def decode(cls, values: tuple[str, ...]) -> ActivityPosition | None:
         """The position a cursor carries, or ``None`` when it is not one."""
 
-        if len(values) != 8:
+        if len(values) != 5:
             return None
-        at, source, partition, position, ordinal, ledger, clamp, top = values
+        at, source, partition, position, ordinal = values
         try:
-            key = (at, source, partition, int(position), int(ordinal))
-            return cls(
-                key=key, ledger_next=int(ledger), ledger_clamp=clamp or None, ledger_top=int(top)
-            )
+            return cls(key=(at, source, partition, int(position), int(ordinal)))
         except ValueError:
             return None
 
@@ -138,8 +117,6 @@ class ActivityPosition:
 class _Candidate:
     key: ActivityKey
     build: Callable[[], OrientActivity]
-    #: The generation a ledger row of the walk's own history lists (not a late one).
-    generation: int | None = None
 
 
 def _instant(text: str) -> datetime:
@@ -200,19 +177,27 @@ class _Page:
 # -- sources ------------------------------------------------------------------------------
 
 
-def _generation_candidate(
+def _ledger(
     instance: PlaybillInstance,
     history: HistoryReader,
-    records: Any,
-    reasons: ChangeReasons,
-    sequence: int,
-) -> tuple[str, Callable[[], OrientActivity]]:
-    """One generation's true acceptance time (a row key) and the row it lists."""
+    *,
+    after: ActivityPosition | None,
+    limit: int,
+) -> list[_Candidate]:
+    """Accepted generations up to the head, newest ``placed`` first, below the boundary."""
 
-    location = history.generation(sequence)
-    at = str(format_datetime(generation_accepted_at(instance, history, records, location)))
+    bound = _bound("ledger", after)
+    times = newest_generations(
+        instance,
+        history,
+        limit=limit + 1,
+        before=None if bound is None else (bound[0], bound[2]),
+    )
+    records = instance.retained_record_reader()
+    reasons = ChangeReasons(instance)
 
-    def build() -> OrientActivity:
+    def build(item: GenerationTime) -> OrientActivity:
+        location = history.generation(item.position)
         row = generation_row(instance, history, records, reasons, location)
         return OrientActivityGenerationAccepted(
             at=row.accepted_at,
@@ -227,56 +212,10 @@ def _generation_candidate(
             members=row.members,
         )
 
-    return at, build
-
-
-def _ledger(
-    instance: PlaybillInstance,
-    history: HistoryReader,
-    *,
-    top: int,
-    clamp: str | None,
-    limit: int,
-) -> list[_Candidate]:
-    """Accepted generations from ``top`` down, keyed by a running minimum of their times.
-
-    Each key is the generation's acceptance time, clamped to no later than the
-    key above it (``clamp`` for the first): sorted by sequence, the keys are
-    sorted newest first however the acceptance times run.
-    """
-
-    if top < 0:
-        return []
-    records = instance.retained_record_reader()
-    reasons = ChangeReasons(instance)
-    rows: list[_Candidate] = []
-    for sequence in range(top, max(top - limit - 1, -1), -1):
-        at, build = _generation_candidate(instance, history, records, reasons, sequence)
-        clamp = at if clamp is None or at < clamp else clamp
-        rows.append(_Candidate((clamp, "ledger", "", sequence, 0), build, generation=sequence))
-    return rows
-
-
-def _ledger_since(
-    instance: PlaybillInstance, history: HistoryReader, *, after: ActivityPosition | None
-) -> list[_Candidate]:
-    """Generations accepted after the walk's first page that sort below its boundary.
-
-    Keyed by their true acceptance times, as a journal record landing between
-    pages is: one newer than the boundary is never listed by this walk.
-    """
-
-    if after is None or history.sequence <= after.ledger_top:
-        return []
-    records = instance.retained_record_reader()
-    reasons = ChangeReasons(instance)
-    rows = []
-    for sequence in range(history.sequence, after.ledger_top, -1):
-        at, build = _generation_candidate(instance, history, records, reasons, sequence)
-        key: ActivityKey = (at, "ledger", "", sequence, 0)
-        if key < after.key:
-            rows.append(_Candidate(key, build))
-    return sorted(rows, key=lambda item: item.key, reverse=True)
+    return [
+        _Candidate((item.placed, "ledger", "", item.position, 0), partial(build, item))
+        for item in times
+    ]
 
 
 def _run_row(page: _Page, source: str, locator: EventLocator) -> OrientActivity:
@@ -447,12 +386,8 @@ def activity_page(
         page = _Page(instance, stack)
         built: dict[int, OrientActivity] = {}
         with instance.accepted_history_reader() as history:
-            top = history.sequence if after is None else after.ledger_top
-            ledger_next = top if after is None else after.ledger_next
-            clamp = None if after is None else after.ledger_clamp
             sources = [
-                _ledger(instance, history, top=ledger_next, clamp=clamp, limit=limit),
-                _ledger_since(instance, history, after=after),
+                _ledger(instance, history, after=after, limit=limit),
                 *_runs(page, after=after, limit=limit),
                 _dispatch(instance, after=after, limit=limit),
                 _inbox(instance, after=after, limit=limit),
@@ -469,13 +404,7 @@ def activity_page(
         )
     if not more or not kept:
         return rows, None
-    listed = [item for item in kept if item.generation is not None]
-    return rows, ActivityPosition(
-        key=kept[-1].key,
-        ledger_next=listed[-1].key[3] - 1 if listed else ledger_next,
-        ledger_clamp=listed[-1].key[0] if listed else clamp,
-        ledger_top=top,
-    )
+    return rows, ActivityPosition(key=kept[-1].key)
 
 
 def _merge(sources: list[list[_Candidate]], limit: int) -> tuple[list[_Candidate], bool]:
