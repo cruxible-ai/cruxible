@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -505,13 +507,18 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
         )
 
     if (revision == 36) != (policy_version == 4):
-        with pytest.raises(FormatError, match="upgrade the compiler"):
+        # The refusal names the governed command that fixes it.
+        repair = (
+            "`cruxible claim-type upgrade`" if revision == 36 else "`cruxible compiler upgrade`"
+        )
+        with pytest.raises(FormatError, match=re.escape(repair)):
             _validate_identity_evidence_policy_format(claim_type, compiler)
         result = submit()
         assert result.candidate is None
         (diagnostic,) = result.evaluation.diagnostics
         assert diagnostic.code == "cruxible.claim_type.format_invalid"
-        assert "upgrade the compiler" in diagnostic.message
+        assert repair in diagnostic.message
+        assert "state evidence_admission_policy explicitly" not in diagnostic.message
     else:
         result = submit()
         assert result.candidate is not None, result.evaluation.diagnostics
