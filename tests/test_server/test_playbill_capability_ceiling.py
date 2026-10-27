@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Iterator
 
 import pytest
+import structlog
 from fastapi.testclient import TestClient
 
 from cruxible_core.errors import ConfigError, DaemonOperationScopeError
@@ -404,9 +406,17 @@ _READ_ONLY_POSTS: dict[str, str] = {
 
 
 class _Placeholder:
-    """Any request field, so a handler reaches its permission gate unvalidated."""
+    """Any request field, so a handler reaches its permission gate unvalidated.
+
+    It stands in for request fields only, never for a protocol hook: a dunder
+    lookup (``__structlog__``, ``__json__``) is missing, so a gate that logs
+    its denial with a request field renders the placeholder by ``repr``
+    instead of recursing on placeholders it calls into existence.
+    """
 
     def __getattr__(self, name: str) -> _Placeholder:
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         return _Placeholder()
 
     def __call__(self, *args: object, **kwargs: object) -> _Placeholder:
@@ -416,15 +426,43 @@ class _Placeholder:
         return iter(())
 
 
+@pytest.fixture(params=["console", "json"])
+def denial_log_renderer(request: pytest.FixtureRequest) -> Iterator[str]:
+    """Pin the renderer gates log denials through, then restore the prior one.
+
+    ``console`` is the import-time default; ``json`` is what a served daemon
+    runs (``configure_request_logging``). Pinning it keeps the sweep from
+    depending on whichever renderer an earlier test file left configured.
+    """
+
+    previous = structlog.get_config()
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if request.param == "json"
+        else structlog.dev.ConsoleRenderer()
+    )
+    structlog.configure(
+        processors=[structlog.processors.add_log_level, renderer],
+        logger_factory=structlog.PrintLoggerFactory(file=io.StringIO()),
+        cache_logger_on_first_use=False,
+    )
+    try:
+        yield request.param
+    finally:
+        structlog.configure(**previous)
+
+
 def test_every_mutating_route_refuses_under_a_read_only_ceiling(
-    host_id: str, monkeypatch: pytest.MonkeyPatch
+    host_id: str, monkeypatch: pytest.MonkeyPatch, denial_log_renderer: str
 ) -> None:
     """Sweep the served route table: each non-GET route refuses or is a listed read.
 
     Handlers are called directly with placeholder inputs, so each reaches its
     own permission gate without a hand-built body per route. A route that is
     not refused fails the sweep unless it is listed above with a reason; a
-    listed route that refuses is stale in the list.
+    listed route that refuses is stale in the list. The sweep runs under each
+    denial-log renderer: a gate's denial line must not turn its refusal into
+    another error.
     """
 
     import asyncio
