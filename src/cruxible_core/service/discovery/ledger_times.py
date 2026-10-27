@@ -28,6 +28,7 @@ from pathlib import Path
 
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.indexes.history.history_index import HistoryReader
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.generation_rows import generation_accepted_at
 
@@ -134,13 +135,18 @@ def newest_generations(
             bound = (str(head[0]), history.sequence + 1)
             if before is not None and before < bound:
                 bound = before
-            rows = conn.execute(
-                "SELECT sequence,at,placed FROM generation_times "
-                "INDEXED BY generation_times_placed "
-                "WHERE (placed,sequence)<(?,?) AND sequence<=? "
-                "ORDER BY placed DESC,sequence DESC LIMIT ?",
-                (*bound, history.sequence, limit),
-            ).fetchall()
+            # Every row below the head's key is at or below the head: placed
+            # never decreases with sequence.
+            rows = rows_before(
+                conn,
+                select="sequence,at,placed",
+                source="generation_times INDEXED BY generation_times_placed",
+                where="1",
+                args=(),
+                columns=("placed", "sequence"),
+                bound=bound,
+                limit=limit,
+            )
         finally:
             conn.close()
     return tuple(

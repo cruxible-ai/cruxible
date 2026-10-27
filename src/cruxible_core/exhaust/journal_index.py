@@ -35,6 +35,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_key,
     journal_stream_strings,
 )
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.indexes.resident import ResidentConnections
 from cruxible_core.indexes.sql_batch import insert_rows
 
@@ -758,18 +759,17 @@ class JournalIndex:
         is read.
         """
 
-        where = "stream=? AND event_kind=?"
-        args: list[Any] = [_key(stream), event_kind]
-        if before is not None:
-            where += " AND (recorded_at,partition_id,sequence)<(?,?,?)"
-            args.extend(before)
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT id,recorded_at,partition_id,sequence,run_id,payload_digest "
-                f"FROM records INDEXED BY records_event WHERE {where} "
-                "ORDER BY recorded_at DESC,partition_id DESC,sequence DESC LIMIT ?",
-                (*args, limit),
-            ).fetchall()
+            rows = rows_before(
+                conn,
+                select="id,recorded_at,partition_id,sequence,run_id,payload_digest",
+                source="records INDEXED BY records_event",
+                where="stream=? AND event_kind=?",
+                args=(_key(stream), event_kind),
+                columns=("recorded_at", "partition_id", "sequence"),
+                bound=before,
+                limit=limit,
+            )
         return tuple(
             EventLocator(
                 record_id=int(row[0]),

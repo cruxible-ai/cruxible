@@ -670,7 +670,15 @@ def test_the_cli_prints_one_line_per_event(world) -> None:  # type: ignore[no-un
     )
 
 
-def test_a_reader_behind_the_indexed_head_seeks_below_its_own_head(traced: Path) -> None:
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        pytest.param(lambda index: f"2026-08-24T16:{index:02d}:00.000000Z", id="newer"),
+        # Older than the head's 15:50: each is placed at 15:50, a plateau with the head.
+        pytest.param(lambda index: "2026-08-24T15:10:00.000000Z", id="plateau"),
+    ],
+)
+def test_a_reader_behind_the_indexed_head_seeks_below_its_own_head(traced: Path, stamp) -> None:  # type: ignore[no-untyped-def]
     """Another reader indexed generations past this one's head: a page never walks them."""
 
     from cruxible_core.service.discovery.ledger_times import newest_generations
@@ -682,7 +690,7 @@ def test_a_reader_behind_the_indexed_head_seeks_below_its_own_head(traced: Path)
         instance, _procedure, owner = _out_of_order(root)
         behind = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         for index in range(accepted):
-            _accept_at(instance, owner, f"ahead-{index}", f"2026-08-24T16:{index:02d}:00.000000Z")
+            _accept_at(instance, owner, f"ahead-{index}", stamp(index))
         with instance.accepted_history_reader() as history:
             newest_generations(instance, history, limit=1, before=None)  # indexes past the head
         with instance.accepted_history_reader(at=behind) as history:
@@ -694,3 +702,44 @@ def test_a_reader_behind_the_indexed_head_seeks_below_its_own_head(traced: Path)
         steps.append(window.counts["sql_vm_steps"])
     small, large = steps
     assert 0 < small and large <= small * 1.25 + 64, steps
+
+
+def test_a_page_inside_one_instant_seeks_on_every_key_column(traced: Path) -> None:
+    """A run's records share one instant: a cursor inside them never walks the tie."""
+
+    from cruxible_core.service.discovery.runs import procedure_run_journal, procedure_run_stream
+
+    steps = []
+    for landed in (5, 50):
+        root = traced / f"tie-{landed}"
+        root.mkdir()
+        instance, procedure, _names = _world(root)
+        for _index in range(landed):
+            capture(instance, procedure, at=_HISTORY, partition="run:tie")
+        journal = procedure_run_journal(instance)
+        assert journal is not None
+        stream = procedure_run_stream(instance)
+        (top,) = journal.index.newest_events(
+            stream, event_kind="produced_capture", limit=1, before=(_record_at(_HISTORY), "~", 0)
+        )
+        key = (top.recorded_at, top.partition_id, top.position)
+        journal.index.newest_events(stream, event_kind="produced_capture", limit=1, before=key)
+        with counting(root) as window:
+            (row,) = journal.index.newest_events(
+                stream, event_kind="produced_capture", limit=1, before=key
+            )
+        assert window.unexplained == [], window.unexplained
+        assert (row.recorded_at, row.partition_id, row.position) == (
+            top.recorded_at,
+            top.partition_id,
+            top.position - 1,
+        )
+        steps.append(window.counts["sql_vm_steps"])
+    small, large = steps
+    assert 0 < small and large <= small * 1.25 + 64, steps
+
+
+def _record_at(value: datetime) -> str:
+    from cruxible_client.contracts.temporal import format_datetime
+
+    return str(format_datetime(value))

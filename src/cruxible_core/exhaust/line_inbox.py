@@ -63,6 +63,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
@@ -739,19 +740,26 @@ class LineInboxStore:
         payload's own ``record_unavailable`` row, never the records after it.
         """
 
-        where, args = ("WHERE (at,sequence,ordinal)<(?,?,?) ", list(before)) if before else ("", [])
-        sql = (
-            "SELECT sequence,ordinal,at,event,fields FROM activity INDEXED BY activity_recent "
-            f"{where}ORDER BY at DESC,sequence DESC,ordinal DESC LIMIT ?"
-        )
+        def page(conn: sqlite3.Connection) -> list[Any]:
+            return rows_before(
+                conn,
+                select="sequence,ordinal,at,event,fields",
+                source="activity INDEXED BY activity_recent",
+                where="1",
+                args=(),
+                columns=("at", "sequence", "ordinal"),
+                bound=before,
+                limit=limit,
+            )
+
         try:
             with self.locked() as conn:
-                rows = conn.execute(sql, (*args, limit)).fetchall()
+                rows = page(conn)
         except InboxUnavailable:
             with _LOCK:
                 conn = self._open_projection()
                 try:
-                    rows = conn.execute(sql, (*args, limit)).fetchall()
+                    rows = page(conn)
                 finally:
                     conn.close()
         return tuple(

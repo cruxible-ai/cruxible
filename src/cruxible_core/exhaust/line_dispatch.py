@@ -28,6 +28,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
@@ -530,13 +531,17 @@ class LineDispatchStore:
         journal holds.
         """
 
-        where, args = ("WHERE (at,sequence)<(?,?) ", list(before)) if before else ("", [])
         with self.locked() as conn:
-            rows = conn.execute(
-                "SELECT sequence,at,event,line,fields FROM activity INDEXED BY activity_recent "
-                f"{where}ORDER BY at DESC,sequence DESC LIMIT ?",
-                (*args, limit),
-            ).fetchall()
+            rows = rows_before(
+                conn,
+                select="sequence,at,event,line,fields",
+                source="activity INDEXED BY activity_recent",
+                where="1",
+                args=(),
+                columns=("at", "sequence"),
+                bound=before,
+                limit=limit,
+            )
         return tuple(
             DispatchActivity(
                 position=int(row[0]),
