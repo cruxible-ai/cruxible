@@ -113,23 +113,33 @@ def newest_generations(
 ) -> tuple[GenerationTime, ...]:
     """Generations up to the reader's head, newest ``placed`` first, strictly ``before`` a key.
 
-    One range of ``generation_times_placed``, after reading in the
-    generations accepted since the last read.
+    One range of ``generation_times_placed`` starting below the reader's own
+    head key (``placed`` never decreases with sequence, so every generation at
+    or below the head sorts at or below it), after reading in the generations
+    accepted since the last read: rows another reader indexed past this head
+    are never visited.
     """
 
     with _LOCK:
         conn = _connect(instance)
         try:
             _catch_up(instance, history, conn)
-            where, args = "sequence<=?", list[object]([history.sequence])
-            if before is not None:
-                where += " AND (placed,sequence)<(?,?)"
-                args.extend(before)
+            # The range starts at this reader's own head: another reader may
+            # have indexed generations past it, and a page never walks them.
+            head = conn.execute(
+                "SELECT placed FROM generation_times WHERE sequence=?", (history.sequence,)
+            ).fetchone()
+            if head is None:
+                return ()
+            bound = (str(head[0]), history.sequence + 1)
+            if before is not None and before < bound:
+                bound = before
             rows = conn.execute(
                 "SELECT sequence,at,placed FROM generation_times "
-                f"INDEXED BY generation_times_placed WHERE {where} "
+                "INDEXED BY generation_times_placed "
+                "WHERE (placed,sequence)<(?,?) AND sequence<=? "
                 "ORDER BY placed DESC,sequence DESC LIMIT ?",
-                (*args, limit),
+                (*bound, history.sequence, limit),
             ).fetchall()
         finally:
             conn.close()

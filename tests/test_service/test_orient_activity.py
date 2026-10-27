@@ -668,3 +668,29 @@ def test_the_cli_prints_one_line_per_event(world) -> None:  # type: ignore[no-un
     assert any(
         line.startswith("  cruxible orient --section activity --cursor ") for line in rendered
     )
+
+
+def test_a_reader_behind_the_indexed_head_seeks_below_its_own_head(traced: Path) -> None:
+    """Another reader indexed generations past this one's head: a page never walks them."""
+
+    from cruxible_core.service.discovery.ledger_times import newest_generations
+
+    steps = []
+    for accepted in (5, 50):
+        root = traced / f"behind-{accepted}"
+        root.mkdir()
+        instance, _procedure, owner = _out_of_order(root)
+        behind = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        for index in range(accepted):
+            _accept_at(instance, owner, f"ahead-{index}", f"2026-08-24T16:{index:02d}:00.000000Z")
+        with instance.accepted_history_reader() as history:
+            newest_generations(instance, history, limit=1, before=None)  # indexes past the head
+        with instance.accepted_history_reader(at=behind) as history:
+            newest_generations(instance, history, limit=1, before=None)  # warm
+            with counting(root) as window:
+                (row,) = newest_generations(instance, history, limit=1, before=None)
+            assert row.position == history.sequence
+        assert window.unexplained == [], window.unexplained
+        steps.append(window.counts["sql_vm_steps"])
+    small, large = steps
+    assert 0 < small and large <= small * 1.25 + 64, steps
