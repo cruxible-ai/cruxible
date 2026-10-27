@@ -1125,8 +1125,12 @@ class ProjectionPool:
     (projection eviction) is deferred to scope exit with ``after_close``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, derived_values: bool = True) -> None:
         self._idle: dict[object, list[ProjectionHandle]] = {}
+        # Whether holders may keep derived values for the pool's lifetime; a
+        # bind-only pool (a long consumer pass) keeps none, only its handles.
+        self._derived_values = derived_values
+        self._verified: dict[object, object] = {}
         # id(handle) -> (handle, key, checked_out) for every live adopted handle.
         self._tracked: dict[int, tuple[ProjectionHandle, object, bool]] = {}
         self._owners: list[object] = []
@@ -1146,7 +1150,15 @@ class ProjectionPool:
         Holders key them by exactly the inputs they were derived from and
         re-check whatever can move within a request before reusing one.
         """
-        return self._values if self._on_thread() else None
+        return self._values if self._derived_values and self._on_thread() else None
+
+    def verified_coordinates(self) -> dict[object, object] | None:
+        """The coordinates this request already re-verified, on its own thread only.
+
+        Kept by every pool, bind-only or not: a reused handle re-verifies its
+        coordinate once per recovered epoch, never per lookup.
+        """
+        return self._verified if self._on_thread() else None
 
     def after_close(self, key: object, run: Callable[[], object]) -> bool:
         """Run ``run`` once at scope exit, after the pool's handles release their holds.
@@ -1224,6 +1236,7 @@ class ProjectionPool:
             self._idle.clear()
             self._owners.clear()
             self._values.clear()
+            self._verified.clear()
             deferred = list(self._after_close.values())
             self._after_close.clear()
         try:

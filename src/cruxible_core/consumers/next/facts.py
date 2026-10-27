@@ -2072,8 +2072,10 @@ def catch_up(instance: Any, *, now: datetime) -> None:
         return
     # One catch-up step reads the accepted head hundreds of times (per derived
     # Claim, per resolved slot): inside the scope each read reuses one bound
-    # projection instead of binding and verifying the piece again.
-    scope = getattr(instance, "projection_scope", None)
+    # projection instead of binding and verifying the piece again. Bind-only: a
+    # cold catch-up derives every Claim, and a request scope would hold every
+    # parse and derivation it made until the pass ends.
+    scope = getattr(instance, "projection_bind_scope", None)
     with (
         nullcontext() if scope is None else scope(),
         reading_at(heads.positions),
