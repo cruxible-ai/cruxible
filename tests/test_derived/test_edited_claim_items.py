@@ -6,6 +6,8 @@ import random
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes import evaluated_state
@@ -217,4 +219,75 @@ def test_a_long_unlooked_staging_chain_stays_exact_and_bounded(tmp_path: Path) -
     cold = SnapshotTree(dict(sealed.items()))
     for path, content in additions:
         statement = parse_claim(content, path=path).statement
+        assert sealed.claim_items(statement) == cold.claim_items(statement)
+
+
+def _fixture_trees(tmp_path: Path):  # type: ignore[no-untyped-def]
+    fixture = build_fixture(tmp_path, PROFILE)
+    instance = PlaybillInstance.open(fixture.managed_root, trust_root=fixture.instance.trust_root)
+    head = instance.immutable_tree_at(instance.accepted_history()[-1].oid)
+    other = build_fixture(tmp_path / "other", replace(PROFILE, seed="edited-claims-other"))
+    other_instance = PlaybillInstance.open(other.managed_root, trust_root=other.instance.trust_root)
+    other_tree = other_instance.tree_at(other_instance.accepted_history()[-1].oid)
+    additions = sorted(
+        (path, content)
+        for path, content in other_tree.items()
+        if path.startswith("claims/") and path not in head
+    )
+    assert len(additions) >= 2
+    return head, additions
+
+
+def test_only_the_final_bytes_of_a_repaired_claim_decide_a_lookup(tmp_path: Path) -> None:
+    """Bytes staged and sealed, then replaced: a lookup reads only the final bytes."""
+
+    head, additions = _fixture_trees(tmp_path)
+    (path, content), (other_path, other_content) = additions[0], additions[1]
+    tree = head.fork()
+    tree[path] = b"not a claim"
+    tree = tree.snapshot().fork()
+    tree[other_path] = other_content
+    tree = tree.snapshot().fork()
+    tree[path] = content  # repaired
+    sealed = tree.snapshot()
+    cold = SnapshotTree(dict(sealed.items()))
+    for item_path, item in (additions[0], additions[1]):
+        statement = parse_claim(item, path=item_path).statement
+        assert sealed.claim_items(statement) == cold.claim_items(statement)
+    # A tree that still holds the malformed bytes refuses them, as it always did.
+    broken = head.fork()
+    broken[path] = b"not a claim"
+    with pytest.raises(Exception, match="Claim"):
+        broken.snapshot().claim_items(parse_claim(content, path=path).statement)
+
+
+def test_sealing_past_the_chain_limit_parses_nothing_and_keeps_final_semantics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.derived import derived_state
+
+    head, additions = _fixture_trees(tmp_path)
+    path, content = additions[0]
+    tree = head.fork()
+    tree[path] = b"not a claim"
+    tree = tree.snapshot().fork()
+    tree[path] = content  # repaired before the chain is compacted
+
+    def refuse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        pytest.fail("sealing parsed a Claim")
+
+    with monkeypatch.context() as guard:
+        guard.setattr(derived_state, "parse_claim", refuse)
+        for step in range(3 * derived_state._CLAIM_CHAIN_LIMIT):  # noqa: SLF001
+            other_path, other_content = additions[1 + step % (len(additions) - 1)]
+            if other_path in tree:
+                del tree[other_path]
+            else:
+                tree[other_path] = other_content
+            sealed = tree.snapshot()
+            assert sealed._claim_depth <= derived_state._CLAIM_CHAIN_LIMIT + 1  # noqa: SLF001
+            tree = sealed.fork()
+    cold = SnapshotTree(dict(sealed.items()))
+    for item_path, item in additions:
+        statement = parse_claim(item, path=item_path).statement
         assert sealed.claim_items(statement) == cold.claim_items(statement)

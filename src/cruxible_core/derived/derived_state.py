@@ -387,33 +387,57 @@ class SnapshotTree(Mapping[str, bytes]):
         lowering looks slots up through forks of the tree it stages into, and
         an index that only the looking tree kept re-indexed every Claim staged
         down the chain on each lookup, O(n^2) for a change of n Claims.
+
+        Only this tree's own bytes decide its answer. An ancestor whose staged
+        bytes do not parse as a Claim (bytes a later edit may have replaced) is
+        left unresolved, and this tree's index is built from its own edits.
         """
         chain: list[SnapshotTree] = []
         node = self
         while True:
+            chain.append(node)
             with node._lock:
                 base = node._claim_base
             if base is None:
                 break
-            chain.append(node)
             node = base
-        with node._lock:
-            index = node._claim_index
-            if index is None:
-                # Built once from the complete edits; forks carry it forward.
-                index = _ClaimEditIndex().updated(
-                    (path for path in node._edits if path.startswith("claims/")), node._edits
-                )
-            elif node._claim_own:
-                index = index.updated(node._claim_own, node._edits)
-            node._claim_index, node._claim_own = index, ()
-        for extension in reversed(chain):
-            with extension._lock:
-                if extension._claim_base is not None:
-                    extension._claim_index = index.updated(extension._claim_own, extension._edits)
-                    extension._claim_base, extension._claim_own = None, ()
-                    extension._claim_depth = 0
-                index = cast(_ClaimEditIndex, extension._claim_index)
+        index: _ClaimEditIndex | None = None
+        for node in reversed(chain):
+            try:
+                index = node._resolve_claim_index(index)
+            except Exception:
+                if node is self:
+                    raise
+                return self._rebuild_claim_index()
+        return cast(_ClaimEditIndex, index)
+
+    def _resolve_claim_index(self, prior: _ClaimEditIndex | None) -> _ClaimEditIndex:
+        """This snapshot's index, from its base's (``prior``) and its own staged Claims."""
+        with self._lock:
+            if self._claim_base is None:
+                index = self._claim_index
+                if index is None:
+                    # Built once from the complete edits; forks carry it forward.
+                    index = _ClaimEditIndex().updated(
+                        (path for path in self._edits if path.startswith("claims/")),
+                        self._edits,
+                    )
+                elif self._claim_own:
+                    index = index.updated(self._claim_own, self._edits)
+            else:
+                index = cast(_ClaimEditIndex, prior).updated(self._claim_own, self._edits)
+            self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_depth = 0
+            return index
+
+    def _rebuild_claim_index(self) -> _ClaimEditIndex:
+        """This snapshot's index from its own complete edits alone, kept."""
+        index = _ClaimEditIndex().updated(
+            (path for path in self._edits if path.startswith("claims/")), self._edits
+        )
+        with self._lock:
+            self._claim_index, self._claim_base, self._claim_own = index, None, ()
+            self._claim_depth = 0
         return index
 
     def edits_from(self, parent: Mapping[str, bytes]) -> Mapping[str, bytes | None] | None:
@@ -603,9 +627,14 @@ class CandidateTree(MutableMapping[str, bytes]):
     def snapshot(self) -> SnapshotTree:
         if self._cached is None:
             base = self._claim_base
+            claim_index: _ClaimEditIndex | None = None if base is not None else _ClaimEditIndex()
+            staged = self._claim_staged
             if base is not None and base._claim_depth >= _CLAIM_CHAIN_LIMIT:
                 # A chain no lookup resolves holds every snapshot along it.
-                base._claim_edit_index()
+                # Compact it without parsing anything: extend the chain's
+                # resolved bottom by every Claim path staged along it, each
+                # re-decided from this tree's own bytes when a lookup needs it.
+                claim_index, staged, base = _compacted_claim_chain(base, staged)
             self._cached = SnapshotTree(
                 self._rows,
                 parent=self._parent,
@@ -614,9 +643,9 @@ class CandidateTree(MutableMapping[str, bytes]):
                 semantic_bytes=self._semantic_bytes,
                 semantic_members=self._semantic_members,
                 resident_bytes=self._resident_bytes,
-                claim_index=None if self._claim_base is not None else _ClaimEditIndex(),
-                claim_base=self._claim_base,
-                claim_own=tuple(sorted(self._claim_staged)),
+                claim_index=claim_index,
+                claim_base=base,
+                claim_own=tuple(sorted(staged)),
             )
             self._claim_base, self._claim_staged = self._cached, set()
         return self._cached
@@ -629,6 +658,27 @@ class CandidateTree(MutableMapping[str, bytes]):
 
     def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifactAny, ...]:
         return self.snapshot().claims_for(statement)
+
+
+def _compacted_claim_chain(
+    base: SnapshotTree, staged: set[str]
+) -> tuple[_ClaimEditIndex | None, set[str], None]:
+    """(index, Claim paths still owed, no base) for a snapshot cut off ``base``'s chain.
+
+    The index is the chain's bottom's (None: built from the snapshot's complete
+    edits); the paths are every one staged along the chain and since. Owing a
+    path the snapshot did not edit only drops it from the edited index, which
+    is where an unedited path belongs.
+    """
+    keys = set(staged)
+    node: SnapshotTree | None = base
+    index: _ClaimEditIndex | None = None
+    while node is not None:
+        with node._lock:
+            following, own, index = node._claim_base, node._claim_own, node._claim_index
+        keys.update(own)
+        node = following
+    return index, keys, None
 
 
 def fork_tree(tree: Mapping[str, bytes]) -> CandidateTree:
