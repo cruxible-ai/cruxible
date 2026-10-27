@@ -1522,6 +1522,22 @@ reason. The change set carries every dependent Claim, so it previews by default
 (see [Previews](#previews)); commit the preview with `--commit --at OID`, then
 approve and activate the proposal as usual.
 
+Compiler revision 36 (`light-artifacts-v1`) writes only v4 identity evidence
+policies (`cruxible-claim-evidence-admission-policy-v4`); below it a write
+states v3. A ClaimType accepted with a v3 policy keeps working after the
+compiler upgrade, but an edit of it on revision 36 is refused until it is
+restated, and `next` reports the compiler facet as
+`claim_type_upgrade_available` naming it. On revision 36, `upgrade` restates
+each chosen live ClaimType's v3 policy as v4 in the same change set (listed
+under `restated`, with or without the v7 move). The restatement keeps every
+rule's id, roles, admission, subject binding and attestation requirement and
+names the same contracts with no `logical_sources` restriction; it drops the
+legacy `evidence_kinds`. That admits exactly the same evidence when every
+accepted CaptureContract v1 version of a named contract captures only kinds the
+rule lists; otherwise the ClaimType is left as it is and refused with
+`cruxible.claim_type.policy_restatement_inexact`, and you state its v4 policy
+explicitly with `claim-type propose`. Below revision 36 nothing is restated.
+
 ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
 (`none`: the Claim's own origin supports it; `self`: the evidence rules decide;

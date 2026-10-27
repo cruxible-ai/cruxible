@@ -166,6 +166,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.proposal.approve",
         "cruxible.proposal.activate",
         "cruxible.compiler.upgrade",
+        # Compiler revision 36 leaves v3 evidence policies for the governed
+        # claim-type upgrade to restate; the compiler facet names it.
+        "cruxible.claim-type.upgrade",
         "cruxible.line.enable",
         "cruxible.line.dispatch",
         # The unread inbox row names the list that shows the Line's items.

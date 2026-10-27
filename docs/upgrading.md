@@ -203,6 +203,14 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
+Upgrading to revision 36 (`light-artifacts-v1`) leaves one governed step after
+it: revision 36 writes only v4 identity evidence policies, so ClaimTypes
+accepted earlier with v3 policies keep working as they are, but each waits for
+`cruxible claim-type upgrade` to restate its policy as v4 before it can be
+edited. `next` names the step (see the facet states below); the restatement is
+one reviewed change set that admits exactly the same evidence and carries every
+Claim with its backing intact.
+
 You only need the upgrade to use what the new revision adds, such as new
 artifact format versions. Until then the daemon keeps serving the instance on
 its current compiler and refuses authoring that needs the new revision. For
@@ -216,6 +224,7 @@ adopts it with `cruxible compiler upgrade`.
 |---|---|---|
 | `current` | The accepted head uses the compiler the daemon runs. | Nothing. |
 | `upgrade_available` | The daemon runs a newer compiler with an explicit upgrade path from the accepted one. | Back up, then run the repair, `cruxible compiler upgrade`. |
+| `claim_type_upgrade_available` | The accepted head uses the running compiler (revision 36), and live ClaimTypes you authored still state a v3 evidence policy. They keep working; an edit of one is refused until it is restated as v4. The detail lists them (`claim_types`, up to 20, and `count`). | Run the repair, `cruxible claim-type upgrade`: preview, then commit and approve the one change set that restates them. |
 | `no_upgrade_path` | The accepted compiler has no path to the running one, for example when the daemon is older than the state it serves. | Install a release whose daemon supports the accepted compiler. Nothing is proposed. |
 
 Downgrades and unsupported transitions are refused.

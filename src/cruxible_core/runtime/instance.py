@@ -395,6 +395,10 @@ class PlaybillInstance:
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
+        # Live v3-policy ClaimTypes per claim-types directory tree object.
+        self._policy_restatements: BoundedCache[tuple[str, ...]] = self.derived.memo(
+            "policy-restatements", max_entries=64, max_bytes=4 * 1024 * 1024
+        )
         # Parsed Claim law evidence per (path, accepting sequence).
         self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
             "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -2507,6 +2511,49 @@ class PlaybillInstance:
 
         self.coordinate_for_oid(oid)
         return self._ledger.blobs_at(oid, paths)
+
+    def pending_policy_restatements(self, oid: str) -> tuple[str, ...]:
+        """Live ClaimTypes at ``oid`` stating a v3 identity evidence policy.
+
+        Compiler revision 36 writes only v4 policies, so these wait for the
+        governed `claim-type upgrade` before an edit. The unedited genesis seeds
+        are left out: a new instance has nothing pending. The answer is
+        remembered by the ``claim-types`` directory's tree object, so a write
+        that changes no ClaimType reuses it; a miss searches only that
+        directory's blobs, inside Git, and parses only the ones naming v3.
+        """
+
+        import hashlib
+
+        from cruxible_client.contracts.claim_types import parse_claim_type
+        from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
+        from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS
+
+        self.coordinate_for_oid(oid)
+        directory = self._ledger.directory_tree_oid(oid, "claim-types")
+        if directory is None:
+            return ()
+        held = self._policy_restatements.get(directory)
+        if held is not None:
+            return held
+        paths = self._ledger.tree_paths_containing_literal(
+            oid, literal="playbill-claim-evidence-admission-policy-v3", paths=("claim-types",)
+        )
+        seeds = {(path, digest) for seed in GENESIS_SEED_SETS for path, digest in seed.files}
+        found: list[str] = []
+        for path, content in sorted(self._ledger.blobs_at(oid, paths).items()):
+            if (path, hashlib.sha256(content).hexdigest()) in seeds:
+                continue
+            claim_type = parse_claim_type(content, path=path)
+            if claim_type.lifecycle.state == "live" and isinstance(
+                claim_type.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3
+            ):
+                found.append(claim_type.identity.qualified)
+        answer = tuple(sorted(found, key=lambda item: item.encode("utf-8")))
+        self._policy_restatements.put(
+            directory, answer, weight=sum(len(item) for item in answer) + 64
+        )
+        return answer
 
     def _require_proposal_object(self, oid: str, proposal_id: str | None) -> None:
         if self._ledger.object_exists(oid):

@@ -2,7 +2,9 @@
 
 An instance whose ClaimTypes were accepted with v3 policies keeps working after
 `compiler upgrade`: only a ClaimType a write creates or changes must state the
-revision's format, and its refusal names the governed command that fixes it.
+revision's format. `claim-type upgrade` is the governed move that restates the
+accepted v3 policies as v4, in one reviewed change set carrying every Claim,
+and `next` names it while any is pending.
 """
 
 from __future__ import annotations
@@ -17,6 +19,10 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     capture_contract_path,
 )
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -24,8 +30,11 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from cruxible_client.contracts.claims import claim_path as claim_artifact_path
+from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV3,
     ClaimEvidenceAdmissionRuleV3,
 )
@@ -40,11 +49,15 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
+from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
+from cruxible_core.service.discovery.next import service_playbill_next
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._write_support import caller
 from tests.core_support.legacy_capture_builders import initialize_legacy_local
+from tests.support.store_snapshot import assert_writes_nothing
 from tests.test_claims.test_claims import TIMESTAMP, _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
+from tests.test_integration.test_next_closed_loop import _request
 from tests.test_ledger.test_activation import _sign
 
 STATUS = "project.work_item.status"
@@ -138,6 +151,15 @@ def _upgrade_compiler(instance: PlaybillInstance, owner: Any) -> None:
     assert instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
 
 
+def _upgrade_claim_types(instance: PlaybillInstance, **request: Any) -> ClaimTypeUpgradeResult:
+    return service_upgrade_claim_types(
+        instance,
+        request=ClaimTypeUpgradeRequest.model_validate(request),
+        actor_id="owner",
+        timestamp=TIMESTAMP,
+    )
+
+
 @pytest.fixture
 def revision_35(tmp_path: Path) -> tuple[PlaybillInstance, Any, str]:
     """A revision-35 instance with v3-policy ClaimTypes and one Claim citing its writer."""
@@ -225,3 +247,121 @@ def test_an_edit_of_a_v3_claim_type_on_revision_36_names_the_upgrade(
     assert diagnostic.code == "cruxible.claim_type.format_invalid"
     assert "`cruxible claim-type upgrade`" in diagnostic.message
     assert "Broken referrer" not in diagnostic.message
+
+
+def test_the_claim_type_upgrade_restates_v3_policies_and_next_names_it(
+    revision_35: tuple[PlaybillInstance, Any, str],
+) -> None:
+    instance, owner, claim_id = revision_35
+
+    # Below revision 36, v3 is the format a write states: nothing to restate.
+    below = _upgrade_claim_types(instance)
+    assert below.status == "unchanged", below
+    assert below.restated == ()
+    assert service_playbill_next(instance, request=_request(instance)).status.compiler.state == (
+        "upgrade_available"
+    )
+
+    _upgrade_compiler(instance, owner)
+    status = service_playbill_next(instance, request=_request(instance)).status
+    assert status.compiler.state == "claim_type_upgrade_available"
+    assert status.compiler.repair is not None
+    assert status.compiler.repair.command == "cruxible claim-type upgrade"
+    # The unedited genesis seeds are not pending work of this instance.
+    assert status.compiler.detail["claim_types"] == [f"ClaimType:{SLUG}", f"ClaimType:{STATUS}"]
+    assert status.compiler.detail["count"] == 2
+    # A governed-write caller runs it; MCP and the SDK name their own door.
+    mcp = _request(instance).model_copy(
+        update={
+            "caller_surface": "mcp",
+            "caller_tools": ("cruxible_claim_type_upgrade", "cruxible_next"),
+        }
+    )
+    shown = service_playbill_next(instance, request=mcp, caller_rung=1).status.compiler
+    assert shown.repair is not None
+    assert shown.repair.command == "cruxible_claim_type_upgrade(request={})"
+    sdk = _request(instance).model_copy(update={"caller_surface": "sdk"})
+    shown = service_playbill_next(instance, request=sdk, caller_rung=1).status.compiler
+    assert shown.repair is not None and shown.repair.command == "cx.upgrade_claim_types()"
+    hidden = service_playbill_next(instance, request=_request(instance), caller_rung=0)
+    assert hidden.status.compiler.repair_requires is not None
+    assert hidden.status.compiler.repair_requires.tier == "governed_write"
+
+    claim_path = claim_artifact_path(claim_id)
+    before = _tree(instance)
+    claim_before = parse_claim(before[claim_path], path=claim_path)
+    dry = assert_writes_nothing([instance.root.parent], lambda: _upgrade_claim_types(instance))
+    assert dry.status == "would_propose", dry
+    assert dry.upgraded == ()
+    # The seeded builtins are restated as well, in the same change set.
+    assert [item.claim_type for item in dry.restated] == [
+        f"ClaimType:{SLUG}",
+        f"ClaimType:{STATUS}",
+        "ClaimType:semantic.alias",
+        "ClaimType:semantic.distinct_from",
+    ]
+    assert dry.carried_claims >= 1
+    assert "v3 evidence policy as v4" in (dry.detail or "")
+
+    result = _upgrade_claim_types(instance, dry_run=False, at=dry.coordinate.git_oid)
+    assert result.status == "proposed", result
+    assert result.restated == dry.restated
+    _approve_and_activate(instance, owner, result.proposal_id)
+
+    after = _tree(instance)
+    for item in dry.restated:
+        predicate = item.claim_type.removeprefix("ClaimType:")
+        old = _claim_type_at(before, predicate)
+        new = _claim_type_at(after, predicate)
+        assert isinstance(new.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)
+        assert new.lifecycle.predecessor_digest == claim_type_digest(old).tagged
+        # Everything but the policy and the lifecycle is exactly what it was.
+        assert new.model_dump(exclude={"evidence_admission_policy", "lifecycle"}) == (
+            old.model_dump(exclude={"evidence_admission_policy", "lifecycle"})
+        )
+        (old_rule,) = old.evidence_admission_policy.rules
+        (new_rule,) = new.evidence_admission_policy.rules
+        assert new_rule.model_dump(exclude={"tag", "capture_contracts"}) == old_rule.model_dump(
+            exclude={"tag", "capture_contracts", "evidence_kinds"}
+        )
+        assert [(ref.target, ref.logical_sources) for ref in new_rule.capture_contracts] == [
+            (ref.target, ()) for ref in old_rule.capture_contracts
+        ]
+    claim_after = parse_claim(after[claim_path], path=claim_path)
+    assert (
+        claim_after.statement.claim_type_digest
+        == claim_type_digest(_claim_type_at(after, STATUS)).tagged
+    )
+    assert claim_after.backing == claim_before.backing
+    assert service_playbill_next(instance, request=_request(instance)).status.compiler.state == (
+        "current"
+    )
+    again = _upgrade_claim_types(instance)
+    assert again.status == "unchanged" and again.restated == ()
+    # Restated, the ClaimType takes ordinary edits and new Claims again.
+    assert _write(instance, "project.work_item/wi-42", "done").status == "accepted"
+
+
+def test_a_v3_policy_v4_cannot_state_exactly_is_refused_with_a_typed_reason(
+    revision_35: tuple[PlaybillInstance, Any, str],
+) -> None:
+    instance, owner, _claim_id = revision_35
+    narrow = "project.work_item.narrow"
+    # The self-source v1 contract captures self_asserted evidence; this rule admits
+    # only another kind, a restriction no v4 rule can state.
+    tree = _tree(instance)
+    narrow_type = _v3_type(narrow, kinds=("observed",)).model_copy(
+        update={"literal_schema": {"type": "string"}}
+    )
+    tree[claim_type_path(narrow)] = render_claim_type(narrow_type)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="narrow")
+    _upgrade_compiler(instance, owner)
+
+    result = _upgrade_claim_types(instance, claim_types=[narrow, STATUS])
+    assert result.status == "would_propose", result
+    assert [item.claim_type for item in result.restated] == [f"ClaimType:{STATUS}"]
+    (refusal,) = result.refused
+    assert refusal.claim_type == f"ClaimType:{narrow}"
+    assert refusal.code == "cruxible.claim_type.policy_restatement_inexact"
+    assert "self_asserted" in refusal.reason
+    assert "cruxible claim-type propose" in refusal.reason

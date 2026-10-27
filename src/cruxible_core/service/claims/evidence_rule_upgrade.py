@@ -56,6 +56,7 @@ class _Lineages:
         self._at = at
         self._by_digest: dict[str, AcceptedCaptureContract] = {}
         self._lineage: dict[str, tuple[AcceptedCaptureContract, ...]] = {}
+        self._versions: dict[str, tuple[AcceptedCaptureContract, ...]] = {}
 
     def version(self, digest: str) -> AcceptedCaptureContract:
         found = self._by_digest.get(digest)
@@ -66,8 +67,10 @@ class _Lineages:
             self._by_digest[digest] = found
         return found
 
-    def lineage(self, identity: str) -> tuple[AcceptedCaptureContract, ...]:
-        cached = self._lineage.get(identity)
+    def versions(self, identity: str) -> tuple[AcceptedCaptureContract, ...]:
+        """Every accepted version of one contract identity, unjudged, read once."""
+
+        cached = self._versions.get(identity)
         if cached is not None:
             return cached
         with self._instance.accepted_history_reader(at=self._at) as history:
@@ -77,6 +80,14 @@ class _Lineages:
             if any(item.artifact_digest == location.artifact_digest for item in versions):
                 continue
             versions.append(self.version(location.artifact_digest))
+        self._versions[identity] = tuple(versions)
+        return self._versions[identity]
+
+    def lineage(self, identity: str) -> tuple[AcceptedCaptureContract, ...]:
+        cached = self._lineage.get(identity)
+        if cached is not None:
+            return cached
+        versions = self.versions(identity)
         by_digest = {item.artifact_digest: item for item in versions}
         for item in versions:
             predecessor_digest = item.contract.lifecycle.predecessor_digest
