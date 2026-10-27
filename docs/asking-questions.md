@@ -242,7 +242,8 @@ fields and counts, who you are, what needs attention, and the next commands
 to run. `--kind K` reads one kind in full, and `--section` pages one family
 at a time: `claim_types`, `subject_kinds`, `queries`, `lines`, `documents`,
 `generations`, `graph` (the Subjects and the Claims between them), `pins`
-(what each definition depends on) and more.
+(what each definition depends on), `activity` (what just happened, newest
+first) and more.
 
 ## The floor: knowledge you can grep
 

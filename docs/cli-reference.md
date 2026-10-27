@@ -3959,6 +3959,20 @@ changes), the proposer, the approving signers, the change set's `because` (cut
 at 500 characters) and its member count. It pages by sequence, so a page reads
 only its own generations; pass a row's sequence back as `--at` to read state as
 that generation left it.
+`--section activity` is what just happened, newest first, across the ledger
+and the operational journals: one row per `event` -- `generation_accepted`,
+`occurrence_due`, `occurrence_lapsed`, `line_state_changed` (a Line's
+enablement moving between `running`, `stopped` and `disabled`), `run_started`,
+`run_finished` (with the runs section's `status`), `capture_landed`,
+`capture_erased`, `inbox_posted` (a new item) and `inbox_disposed` -- each with
+its `at` and the `ref` that reads it (`ProcedureRun:`, `Line:`, `Capture:`, the
+proposal, or the inbox item's `INB-` id). It is operational state, read live at
+the current head, and pages by key: each source is read through its own index,
+at most a page plus one row each, and only the page's rows read payloads, so a
+page costs its rows; a record landing between pages is never repeated or
+skipped. A run records every event at its evaluation instant, so a finish
+carries its start's `at`. A record whose payload is lost still lists, marked
+`unavailable` (or as `record_unavailable` when what it said is unknown).
 `--section graph` pages the Subject graph for a whole-graph view: first the
 live Subjects (`graph.nodes`, each `{subject, kind}` with `subject` the
 `kind/id` ref `get` reads, by kind then Subject), then the live Claims whose
