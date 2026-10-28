@@ -287,6 +287,13 @@ def _assert_guarded(conn: sqlite3.Connection) -> None:
         # Moving a row onto another's key would delete that one with no trigger.
         "UPDATE OR REPLACE capture_selectors SET record_id=3 WHERE record_id=1",
         "UPDATE capture_selectors SET record_id=9 WHERE record_id=1",
+        # The INTEGER PRIMARY KEY's aliases, which an UPDATE OF column list never sees.
+        "UPDATE OR REPLACE capture_selectors SET rowid=3 WHERE record_id=1",
+        "UPDATE OR REPLACE capture_selectors SET _rowid_=3 WHERE record_id=1",
+        "UPDATE OR REPLACE capture_selectors SET oid=3 WHERE record_id=1",
+        "UPDATE OR REPLACE capture_unattributed SET rowid=1",
+        "UPDATE OR REPLACE capture_unattributed SET _rowid_=1",
+        "UPDATE OR REPLACE capture_unattributed SET oid=1",
         "UPDATE capture_unattributed SET stream='stream-b'",
         "UPDATE OR REPLACE capture_unattributed SET record_id=1",
     ):
@@ -324,16 +331,17 @@ def _guard_names(conn: sqlite3.Connection) -> set[str]:
         for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
             "('capture_landing_once','capture_landing_fixed','capture_landing_frozen',"
+            "'capture_landing_sealed',"
             "'capture_unattributed_once','capture_unattributed_fixed')"
         )
     }
 
 
-@pytest.mark.parametrize("written_by", ["d9af311c3", "72a3d6880"])
+@pytest.mark.parametrize("written_by", ["d9af311c3", "72a3d6880", "576f84444"])
 def test_opening_an_index_written_before_its_guards_installs_them(
     tmp_path: Path, written_by: str
 ) -> None:
-    """A version 9 file from before the guards (or with the record_id-blind one) gains them."""
+    """A version 9 file from before the guards, or with an older guard, gains the current ones."""
 
     from types import SimpleNamespace
 
@@ -351,6 +359,12 @@ def test_opening_an_index_written_before_its_guards_installs_them(
             "CREATE TRIGGER capture_landing_fixed BEFORE UPDATE OF logical_source ON "
             "capture_selectors BEGIN SELECT RAISE(ABORT, 'keeps its'); END"
         )
+    if written_by == "576f84444":
+        # That commit's froze record_id through a column list the rowid aliases bypass.
+        conn.execute(
+            "CREATE TRIGGER capture_landing_frozen BEFORE UPDATE OF record_id ON "
+            "capture_selectors BEGIN SELECT RAISE(ABORT, 'keeps its'); END"
+        )
     conn.execute("INSERT INTO initialized VALUES (1)")
     conn.execute("PRAGMA user_version=9")
     conn.close()
@@ -360,7 +374,7 @@ def test_opening_an_index_written_before_its_guards_installs_them(
     try:
         assert _guard_names(reopened) == {
             "capture_landing_once",
-            "capture_landing_frozen",
+            "capture_landing_sealed",
             "capture_unattributed_once",
             "capture_unattributed_fixed",
         }

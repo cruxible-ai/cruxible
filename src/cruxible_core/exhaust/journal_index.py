@@ -121,14 +121,16 @@ END;
 """
 #: The landing rows' immutability guards: every open installs them (idempotently),
 #: so an index file written before a guard existed gains it without a schema move.
-#: A guard whose definition changed is renamed, and the old name is dropped.
+#: A guard whose definition changed is renamed, and the old name is dropped. An
+#: UPDATE guard is unrestricted (no ``UPDATE OF`` column list): a column list
+#: does not fire for writes through the rowid, _rowid_ and oid aliases of an
+#: INTEGER PRIMARY KEY.
 _LANDING_GUARDS = """
 CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selectors
  WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
  SELECT RAISE(ABORT, 'a projected landing is never replaced');
 END;
-CREATE TRIGGER IF NOT EXISTS capture_landing_frozen BEFORE UPDATE OF
- record_id, logical_source, contract_digest, stream, source_lost ON capture_selectors
+CREATE TRIGGER IF NOT EXISTS capture_landing_sealed BEFORE UPDATE ON capture_selectors
  WHEN old.record_id IS NOT new.record_id
  OR old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
  OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
@@ -143,7 +145,7 @@ CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture
  SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
 END;
 """
-_RETIRED_LANDING_GUARDS = ("capture_landing_fixed",)
+_RETIRED_LANDING_GUARDS = ("capture_landing_fixed", "capture_landing_frozen")
 _LANDING_SCHEMA += _LANDING_GUARDS
 _SCHEMA = (
     """
