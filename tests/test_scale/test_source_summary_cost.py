@@ -7,6 +7,15 @@ sources (the tally walk, each source's latest-landing seek and the unattributed
 tally: every statement the page runs against the index) and projecting one more
 landing (its row and the triggers that tally it) run the same SQL work at both
 sizes.
+
+The served read is measured whole too: ``service_playbill_orient`` for one page
+on two instances, the LARGE one with ten times the landings (of the listed
+source and of other sources) and ten times the evidence worker's unrelated
+findings (200 against 2,000), the page's latest Capture missing its body without an erasure so its
+availability consults the findings. Every counter (SQL statements and VM
+steps, file opens, CAS reads, projection binds, parses and digests) stays
+within the scale guard's rule: contract resolution, the landing's admission,
+payload and envelope reads and the findings read cost the page.
 """
 
 from __future__ import annotations
@@ -130,3 +139,70 @@ def test_projecting_one_landing_is_flat_in_the_landings_already_tallied(root: Pa
         assert tallied == (per_source // 2 + 1,)
         conn.close()
     assert _flat(steps), steps
+
+
+def _served_world(root: Path, extra: int) -> object:
+    """The sources world with ``extra`` more landings and ``10 * extra`` unrelated findings."""
+
+    from cruxible_core.consumers.next.evidence import _STATE
+    from tests.test_service.test_orient_sources import KEV, SELECTOR, SourcesWorld
+
+    root.mkdir()
+    world = SourcesWorld(root)
+    for index in range(extra):
+        source = KEV if index % 2 else f"zz.other-{index:04d}"
+        world.land(source, SELECTOR.capture_contract_digest, 10 + index)
+    latest = world.land(KEV, SELECTOR.capture_contract_digest, 10 + extra)
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.storage.capture_metadata import capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    access = BodyAccessContext(principal_id="cost", can_read_body=True)
+    payload = read_payload(world.instance.body_store(), latest.record.payload_digest, access=access)
+    envelope = capture_envelope(
+        world.instance.body_store(), payload["capture_digest"], access=access
+    )
+    world.instance.body_store().erase(envelope.commitment.digest)  # missing, never erased
+    with _STATE.open(world.instance) as connection:
+        assert connection is not None
+        connection.executemany(
+            "INSERT INTO findings VALUES (?,?,?,?,?)",
+            [
+                (
+                    f"sha256:{index:064x}",
+                    "body",
+                    f"sha256:{index:064x}",
+                    "missing",
+                    "2026-10-28T00:00:00.000000Z",
+                )
+                for index in range(10 * extra)
+            ],
+        )
+    return world
+
+
+def test_a_served_sources_page_is_flat_in_landings_and_unrelated_findings(root: Path) -> None:
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+    from tests.test_scale._counters import COUNTERS
+
+    counts = []
+    for extra in SIZES:
+        world = _served_world(root / f"served-{extra}", extra)
+        instance = world.instance  # type: ignore[attr-defined]
+        warm = service_playbill_orient(instance, section="sources", limit=1)
+        assert warm.sources is not None
+        with counting(root) as window:
+            answer = service_playbill_orient(instance, section="sources", limit=1)
+        assert window.unexplained == [], window.unexplained
+        assert answer.sources is not None and len(answer.sources) == 1
+        (row,) = answer.sources
+        assert row.logical_source == "cisa.kev.catalog" and row.landings == 3 + extra // 2 + 1
+        assert row.latest.status == "unavailable" and row.latest.erased is None
+        counts.append(dict(window.counts))
+    small, large = counts
+    grown = {
+        name: (small[name], large[name])
+        for name in COUNTERS
+        if large[name] > small[name] * RATIO + SLACK[name]
+    }
+    assert not grown, grown

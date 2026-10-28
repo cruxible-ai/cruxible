@@ -635,12 +635,13 @@ def capture_availability(
     instance: PlaybillInstance,
     digest: str,
     *,
-    findings: Callable[[], Sequence[Any]] | None = None,
+    findings_of: Callable[[str], Sequence[Any]] | None = None,
 ) -> tuple[Literal["available", "unavailable"], str | None, CaptureErasureRecord | None]:
     """Whether the store can still produce a Capture, as the evidence worker last saw.
 
     An erased body is no damage: the erasure record says who erased it and why.
-    ``findings`` shares one read of the evidence worker's findings across a page.
+    ``findings_of`` reads the worker's findings for one Capture (a page passes a
+    keyed read); without it the card reads them all.
     """
 
     from cruxible_client.contracts.captures import required_capture_bodies
@@ -665,7 +666,7 @@ def capture_availability(
         pass
     found = [
         item
-        for item in (evidence_findings(instance) if findings is None else findings())
+        for item in (evidence_findings(instance) if findings_of is None else findings_of(digest))
         if item.capture_digest == digest
     ]
     if found:

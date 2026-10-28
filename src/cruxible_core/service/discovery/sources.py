@@ -76,20 +76,16 @@ def source_page(
     with instance.bind_accepted_projection(head) as projection:
         names = CaptureContractNames(instance, head, connection=projection.typed.connection)
         contracts = {item.source: _contracts(names, item) for item in page.sources}
-    findings: list[Sequence[Any]] = []
+    from cruxible_core.consumers.next.evidence import evidence_findings_for
 
-    def shared_findings() -> Sequence[Any]:
-        from cruxible_core.consumers.next.evidence import evidence_findings
-
-        if not findings:
-            findings.append(evidence_findings(instance))
-        return findings[0]
+    def findings_of(digest: str) -> Sequence[Any]:
+        return evidence_findings_for(instance, (digest,))
 
     rows = tuple(
         OrientSource(
             logical_source=item.source,
             landings=sum(count for _, count in item.counts),
-            latest=_latest(instance, journal, stream, item, shared_findings),
+            latest=_latest(instance, journal, stream, item, findings_of),
             contracts=contracts[item.source],
         )
         for item in page.sources
@@ -144,7 +140,7 @@ def _latest(
         envelope = capture_envelope(instance.body_store(), digest, access=_ACCESS)
     except (CasError, OSError, ValueError):
         return OrientSourceLanding(**base, unavailable=True)
-    status, detail, erasure = capture_availability(instance, digest, findings=findings)
+    status, detail, erasure = capture_availability(instance, digest, findings_of=findings)
     return OrientSourceLanding(
         **base,
         observed_at=envelope.observed_at,
