@@ -15,6 +15,8 @@ import random
 import sqlite3
 from typing import Any
 
+import pytest
+
 from cruxible_core.exhaust.journal_index import (
     _SCHEMA,
     _TABLES,
@@ -267,3 +269,31 @@ def test_a_9_to_8_to_9_round_trip_rederives_the_stale_landing_objects() -> None:
     _rebuild_schema(conn)
 
     _assert_migrated(conn)
+
+
+def test_a_projected_landing_is_never_rewritten_or_replaced() -> None:
+    conn = _index()
+    _land(conn, 1, "kev", "c1", at="2026-10-01T00:00:00Z")
+    _record(conn, 2, at="2026-10-02T00:00:00Z")
+    conn.execute("INSERT INTO capture_unattributed VALUES (2, ?)", (STREAM,))
+    for update in (
+        "UPDATE capture_selectors SET logical_source='pypi'",
+        "UPDATE capture_selectors SET contract_digest='c2'",
+        "UPDATE capture_selectors SET stream='stream-b'",
+        "UPDATE capture_selectors SET source_lost=1",
+        "UPDATE capture_unattributed SET stream='stream-b'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match="keeps its"):
+            conn.execute(update)
+    for replace in (
+        "INSERT OR REPLACE INTO capture_selectors(record_id,contract_digest,logical_source,"
+        "stream,landed_at,source_lost) VALUES (1,'c1','kev','stream-a','2026-10-01T00:00:00Z',0)",
+        "INSERT OR REPLACE INTO capture_selectors(record_id,contract_digest,logical_source,"
+        "stream,landed_at,source_lost) VALUES (1,'c1','pypi','stream-a','2026-10-01T00:00:00Z',0)",
+        "INSERT OR REPLACE INTO capture_unattributed VALUES (2, 'stream-a')",
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match="never replaced"):
+            conn.execute(replace)
+    # What the projection does write: the Trigger-name column, and nothing tallied moves.
+    conn.execute("UPDATE capture_selectors SET contract_identity='CaptureContract:x'")
+    assert _tallies(conn) == _recount(conn) == [(STREAM, "", "", 1), (STREAM, "kev", "c1", 1)]

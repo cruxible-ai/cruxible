@@ -205,12 +205,10 @@ def test_v6_index_migration_preserves_rows_and_progress_without_backfill(tmp_pat
         identity = conn.execute("SELECT identity FROM index_identity").fetchone()[0]
         progress = tuple(conn.execute("SELECT * FROM capture_progress").fetchone())
         # Remove every v9- and v8-only object before simulating the actual v6 schema.
-        for trigger in (
-            "capture_landing_attributed",
-            "capture_landing_unattributed",
-            "capture_landing_lost",
-            "capture_landing_found",
-        ):
+        for (trigger,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND "
+            "(name LIKE 'capture_landing%' OR name LIKE 'capture_unattributed%')"
+        ).fetchall():
             conn.execute(f"DROP TRIGGER {trigger}")
         conn.execute("DROP INDEX capture_source_latest")
         conn.execute("DROP TABLE capture_source_tallies")
