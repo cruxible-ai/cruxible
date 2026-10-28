@@ -3992,6 +3992,21 @@ carries its start's `at`. A generation is placed no earlier than any
 accepted before it, whatever its candidate timestamp says (its `at` is still
 that timestamp). A record whose payload is lost still lists, marked
 `unavailable` (or as `record_unavailable` when what it said is unknown).
+`--section sources` lists each logical source runs have landed Captures
+from, cited or not, by name: `{logical_source, landings, latest, contracts}`,
+with `landings` its landings (the `capture_landed` events of `--section
+activity`), `latest` its most recent landing (`landed_at`, the `run` and
+`line` that landed it, the Capture's `capture` handle and `Capture:` `ref`,
+its `observed_at` and `size`, and the Capture card's `status` and `erased`)
+and `contracts` each CaptureContract version they were landed under, with its
+count. Like `--section activity`, it is operational state read live at the
+current head whatever `--at` names. Each landing is indexed once, with
+running tallies per source, so a page costs its sources, never their
+landings. Landing records are best-effort: `sources_unattributed` counts the
+landings whose record or Capture envelope could not be read, so no source is
+known, and a latest landing that can no longer be read is marked
+`unavailable`. A Capture naming no logical source (a Procedure's emitted
+output) belongs to no row.
 `--section graph` pages the Subject graph for a whole-graph view: first the
 live Subjects (`graph.nodes`, each `{subject, kind}` with `subject` the
 `kind/id` ref `get` reads, by kind then Subject), then the live Claims whose

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`orient --section sources`: when each logical source last landed.** One
+  row per logical source runs have landed Captures from, cited or not: how
+  many landings it has, its latest landing (when, the run and Line that
+  landed it, and the Capture's handle, `Capture:` ref, observation time, size
+  and availability, erased included) and the CaptureContract versions they
+  were landed under, each with its count. It reads the same landing records
+  as the activity feed's `capture_landed` events, live at the current head.
+  The Procedure-run journal index keeps per-source landing tallies as it
+  indexes each landing (index schema 9 derives them once from an existing
+  index, keeping its identity), so a page costs its sources, never their
+  landings. Landings whose record can no longer be read are counted as
+  `sources_unattributed`.
 - **Provider interfaces can declare the logical sources they produce.** A v4
   interface definition takes an optional `produces`: the source names its
   provider writes on its Captures' `source_identity` (sorted and deduplicated,
