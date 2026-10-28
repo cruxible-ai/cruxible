@@ -272,14 +272,15 @@ def _statements(conn: sqlite3.Connection, script: str) -> None:
 
 
 def _install_landing_guards(conn: sqlite3.Connection) -> None:
-    """Install the landing rows' guards if missing; a no-op (no schema change) when present."""
+    """Install the landing rows' guards if missing; a no-op (no schema change) when present.
 
-    present = {
-        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
-    }
+    Every statement is idempotent on its own (DROP ... IF EXISTS, CREATE ... IF
+    NOT EXISTS), so processes opening the same file at once never act on what
+    another has already changed.
+    """
+
     for name in _RETIRED_LANDING_GUARDS:
-        if name in present:
-            conn.execute(f"DROP TRIGGER {name}")
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
     _statements(conn, _LANDING_GUARDS)
 
 

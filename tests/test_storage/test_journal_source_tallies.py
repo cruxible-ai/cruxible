@@ -337,18 +337,10 @@ def _guard_names(conn: sqlite3.Connection) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("written_by", ["d9af311c3", "72a3d6880", "576f84444"])
-def test_opening_an_index_written_before_its_guards_installs_them(
-    tmp_path: Path, written_by: str
-) -> None:
-    """A version 9 file from before the guards, or with an older guard, gains the current ones."""
+def _old_index(root: Path, written_by: str) -> Path:
+    """A version 9 index file as an earlier commit of this branch wrote it."""
 
-    from types import SimpleNamespace
-
-    from cruxible_core.exhaust.journal_index import JournalIndex
-    from cruxible_core.indexes.resident import close_idle_connections
-
-    path = tmp_path / "event-index.sqlite3"
+    path = root / "event-index.sqlite3"
     conn = sqlite3.connect(path, isolation_level=None)
     _statements(conn, _SCHEMA)
     for name in _guard_names(conn):
@@ -368,7 +360,21 @@ def test_opening_an_index_written_before_its_guards_installs_them(
     conn.execute("INSERT INTO initialized VALUES (1)")
     conn.execute("PRAGMA user_version=9")
     conn.close()
+    return path
 
+
+@pytest.mark.parametrize("written_by", ["d9af311c3", "72a3d6880", "576f84444"])
+def test_opening_an_index_written_before_its_guards_installs_them(
+    tmp_path: Path, written_by: str
+) -> None:
+    """A version 9 file from before the guards, or with an older guard, gains the current ones."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.exhaust.journal_index import JournalIndex
+    from cruxible_core.indexes.resident import close_idle_connections
+
+    path = _old_index(tmp_path, written_by)
     backend = SimpleNamespace(root=tmp_path, _streams_root=tmp_path / "streams")
     reopened = JournalIndex(backend)._open()  # type: ignore[arg-type]
     try:
@@ -392,3 +398,67 @@ def test_opening_an_index_written_before_its_guards_installs_them(
     guarded.execute("PRAGMA foreign_keys=ON")
     _assert_guarded(guarded)
     guarded.close()
+
+
+@pytest.mark.parametrize("written_by", ["72a3d6880", "576f84444"])
+def test_concurrent_opens_of_an_old_index_all_install_its_guards(
+    tmp_path: Path, written_by: str
+) -> None:
+    """Several connections opening the same old file at once each succeed.
+
+    Each removes the retired guard and installs the current ones with
+    statements that are idempotent on their own, so an opener never acts on a
+    trigger another opener has just dropped or created. A barrier releases
+    every opener's guard installation together, after each has read the
+    schema, which is when reading names and then dropping them used to fail
+    (``no such trigger``).
+    """
+
+    import threading
+    from types import SimpleNamespace
+
+    from cruxible_core.exhaust import journal_index
+    from cruxible_core.exhaust.journal_index import JournalIndex
+
+    openers = 6
+    for round_ in range(5):
+        root = tmp_path / f"round-{round_}"
+        root.mkdir()
+        path = _old_index(root, written_by)
+        backend = SimpleNamespace(root=root, _streams_root=root / "streams")
+        barrier = threading.Barrier(openers)
+        install = journal_index._install_landing_guards
+        failures: list[BaseException] = []
+
+        def opener() -> None:
+            try:
+                conn = JournalIndex(backend)._open()  # type: ignore[arg-type]
+                conn.close()
+            except BaseException as error:  # noqa: BLE001 - collected and asserted below
+                failures.append(error)
+
+        def gated(conn: sqlite3.Connection) -> None:
+            conn.execute("SELECT name FROM sqlite_master").fetchall()
+            barrier.wait(timeout=30)
+            install(conn)
+
+        journal_index._install_landing_guards = gated  # type: ignore[assignment]
+        try:
+            threads = [threading.Thread(target=opener) for _ in range(openers)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=60)
+        finally:
+            journal_index._install_landing_guards = install  # type: ignore[assignment]
+        assert failures == []
+        check = sqlite3.connect(path)
+        try:
+            assert _guard_names(check) == {
+                "capture_landing_once",
+                "capture_landing_sealed",
+                "capture_unattributed_once",
+                "capture_unattributed_fixed",
+            }
+        finally:
+            check.close()
