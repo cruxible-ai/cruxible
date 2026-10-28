@@ -15,8 +15,10 @@
   upgrade's acceptance, a failed run's finish, a coverage gap's start, the
   oldest pending match, an attestation, a proposal's admission, a prediction
   window's close, and, for a conflict, the acceptance of the newest contender
-  or their ClaimType (one index seek per input). Other reasons leave it out.
-  `since` is not part of `item_id`, and the queue's own reads stay per row.
+  or their ClaimType (one index seek per input, and that generation's instant
+  from its record's small memoized facts, never the whole change set). Other
+  reasons leave it out. `since` is not part of `item_id`, and the queue's own
+  reads stay per row.
 
 - **`orient --section sources`: when each logical source last landed.** One
   row per logical source runs have landed Captures from, cited or not: how

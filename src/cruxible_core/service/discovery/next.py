@@ -7173,16 +7173,23 @@ def _stamp_since(
     )
     conflict_since: dict[int, str] = {}
     if conflicts:
+        from cruxible_core.service.discovery.generation_rows import generation_accepted_at
+
+        records = instance.retained_record_reader()
         with instance.accepted_history_reader(at=coordinate) as history:
             changed = history.last_changed(
                 tuple(path for paths in conflicts.values() for path in paths)
             )
-            oids = {
-                sequence: history.generation(sequence).git_oid for sequence in set(changed.values())
+            # Each generation's instant from its record's small facts, memoized
+            # per generation: never the whole change-set record a recovered
+            # generation's own instant would load, so the cost does not grow
+            # with how many members the accepting change set carried.
+            accepted = {
+                sequence: generation_accepted_at(
+                    instance, history, records, history.generation(sequence)
+                )
+                for sequence in set(changed.values())
             }
-        accepted = {
-            sequence: instance.accepted_evaluation_time(oid) for sequence, oid in oids.items()
-        }
         for position, paths in conflicts.items():
             sequences = [changed[path] for path in paths if path in changed]
             if sequences:
