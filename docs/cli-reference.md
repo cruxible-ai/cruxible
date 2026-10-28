@@ -3434,7 +3434,10 @@ Empty `items` means only that no work exists in the explicitly observed domains.
 Rows are typed: each carries `severity`, `reason`, `subject_identity`,
 `related_identities`, `detail`, a `repair` (with a runnable `command` when the
 operation's arguments name every operand), and any further `findings` about the
-same underlying fact. `--delta DIGEST` returns only the rows added or removed
+same underlying fact. Severity is `blocking`, `repair`, `warning` or `setup`,
+in that order: `setup` is a choice the operator owns rather than a problem (a
+Line accepted but not yet enabled, `line_not_enabled`), so it sorts after
+every problem. `--delta DIGEST` returns only the rows added or removed
 since that earlier queue, when the daemon still remembers it; otherwise it
 returns the whole queue.
 
@@ -3915,7 +3918,8 @@ type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (when not, the same `authoring_refusal`
 code, detail and repair that `whoami` reports), what the `next` queue
-holds, and the next commands to run. When any Line was ever enabled, attention
+holds (its problems as `next_items` and the first of them in `top`, its setup
+rows apart as `setup_items`), and the next commands to run. When any Line was ever enabled, attention
 counts the enablements as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
 reason, for any caller of the instance, without daemon scope; it also notes

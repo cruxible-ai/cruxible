@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`next` separates setup choices from problems.** A new severity, `setup`,
+  sorts after `blocking`, `repair` and `warning`: a choice the operator owns
+  rather than something wrong. `line_not_enabled` (a Line accepted but not
+  yet enabled) is the one reason that carries it, so a fresh kit install no
+  longer buries real problems under one warning per Line. `orient` attention
+  counts problems in `next_items` and names them in `top`; setup rows are
+  counted apart in `setup_items`, and the CLI prints
+  `Attention: next=N setup=M ...`.
 - **`orient --section sources`: when each logical source last landed.** One
   row per logical source runs have landed Captures from, cited or not: how
   many landings it has, its latest landing (when, the run and Line that

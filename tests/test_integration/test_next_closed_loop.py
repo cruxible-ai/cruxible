@@ -2028,7 +2028,8 @@ def _line_not_enabled(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     request = _request(instance)
 
     row = _row(instance, "line_not_enabled", request)
-    assert row.subject_identity == line.identity.qualified and row.severity == "warning"
+    # A Line nobody enabled yet is a choice, not a problem: setup.
+    assert row.subject_identity == line.identity.qualified and row.severity == "setup"
     assert row.repair.command == f"cruxible line enable {line.identity.name}"
 
     # The named repair: enable it. A later disable owes nothing: it was deliberate.

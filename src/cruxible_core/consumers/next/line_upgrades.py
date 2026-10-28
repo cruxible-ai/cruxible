@@ -1,7 +1,7 @@
 """Disabled-by-upgrade and never-enabled findings derived from accepted Line version changes.
 
 A Line whose identity is new and was never enabled owes ``line enable``: a
-warning row until its first enablement or its retirement.
+setup row until its first enablement or its retirement.
 
 The durable cursor and rows commit together. A crash before commit replays only
 those generations; deleting this disposable projection rebuilds from retained

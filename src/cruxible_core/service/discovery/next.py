@@ -222,7 +222,7 @@ _COVERAGE_SOURCE_SCAN_DEFECT_NOTES = frozenset(
         "coverage_window_limit_exceeded",
     }
 )
-_SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
+_SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2, "setup": 3}
 _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "accepted_state",
     "workspace_floor",
@@ -4861,7 +4861,8 @@ def _line_upgrade_items(
     # A Line starts disabled: until its first enablement, name the enable.
     added = tuple(
         _item(
-            severity="warning",
+            # A choice the operator owns, not a problem: setup, after every problem.
+            severity="setup",
             reason="line_not_enabled",
             subject_identity=line,
             detail={"detail": "accepted but never enabled; enable it to run on its Triggers"},
@@ -7081,11 +7082,16 @@ def _queue_at(
 
 @dataclass(frozen=True)
 class PlaybillNextSummary:
-    """A bounded view of the same grouped queue, without health, paging or digest work."""
+    """A bounded view of the same grouped queue, without health, paging or digest work.
+
+    ``items`` and ``total_items`` are the queue's problems; ``setup_items``
+    counts its setup rows (choices the operator owns), which sort after them.
+    """
 
     items: tuple[PlaybillNextItemV1, ...]
     total_items: int
     matching_item: PlaybillNextItemV1 | None
+    setup_items: int = 0
 
 
 def summarize_playbill_next(
@@ -7097,7 +7103,10 @@ def summarize_playbill_next(
     match: Callable[[PlaybillNextItemV1], bool] | None = None,
     heads: ReadHeads | None = None,
 ) -> PlaybillNextSummary:
-    """Count the queue and return its first three rows plus one optional matched row.
+    """Count the queue and return its first three problem rows plus one optional matched row.
+
+    Setup rows are counted apart (``setup_items``): a choice the operator owns
+    is not a problem, and sorts after every one.
 
     Matches search the same first maximum-size page orient previously read.
     Claim rows at the current heads come from the worker's stored rows, with
@@ -7128,7 +7137,9 @@ def summarize_playbill_next(
         if match is None
         else next((item for item in queue.items[:NEXT_MAX_LIMIT] if match(item)), None)
     )
-    return PlaybillNextSummary(queue.items[:3], len(queue.items), matching)
+    setup = sum(item.severity == "setup" for item in queue.items)
+    problems = queue.items[: len(queue.items) - setup]
+    return PlaybillNextSummary(problems[:3], len(problems), matching, setup)
 
 
 def service_playbill_next(

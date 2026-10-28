@@ -459,7 +459,10 @@ NextReason: TypeAlias = Literal[
     "subject_kind_undeclared",
     "kit_resume_blocked",
 ]
-NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
+#: How much a row asks of its reader, most first. ``setup`` is a choice the
+#: operator owns rather than something wrong (a Line accepted but not yet
+#: enabled): it sorts after every problem and no problem count includes it.
+NextSeverity: TypeAlias = Literal["blocking", "repair", "warning", "setup"]
 #: An operand only the caller holds, which a repair's command shows as a
 #: placeholder to replace: ``because`` (TEXT), ``file`` (FILE#ANCHOR), ``capture`` (CAP).
 NextRepairOperand: TypeAlias = Literal["because", "file", "capture"]

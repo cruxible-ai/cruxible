@@ -568,7 +568,7 @@ def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
         },
         {
             "item_id": "sha256:" + "2" * 64,
-            "severity": "warning",
+            "severity": "setup",
             "reason": "line_not_enabled",
             "subject_identity": "Line:daily",
             "detail": {"detail": "accepted but never enabled; enable it to run on its Triggers"},
@@ -647,7 +647,7 @@ def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
         "  Cause: fetch: transport_error: connection refused",
         "  repair: hand edit Line:hourly: "
         "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
-        "warning  line_not_enabled  Line:daily  next=cruxible.line.enable",
+        "setup  line_not_enabled  Line:daily  next=cruxible.line.enable",
         "  repair: cruxible line enable daily",
         f"repair  claim_evidence_erased  Claim:{claim}  next=cruxible.rebind",
         f"  repair: cruxible rebind {claim} --capture CAP --because TEXT",

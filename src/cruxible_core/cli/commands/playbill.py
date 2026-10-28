@@ -9209,9 +9209,11 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             )
     attention = result.get("attention")
     if attention is not None:
+        setup = attention.get("setup_items")
         lines.append(
             f"Attention: next={attention['next_items']} "
-            f"open_proposals={attention['open_proposals']}"
+            + (f"setup={setup} " if setup else "")
+            + f"open_proposals={attention['open_proposals']}"
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))

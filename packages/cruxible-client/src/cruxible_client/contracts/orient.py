@@ -344,11 +344,17 @@ class OrientEnablements(_StrictOrientModel):
 
 
 class OrientAttention(_StrictOrientModel):
-    """What the ``next`` queue holds, and anything else the instance needs."""
+    """What the ``next`` queue holds, and anything else the instance needs.
+
+    ``next_items`` counts the queue's problems and ``top`` names the first of
+    them; ``setup_items`` counts its setup rows apart (choices the operator
+    owns, such as a Line accepted but not yet enabled), absent when none.
+    """
 
     next_items: int = Field(ge=0)
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
+    setup_items: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     # Present when any Line was ever enabled on this instance.
     enablements: OrientEnablements | None = Field(default=None, exclude_if=_is_none)

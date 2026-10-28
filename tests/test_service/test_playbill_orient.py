@@ -135,7 +135,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         orient_module,
         "summarize_playbill_next",
         lambda *args, **kwargs: SimpleNamespace(
-            items=(other, item), total_items=7, matching_item=item
+            items=(other, item), total_items=7, matching_item=item, setup_items=0
         ),
     )
 
