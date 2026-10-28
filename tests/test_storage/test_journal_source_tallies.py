@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -271,17 +272,20 @@ def test_a_9_to_8_to_9_round_trip_rederives_the_stale_landing_objects() -> None:
     _assert_migrated(conn)
 
 
-def test_a_projected_landing_is_never_rewritten_or_replaced() -> None:
-    conn = _index()
+def _assert_guarded(conn: sqlite3.Connection) -> None:
+    """Every write that could move a row away from its tally is refused."""
+
     _land(conn, 1, "kev", "c1", at="2026-10-01T00:00:00Z")
+    _land(conn, 3, "pypi", "c1", at="2026-10-03T00:00:00Z")
     _record(conn, 2, at="2026-10-02T00:00:00Z")
     conn.execute("INSERT INTO capture_unattributed VALUES (2, ?)", (STREAM,))
     for update in (
-        "UPDATE capture_selectors SET logical_source='pypi'",
-        "UPDATE capture_selectors SET contract_digest='c2'",
-        "UPDATE capture_selectors SET stream='stream-b'",
-        "UPDATE capture_selectors SET source_lost=1",
+        "UPDATE capture_selectors SET logical_source='pypi' WHERE record_id=1",
+        "UPDATE capture_selectors SET contract_digest='c2' WHERE record_id=1",
+        "UPDATE capture_selectors SET stream='stream-b' WHERE record_id=1",
+        "UPDATE capture_selectors SET source_lost=1 WHERE record_id=1",
         "UPDATE capture_unattributed SET stream='stream-b'",
+        "UPDATE OR REPLACE capture_unattributed SET record_id=1",
     ):
         with pytest.raises(sqlite3.IntegrityError, match="keeps its"):
             conn.execute(update)
@@ -296,4 +300,69 @@ def test_a_projected_landing_is_never_rewritten_or_replaced() -> None:
             conn.execute(replace)
     # What the projection does write: the Trigger-name column, and nothing tallied moves.
     conn.execute("UPDATE capture_selectors SET contract_identity='CaptureContract:x'")
-    assert _tallies(conn) == _recount(conn) == [(STREAM, "", "", 1), (STREAM, "kev", "c1", 1)]
+    assert (
+        _tallies(conn)
+        == _recount(conn)
+        == [
+            (STREAM, "", "", 1),
+            (STREAM, "kev", "c1", 1),
+            (STREAM, "pypi", "c1", 1),
+        ]
+    )
+
+
+def test_a_projected_landing_is_never_rewritten_or_replaced() -> None:
+    _assert_guarded(_index())
+
+
+def _guard_names(conn: sqlite3.Connection) -> set[str]:
+    return {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
+            "('capture_landing_once','capture_landing_fixed','capture_landing_frozen',"
+            "'capture_unattributed_once','capture_unattributed_fixed')"
+        )
+    }
+
+
+def test_opening_an_index_written_before_its_guards_installs_them(tmp_path: Path) -> None:
+    """A version 9 file from before the guards (d9af311c3) gains them on open."""
+
+    from types import SimpleNamespace
+
+    from cruxible_core.exhaust.journal_index import JournalIndex
+    from cruxible_core.indexes.resident import close_idle_connections
+
+    path = tmp_path / "event-index.sqlite3"
+    conn = sqlite3.connect(path, isolation_level=None)
+    _statements(conn, _SCHEMA)
+    for name in _guard_names(conn):
+        conn.execute(f"DROP TRIGGER {name}")
+    conn.execute("INSERT INTO initialized VALUES (1)")
+    conn.execute("PRAGMA user_version=9")
+    conn.close()
+
+    backend = SimpleNamespace(root=tmp_path, _streams_root=tmp_path / "streams")
+    reopened = JournalIndex(backend)._open()  # type: ignore[arg-type]
+    try:
+        assert _guard_names(reopened) == {
+            "capture_landing_once",
+            "capture_landing_fixed",
+            "capture_unattributed_once",
+            "capture_unattributed_fixed",
+        }
+        version = reopened.execute("PRAGMA schema_version").fetchone()[0]
+    finally:
+        reopened.close()
+    # Opening again finds them present and changes nothing.
+    again = JournalIndex(backend)._open()  # type: ignore[arg-type]
+    try:
+        assert again.execute("PRAGMA schema_version").fetchone()[0] == version
+    finally:
+        again.close()
+    close_idle_connections()
+    guarded = sqlite3.connect(path, isolation_level=None)
+    guarded.execute("PRAGMA foreign_keys=ON")
+    _assert_guarded(guarded)
+    guarded.close()

@@ -93,24 +93,6 @@ CREATE TABLE IF NOT EXISTS capture_source_tallies (
 CREATE INDEX IF NOT EXISTS capture_source_latest
  ON capture_selectors(stream, logical_source, landed_at, record_id)
  WHERE logical_source IS NOT NULL;
-CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selectors
- WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
- SELECT RAISE(ABORT, 'a projected landing is never replaced');
-END;
-CREATE TRIGGER IF NOT EXISTS capture_landing_fixed BEFORE UPDATE OF
- logical_source, contract_digest, stream, source_lost ON capture_selectors
- WHEN old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
- OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
- SELECT RAISE(ABORT, 'a projected landing keeps its source, contract and stream');
-END;
-CREATE TRIGGER IF NOT EXISTS capture_unattributed_once BEFORE INSERT ON capture_unattributed
- WHEN EXISTS(SELECT 1 FROM capture_unattributed WHERE record_id=new.record_id) BEGIN
- SELECT RAISE(ABORT, 'an unattributed landing is never replaced');
-END;
-CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture_unattributed
- WHEN old.record_id IS NOT new.record_id OR old.stream IS NOT new.stream BEGIN
- SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
-END;
 CREATE TRIGGER IF NOT EXISTS capture_landing_attributed AFTER INSERT ON capture_selectors
  WHEN new.stream IS NOT NULL AND (new.logical_source IS NOT NULL OR new.source_lost=1) BEGIN
  INSERT INTO capture_source_tallies VALUES(new.stream, coalesce(new.logical_source, ''),
@@ -137,6 +119,31 @@ CREATE TRIGGER IF NOT EXISTS capture_landing_found AFTER DELETE ON capture_unatt
   AND stream=old.stream AND logical_source='' AND contract_digest='';
 END;
 """
+#: The landing rows' immutability guards: every open installs them (idempotently),
+#: so an index file written before a guard existed gains it without a schema move.
+#: A guard whose definition changed is renamed, and the old name is dropped.
+_LANDING_GUARDS = """
+CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selectors
+ WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'a projected landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_fixed BEFORE UPDATE OF
+ logical_source, contract_digest, stream, source_lost ON capture_selectors
+ WHEN old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
+ OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
+ SELECT RAISE(ABORT, 'a projected landing keeps its source, contract and stream');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_once BEFORE INSERT ON capture_unattributed
+ WHEN EXISTS(SELECT 1 FROM capture_unattributed WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture_unattributed
+ WHEN old.record_id IS NOT new.record_id OR old.stream IS NOT new.stream BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
+END;
+"""
+_RETIRED_LANDING_GUARDS: tuple[str, ...] = ()
+_LANDING_SCHEMA += _LANDING_GUARDS
 _SCHEMA = (
     """
 CREATE TABLE IF NOT EXISTS initialized (singleton INTEGER PRIMARY KEY);
@@ -259,6 +266,18 @@ def _statements(conn: sqlite3.Connection, script: str) -> None:
         if sqlite3.complete_statement(statement):
             conn.execute(statement)
             statement = ""
+
+
+def _install_landing_guards(conn: sqlite3.Connection) -> None:
+    """Install the landing rows' guards if missing; a no-op (no schema change) when present."""
+
+    present = {
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+    }
+    for name in _RETIRED_LANDING_GUARDS:
+        if name in present:
+            conn.execute(f"DROP TRIGGER {name}")
+    _statements(conn, _LANDING_GUARDS)
 
 
 def _add_landing_tallies(conn: sqlite3.Connection) -> None:
@@ -529,6 +548,7 @@ class JournalIndex:
             conn.execute("PRAGMA foreign_keys=ON")
             if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
                 _rebuild_schema(conn)
+            _install_landing_guards(conn)
             conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
             if not conn.execute("SELECT 1 FROM initialized").fetchone():
                 for identity in self.backend._streams_root.glob("*/*/identity.json"):
