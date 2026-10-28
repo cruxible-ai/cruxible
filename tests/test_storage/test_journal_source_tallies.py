@@ -284,6 +284,9 @@ def _assert_guarded(conn: sqlite3.Connection) -> None:
         "UPDATE capture_selectors SET contract_digest='c2' WHERE record_id=1",
         "UPDATE capture_selectors SET stream='stream-b' WHERE record_id=1",
         "UPDATE capture_selectors SET source_lost=1 WHERE record_id=1",
+        # Moving a row onto another's key would delete that one with no trigger.
+        "UPDATE OR REPLACE capture_selectors SET record_id=3 WHERE record_id=1",
+        "UPDATE capture_selectors SET record_id=9 WHERE record_id=1",
         "UPDATE capture_unattributed SET stream='stream-b'",
         "UPDATE OR REPLACE capture_unattributed SET record_id=1",
     ):
@@ -326,8 +329,11 @@ def _guard_names(conn: sqlite3.Connection) -> set[str]:
     }
 
 
-def test_opening_an_index_written_before_its_guards_installs_them(tmp_path: Path) -> None:
-    """A version 9 file from before the guards (d9af311c3) gains them on open."""
+@pytest.mark.parametrize("written_by", ["d9af311c3", "72a3d6880"])
+def test_opening_an_index_written_before_its_guards_installs_them(
+    tmp_path: Path, written_by: str
+) -> None:
+    """A version 9 file from before the guards (or with the record_id-blind one) gains them."""
 
     from types import SimpleNamespace
 
@@ -339,6 +345,12 @@ def test_opening_an_index_written_before_its_guards_installs_them(tmp_path: Path
     _statements(conn, _SCHEMA)
     for name in _guard_names(conn):
         conn.execute(f"DROP TRIGGER {name}")
+    if written_by == "72a3d6880":
+        # That commit's selector guard did not freeze record_id.
+        conn.execute(
+            "CREATE TRIGGER capture_landing_fixed BEFORE UPDATE OF logical_source ON "
+            "capture_selectors BEGIN SELECT RAISE(ABORT, 'keeps its'); END"
+        )
     conn.execute("INSERT INTO initialized VALUES (1)")
     conn.execute("PRAGMA user_version=9")
     conn.close()
@@ -348,7 +360,7 @@ def test_opening_an_index_written_before_its_guards_installs_them(tmp_path: Path
     try:
         assert _guard_names(reopened) == {
             "capture_landing_once",
-            "capture_landing_fixed",
+            "capture_landing_frozen",
             "capture_unattributed_once",
             "capture_unattributed_fixed",
         }

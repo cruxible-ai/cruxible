@@ -127,11 +127,12 @@ CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selec
  WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
  SELECT RAISE(ABORT, 'a projected landing is never replaced');
 END;
-CREATE TRIGGER IF NOT EXISTS capture_landing_fixed BEFORE UPDATE OF
- logical_source, contract_digest, stream, source_lost ON capture_selectors
- WHEN old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
+CREATE TRIGGER IF NOT EXISTS capture_landing_frozen BEFORE UPDATE OF
+ record_id, logical_source, contract_digest, stream, source_lost ON capture_selectors
+ WHEN old.record_id IS NOT new.record_id
+ OR old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
  OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
- SELECT RAISE(ABORT, 'a projected landing keeps its source, contract and stream');
+ SELECT RAISE(ABORT, 'a projected landing keeps its record, source, contract and stream');
 END;
 CREATE TRIGGER IF NOT EXISTS capture_unattributed_once BEFORE INSERT ON capture_unattributed
  WHEN EXISTS(SELECT 1 FROM capture_unattributed WHERE record_id=new.record_id) BEGIN
@@ -142,7 +143,7 @@ CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture
  SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
 END;
 """
-_RETIRED_LANDING_GUARDS: tuple[str, ...] = ()
+_RETIRED_LANDING_GUARDS = ("capture_landing_fixed",)
 _LANDING_SCHEMA += _LANDING_GUARDS
 _SCHEMA = (
     """
