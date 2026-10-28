@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Provider interfaces can declare the logical sources they produce.** A v4
+  interface definition takes an optional `produces`: the source names its
+  provider writes on its Captures' `source_identity` (sorted and deduplicated,
+  each a lowercase logical source name). `orient --section interfaces` and
+  `get ProviderInterface:NAME` show it, empty when undeclared. A definition
+  without it keeps its exact bytes and digests; a wheel must list the names
+  sorted, since its interface digest covers its own spelling. The declaration
+  is not yet enforced against what a run stamps.
 - **Old v3 evidence policies keep working after the revision-36 compiler
   upgrade.** The rule that revision 36 writes v4 identity evidence policies now
   judges only the ClaimTypes a write creates or changes. Rechecking an

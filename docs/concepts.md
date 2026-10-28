@@ -780,7 +780,13 @@ default installed by name); installing grants no permission to run anything. New
 at `provider-interfaces/<id>/v<version>.json`, with one effect declaration:
 `pure`, `external_read`, or `external_mutation`. An installed name and version
 has one definition; a changed definition requires a new version. Calls use the
-interface's input and output schemas directly.
+interface's input and output schemas directly. An acquisition interface whose
+provider names its own logical source may declare `produces`: the sorted source
+names (`pypi.release`, `cisa.kev.catalog`) it writes on its Captures'
+`source_identity`, so Trigger and evidence-rule authors can read them from
+`orient --section interfaces` or `get ProviderInterface:NAME`. Interfaces whose
+caller names the source (`web.fetch`, `workspace.file`) omit it. The
+declaration is not yet checked against what a run stamps.
 
 In Python, `@procedure` from `cruxible_client.authoring.source` turns a
 decorated function into a `ProcedureSource`, compiled into the same governed

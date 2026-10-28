@@ -45434,7 +45434,7 @@
           },
           "OrientInterface": {
             "additionalProperties": false,
-            "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` names the live Providers implementing it; one\nwith none has nothing to run it yet. ``operation_contract`` describes the\nnode's input and output. ``get(\"ProviderInterface:<name>\")`` reads the\nwhole accepted entry. Admission records the exact versions selected by name.",
+            "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` names the live Providers implementing it; one\nwith none has nothing to run it yet. ``operation_contract`` describes the\nnode's input and output. ``produces`` lists the logical source names the\ninterface declares its Captures carry (empty when undeclared, as when the\ncaller names the source). ``get(\"ProviderInterface:<name>\")`` reads the\nwhole accepted entry. Admission records the exact versions selected by name.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -45486,6 +45486,14 @@
                   "type": "string"
                 },
                 "title": "Output",
+                "type": "array"
+              },
+              "produces": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Produces",
                 "type": "array"
               },
               "providers": {

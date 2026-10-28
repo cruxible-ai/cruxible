@@ -309,7 +309,9 @@ class OrientInterface(_StrictOrientModel):
     governed effect class: an ``external_mutation`` call needs an effect policy
     on its node. ``providers`` names the live Providers implementing it; one
     with none has nothing to run it yet. ``operation_contract`` describes the
-    node's input and output. ``get("ProviderInterface:<name>")`` reads the
+    node's input and output. ``produces`` lists the logical source names the
+    interface declares its Captures carry (empty when undeclared, as when the
+    caller names the source). ``get("ProviderInterface:<name>")`` reads the
     whole accepted entry. Admission records the exact versions selected by name.
     """
 
@@ -318,6 +320,7 @@ class OrientInterface(_StrictOrientModel):
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
     effect: Literal["pure", "external_read", "external_mutation"]
+    produces: tuple[str, ...] = ()
     providers: tuple[OrientInterfaceProvider, ...] = ()
     operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)
 

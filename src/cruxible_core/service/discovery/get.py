@@ -1675,6 +1675,7 @@ def _provider_interface_card(
         input=row.input,
         output=row.output,
         effect=row.effect,
+        produces=row.produces,
         providers=tuple(
             GetProviderInterfaceProvider(provider=item.provider) for item in row.providers
         ),

@@ -798,3 +798,68 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
         if item.entry.identity == "ProviderInterface:demo.interface"
     )
     assert proof.proof is not None and proof.proof["entry"] == entry.model_dump(mode="json")
+
+
+def test_orient_and_get_show_the_sources_an_interface_produces(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceDefinition,
+        provider_interface_contract,
+        provider_interface_path,
+        render_provider_interface,
+    )
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._support import initialize_local
+
+    instance, owner = initialize_local(tmp_path)
+    interface = provider_interface_contract(
+        interface=ProviderInterfaceDefinition.model_validate(
+            {
+                "interface_id": "demo.release",
+                "version": 1,
+                "effect_class": "external_read",
+                "contracts": {
+                    "input": {"fields": {"project": {"type": "string"}}},
+                    "output": "playbill-provider-result-to-external-capture-v1",
+                },
+                "produces": ["demo.release", "demo.advisory"],
+            }
+        )
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[provider_interface_path(interface.identity.name)] = render_provider_interface(interface)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/interface-produces",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert proposed.evaluation.verdict == "candidate", proposed.evaluation.diagnostics
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=proposed.admission.proposal_id),
+    )
+
+    page = service_playbill_orient(instance, section="interfaces", surface="mcp")
+    rows = {row.name: row for row in page.interfaces or ()}
+    assert rows["demo.release"].produces == ("demo.advisory", "demo.release")
+    # The caller names workspace.file's source, so it declares none.
+    assert rows["workspace.file"].produces == ()
+    assert rows["workspace.file"].model_dump(mode="json")["produces"] == []
+
+    access = BodyAccessContext(principal_id="reader", can_read_body=False)
+    card = service_playbill_get(
+        instance, request=GetRequest(ref="ProviderInterface:demo.release"), access=access
+    ).card
+    assert card is not None and card.produces == ("demo.advisory", "demo.release")
+    builtin = service_playbill_get(
+        instance, request=GetRequest(ref="ProviderInterface:workspace.file"), access=access
+    ).card
+    assert builtin is not None and builtin.produces == ()
