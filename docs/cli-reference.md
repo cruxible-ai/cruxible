@@ -3445,10 +3445,10 @@ rows (the attestation), `proposal_awaiting_approval` (its admission),
 `prediction_settleable` (the window's close) and `claim_conflicted` (when the
 newest contender or their ClaimType took its current form, so the contest
 has held at least that long). Other rows leave it out. `since` is not part of
-`item_id`, so a delta does not report a row whose `since` alone moved.
-`--delta DIGEST` returns only the rows added or removed since that earlier
-queue, when the daemon still remembers it; otherwise it returns the whole
-queue.
+`item_id`; a delta carries a row whose `since` alone moved, under the same
+`item_id`. `--delta DIGEST` returns only the rows added or removed since that
+earlier queue (and kept rows whose `since` moved), when the daemon still
+remembers it; otherwise it returns the whole queue.
 
 Results are paged. `--limit` sets the rows per page (default 100, at most 1000),
 and `total_items` counts every row of the answer, so page one already gives the

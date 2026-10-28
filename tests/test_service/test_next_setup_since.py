@@ -322,3 +322,29 @@ def test_a_conflicts_since_reads_no_change_set_however_large_its_accepting_batch
     ]
     assert seeks == [len(contenders) + 1]
     assert parsed == []
+
+
+def test_a_delta_carries_a_kept_row_whose_since_moved(tmp_path: Path) -> None:
+    instance, owner, first = _conflict_world(tmp_path)
+    before = service_playbill_next(instance, request=_request(instance))
+    _restate(instance, owner, first, unrelated=0, timestamp="2026-08-24T18:00:00.000000Z")
+    after = service_playbill_next(instance, request=_request(instance))
+    old, new = _conflict(before.items), _conflict(after.items)
+    # The same finding, now younger: its inputs last changed at the restatement.
+    assert (old.since, new.since) == ("2026-08-24T17:00:03+00:00", "2026-08-24T18:00:00+00:00")
+    assert old.item_id == new.item_id
+
+    delta = service_playbill_next(
+        instance,
+        request=_request(instance).model_copy(update={"since_result_digest": before.result_digest}),
+    )
+    assert delta.delta_since == before.result_digest
+    # The kept row is carried with its current since, and is not removed.
+    assert _conflict(delta.items) == new
+    assert new.item_id not in delta.removed_item_ids
+    # A delta from the current queue carries nothing.
+    unchanged = service_playbill_next(
+        instance,
+        request=_request(instance).model_copy(update={"since_result_digest": after.result_digest}),
+    )
+    assert not unchanged.items

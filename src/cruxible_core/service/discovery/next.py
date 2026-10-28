@@ -7488,7 +7488,11 @@ def _delta_of(
     since: str,
     scope: str,
 ) -> PlaybillNextResultV2:
-    """Return the reproducible symmetric difference from a remembered queue."""
+    """Return the reproducible symmetric difference from a remembered queue.
+
+    A row kept under the same ``item_id`` whose ``since`` moved is carried too
+    (and not removed): a reader replaces it by ID.
+    """
 
     with _QUEUE_MEMO_LOCK:
         previous = _QUEUE_MEMO.get((scope, since))
@@ -7500,7 +7504,15 @@ def _delta_of(
     changed = tuple(
         sorted(
             (
-                *(item for item in full.items if item.item_id not in previous_ids),
+                # A new row, or a kept one whose ``since`` moved: ``since`` is
+                # outside ``item_id`` (the row is the same finding), so a delta
+                # compares it to carry the row's current age to its reader.
+                *(
+                    item
+                    for item in full.items
+                    if item.item_id not in previous_ids
+                    or previous_by_id[item.item_id].since != item.since
+                ),
                 *(previous_by_id[item_id] for item_id in previous_ids - current_ids),
             ),
             key=_item_sort_key,

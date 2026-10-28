@@ -1695,7 +1695,8 @@ class NextItem(BaseModel):
     #: When the condition this row's reason reports began, read from state that
     #: already records it (a Line's acceptance, a run's failure, an attestation,
     #: a window's close). Absent when no record gives it cheaply. Not part of
-    #: ``item_id``: it describes the row, it does not identify it.
+    #: ``item_id``: it describes the row, it does not identify it. A delta
+    #: carries a kept row whose ``since`` moved, under the same ``item_id``.
     since: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("item_id")

@@ -17,8 +17,9 @@
   window's close, and, for a conflict, the acceptance of the newest contender
   or their ClaimType (one index seek per input, and that generation's instant
   from its record's small memoized facts, never the whole change set). Other
-  reasons leave it out. `since` is not part of `item_id`, and the queue's own
-  reads stay per row.
+  reasons leave it out. `since` is not part of `item_id`; a delta carries a
+  kept row whose `since` moved, under the same ID. The queue's own reads stay
+  per row.
 
 - **`orient --section sources`: when each logical source last landed.** One
   row per logical source runs have landed Captures from, cited or not: how
