@@ -41,6 +41,15 @@ after every problem, and `orient` counts them apart (`setup_items`) from the
 problems it counts (`next_items`). Rows are read from what changed, so the
 queue stays cheap to read however much the instance holds.
 
+In `--json`, a row whose start state records also carries `since`: when the
+condition began. A Line not yet enabled has been since its acceptance, one
+disabled by an upgrade since the upgrade, a failed run since it finished, a
+coverage gap since its start, pending work since its oldest match, new
+evidence since its attestation, a proposal awaiting approval since its
+admission, a settleable prediction since its window closed, and a conflict
+since the newest of its contenders (or their ClaimType) was accepted. Other
+rows leave it out.
+
 ## Signals by family
 
 | Family | Rows | What happened |

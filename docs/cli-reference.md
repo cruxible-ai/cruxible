@@ -3437,9 +3437,18 @@ operation's arguments name every operand), and any further `findings` about the
 same underlying fact. Severity is `blocking`, `repair`, `warning` or `setup`,
 in that order: `setup` is a choice the operator owns rather than a problem (a
 Line accepted but not yet enabled, `line_not_enabled`), so it sorts after
-every problem. `--delta DIGEST` returns only the rows added or removed
-since that earlier queue, when the daemon still remembers it; otherwise it
-returns the whole queue.
+every problem. A row also carries `since`, when the condition it reports
+began, where state already records it: `line_not_enabled` (the Line's
+acceptance), `line_disabled_by_upgrade` (the upgrade's acceptance),
+`line_run_failed`, `line_coverage_gap`, `line_work_pending`, the new-evidence
+rows (the attestation), `proposal_awaiting_approval` (its admission),
+`prediction_settleable` (the window's close) and `claim_conflicted` (when the
+newest contender or their ClaimType took its current form, so the contest
+has held at least that long). Other rows leave it out. `since` is not part of
+`item_id`, so a delta does not report a row whose `since` alone moved.
+`--delta DIGEST` returns only the rows added or removed since that earlier
+queue, when the daemon still remembers it; otherwise it returns the whole
+queue.
 
 Results are paged. `--limit` sets the rows per page (default 100, at most 1000),
 and `total_items` counts every row of the answer, so page one already gives the

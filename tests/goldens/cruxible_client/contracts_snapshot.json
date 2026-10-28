@@ -40068,6 +40068,26 @@
             "type": "string"
           }
         },
+        "since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Since"
+          }
+        },
         "subject_identity": {
           "has_default": false,
           "has_default_factory": false,
@@ -40583,6 +40603,18 @@
             ],
             "title": "Severity",
             "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Since"
           },
           "subject_identity": {
             "title": "Subject Identity",
@@ -41830,6 +41862,18 @@
                 ],
                 "title": "Severity",
                 "type": "string"
+              },
+              "since": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Since"
               },
               "subject_identity": {
                 "title": "Subject Identity",

@@ -636,6 +636,10 @@ class PlaybillNextItemV1(_StrictNextModel):
     repair_requires: PlaybillNextRepairRequirementV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: When the condition the row's reason reports began, stamped on the
+    #: queue's final rows from state that already records it (``_stamp_since``);
+    #: absent where nothing does cheaply. Not hashed into ``item_id``.
+    since: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("item_id")
     @classmethod
@@ -1786,6 +1790,8 @@ def playbill_next_item_id(item: PlaybillNextItemV1) -> str:
     payload = item.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("item_id")
+    # When a row's condition began describes the row; it does not identify it.
+    payload.pop("since", None)
     return typed_digest(Sha256Value, NEXT_ITEM_ID_DOMAIN, payload).tagged
 
 
@@ -7080,6 +7086,122 @@ def _queue_at(
     )
 
 
+#: Reasons whose row's own detail records when its condition began, by key path:
+#: an uncovered range's start, the oldest pending match, the failed run's
+#: finalization, the attestation's instant, the proposal's admission (from
+#: which it awaits approval), and the prediction window's close.
+_SINCE_FROM_DETAIL: Mapping[str, tuple[str, ...]] = {
+    "line_coverage_gap": ("since",),
+    "line_work_pending": ("oldest_eligible_at",),
+    "line_run_failed": ("finalized_at",),
+    "claim_contradicting_evidence_available": ("attested_at",),
+    "claim_new_evidence_supporting": ("attested_at",),
+    "claim_new_evidence_unreviewed": ("attested_at",),
+    "proposal_awaiting_approval": ("admitted_at",),
+    "prediction_settleable": ("window", "ends_at"),
+}
+#: Line findings whose opening instant the line-upgrades fold keeps, by its table.
+_SINCE_FROM_LINE_FOLD: Mapping[str, str] = {
+    "line_not_enabled": "unenabled",
+    "line_disabled_by_upgrade": "disabled",
+}
+
+
+def _detail_instant(detail: object, keys: tuple[str, ...]) -> str | None:
+    value = detail
+    for key in keys:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    if not isinstance(value, str):
+        return None
+    try:
+        return format_datetime(parse_datetime(value))
+    except ValueError:
+        return None
+
+
+def _conflict_paths(item: PlaybillNextItemV1) -> tuple[str, ...] | None:
+    """What a conflict is judged from: its contenders and their ClaimType, as paths."""
+
+    predicate = _detail_value(item, "predicate")
+    claims = tuple(
+        identity.removeprefix("Claim:")
+        for identity in item.related_identities
+        if identity.startswith("Claim:")
+    )
+    if predicate is None or not claims:
+        return None
+    try:
+        return (claim_type_path(predicate), *(claim_path(claim_id) for claim_id in claims))
+    except CruxibleError:
+        return None
+
+
+def _stamp_since(
+    instance: PlaybillInstance,
+    items: tuple[PlaybillNextItemV1, ...],
+    *,
+    coordinate: AcceptedCoordinate,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Each final row with ``since``: when the condition its reason reports began.
+
+    Read only from state that already records it, at a cost per row and never
+    per history: a field of the row's own detail, the instant the line-upgrades
+    fold kept when it opened the finding (one keyed lookup per Line), or, for a
+    conflict, the acceptance of the newest of its inputs -- its contenders and
+    their ClaimType as they stand -- one index seek per input (the contest, as
+    judged now, has held since then). Every other reason stays absent.
+    """
+
+    line_rows: dict[str, list[str]] = defaultdict(list)
+    conflicts: dict[int, tuple[str, ...]] = {}
+    for position, item in enumerate(items):
+        table = _SINCE_FROM_LINE_FOLD.get(item.reason)
+        if table is not None:
+            line_rows[table].append(item.subject_identity)
+        elif item.reason == "claim_conflicted":
+            paths = _conflict_paths(item)
+            if paths is not None:
+                conflicts[position] = paths
+    from cruxible_core.consumers.next.line_upgrades import finding_since
+
+    folded = finding_since(
+        instance,
+        unenabled=line_rows.get("unenabled", ()),
+        disabled=line_rows.get("disabled", ()),
+    )
+    conflict_since: dict[int, str] = {}
+    if conflicts:
+        with instance.accepted_history_reader(at=coordinate) as history:
+            changed = history.last_changed(
+                tuple(path for paths in conflicts.values() for path in paths)
+            )
+            oids = {
+                sequence: history.generation(sequence).git_oid for sequence in set(changed.values())
+            }
+        accepted = {
+            sequence: instance.accepted_evaluation_time(oid) for sequence, oid in oids.items()
+        }
+        for position, paths in conflicts.items():
+            sequences = [changed[path] for path in paths if path in changed]
+            if sequences:
+                conflict_since[position] = str(format_datetime(accepted[max(sequences)]))
+    stamped: list[PlaybillNextItemV1] = []
+    for position, item in enumerate(items):
+        keys = _SINCE_FROM_DETAIL.get(item.reason)
+        table = _SINCE_FROM_LINE_FOLD.get(item.reason)
+        since = (
+            _detail_instant(item.detail, keys)
+            if keys is not None
+            else folded.get((table, item.subject_identity))
+            if table is not None
+            else conflict_since.get(position)
+        )
+        stamped.append(item if since is None else item.model_copy(update={"since": since}))
+    return tuple(stamped)
+
+
 @dataclass(frozen=True)
 class PlaybillNextSummary:
     """A bounded view of the same grouped queue, without health, paging or digest work.
@@ -7185,7 +7307,8 @@ def service_playbill_next(
     attestation_head = queue.attestation_head
     observed, unobserved = queue.observed, queue.unobserved
     consumer_healths, caller = queue.consumer_healths, queue.caller
-    items, held = queue.items, queue.held
+    items = _stamp_since(instance, queue.items, coordinate=public_coordinate)
+    held = queue.held
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,

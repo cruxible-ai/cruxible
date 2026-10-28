@@ -615,6 +615,24 @@ class HistoryReader:
                 found[path].append((int(sequence), None if digest is None else str(digest)))
         return {path: tuple(items) for path, items in found.items()}
 
+    def last_changed(self, paths: Sequence[str]) -> dict[str, int]:
+        """The sequence each path's artifact last took new bytes at, to this cutoff.
+
+        One seek per path on ``versions_by_path``, whatever the path's history
+        holds. A path no change record named (genesis bytes) is absent.
+        """
+
+        found: dict[str, int] = {}
+        for path in dict.fromkeys(paths):
+            row = self._connection.execute(
+                "SELECT occurrence_sequence FROM artifact_versions WHERE path=? "
+                "AND occurrence_sequence<=? ORDER BY occurrence_sequence DESC LIMIT 1",
+                (path, self.sequence),
+            ).fetchone()
+            if row is not None:
+                found[path] = int(row[0])
+        return found
+
     def member_paths_after(self, sequence: int) -> frozenset[str]:
         """Every member path the change records after ``sequence`` touched, to this cutoff."""
         if sequence < 0 or sequence > self.sequence:
