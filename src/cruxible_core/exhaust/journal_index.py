@@ -250,6 +250,15 @@ def _add_landing_tallies(conn: sqlite3.Connection) -> None:
     no source, as before.
     """
 
+    # A file this version wrote and an older binary rebuilt keeps the landing
+    # objects that binary does not know, tallying rows it has since dropped:
+    # they are derived state, recreated here from the rows below.
+    for kind, name in (
+        ("TABLE", "capture_source_tallies"),
+        ("TABLE", "capture_unattributed"),
+        ("INDEX", "capture_source_latest"),
+    ):
+        conn.execute(f"DROP {kind} IF EXISTS {name}")
     for column in ("stream TEXT", "landed_at TEXT", "source_lost INTEGER NOT NULL DEFAULT 0"):
         conn.execute(f"ALTER TABLE capture_selectors ADD COLUMN {column}")
     conn.execute(

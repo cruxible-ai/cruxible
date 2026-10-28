@@ -17,6 +17,7 @@ from typing import Any
 
 from cruxible_core.exhaust.journal_index import (
     _SCHEMA,
+    _TABLES,
     _rebuild_schema,
     _statements,
     source_landing_page,
@@ -167,24 +168,20 @@ def test_a_page_walks_the_tallies_and_seeks_each_latest_landing() -> None:
     assert "TEMP B-TREE" not in " ".join(_join)
 
 
-def test_schema_8_gains_the_tallies_from_its_own_rows_and_keeps_its_identity() -> None:
-    conn = _index()
-    conn.execute("INSERT INTO index_identity VALUES (1, 'kept')")
-    # Back to the version 8 shape: no landing objects, no landing columns.
-    for statement in (
-        "DROP TRIGGER capture_landing_attributed",
-        "DROP TRIGGER capture_landing_unattributed",
-        "DROP TRIGGER capture_landing_lost",
-        "DROP TRIGGER capture_landing_found",
-        "DROP INDEX capture_source_latest",
-        "DROP TABLE capture_source_tallies",
-        "DROP TABLE capture_unattributed",
-        "ALTER TABLE capture_selectors DROP COLUMN source_lost",
-        "ALTER TABLE capture_selectors DROP COLUMN landed_at",
-        "ALTER TABLE capture_selectors DROP COLUMN stream",
-        "PRAGMA user_version=8",
-    ):
-        conn.execute(statement)
+def _selectors_to_version_8(conn: sqlite3.Connection) -> None:
+    """Strip capture_selectors back to its version 8 shape: no landing columns or objects."""
+
+    for (trigger,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='capture_selectors'"
+    ).fetchall():
+        conn.execute(f"DROP TRIGGER {trigger}")
+    conn.execute("DROP INDEX capture_source_latest")
+    for column in ("source_lost", "landed_at", "stream"):
+        conn.execute(f"ALTER TABLE capture_selectors DROP COLUMN {column}")
+    conn.execute("PRAGMA user_version=8")
+
+
+def _version_8_rows(conn: sqlite3.Connection) -> None:
     for record_id, source in ((1, "kev"), (2, "kev"), (3, None), (5, "pypi")):
         _record(conn, record_id, at=f"2026-10-0{record_id}T00:00:00Z")
         conn.execute(
@@ -196,15 +193,18 @@ def test_schema_8_gains_the_tallies_from_its_own_rows_and_keeps_its_identity() -
     _record(conn, 6, at="2026-10-06T00:00:00Z")  # not projected yet
     conn.execute("INSERT INTO capture_progress VALUES (?, 5)", (STREAM,))
 
-    _rebuild_schema(conn)
 
+def _assert_migrated(conn: sqlite3.Connection) -> None:
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
-    assert conn.execute("SELECT identity FROM index_identity").fetchone()[0] == "kept"
-    assert _tallies(conn) == [
-        (STREAM, "", "", 1),
-        (STREAM, "kev", "c1", 2),
-        (STREAM, "pypi", "c1", 1),
-    ]
+    assert (
+        _tallies(conn)
+        == _recount(conn)
+        == [
+            (STREAM, "", "", 1),
+            (STREAM, "kev", "c1", 2),
+            (STREAM, "pypi", "c1", 1),
+        ]
+    )
     assert [tuple(row) for row in conn.execute("SELECT * FROM capture_unattributed")] == [
         (4, STREAM)
     ]
@@ -213,16 +213,57 @@ def test_schema_8_gains_the_tallies_from_its_own_rows_and_keeps_its_identity() -
         ("kev", 2),
         ("pypi", 5),
     ]
-    # Every object a fresh index has, the migrated one has too.
-    names = {
-        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE name LIKE 'capture_%'")
+    # Every landing object a fresh index has, the migrated one has too.
+    fresh = _index()
+    expected = {
+        row[0]
+        for row in fresh.execute(
+            "SELECT type || ':' || name FROM sqlite_master WHERE name LIKE 'capture_%'"
+        )
     }
-    assert {
-        "capture_source_tallies",
-        "capture_unattributed",
-        "capture_source_latest",
-        "capture_landing_attributed",
-        "capture_landing_unattributed",
-        "capture_landing_lost",
-        "capture_landing_found",
-    } <= names
+    assert expected == {
+        row[0]
+        for row in conn.execute(
+            "SELECT type || ':' || name FROM sqlite_master WHERE name LIKE 'capture_%'"
+        )
+    }
+
+
+def test_schema_8_gains_the_tallies_from_its_own_rows_and_keeps_its_identity() -> None:
+    conn = _index()
+    conn.execute("INSERT INTO index_identity VALUES (1, 'kept')")
+    conn.execute("DROP TABLE capture_source_tallies")
+    conn.execute("DROP TABLE capture_unattributed")
+    _selectors_to_version_8(conn)
+    _version_8_rows(conn)
+
+    _rebuild_schema(conn)
+
+    assert conn.execute("SELECT identity FROM index_identity").fetchone()[0] == "kept"
+    _assert_migrated(conn)
+
+
+def test_a_9_to_8_to_9_round_trip_rederives_the_stale_landing_objects() -> None:
+    """An older binary rebuilds a version 9 file as 8, dropping only the tables it knows.
+
+    The landing tables survive it, tallying rows that are gone; migrating to 9
+    again recreates them from the rows, instead of colliding with them.
+    """
+
+    conn = _index()
+    _land(conn, 1, "kev", "c1", at="2026-10-01T00:00:00Z")
+    _land(conn, 7, "kev", "c1", at="2026-10-07T00:00:00Z")
+    _record(conn, 8, at="2026-10-08T00:00:00Z")
+    conn.execute("INSERT INTO capture_unattributed VALUES (8, ?)", (STREAM,))
+    # The version 8 binary's rebuild: its own tables dropped and recreated.
+    for table in _TABLES:
+        if table not in {"capture_source_tallies", "capture_unattributed"}:
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+    _statements(conn, _SCHEMA)
+    _selectors_to_version_8(conn)
+    assert _tallies(conn), "the stale tallies survive the older rebuild"
+    _version_8_rows(conn)
+
+    _rebuild_schema(conn)
+
+    _assert_migrated(conn)
