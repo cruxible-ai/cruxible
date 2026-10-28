@@ -228,7 +228,8 @@
       "values": [
         "blocking",
         "repair",
-        "warning"
+        "warning",
+        "setup"
       ]
     },
     "OrientSection": {
@@ -39059,7 +39060,8 @@
             "enum": [
               "blocking",
               "repair",
-              "warning"
+              "warning",
+              "setup"
             ],
             "title": "Severity",
             "type": "string"
@@ -39458,7 +39460,8 @@
             "enum": [
               "blocking",
               "repair",
-              "warning"
+              "warning",
+              "setup"
             ],
             "title": "Severity",
             "type": "string"
@@ -40058,10 +40061,31 @@
             "enum": [
               "blocking",
               "repair",
-              "warning"
+              "warning",
+              "setup"
             ],
             "title": "Severity",
             "type": "string"
+          }
+        },
+        "since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Since"
           }
         },
         "subject_identity": {
@@ -40246,7 +40270,8 @@
                 "enum": [
                   "blocking",
                   "repair",
-                  "warning"
+                  "warning",
+                  "setup"
                 ],
                 "title": "Severity",
                 "type": "string"
@@ -40573,10 +40598,23 @@
             "enum": [
               "blocking",
               "repair",
-              "warning"
+              "warning",
+              "setup"
             ],
             "title": "Severity",
             "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Since"
           },
           "subject_identity": {
             "title": "Subject Identity",
@@ -41651,7 +41689,8 @@
                 "enum": [
                   "blocking",
                   "repair",
-                  "warning"
+                  "warning",
+                  "setup"
                 ],
                 "title": "Severity",
                 "type": "string"
@@ -41818,10 +41857,23 @@
                 "enum": [
                   "blocking",
                   "repair",
-                  "warning"
+                  "warning",
+                  "setup"
                 ],
                 "title": "Severity",
                 "type": "string"
+              },
+              "since": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Since"
               },
               "subject_identity": {
                 "title": "Subject Identity",
@@ -45059,7 +45111,7 @@
           },
           "OrientAttention": {
             "additionalProperties": false,
-            "description": "What the ``next`` queue holds, and anything else the instance needs.",
+            "description": "What the ``next`` queue holds, and anything else the instance needs.\n\n``next_items`` counts the queue's problems and ``top`` names the first of\nthem; ``setup_items`` counts its setup rows apart (choices the operator\nowns, such as a Line accepted but not yet enabled), absent when none.",
             "properties": {
               "enablements": {
                 "anyOf": [
@@ -45088,6 +45140,12 @@
               "open_proposals": {
                 "minimum": 0,
                 "title": "Open Proposals",
+                "type": "integer"
+              },
+              "setup_items": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Setup Items",
                 "type": "integer"
               },
               "top": {

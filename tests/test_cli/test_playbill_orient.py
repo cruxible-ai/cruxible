@@ -131,6 +131,25 @@ def test_orient_prints_the_ledger_mirror_a_reviewer_clones() -> None:
     assert "Ledger mirror" not in _render_orient(header)
 
 
+def test_orient_prints_setup_rows_apart_from_the_queues_problems() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+        "next": [],
+    }
+    attention = {"next_items": 0, "open_proposals": 0, "top": []}
+    fresh = _render_orient({**header, "attention": {**attention, "setup_items": 14}})
+    assert "Attention: next=0 setup=14 open_proposals=0" in fresh
+    # No setup rows: the line reads as it always did.
+    assert "Attention: next=0 open_proposals=0" in _render_orient(
+        {**header, "attention": attention}
+    )
+
+
 def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,

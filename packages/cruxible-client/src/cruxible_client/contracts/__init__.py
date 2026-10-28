@@ -459,7 +459,10 @@ NextReason: TypeAlias = Literal[
     "subject_kind_undeclared",
     "kit_resume_blocked",
 ]
-NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
+#: How much a row asks of its reader, most first. ``setup`` is a choice the
+#: operator owns rather than something wrong (a Line accepted but not yet
+#: enabled): it sorts after every problem and no problem count includes it.
+NextSeverity: TypeAlias = Literal["blocking", "repair", "warning", "setup"]
 #: An operand only the caller holds, which a repair's command shows as a
 #: placeholder to replace: ``because`` (TEXT), ``file`` (FILE#ANCHOR), ``capture`` (CAP).
 NextRepairOperand: TypeAlias = Literal["because", "file", "capture"]
@@ -1689,6 +1692,12 @@ class NextItem(BaseModel):
         exclude_if=lambda value: not value,
     )
     repair_requires: NextRepairRequirement | None = None
+    #: When the condition this row's reason reports began, read from state that
+    #: already records it (a Line's acceptance, a run's failure, an attestation,
+    #: a window's close). Absent when no record gives it cheaply. Not part of
+    #: ``item_id``: it describes the row, it does not identify it. A delta
+    #: carries a kept row whose ``since`` moved, under the same ``item_id``.
+    since: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("item_id")
     @classmethod

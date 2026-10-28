@@ -50,9 +50,11 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_client.contracts.procedures.line_specs import line_spec_path
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -242,12 +244,43 @@ def _request(
     )
 
 
+#: The reasons whose rows say when their condition began (``since``); every
+#: other reason's row leaves it absent.
+SINCE_REASONS = frozenset(
+    {
+        "line_not_enabled",
+        "line_disabled_by_upgrade",
+        "line_coverage_gap",
+        "line_work_pending",
+        "line_run_failed",
+        "claim_conflicted",
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+        "proposal_awaiting_approval",
+        "prediction_settleable",
+    }
+)
+
+
 def _row(instance, reason: str, request: NextRequest, **caller: Any):  # type: ignore[no-untyped-def]
-    return next(
+    row = next(
         item
         for item in service_playbill_next(instance, request=request, **caller).items
         if item.reason == reason
     )
+    assert (row.since is not None) is (reason in SINCE_REASONS), (reason, row.since)
+    return row
+
+
+def _first_acceptance_oid(instance, identity: str) -> str:  # type: ignore[no-untyped-def]
+    """The generation that first accepted an artifact, read from its member history."""
+
+    kind, _sep, name = identity.partition(":")
+    assert kind == "Line"
+    with instance.accepted_history_reader() as history:
+        first = history.member_history(line_spec_path(name))[0]
+        return history.generation(first.sequence).git_oid
 
 
 def _assert_gone(instance, reason: str, request: NextRequest, **caller: Any) -> None:  # type: ignore[no-untyped-def]
@@ -282,11 +315,13 @@ def _row_by_key(
     key: ClosedLoopKey,
     request: NextRequest,  # type: ignore[no-untyped-def]
 ):  # type: ignore[no-untyped-def]
-    return next(
+    row = next(
         item
         for item in service_playbill_next(instance, request=request).items
         if _item_key(item) == key
     )
+    assert (row.since is not None) is (key[0] in SINCE_REASONS), (key, row.since)
+    return row
 
 
 def _assert_key_gone(
@@ -334,6 +369,9 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     before = _request(instance)
     row = _row(instance, "claim_conflicted", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_conflicted"]
+    # The contest, as judged now, has held since its newest input was accepted:
+    # the contradicting Claim's change set.
+    assert row.since == "2026-08-24T17:00:03+00:00"
 
     contenders = tuple(
         claim
@@ -2028,7 +2066,12 @@ def _line_not_enabled(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     request = _request(instance)
 
     row = _row(instance, "line_not_enabled", request)
-    assert row.subject_identity == line.identity.qualified and row.severity == "warning"
+    # A Line nobody enabled yet is a choice, not a problem: setup, since the
+    # generation that accepted it.
+    assert row.subject_identity == line.identity.qualified and row.severity == "setup"
+    assert row.since == format_datetime(
+        instance.accepted_evaluation_time(_first_acceptance_oid(instance, line.identity.qualified))
+    )
     assert row.repair.command == f"cruxible line enable {line.identity.name}"
 
     # The named repair: enable it. A later disable owes nothing: it was deliberate.

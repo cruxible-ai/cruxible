@@ -1,7 +1,9 @@
 """Disabled-by-upgrade and never-enabled findings derived from accepted Line version changes.
 
 A Line whose identity is new and was never enabled owes ``line enable``: a
-warning row until its first enablement or its retirement.
+setup row until its first enablement or its retirement. Each finding keeps
+``since``, the acceptance instant of the generation that opened it (the new
+identity's, or the upgrade's), read once when the fold reaches it.
 
 The durable cursor and rows commit together. A crash before commit replays only
 those generations; deleting this disposable projection rebuilds from retained
@@ -16,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
@@ -30,8 +33,9 @@ INSERT INTO progress VALUES(1,0);
 CREATE TABLE lines (identity TEXT PRIMARY KEY, digest TEXT NOT NULL,
  procedure TEXT NOT NULL) STRICT;
 CREATE TABLE disabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL,
- digest TEXT NOT NULL, procedure TEXT NOT NULL) STRICT;
-CREATE TABLE unenabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL) STRICT;
+ digest TEXT NOT NULL, procedure TEXT NOT NULL, since TEXT NOT NULL) STRICT;
+CREATE TABLE unenabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL,
+ since TEXT NOT NULL) STRICT;
 """,
 )
 
@@ -47,6 +51,15 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
         assert connection is not None
         (cursor,) = connection.execute("SELECT generation FROM progress").fetchone()
         end = history.sequence if through is None else min(through, history.sequence)
+        opened: dict[str, str] = {}
+
+        def accepted_at(git_oid: str) -> str:
+            # When the generation that opens a finding was accepted: read once
+            # per generation, and only for one that opens a finding.
+            if git_oid not in opened:
+                opened[git_oid] = str(format_datetime(instance.accepted_evaluation_time(git_oid)))
+            return opened[git_oid]
+
         for sequence in range(cursor + 1, end + 1):
             versions = tuple(
                 v for v in history.versions_at(sequence) if v.path.startswith("lines/")
@@ -93,7 +106,8 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                     # A new Line identity starts disabled: name `line enable` until
                     # its first enablement (or retirement) closes the row.
                     connection.execute(
-                        "INSERT OR REPLACE INTO unenabled VALUES(?,?)", (version.identity, line_id)
+                        "INSERT OR REPLACE INTO unenabled VALUES(?,?,?)",
+                        (version.identity, line_id, accepted_at(generation.git_oid)),
                     )
                 if line.lifecycle.state == "retired":
                     connection.execute("DELETE FROM disabled WHERE identity=?", (version.identity,))
@@ -103,13 +117,18 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                     and old[0] == line.lifecycle.predecessor_digest
                     and old[1] != procedure_reference
                 ):
+                    # A further upgrade before enablement keeps the Line disabled
+                    # since the first: it moves the owed version, not ``since``.
                     connection.execute(
-                        "INSERT OR REPLACE INTO disabled VALUES(?,?,?,?)",
+                        "INSERT INTO disabled VALUES(?,?,?,?,?) ON CONFLICT(identity) DO UPDATE "
+                        "SET line_id=excluded.line_id,digest=excluded.digest,"
+                        "procedure=excluded.procedure",
                         (
                             version.identity,
                             line_id,
                             version.artifact_digest,
                             procedure_reference,
+                            accepted_at(generation.git_oid),
                         ),
                     )
                 connection.execute(
@@ -147,6 +166,32 @@ def unenabled_lines(instance: Any) -> tuple[str, ...]:
             else:
                 result.append(str(identity))
         return tuple(result)
+
+
+def finding_since(
+    instance: Any, *, unenabled: Iterable[str] = (), disabled: Iterable[str] = ()
+) -> dict[tuple[str, str], str]:
+    """When each named Line's open finding began, keyed ``(table, identity)``.
+
+    A pure read of the instants the fold stored: one keyed lookup per Line,
+    never a walk of its versions or of accepted history.
+    """
+
+    found: dict[tuple[str, str], str] = {}
+    wanted = (("unenabled", tuple(unenabled)), ("disabled", tuple(disabled)))
+    if not any(identities for _table, identities in wanted):
+        return found
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return found
+        for table, identities in wanted:
+            for identity in identities:
+                row = connection.execute(
+                    f"SELECT since FROM {table} WHERE identity=?", (identity,)
+                ).fetchone()
+                if row is not None:
+                    found[(table, identity)] = str(row[0])
+    return found
 
 
 def _was_enabled(instance: Any, line_id: str, digest: str) -> bool:

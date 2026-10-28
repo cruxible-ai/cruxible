@@ -662,7 +662,7 @@ def _attention(
         )
     items: tuple[PlaybillNextItemV1, ...] = ()
     reused: PlaybillNextItemV1 | None = None
-    total = 0
+    total = setup = 0
     try:
         queue = summarize_playbill_next(
             instance,
@@ -679,7 +679,7 @@ def _attention(
             match=lambda item: _upgrade_hint((item,)) is not None,
             heads=heads,
         )
-        items, total = queue.items, queue.total_items
+        items, total, setup = queue.items, queue.total_items, queue.setup_items
         reused = queue.matching_item
     except CruxibleError as exc:
         code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
@@ -715,6 +715,7 @@ def _attention(
             next_items=total,
             open_proposals=open_proposals,
             top=tuple(_line(item) for item in items[:ORIENT_ATTENTION_TOP]),
+            setup_items=setup,
             notes=tuple(notes),
             enablements=enablements,
         ),
@@ -1121,7 +1122,7 @@ def service_playbill_orient(
         select = _select_names(focus)
         if select:
             calls.append(_Call("query", (("kind", focus.kind), ("select", select), ("limit", 10))))
-    if attention.next_items:
+    if attention.next_items or attention.setup_items:
         calls.append(_Call("next"))
     if upgrade:
         calls.append(_Call("claim_type_upgrade"))

@@ -22,7 +22,12 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
-from cruxible_core.consumers.next.line_upgrades import _STATE, catch_up, disabled_upgrades
+from cruxible_core.consumers.next.line_upgrades import (
+    _STATE,
+    catch_up,
+    disabled_upgrades,
+    finding_since,
+)
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.providers.automation_carry import carry_automation
 from cruxible_core.providers.build_moves import settle_changes
@@ -181,9 +186,13 @@ def test_definition_upgrade_disabled_next_recovery_and_enable_resumes(tmp_path, 
     assert finding.reason == "line_disabled_by_upgrade"
     assert finding.repair.operation == "cruxible.line.enable"
     assert "disabled by upgrade to" in finding.detail["detail"]
+    # Disabled since the upgrade's generation was accepted.
+    upgraded_since = {("disabled", line.identity.qualified): "2026-08-25T15:00:00+00:00"}
+    assert finding_since(instance, disabled=(line.identity.qualified,)) == upgraded_since
     # Rebuild after a lost projection reconstructs the finding from accepted deltas.
     _STATE.reset(instance)
     assert disabled_upgrades(instance) == expected
+    assert finding_since(instance, disabled=(line.identity.qualified,)) == upgraded_since
     catch_up(instance)
     # Warm tick/read must not reread a retained Line blob.
     monkeypatch.setattr(instance, "blob_at", lambda *a: pytest.fail("warm history reread"))

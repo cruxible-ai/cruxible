@@ -32,11 +32,23 @@ repair  proposal_stale  sha256:928b83fd…  next=cruxible.proposal.readmit
   repair: cruxible proposal readmit sha256:928b83fd…
 ~~~
 
-Each row starts with its severity (`blocking`, `repair`, `warning`), then its
-reason, then what it concerns (for a Claim, often its Subject and field), and
-the lines under it name a repair and, after `or:`, the alternatives. Rows are
-read from what changed, so the queue stays cheap to read however much the
-instance holds.
+Each row starts with its severity (`blocking`, `repair`, `warning`, `setup`),
+then its reason, then what it concerns (for a Claim, often its Subject and
+field), and the lines under it name a repair and, after `or:`, the
+alternatives. `setup` marks a choice you own rather than something wrong: a
+Line accepted but not yet enabled (`line_not_enabled`) is one. Setup rows sort
+after every problem, and `orient` counts them apart (`setup_items`) from the
+problems it counts (`next_items`). Rows are read from what changed, so the
+queue stays cheap to read however much the instance holds.
+
+In `--json`, a row whose start state records also carries `since`: when the
+condition began. A Line not yet enabled has been since its acceptance, one
+disabled by an upgrade since the upgrade, a failed run since it finished, a
+coverage gap since its start, pending work since its oldest match, new
+evidence since its attestation, a proposal awaiting approval since its
+admission, a settleable prediction since its window closed, and a conflict
+since the newest of its contenders (or their ClaimType) was accepted. Other
+rows leave it out.
 
 ## Signals by family
 
@@ -49,6 +61,7 @@ instance holds.
 | Pages | `projection_backing_stale`, `projection_dirty` | A stamped passage reflects state that moved, or someone edited it. |
 | Proposals | `proposal_awaiting_approval`, `proposal_stale` | A change waits for an approval, or the state moved since it was checked. |
 | Automation | `line_inbox_unread`, `line_coverage_gap`, `line_work_pending`, `line_disabled_by_upgrade` | A Line posted something, missed work, or stopped after its definition changed. |
+| Setup | `line_not_enabled` | A Line was accepted but nobody has enabled it yet. |
 | Predictions | `prediction_settleable` | A prediction's window closed and it can be settled. |
 | Upgrades | `upgrade_available` | A newer compiler revision can be adopted. |
 
