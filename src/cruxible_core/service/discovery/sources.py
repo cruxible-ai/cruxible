@@ -11,7 +11,9 @@ it costs its sources and their contracts, never their landings.
 
 Landings are operational state, not accepted state: like the activity feed,
 the section is read live at the current head whatever coordinate the read
-names, and says so with ``live``. Contract names and versions resolve at the
+names, and says so with ``live``; it also reads the body store live, never at
+the enclosing read's landing-log position, since what the landing projection
+records is kept. Contract names and versions resolve at the
 head. The landing records are best-effort exhaust: a landing whose payload or
 Capture envelope is lost when it is projected cannot be attributed to a
 source and is counted in ``sources_unattributed``; a latest landing whose
@@ -47,14 +49,21 @@ from cruxible_core.service.discovery.runs import (
 )
 from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import unpositioned_operation
 
 _ACCESS = BodyAccessContext(principal_id="playbill-source-reads", can_read_body=True)
 
 
+@unpositioned_operation
 def source_page(
     instance: PlaybillInstance, *, limit: int, after: str | None
 ) -> tuple[tuple[OrientSource, ...], str | None, int]:
-    """One page of logical sources by name, where the next continues, and unattributed landings."""
+    """One page of logical sources by name, where the next continues, and unattributed landings.
+
+    Read live, never at the enclosing read's log positions: the projection it
+    triggers keeps what it records, and a landing newer than those positions
+    would otherwise read as lost here (``JournalIndex._project_landings``).
+    """
 
     journal = procedure_run_journal(instance)
     if journal is None:

@@ -38,6 +38,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.indexes.resident import ResidentConnections
 from cruxible_core.indexes.sql_batch import insert_rows
+from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -1228,6 +1229,7 @@ class JournalIndex:
                     found[invocation_id] = (str(row[0]), str(row[1]))
             return found
 
+    @unpositioned_operation
     def _project_landings(
         self, conn: sqlite3.Connection, stream: JournalStreamIdentityV1, bodies: Any
     ) -> bool:
@@ -1237,6 +1239,12 @@ class JournalIndex:
         its contract, its logical source (from its Capture's envelope), its
         landing instant and stream. A lost payload records the landing as
         unattributed; a lost envelope keeps it, with no source, marked lost.
+
+        What it writes is kept for good, so it reads the store as it is now,
+        never at the positions of a read it runs inside: a landing appended
+        after that read pinned the body store's landing log has an envelope
+        the pinned read cannot see, and recording it lost would misattribute
+        it permanently.
         """
 
         from cruxible_core.storage.cas import BodyAccessContext

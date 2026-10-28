@@ -136,7 +136,7 @@ class SourcesWorld:
             capture_digest=captured,
         )
         if source is not None:
-            self.landed[source].append((captured, str(stored.record.run_id)))
+            self.landed.setdefault(source, []).append((captured, str(stored.record.run_id)))
         return stored
 
 
@@ -289,3 +289,30 @@ def test_an_instance_with_no_runs_lists_no_sources(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     answer = service_playbill_orient(instance, section="sources")
     assert answer.sources == () and answer.sources_unattributed == 0
+
+
+def test_a_landing_newer_than_the_reads_position_keeps_its_source(tmp_path: Path) -> None:
+    """The projection keeps what it records, so it never reads at an older read's position.
+
+    A read pins the body store's landing log when it starts; a run landing after
+    that has an envelope the pinned read cannot see. Projecting that landing as
+    the read sees the store would record it lost, for good.
+    """
+
+    from cruxible_core.storage.read_positions import read_positions, reading_at
+
+    raced = SourcesWorld(tmp_path)
+    assert _rows(raced.instance)  # everything so far is projected
+    positions = read_positions(raced.instance)
+    raced.land("new.source", SELECTOR.capture_contract_digest, 20)
+
+    with reading_at(positions):
+        answer = service_playbill_orient(raced.instance, section="sources")
+    assert answer.sources is not None and answer.sources_unattributed == 1
+    (new,) = (row for row in answer.sources if row.logical_source == "new.source")
+    assert new.landings == 1 and new.latest.unavailable is False
+    assert new.latest.status == "available"
+
+    after = service_playbill_orient(raced.instance, section="sources")
+    assert after.sources_unattributed == 1
+    assert _rows(raced.instance)["new.source"].landings == 1
