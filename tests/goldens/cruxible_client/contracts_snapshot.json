@@ -251,7 +251,8 @@
         "generations",
         "graph",
         "pins",
-        "activity"
+        "activity",
+        "sources"
       ]
     },
     "OrientSurface": {
@@ -43783,7 +43784,8 @@
                   "generations",
                   "graph",
                   "pins",
-                  "activity"
+                  "activity",
+                  "sources"
                 ],
                 "type": "string"
               },
@@ -43793,6 +43795,50 @@
             ],
             "default": null,
             "title": "Section"
+          }
+        },
+        "sources": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "sources",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientSource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources"
+          }
+        },
+        "sources_unattributed": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "sources_unattributed",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources Unattributed"
           }
         },
         "subject_kinds": {
@@ -44048,6 +44094,32 @@
               "fields"
             ],
             "title": "ContractSchema",
+            "type": "object"
+          },
+          "GetCaptureErasure": {
+            "additionalProperties": false,
+            "description": "Who erased a Capture's retained body, when and why.",
+            "properties": {
+              "at": {
+                "format": "date-time",
+                "title": "At",
+                "type": "string"
+              },
+              "because": {
+                "title": "Because",
+                "type": "string"
+              },
+              "by": {
+                "title": "By",
+                "type": "string"
+              }
+            },
+            "required": [
+              "by",
+              "at",
+              "because"
+            ],
+            "title": "GetCaptureErasure",
             "type": "object"
           },
           "HandEditInstruction": {
@@ -46232,6 +46304,200 @@
             "title": "OrientQuery",
             "type": "object"
           },
+          "OrientSource": {
+            "additionalProperties": false,
+            "description": "One logical source runs have landed Captures from, cited or not.\n\n``landings`` counts its landings (the ``capture_landed`` events the\nactivity feed lists), ``latest`` is the most recent, and ``contracts`` the\ncontract versions they were landed under, each with its count.",
+            "properties": {
+              "contracts": {
+                "items": {
+                  "$ref": "#/$defs/OrientSourceContract"
+                },
+                "title": "Contracts",
+                "type": "array"
+              },
+              "landings": {
+                "minimum": 1,
+                "title": "Landings",
+                "type": "integer"
+              },
+              "latest": {
+                "$ref": "#/$defs/OrientSourceLanding"
+              },
+              "logical_source": {
+                "title": "Logical Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "logical_source",
+              "landings",
+              "latest",
+              "contracts"
+            ],
+            "title": "OrientSource",
+            "type": "object"
+          },
+          "OrientSourceContract": {
+            "additionalProperties": false,
+            "description": "One CaptureContract version a logical source's landed Captures are under.\n\n``version`` counts that contract's accepted versions at the current head; it\nis absent when the digest names no accepted version there (``contract``\nthen reads ``unresolved:<digest>``).",
+            "properties": {
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "landings": {
+                "minimum": 1,
+                "title": "Landings",
+                "type": "integer"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "contract",
+              "landings"
+            ],
+            "title": "OrientSourceContract",
+            "type": "object"
+          },
+          "OrientSourceLanding": {
+            "additionalProperties": false,
+            "description": "A logical source's latest landing: the run that landed it and the Capture it landed.\n\n``landed_at`` is the landing record's instant, ``run`` and ``line`` the run\nthat recorded it (``line`` absent for a direct run). ``capture`` is the\nCapture's handle and ``ref`` its ``Capture:<digest>``; ``observed_at`` and\n``size`` come from its envelope; ``status``, ``status_detail`` and\n``erased`` say, as the Capture card does, whether the store can still\nproduce it. ``unavailable`` marks a landing whose payload or envelope can\nno longer be read: the landing is listed by its run alone.",
+            "properties": {
+              "capture": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Capture"
+              },
+              "erased": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GetCaptureErasure"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "landed_at": {
+                "format": "date-time",
+                "title": "Landed At",
+                "type": "string"
+              },
+              "line": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Line"
+              },
+              "observed_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Observed At"
+              },
+              "ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ref"
+              },
+              "run": {
+                "title": "Run",
+                "type": "string"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "available",
+                      "unavailable"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Status"
+              },
+              "status_detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Status Detail"
+              },
+              "unavailable": {
+                "default": false,
+                "title": "Unavailable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "landed_at",
+              "run"
+            ],
+            "title": "OrientSourceLanding",
+            "type": "object"
+          },
           "OrientSubjectKind": {
             "additionalProperties": false,
             "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``kit`` is\nthe installed kit that owns the SubjectKind, absent when no kit owns it.",
@@ -46711,7 +46977,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the logical sources runs landed\n  Captures from (``sources``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``), the Subject graph (``graph``), the\n  pins between live definitions (``pins``) or what just happened, newest\n  first (``activity``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -47160,7 +47426,8 @@
                   "generations",
                   "graph",
                   "pins",
-                  "activity"
+                  "activity",
+                  "sources"
                 ],
                 "type": "string"
               },
@@ -47170,6 +47437,34 @@
             ],
             "default": null,
             "title": "Section"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientSource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources"
+          },
+          "sources_unattributed": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources Unattributed"
           },
           "subject_kinds": {
             "anyOf": [

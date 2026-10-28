@@ -37,6 +37,7 @@ from cruxible_client.contracts.operational_reads import (
     OrientLine,
     OrientMandate,
     OrientPrediction,
+    OrientSource,
     RunRow,
     RunStatus,
 )
@@ -66,6 +67,7 @@ OrientSection: TypeAlias = Literal[
     "graph",
     "pins",
     "activity",
+    "sources",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -715,7 +717,8 @@ class OrientResult(_StrictOrientModel):
       ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an
       operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
-      ``predictions``, ``mandates``), the principal registry (``principals``),
+      ``predictions``, ``mandates``), the logical sources runs landed
+      Captures from (``sources``), the principal registry (``principals``),
       the governed policies in force (``policies``), the accepted generations
       newest first (``generations``), the Subject graph (``graph``), the
       pins between live definitions (``pins``) or what just happened, newest
@@ -756,6 +759,12 @@ class OrientResult(_StrictOrientModel):
     capture_contracts: tuple[OrientCaptureContract, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
+    # Each logical source runs have landed Captures from (section "sources"), by
+    # name, keyset-paged: its landings, latest landing and contracts. Read live
+    # from the landing records; ``sources_unattributed`` counts the landings
+    # whose record or Capture can no longer be read, so no source is known.
+    sources: tuple[OrientSource, ...] | None = Field(default=None, exclude_if=_is_none)
+    sources_unattributed: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     # Live ResolutionContracts with their bound windows counted by status.
     predictions: tuple[OrientPrediction, ...] | None = Field(default=None, exclude_if=_is_none)
     mandates: tuple[OrientMandate, ...] | None = Field(default=None, exclude_if=_is_none)

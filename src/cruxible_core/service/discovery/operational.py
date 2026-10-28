@@ -631,12 +631,17 @@ def line_rows(
 # -- Captures ----------------------------------------------------------------------------
 
 
-def _availability(
-    instance: PlaybillInstance, digest: str
+def capture_availability(
+    instance: PlaybillInstance,
+    digest: str,
+    *,
+    findings_of: Callable[[str], Sequence[Any]] | None = None,
 ) -> tuple[Literal["available", "unavailable"], str | None, CaptureErasureRecord | None]:
     """Whether the store can still produce a Capture, as the evidence worker last saw.
 
     An erased body is no damage: the erasure record says who erased it and why.
+    ``findings_of`` reads the worker's findings for one Capture (a page passes a
+    keyed read); without it the card reads them all.
     """
 
     from cruxible_client.contracts.captures import required_capture_bodies
@@ -659,7 +664,11 @@ def _availability(
             )
     except (CruxibleError, ValueError):
         pass
-    found = [item for item in evidence_findings(instance) if item.capture_digest == digest]
+    found = [
+        item
+        for item in (evidence_findings(instance) if findings_of is None else findings_of(digest))
+        if item.capture_digest == digest
+    ]
     if found:
         return (
             "unavailable",
@@ -734,7 +743,7 @@ def capture_card(
             if contract.startswith("unresolved:")
             else names.version_number(contract, contract_digest)
         )
-    status, status_detail, erasure = _availability(instance, digest)
+    status, status_detail, erasure = capture_availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
     return GetCaptureCard(

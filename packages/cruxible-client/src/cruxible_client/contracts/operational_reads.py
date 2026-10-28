@@ -400,6 +400,58 @@ class OrientCapture(_StrictOperationalModel):
     citing: int = Field(ge=0)
 
 
+class OrientSourceContract(_StrictOperationalModel):
+    """One CaptureContract version a logical source's landed Captures are under.
+
+    ``version`` counts that contract's accepted versions at the current head; it
+    is absent when the digest names no accepted version there (``contract``
+    then reads ``unresolved:<digest>``).
+    """
+
+    contract: str
+    version: int | None = Field(default=None, ge=1, exclude_if=_omit_none)
+    landings: int = Field(ge=1)
+
+
+class OrientSourceLanding(_StrictOperationalModel):
+    """A logical source's latest landing: the run that landed it and the Capture it landed.
+
+    ``landed_at`` is the landing record's instant, ``run`` and ``line`` the run
+    that recorded it (``line`` absent for a direct run). ``capture`` is the
+    Capture's handle and ``ref`` its ``Capture:<digest>``; ``observed_at`` and
+    ``size`` come from its envelope; ``status``, ``status_detail`` and
+    ``erased`` say, as the Capture card does, whether the store can still
+    produce it. ``unavailable`` marks a landing whose payload or envelope can
+    no longer be read: the landing is listed by its run alone.
+    """
+
+    landed_at: datetime
+    run: str
+    line: str | None = Field(default=None, exclude_if=_omit_none)
+    capture: str | None = Field(default=None, exclude_if=_omit_none)
+    ref: str | None = Field(default=None, exclude_if=_omit_none)
+    observed_at: datetime | None = Field(default=None, exclude_if=_omit_none)
+    size: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    status: Literal["available", "unavailable"] | None = Field(default=None, exclude_if=_omit_none)
+    status_detail: str | None = Field(default=None, exclude_if=_omit_none)
+    erased: GetCaptureErasure | None = Field(default=None, exclude_if=_omit_none)
+    unavailable: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class OrientSource(_StrictOperationalModel):
+    """One logical source runs have landed Captures from, cited or not.
+
+    ``landings`` counts its landings (the ``capture_landed`` events the
+    activity feed lists), ``latest`` is the most recent, and ``contracts`` the
+    contract versions they were landed under, each with its count.
+    """
+
+    logical_source: str
+    landings: int = Field(ge=1)
+    latest: OrientSourceLanding
+    contracts: tuple[OrientSourceContract, ...]
+
+
 class OrientCaptureContract(_StrictOperationalModel):
     contract: str
     version: int = Field(ge=1)
@@ -466,6 +518,9 @@ __all__ = [
     "OrientLine",
     "OrientMandate",
     "OrientPrediction",
+    "OrientSource",
+    "OrientSourceContract",
+    "OrientSourceLanding",
     "PredictionWindowStatus",
     "RunRow",
     "RunStatus",

@@ -9097,6 +9097,34 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                     for value in row.values()
                 )
             )
+    if section == "sources":
+        for row in result["sources"]:
+            latest = row["latest"]
+            state = (
+                "  (unavailable)"
+                if latest.get("unavailable")
+                else "  (erased)"
+                if latest.get("erased")
+                else "  (unavailable)"
+                if latest.get("status") == "unavailable"
+                else ""
+            )
+            contracts_line = ", ".join(
+                _public_name(item["contract"])
+                + (f" v{item['version']}" if item.get("version") else "")
+                + f" ({item['landings']})"
+                for item in row["contracts"]
+            )
+            lines.append(
+                f"{row['logical_source']}  landings={row['landings']}  "
+                f"last landed {latest['landed_at']} {latest.get('capture') or '-'}{state}  "
+                f"by {latest.get('line') or latest['run']}  under {contracts_line}"
+            )
+        if result.get("sources_unattributed"):
+            lines.append(
+                f"({result['sources_unattributed']} landings whose record or Capture can no "
+                "longer be read are attributed to no source)"
+            )
     if section == "pins":
         for row in result["pins"]:
             stale = "" if row.get("current", True) else "  (not the current version)"
@@ -9208,7 +9236,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     default=None,
     help=(
         "Page one artifact family, graph (live Subjects, then the Claims between them), "
-        "pins (what each live definition pins) or activity (what just happened, newest first)."
+        "pins (what each live definition pins), activity (what just happened, newest first) "
+        "or sources (each logical source's landings: count, latest, contracts)."
     ),
 )
 @click.option(

@@ -146,6 +146,35 @@ def evidence_findings(instance: Any) -> tuple[EvidenceFinding, ...]:
     )
 
 
+def evidence_findings_for(
+    instance: Any, capture_digests: Iterable[str]
+) -> tuple[EvidenceFinding, ...]:
+    """The worker's last findings for these Captures only: primary-key seeks, never the table."""
+
+    digests = sorted(set(capture_digests))
+    if not digests:
+        return ()
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return ()
+        rows = connection.execute(
+            "SELECT capture_digest,part,object_digest,state,checked_at FROM findings "
+            f"WHERE capture_digest IN ({','.join('?' for _ in digests)}) "
+            "ORDER BY capture_digest,part",
+            digests,
+        ).fetchall()
+    return tuple(
+        EvidenceFinding(
+            capture_digest=row[0],
+            part=row[1],
+            object_digest=row[2],
+            state=row[3],
+            checked_at=_instant(row[4]),
+        )
+        for row in rows
+    )
+
+
 @dataclass(frozen=True)
 class ErasedClaim:
     """A live Claim whose every cited Capture, its own words aside, has an erased body."""

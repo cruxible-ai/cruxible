@@ -411,6 +411,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetLineOccurrence", "eligible_at"): "VALIDITY WINDOW",
     ("GetCaptureCard", "observed_at"): "ASSERTION TIME",
     ("OrientCapture", "observed_at"): "ASSERTION TIME",
+    ("OrientSourceLanding", "landed_at"): "ASSERTION TIME",
+    ("OrientSourceLanding", "observed_at"): "ASSERTION TIME",
     ("GetPredictionWindow", "starts_at"): "VALIDITY WINDOW",
     ("GetPredictionWindow", "ends_at"): "VALIDITY WINDOW",
     ("OrientPrediction", "next_close"): "VALIDITY WINDOW",

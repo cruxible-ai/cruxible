@@ -551,7 +551,8 @@ def register_tools(
             Field(
                 description=(
                     "Page one family as rows; graph: Subjects+edges; pins: what pins what; "
-                    "activity: what just happened, newest first."
+                    "activity: what just happened, newest first; sources: each logical "
+                    "source's landings, latest landing and contracts."
                 )
             ),
         ] = None,

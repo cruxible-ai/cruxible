@@ -38,6 +38,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.indexes.keyset import rows_before
 from cruxible_core.indexes.resident import ResidentConnections
 from cruxible_core.indexes.sql_batch import insert_rows
+from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -53,8 +54,10 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is migrated or rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 _TABLES = (
+    "capture_source_tallies",
+    "capture_unattributed",
     "capture_contract_names",
     "capture_name_progress",
     "capture_selectors",
@@ -68,7 +71,84 @@ _TABLES = (
     "index_identity",
     "initialized",
 )
-_SCHEMA = """
+_LANDING_SCHEMA = """
+-- Landings by logical source. Each projected produced_capture record keeps one
+-- capture_selectors row (its stream, landing instant and whether its envelope
+-- could be read); a landing whose payload is lost keeps a capture_unattributed
+-- row instead. Triggers keep capture_source_tallies -- landings per (stream,
+-- logical source, contract digest), and under ('', '') per stream the landings
+-- no source can be read for -- on every insert and delete, so a count never
+-- visits the landings it counts and a partition rebuilt after replacement
+-- (whose rows cascade away and are projected again) stays exact. A row is
+-- written once and never rewritten: an UPDATE of a tallied column and an
+-- INSERT that would replace a row (whose implicit delete runs no trigger) are
+-- refused, so no write can leave a tally behind its rows.
+CREATE TABLE IF NOT EXISTS capture_unattributed (
+ record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+ stream TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_source_tallies (
+ stream TEXT NOT NULL, logical_source TEXT NOT NULL, contract_digest TEXT NOT NULL,
+ landings INTEGER NOT NULL CHECK(landings >= 0),
+ PRIMARY KEY(stream, logical_source, contract_digest)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS capture_source_latest
+ ON capture_selectors(stream, logical_source, landed_at, record_id)
+ WHERE logical_source IS NOT NULL;
+CREATE TRIGGER IF NOT EXISTS capture_landing_attributed AFTER INSERT ON capture_selectors
+ WHEN new.stream IS NOT NULL AND (new.logical_source IS NOT NULL OR new.source_lost=1) BEGIN
+ INSERT INTO capture_source_tallies VALUES(new.stream, coalesce(new.logical_source, ''),
+  CASE WHEN new.logical_source IS NULL THEN '' ELSE new.contract_digest END, 1)
+  ON CONFLICT(stream, logical_source, contract_digest) DO UPDATE SET landings=landings+1;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_unattributed AFTER DELETE ON capture_selectors
+ WHEN old.stream IS NOT NULL AND (old.logical_source IS NOT NULL OR old.source_lost=1) BEGIN
+ UPDATE capture_source_tallies SET landings=landings-1 WHERE stream=old.stream
+  AND logical_source=coalesce(old.logical_source, '')
+  AND contract_digest=CASE WHEN old.logical_source IS NULL THEN '' ELSE old.contract_digest END;
+ DELETE FROM capture_source_tallies WHERE landings=0 AND stream=old.stream
+  AND logical_source=coalesce(old.logical_source, '')
+  AND contract_digest=CASE WHEN old.logical_source IS NULL THEN '' ELSE old.contract_digest END;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_lost AFTER INSERT ON capture_unattributed BEGIN
+ INSERT INTO capture_source_tallies VALUES(new.stream, '', '', 1)
+  ON CONFLICT(stream, logical_source, contract_digest) DO UPDATE SET landings=landings+1;
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_found AFTER DELETE ON capture_unattributed BEGIN
+ UPDATE capture_source_tallies SET landings=landings-1
+  WHERE stream=old.stream AND logical_source='' AND contract_digest='';
+ DELETE FROM capture_source_tallies WHERE landings=0
+  AND stream=old.stream AND logical_source='' AND contract_digest='';
+END;
+"""
+#: The landing rows' immutability guards: every open installs them (idempotently),
+#: so an index file written before a guard existed gains it without a schema move.
+#: A guard whose definition changed is renamed, and the old name is dropped. An
+#: UPDATE guard is unrestricted (no ``UPDATE OF`` column list): a column list
+#: does not fire for writes through the rowid, _rowid_ and oid aliases of an
+#: INTEGER PRIMARY KEY.
+_LANDING_GUARDS = """
+CREATE TRIGGER IF NOT EXISTS capture_landing_once BEFORE INSERT ON capture_selectors
+ WHEN EXISTS(SELECT 1 FROM capture_selectors WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'a projected landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_landing_sealed BEFORE UPDATE ON capture_selectors
+ WHEN old.record_id IS NOT new.record_id
+ OR old.logical_source IS NOT new.logical_source OR old.contract_digest IS NOT new.contract_digest
+ OR old.stream IS NOT new.stream OR old.source_lost IS NOT new.source_lost BEGIN
+ SELECT RAISE(ABORT, 'a projected landing keeps its record, source, contract and stream');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_once BEFORE INSERT ON capture_unattributed
+ WHEN EXISTS(SELECT 1 FROM capture_unattributed WHERE record_id=new.record_id) BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing is never replaced');
+END;
+CREATE TRIGGER IF NOT EXISTS capture_unattributed_fixed BEFORE UPDATE ON capture_unattributed
+ WHEN old.record_id IS NOT new.record_id OR old.stream IS NOT new.stream BEGIN
+ SELECT RAISE(ABORT, 'an unattributed landing keeps its stream');
+END;
+"""
+_RETIRED_LANDING_GUARDS = ("capture_landing_fixed", "capture_landing_frozen")
+_LANDING_SCHEMA += _LANDING_GUARDS
+_SCHEMA = (
+    """
 CREATE TABLE IF NOT EXISTS initialized (singleton INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS index_identity (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS partitions (
@@ -90,7 +170,8 @@ CREATE INDEX IF NOT EXISTS records_occurrence
  ON records(stream, partition_id, occurrence_id, event_kind, sequence);
 CREATE TABLE IF NOT EXISTS capture_selectors (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
- contract_digest TEXT NOT NULL, logical_source TEXT, contract_identity TEXT);
+ contract_digest TEXT NOT NULL, logical_source TEXT, contract_identity TEXT,
+ stream TEXT, landed_at TEXT, source_lost INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS capture_contract_names (digest TEXT PRIMARY KEY, identity TEXT);
 CREATE TABLE IF NOT EXISTS capture_name_progress
  (stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
@@ -104,7 +185,9 @@ CREATE INDEX IF NOT EXISTS records_stream_position ON records(stream,id);
 CREATE INDEX IF NOT EXISTS records_partition_position
  ON records(stream,partition_id,event_kind,id);
 CREATE TABLE IF NOT EXISTS capture_progress(stream TEXT PRIMARY KEY, record_id INTEGER NOT NULL);
--- The Provider invocation each provider_invocation_started record names. The
+"""
+    + _LANDING_SCHEMA
+    + """-- The Provider invocation each provider_invocation_started record names. The
 -- writer that appends a start records its locator (note_invocation); a start
 -- indexed without one (a rebuilt index, a crash between append and note) waits
 -- in invocation_pending until a lookup projects it from its payload.
@@ -165,6 +248,7 @@ CREATE TRIGGER IF NOT EXISTS records_unfinalized AFTER DELETE ON records
   WHERE f.stream=old.stream AND f.run_id=old.run_id AND f.event_kind='attempt_finalized');
 END;
 """
+)
 
 
 def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -176,10 +260,73 @@ def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
     return locked
 
 
+def _statements(conn: sqlite3.Connection, script: str) -> None:
+    """Run a schema script statement by statement, inside the caller's transaction."""
+
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            conn.execute(statement)
+            statement = ""
+
+
+def _install_landing_guards(conn: sqlite3.Connection) -> None:
+    """Install the landing rows' guards if missing; a no-op (no schema change) when present.
+
+    Every statement is idempotent on its own (DROP ... IF EXISTS, CREATE ... IF
+    NOT EXISTS), so processes opening the same file at once never act on what
+    another has already changed.
+    """
+
+    for name in _RETIRED_LANDING_GUARDS:
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+    _statements(conn, _LANDING_GUARDS)
+
+
+def _add_landing_tallies(conn: sqlite3.Connection) -> None:
+    """Version 8 to 9: landings by logical source, derived once from the index's own rows.
+
+    Every projected landing gains its stream and landing instant from its
+    record, the tallies are counted once from those rows, and each landing the
+    projection skipped for a lost payload is recorded as unattributed. No body
+    is read: an envelope that was lost when its landing was projected reads as
+    no source, as before.
+    """
+
+    # A file this version wrote and an older binary rebuilt keeps the landing
+    # objects that binary does not know, tallying rows it has since dropped:
+    # they are derived state, recreated here from the rows below.
+    for kind, name in (
+        ("TABLE", "capture_source_tallies"),
+        ("TABLE", "capture_unattributed"),
+        ("INDEX", "capture_source_latest"),
+    ):
+        conn.execute(f"DROP {kind} IF EXISTS {name}")
+    for column in ("stream TEXT", "landed_at TEXT", "source_lost INTEGER NOT NULL DEFAULT 0"):
+        conn.execute(f"ALTER TABLE capture_selectors ADD COLUMN {column}")
+    conn.execute(
+        "UPDATE capture_selectors SET (stream, landed_at) = "
+        "(SELECT r.stream, r.recorded_at FROM records r WHERE r.id=capture_selectors.record_id)"
+    )
+    _statements(conn, _LANDING_SCHEMA)
+    conn.execute(
+        "INSERT INTO capture_source_tallies SELECT stream, logical_source, contract_digest, "
+        "count(*) FROM capture_selectors WHERE logical_source IS NOT NULL AND stream IS NOT NULL "
+        "GROUP BY stream, logical_source, contract_digest"
+    )
+    conn.execute(
+        "INSERT INTO capture_unattributed SELECT r.id, r.stream FROM records r "
+        "JOIN capture_progress p ON p.stream=r.stream "
+        "WHERE r.event_kind='produced_capture' AND r.id<=p.record_id "
+        "AND NOT EXISTS(SELECT 1 FROM capture_selectors c WHERE c.record_id=r.id)"
+    )
+
+
 def _rebuild_schema(conn: sqlite3.Connection) -> None:
     """Add source metadata without backfilling; rebuild unsupported older schemas.
 
-    Version 6 keeps its identity, rows and progress cursors. Source-filtered
+    Versions 6 to 8 keep their identity, rows and progress cursors. Source-filtered
     Triggers start after their acceptance, so old NULL rows are never eligible.
     The retained journal refills unsupported older schemas. One immediate
     transaction re-checks the version, so concurrent openers migrate or rebuild
@@ -189,7 +336,10 @@ def _rebuild_schema(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version in {6, 7}:
+        if version == 8:
+            _add_landing_tallies(conn)
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        elif version in {6, 7}:
             if version == 6:
                 conn.execute("ALTER TABLE capture_selectors ADD COLUMN logical_source TEXT")
                 conn.execute(
@@ -208,16 +358,12 @@ def _rebuild_schema(conn: sqlite3.Connection) -> None:
                 "CREATE INDEX capture_name ON capture_selectors"
                 "(contract_identity,logical_source,record_id)"
             )
+            _add_landing_tallies(conn)
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         elif version != _SCHEMA_VERSION:
             for table in _TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
-            statement = ""
-            for line in _SCHEMA.splitlines(keepends=True):
-                statement += line
-                if sqlite3.complete_statement(statement):
-                    conn.execute(statement)
-                    statement = ""
+            _statements(conn, _SCHEMA)
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.commit()
     except BaseException:
@@ -290,6 +436,92 @@ class EventLocator:
     payload_digest: str
 
 
+#: Landings projected per transaction.
+_LANDING_CHUNK = 1024
+
+
+@dataclass(frozen=True)
+class SourceLandings:
+    """One logical source: its landings per contract digest and its newest landing's record."""
+
+    source: str
+    counts: tuple[tuple[str, int], ...]
+    latest: EventLocator
+
+
+@dataclass(frozen=True)
+class SourceLandingPage:
+    """A page of sources, the last one when more follow, and the stream's unattributed landings."""
+
+    sources: tuple[SourceLandings, ...]
+    stop: str | None
+    unattributed: int
+
+
+def source_landing_page(
+    conn: sqlite3.Connection, stream: str, *, limit: int, after: str | None
+) -> SourceLandingPage:
+    """Up to ``limit`` sources after ``after``, from the tallies and one seek per source.
+
+    One walk of ``capture_source_tallies`` in key order, stopped at the first
+    row of the source after the page; one ``capture_source_latest`` seek per
+    source for its newest landing (latest landing instant, ties to the later
+    record); one key read of the stream's unattributed tally.
+    """
+
+    page: list[tuple[str, list[tuple[str, int]]]] = []
+    more = False
+    cursor = conn.execute(
+        "SELECT logical_source, contract_digest, landings FROM capture_source_tallies "
+        "WHERE stream=? AND logical_source>? ORDER BY logical_source, contract_digest",
+        (stream, "" if after is None else after),
+    )
+    try:
+        for source, contract, count in cursor:
+            if not page or page[-1][0] != source:
+                if len(page) == limit:
+                    more = True
+                    break
+                page.append((str(source), []))
+            page[-1][1].append((str(contract), int(count)))
+    finally:
+        cursor.close()
+    sources: list[SourceLandings] = []
+    for source, counts in page:
+        row = conn.execute(
+            "SELECT r.id,r.recorded_at,r.partition_id,r.sequence,r.run_id,r.payload_digest "
+            "FROM capture_selectors c INDEXED BY capture_source_latest "
+            "JOIN records r ON r.id=c.record_id "
+            "WHERE c.stream=? AND c.logical_source=? "
+            "ORDER BY c.landed_at DESC, c.record_id DESC LIMIT 1",
+            (stream, source),
+        ).fetchone()
+        sources.append(
+            SourceLandings(
+                source=source,
+                counts=tuple(counts),
+                latest=EventLocator(
+                    record_id=int(row[0]),
+                    recorded_at=str(row[1]),
+                    partition_id=str(row[2]),
+                    position=int(row[3]),
+                    run_id=None if row[4] is None else str(row[4]),
+                    payload_digest=str(row[5]),
+                ),
+            )
+        )
+    lost = conn.execute(
+        "SELECT landings FROM capture_source_tallies "
+        "WHERE stream=? AND logical_source='' AND contract_digest=''",
+        (stream,),
+    ).fetchone()
+    return SourceLandingPage(
+        sources=tuple(sources),
+        stop=sources[-1].source if more and sources else None,
+        unattributed=0 if lost is None else int(lost[0]),
+    )
+
+
 #: This process's resident connection to each journal index file (setup once per
 #: open; see ``indexes.resident``), used under ``_LOCK``.
 _RESIDENT = ResidentConnections(lock=lambda: _LOCK)
@@ -320,6 +552,7 @@ class JournalIndex:
             conn.execute("PRAGMA foreign_keys=ON")
             if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
                 _rebuild_schema(conn)
+            _install_landing_guards(conn)
             conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
             if not conn.execute("SELECT 1 FROM initialized").fetchone():
                 for identity in self.backend._streams_root.glob("*/*/identity.json"):
@@ -1050,6 +1283,98 @@ class JournalIndex:
                     found[invocation_id] = (str(row[0]), str(row[1]))
             return found
 
+    @unpositioned_operation
+    def _project_landings(
+        self, conn: sqlite3.Connection, stream: JournalStreamIdentityV1, bodies: Any
+    ) -> bool:
+        """Project up to one chunk of new landings; whether the projection is caught up.
+
+        Each produced_capture record is read once, after the high-water mark:
+        its contract, its logical source (from its Capture's envelope), its
+        landing instant and stream. A lost payload records the landing as
+        unattributed; a lost envelope keeps it, with no source, marked lost.
+
+        What it writes is kept for good, so it reads the store as it is now,
+        never at the positions of a read it runs inside: a landing appended
+        after that read pinned the body store's landing log has an envelope
+        the pinned read cannot see, and recording it lost would misattribute
+        it permanently.
+        """
+
+        from cruxible_core.storage.cas import BodyAccessContext
+
+        access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
+        progress = conn.execute(
+            "SELECT record_id FROM capture_progress WHERE stream=?", (_key(stream),)
+        ).fetchone()
+        fresh = conn.execute(
+            "SELECT * FROM records WHERE stream=? AND event_kind='produced_capture' "
+            "AND id>? ORDER BY id LIMIT ?",
+            (_key(stream), progress[0] if progress else 0, _LANDING_CHUNK + 1),
+        ).fetchall()
+        for row in fresh[:_LANDING_CHUNK]:
+            stored = self.read_row(row)
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                conn.execute(
+                    "INSERT INTO capture_unattributed SELECT ?,? WHERE NOT EXISTS("
+                    "SELECT 1 FROM capture_unattributed WHERE record_id=?)",
+                    (row["id"], _key(stream), row["id"]),
+                )
+                continue
+            if (
+                not isinstance(payload, dict)
+                or payload.get("tag") != "playbill-procedure-produced-capture-v1"
+                or not isinstance(payload.get("capture_contract_digest"), str)
+            ):
+                raise JournalIntegrityError("produced Capture payload lacks its typed contract")
+            source = landing_logical_source(bodies, payload, access=access)
+            lost = isinstance(source, UnavailablePayload)
+            if lost:
+                # Preserve unrestricted event discovery when its envelope
+                # is lost; a sourced selector cannot establish a match.
+                source = None
+            conn.execute(
+                "INSERT INTO capture_selectors(record_id,contract_digest,logical_source,"
+                "stream,landed_at,source_lost) VALUES (?,?,?,?,?,?)",
+                (
+                    row["id"],
+                    payload["capture_contract_digest"],
+                    source,
+                    _key(stream),
+                    row["recorded_at"],
+                    int(lost),
+                ),
+            )
+        if fresh:
+            conn.execute(
+                "INSERT OR REPLACE INTO capture_progress VALUES(?,?)",
+                (_key(stream), fresh[min(len(fresh), _LANDING_CHUNK) - 1]["id"]),
+            )
+        return len(fresh) <= _LANDING_CHUNK
+
+    def source_landings(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        bodies: Any,
+        limit: int,
+        after: str | None,
+    ) -> SourceLandingPage:
+        """One page of logical sources by name, each with its landings: tallies and one seek.
+
+        New landings are projected first, a chunk per transaction, each read
+        once whatever reads it next (Capture-landing Triggers project the same
+        rows). The page then walks the per-source tallies and seeks each
+        source's newest landing: it costs its sources and their contracts,
+        never their landings.
+        """
+
+        while True:
+            with self.connection() as conn:
+                if self._project_landings(conn, stream, bodies):
+                    return source_landing_page(conn, _key(stream), limit=limit, after=after)
+
     def captures(
         self,
         stream: JournalStreamIdentityV1,
@@ -1071,45 +1396,8 @@ class JournalIndex:
         Metadata catch-up is bounded independently of the result page. A caller
         must not report absence while selector coverage is incomplete.
         """
-        from cruxible_core.storage.cas import BodyAccessContext
-
-        access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
         with self.connection() as conn:
-            progress = conn.execute(
-                "SELECT record_id FROM capture_progress WHERE stream=?", (_key(stream),)
-            ).fetchone()
-            fresh = conn.execute(
-                "SELECT * FROM records WHERE stream=? AND event_kind='produced_capture' "
-                "AND id>? ORDER BY id LIMIT 1025",
-                (_key(stream), progress[0] if progress else 0),
-            ).fetchall()
-            for row in fresh[:1024]:
-                stored = self.read_row(row)
-                payload = read_payload(bodies, stored.record.payload_digest, access=access)
-                if isinstance(payload, UnavailablePayload):
-                    continue
-                if (
-                    not isinstance(payload, dict)
-                    or payload.get("tag") != "playbill-procedure-produced-capture-v1"
-                    or not isinstance(payload.get("capture_contract_digest"), str)
-                ):
-                    raise JournalIntegrityError("produced Capture payload lacks its typed contract")
-                source = landing_logical_source(bodies, payload, access=access)
-                if isinstance(source, UnavailablePayload):
-                    # Preserve unrestricted event discovery when its envelope
-                    # is lost; a sourced selector cannot establish a match.
-                    source = None
-                conn.execute(
-                    "INSERT INTO capture_selectors(record_id,contract_digest,logical_source) "
-                    "VALUES (?,?,?)",
-                    (row["id"], payload["capture_contract_digest"], source),
-                )
-            if fresh:
-                conn.execute(
-                    "INSERT OR REPLACE INTO capture_progress VALUES(?,?)",
-                    (_key(stream), fresh[min(len(fresh), 1024) - 1]["id"]),
-                )
-            if len(fresh) > 1024:
+            if not self._project_landings(conn, stream, bodies):
                 return (), None, False
             if contract_identity is not None:
                 if resolve_contract is None:
@@ -1197,4 +1485,4 @@ class JournalIndex:
             if len(rows) > limit:
                 row = rows[limit - 1]
                 next_cursor = (row["recorded_at"], row["partition_id"], row["sequence"])
-            return selected, next_cursor, len(fresh) <= 1024
+            return selected, next_cursor, True
