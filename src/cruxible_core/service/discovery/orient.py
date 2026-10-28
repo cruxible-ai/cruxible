@@ -114,6 +114,7 @@ from cruxible_core.service.discovery.operational import (
 from cruxible_core.service.discovery.pins import PinKey, pins_page
 from cruxible_core.service.discovery.query_vocabulary import render_duration
 from cruxible_core.service.discovery.runs import run_counts, run_rows
+from cruxible_core.service.discovery.sources import source_page
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     ListContinuation,
@@ -952,6 +953,16 @@ def service_playbill_orient(
             limit=limit,
             surface=surface,
         )
+    # The logical sources read the landing tallies and one seek per source, never the landings.
+    if section == "sources":
+        return _sources_section(
+            instance,
+            base,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # What just happened reads each journal's own index and the ledger, never the vocabulary.
     if section == "activity":
         return _activity_section(
@@ -1398,6 +1409,51 @@ def _captures_section(
         **base,
         section="captures",
         captures=rows,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _sources_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of logical sources by name, from the landing records, read live.
+
+    Landings are operational state: like the activity feed, the section reads
+    them at the current head whatever coordinate the read names, and ``live``
+    says so (``service.discovery.sources``).
+    """
+
+    after = _keyset_after(continuation)
+    if after is not None and len(after) != 1:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    rows, stop, unattributed = source_page(
+        instance, limit=limit, after=None if after is None else after[0]
+    )
+    next_cursor = (
+        None if stop is None else _keyset_cursor(view="sources", served=served, last_key=[stop])
+    )
+    # The full ref opens a Capture nobody cites; a CAP- handle resolves only verified ones.
+    first = next((row.latest.ref for row in rows if row.latest.ref is not None), None)
+    calls = [] if first is None else [_Call("get", (("ref", first),))]
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "sources"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="sources",
+        live=live_view(instance, ("sources",)),
+        sources=rows,
+        sources_unattributed=unattributed,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

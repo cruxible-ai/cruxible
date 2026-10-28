@@ -253,6 +253,48 @@ def test_orient_capture_sections_print_contracts_by_their_public_names() -> None
     )
 
 
+def test_orient_sources_prints_one_line_per_logical_source() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    contract = "CaptureContract:playbill.foreign-source.cisa.kev.catalog"
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "section": "sources",
+            "sources": [
+                {
+                    "logical_source": "cisa.kev.catalog",
+                    "landings": 3,
+                    "latest": {
+                        "landed_at": "2026-10-28T09:00:00Z",
+                        "run": "RUN-1",
+                        "line": "Line:kev.daily",
+                        "capture": "CAP-0123456789ab",
+                        "ref": "Capture:sha256:" + "0123456789ab" * 5 + "0123",
+                        "status": "unavailable",
+                        "erased": {"by": "owner", "at": "2026-10-28T10:00:00Z", "because": "x"},
+                    },
+                    "contracts": [
+                        {"contract": contract, "version": 1, "landings": 2},
+                        {"contract": contract, "version": 2, "landings": 1},
+                    ],
+                }
+            ],
+            "sources_unattributed": 2,
+        }
+    )
+    assert (
+        "cisa.kev.catalog  landings=3  last landed 2026-10-28T09:00:00Z CAP-0123456789ab  "
+        "(erased)  by Line:kev.daily  "
+        "under CaptureContract:cruxible.foreign-source.cisa.kev.catalog v1 (2), "
+        "CaptureContract:cruxible.foreign-source.cisa.kev.catalog v2 (1)"
+    ) in text
+    assert "(2 landings whose record or Capture can no longer be read" in text
+
+
 def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
     from cruxible_core.cli.commands.playbill import _render_orient
 

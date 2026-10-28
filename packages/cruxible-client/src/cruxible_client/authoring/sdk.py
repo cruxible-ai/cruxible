@@ -4790,7 +4790,10 @@ class Cruxible:
         Procedure), activity (what just happened, newest first: one row per
         ``event`` -- generations accepted, Line occurrences and enablement
         changes, runs started and finished, Captures landed and erased, inbox
-        items posted and decided -- each with the ``ref`` that reads it), or an
+        items posted and decided -- each with the ``ref`` that reads it),
+        sources (each logical source runs have landed Captures from, cited
+        or not: its landings, latest landing and the contract versions they
+        were landed under, read live), or an
         operational family:
         runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``. When this workspace holds an
