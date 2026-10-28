@@ -4013,7 +4013,8 @@ definition: the Procedures that capture under a contract (role
 ClaimType. A page reads only definition rows (never a Claim's or a Subject's
 pins), so the whole listing costs the ontology, not the instance.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
-each with its interface digest, operation contract and the implementing
+each with its interface digest, operation contract, the logical sources it
+declares it `produces` (empty when the caller names the source) and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`
 reads one, `--detail proof` its accepted inventory entry). `--section
 principals` lists the principal registry (`get Principal:ID` reads one), and

@@ -274,3 +274,55 @@ def test_non_reproducible_install_definition_refuses_with_a_rebuild_repair(inval
         "Declare only the v4 definition fields and rebuild the wheel "
         "so its interface_digest covers them."
     )
+
+
+def test_v4_produces_is_sorted_unique_and_stored_in_the_definition():
+    interface = registration(produces=["demo.b", "demo.a", "demo.b"])
+    assert interface.interface.produces == ("demo.a", "demo.b")
+    wire = json.loads(render_provider_interface(interface))
+    assert wire["interface"]["produces"] == ["demo.a", "demo.b"]
+    path = provider_interface_path(interface.identity.name)
+    assert parse_provider_interface(render_provider_interface(interface), path=path) == interface
+
+
+@pytest.mark.parametrize(
+    "produces",
+    [[], [""], ["PyPI.release"], ["https://pypi.org"], ["1source"], ["demo a"]],
+)
+def test_v4_produces_rejects_an_empty_list_and_non_canonical_names(produces):
+    with pytest.raises(ValidationError, match="produces"):
+        registration(produces=produces)
+
+
+def test_v4_without_produces_keeps_its_exact_bytes_and_digests():
+    # Pinned at 72b5e294a, before interfaces could declare produces.
+    for extras, definition_digest, artifact_digest in (
+        (
+            {},
+            "sha256:e57bf677ddd98a697f2857a6166f76df3214cfe1c0a0777050444474c88eed4c",
+            "sha256:266faaef38d3a7bd96c4330958516365c4f2d9cd7d7718627f99316fe1d4444e",
+        ),
+        (
+            {"refusals": ["provider_declined"], "description": "x"},
+            "sha256:a25c764dd68e08a4b9a13d05596b1d0c63d74cdf3e2359350d8d3ce0851e508c",
+            "sha256:a61a44536f35d15bb94b8e11cf7489a34c0b2c4f835a158ccd62fb08f3c5dbdf",
+        ),
+    ):
+        interface = registration(**extras)
+        assert "produces" not in json.loads(render_provider_interface(interface))["interface"]
+        assert interface_definition_bytes(interface) == canonical_bytes(definition(**extras))
+        assert interface_definition_digest(interface) == definition_digest
+        assert provider_interface_digest(interface).tagged == artifact_digest
+
+
+def test_a_package_export_declaring_produces_registers_it():
+    value = definition(produces=["demo.a", "demo.b"])
+    (interface,) = package_document(value).interface_registrations()
+    assert interface.interface.produces == ("demo.a", "demo.b")
+    assert json.loads(render_provider_interface(interface))["interface"] == value
+    assert interface_definition_digest(interface) == (
+        package_document(value).interfaces[0].interface_digest
+    )
+    # The wheel hashes its own spelling: an unsorted declaration cannot store exactly.
+    with pytest.raises(RequestRefusedError, match="stored interface JSON"):
+        package_document(definition(produces=["demo.b", "demo.a"])).interface_registrations()

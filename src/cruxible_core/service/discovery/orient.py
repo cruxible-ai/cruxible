@@ -70,6 +70,7 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceContract,
     interface_definition_bytes,
     provider_effect_class,
 )
@@ -277,6 +278,11 @@ def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
         input=_contract_fields(sides.get("input"), stub=stub),
         output=_contract_fields(sides.get("output"), stub=stub),
         effect=provider_effect_class(registration),
+        produces=(
+            registration.interface.produces
+            if isinstance(registration, ProviderInterfaceContract)
+            else ()
+        ),
         providers=tuple(
             OrientInterfaceProvider(
                 provider=provider.provider_identity.removeprefix("Provider:"),

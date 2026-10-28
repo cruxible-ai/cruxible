@@ -61,6 +61,8 @@ from cruxible_client.contracts.provider_contracts import ProviderOperationContra
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _INTERFACE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+#: A Capture envelope's logical ``source_identity`` (source_references._SOURCE_ID_RE).
+_SOURCE_IDENTITY_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _CLASSIFIER_ID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,255}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^(?:[0-9a-f]{2})+$")
@@ -619,6 +621,10 @@ class ProviderInterfaceDefinition(_StrictInterfaceModel):
     refusals: tuple[str, ...] = ()
     description: str | None = None
     configuration: ContractSchema | None = None
+    #: The logical source names (``source_identity``) this interface's provider
+    #: writes on the Captures it returns. Declared, not enforced at run time;
+    #: omitted when the caller names the source (web.fetch, workspace.file).
+    produces: tuple[str, ...] = ()
 
     @field_validator("interface_id")
     @classmethod
@@ -627,12 +633,25 @@ class ProviderInterfaceDefinition(_StrictInterfaceModel):
             raise ValueError("Provider interface id must be canonical")
         return value
 
+    @field_validator("produces")
+    @classmethod
+    def _produces(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("Provider interface produces names at least one source; omit it")
+        for name in value:
+            if not _SOURCE_IDENTITY_RE.fullmatch(name):
+                raise ValueError(
+                    f"Provider interface produces {name!r}: a logical source name is "
+                    "lowercase, starts with a letter and uses only a-z 0-9 _ . -"
+                )
+        return tuple(sorted(set(value), key=str.encode))
+
     @model_serializer(mode="wrap")
     def _definition_bytes(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # Wheels hash sparse ContractSchema JSON, not the engine's filled defaults.
         result: dict[str, Any] = handler(self)
         result["contracts"] = self.contracts.model_dump(mode="json", exclude_unset=True)
-        for optional in ("description", "refusals", "configuration"):
+        for optional in ("description", "refusals", "configuration", "produces"):
             if optional not in self.model_fields_set:
                 result.pop(optional, None)
         if self.configuration is not None:

@@ -587,9 +587,10 @@ class GetProviderInterfaceProvider(_StrictGetModel):
 class GetProviderInterfaceCard(_StrictGetModel):
     """One live provider interface: its contract fields, effect and implementations.
 
-    ``detail="proof"`` answers the accepted inventory entry a Procedure node
-    pins (``entry``): the artifact and interface digests, the operation contract
-    and every implementation.
+    ``produces`` lists the logical source names the interface declares its
+    Captures carry (empty when undeclared). ``detail="proof"`` answers the
+    accepted inventory entry a Procedure node pins (``entry``): the artifact and
+    interface digests, the operation contract and every implementation.
     """
 
     interface: str
@@ -597,6 +598,7 @@ class GetProviderInterfaceCard(_StrictGetModel):
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
     effect: Literal["pure", "external_read", "external_mutation"]
+    produces: tuple[str, ...] = ()
     providers: tuple[GetProviderInterfaceProvider, ...] = ()
     next: tuple[str, ...] = ()
 
