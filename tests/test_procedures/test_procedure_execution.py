@@ -28,6 +28,7 @@ from cruxible_client.contracts.captures import (
     CaptureRetentionErasurePolicy,
 )
 from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -37,7 +38,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
     procedure_path,
 )
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -933,7 +933,7 @@ def _prepare(accepted: AcceptedProcedure, fixture: _Fixture, reader: _StateReade
         accepted,
         instance_id="instance-a",
         run_id=kwargs.get("run_id", "run-a"),
-        accepted_coordinate=_coordinate(),
+        accepted_coordinate=kwargs.get("accepted_coordinate", _coordinate()),
         invocation_input=kwargs.get("invocation_input", {"value": 7}),
         actor_context=kwargs.get("actor_context", _actor()),
         state_reader=reader,
@@ -1010,15 +1010,24 @@ def _line_admission(
     attempt: int = 1,
     landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = (),
     exhaust_inputs: tuple[ExhaustRunInputV1, ...] = (),
+    coordinate: AcceptedCoordinate | None = None,
+    actor_context: GovernedActorContext | None = None,
+    line_identity: ArtifactIdentity | None = None,
+    line_spec_digest: str | None = None,
 ) -> ProcedureRunAdmissionV3:
-    direct = _prepare(accepted, fixture, _StateReader()).admission
+    prepare_kwargs: dict[str, object] = {}
+    if coordinate is not None:
+        prepare_kwargs["accepted_coordinate"] = coordinate
+    if actor_context is not None:
+        prepare_kwargs["actor_context"] = actor_context
+    direct = _prepare(accepted, fixture, _StateReader(), **prepare_kwargs).admission
     policy_digest = _digest("acquisition-policy")
     decision = ProcedureSelectionDecision(
         policy_digest=policy_digest,
         verdict="selected",
         decisions=(),
     )
-    line_identity = ArtifactIdentity(kind="Line", name="daily-triage")
+    line_identity = line_identity or ArtifactIdentity(kind="Line", name="daily-triage")
     fields = {name: getattr(direct, name) for name in type(direct).model_fields if name != "tag"}
     fields.update(
         {
@@ -1027,7 +1036,7 @@ def _line_admission(
             "invocation_origin": "line",
             "journal_stream": procedure_line_journal_stream("instance-a"),
             "journal_partition_id": procedure_line_partition(line_identity),
-            "line_spec_digest": _digest("line-spec"),
+            "line_spec_digest": line_spec_digest or _digest("line-spec"),
             "occurrence_id": occurrence_id,
             "deployment_snapshot_digest": _digest("deployment"),
             "acquisition_policy_digest": policy_digest,
