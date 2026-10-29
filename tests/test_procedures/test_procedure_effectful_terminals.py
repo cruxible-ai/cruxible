@@ -15,7 +15,9 @@ from cruxible_client.contracts.procedures.artifacts import (
     LINE_NODE_KINDS,
     render_procedure,
 )
+from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.egress import (
     MANDATE_FREE_RUNG_CEILING,
@@ -52,7 +54,12 @@ from tests.test_procedures.test_procedure_execution import (
     _pin,
     _StateReader,
 )
-from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
+from tests.test_procedures.test_procedure_mandates import (
+    _accepted_line,
+    _line,
+    _mandate,
+    _procedure,
+)
 from tests.test_procedures.test_procedure_source_runs import _accept_more
 
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -144,19 +151,48 @@ def _runtime_mandate(
     admission: ProcedureRunAdmissionV1,
     *,
     namespace: tuple[str, ...],
+    grants: str = "settle",
 ):
-    base = _mandate()
-    return base.model_copy(
-        update={
-            "procedure": base.procedure.model_copy(
-                update={
-                    "target": admission.procedure_identity,
-                    "artifact_digest": admission.procedure_artifact_digest,
-                }
-            ),
-            "authority_ceiling": admission.hard_caps,
-            "namespace": namespace,
-        }
+    # settle-grants by default so a settle_change_set request's rung is covered;
+    # callers whose namespace reaches outside claims/ pass grants="propose" (a
+    # settle grant may only reach accepted Claims). A direct (non-Line) admission
+    # has no line identity to pin against, so such callers get the base
+    # mandate's own (unrelated) Line.
+    base = _mandate(grants=grants)
+    line_identity = getattr(admission, "line_identity", None)
+    line_digest = admission.line_spec_digest
+    update: dict[str, object] = {
+        "resource_ceiling": admission.hard_caps,
+        "namespace": namespace,
+    }
+    if line_identity is not None and line_digest is not None:
+        update["line"] = base.line.model_copy(
+            update={"target": line_identity, "artifact_digest": line_digest}
+        )
+    return base.model_copy(update=update)
+
+
+def _line_run_admission(
+    tmp_path,
+    *,
+    coordinate: AcceptedCoordinate | None = None,
+    actor: GovernedActorContext | None = None,
+    admitted_at: datetime = NOW,
+    line_identity: ArtifactIdentity | None = None,
+    line_spec_digest: str | None = None,
+) -> ProcedureRunAdmissionV1:
+    root = tmp_path / "admission"
+    root.mkdir(exist_ok=True)
+    fixture = _fixture(root)
+    accepted = _procedure()
+    return _line_admission(
+        accepted,
+        fixture,
+        admitted_at=admitted_at,
+        coordinate=coordinate,
+        actor_context=actor,
+        line_identity=line_identity,
+        line_spec_digest=line_spec_digest,
     )
 
 
@@ -341,7 +377,7 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
     )
     path = subject_path("project.work_item", "wi-1")
     candidate_tree = {**instance.tree_at(base.git_oid), path: render_subject(subject)}
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     mandate_digest = procedure_mandate_digest(mandate).tagged
     request = _effectful_request(
         "propose_change_set",
@@ -377,17 +413,22 @@ def test_proposal_adapter_checks_authority_before_creating_a_ref(tmp_path) -> No
 
 @pytest.mark.parametrize("retire_at_head", [False, True])
 def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_at_head) -> None:
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
-
-    instance, owner = initialize_legacy_local(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     # The mandate the adapter is handed must be one accepted state carries: the
     # door re-establishes it against the head tree before any ref moves.
+    accepted = _procedure(named=True)
+    line = _line(procedure=accepted)
+    accepted_line = _accepted_line(line)
     (tmp_path / "shape").mkdir()
-    shape = _admission(tmp_path / "shape", actor=_actor().model_copy(update={"actor_id": "owner"}))
+    shape = _line_run_admission(
+        tmp_path / "shape",
+        actor=_actor().model_copy(update={"actor_id": "owner"}),
+        line_identity=line.identity,
+        line_spec_digest=accepted_line.artifact_digest,
+    )
     # Creating a keyed Subject writes its key Claim beside it.
-    mandate = _runtime_mandate(shape, namespace=("claims", "subjects"))
+    mandate = _runtime_mandate(shape, namespace=("claims", "subjects"), grants="propose")
     mandate_digest = procedure_mandate_digest(mandate).tagged
-    accepted = _procedure()
     _accept_more(
         instance,
         owner,
@@ -395,6 +436,7 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
             instance,
             {
                 accepted.path: render_procedure(accepted.procedure),
+                line_spec_path(line.identity.name): render_line_spec(line),
                 procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
                 # A first work item declares the kind the terminal creates wi-2 of.
                 subject_path("project.work_item", "wi-1"): render_subject(
@@ -409,10 +451,12 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         name="adapter-mandate",
     )
     base = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    admission = _admission(
+    admission = _line_run_admission(
         tmp_path,
         coordinate=base,
         actor=_actor().model_copy(update={"actor_id": "owner"}),
+        line_identity=line.identity,
+        line_spec_digest=accepted_line.artifact_digest,
     )
     subject = SubjectShell(
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-2"),
@@ -474,7 +518,7 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
 
 
 def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
-    admission = _admission(tmp_path, admitted_at=NOW - timedelta(days=10))
+    admission = _line_run_admission(tmp_path, admitted_at=NOW - timedelta(days=10))
     target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
     mandate = _runtime_mandate(admission, namespace=("claims",)).model_copy(
         update={"expires_at": NOW - timedelta(days=9)}
@@ -536,16 +580,14 @@ def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> N
 
 
 def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path) -> None:
-    admission = _admission(tmp_path)
+    admission = _line_run_admission(tmp_path)
     target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
     base = _runtime_mandate(admission, namespace=("claims",))
     refused = base.model_copy(
         update={
-            "procedure": base.procedure.model_copy(
-                update={"artifact_digest": _digest("other-procedure")}
-            ),
-            "rung": 2,
-            "authority_ceiling": base.authority_ceiling.model_copy(update={"max_items": 1}),
+            "line": base.line.model_copy(update={"artifact_digest": _digest("other-line")}),
+            "grants": "propose",
+            "resource_ceiling": base.resource_ceiling.model_copy(update={"max_items": 1}),
             "namespace": ("documents",),
             "expires_at": NOW - timedelta(days=1),
             "lifecycle": base.lifecycle.model_copy(update={"state": "retired"}),
@@ -569,8 +611,8 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
         "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_expired",
         "procedure_mandate_grant_insufficient",
+        "procedure_mandate_line_mismatch",
         "procedure_mandate_namespace_mismatch",
-        "procedure_mandate_procedure_mismatch",
         "procedure_mandate_superseded",
     )
     assert caught.value.procedure_name == "triage"
