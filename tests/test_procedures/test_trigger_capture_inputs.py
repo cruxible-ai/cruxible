@@ -314,11 +314,11 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         return
     else:
         # Exercise the admission budget independently of acquisition-time provider caps.
-        from cruxible_core.service.procedures.procedure_runs import (
-            _accepted_procedure,
-        )
         from cruxible_client.contracts.procedures.acquisition_rules import (
             resolve_acquisition_rules,
+        )
+        from cruxible_core.service.procedures.procedure_runs import (
+            _accepted_procedure,
         )
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
         from tests.test_procedures.test_procedure_source_runs import _policy
