@@ -124,9 +124,11 @@ def _digest(content: bytes) -> str:
 def build_inert_wheel(directory: Path, metadata: dict[str, Any]) -> Path:
     """A provider-runtime 0.2.x wheel, written by hand, carrying ``metadata``."""
 
-    interface_digest = provider_external_interface_definition_digest(
-        canonical_bytes(DEFINITION).hex(), domain="cruxible.interface.stub.v1"
-    )
+    # Self-consistent only: core treats this legacy registration's interface
+    # digest as inert bucket metadata (never recomputed or verified against the
+    # definition bytes), so a plain content digest is enough -- the removed
+    # `provider_external_interface_definition_digest` is not resurrected.
+    interface_digest = _digest(canonical_bytes(DEFINITION))
     files: dict[str, bytes] = {
         f"{MODULE}/__init__.py": b"",
         f"{MODULE}/operation.py": b"def classify(value):\n    raise RuntimeError('never run')\n",
