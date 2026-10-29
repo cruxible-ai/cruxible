@@ -5,12 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
@@ -22,6 +18,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
+from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.indexes.history.history_index import HistoryReader
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -37,10 +34,17 @@ from tests.core_support._knowledge_loop_support import activate, authoring, seed
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_next_closed_loop import _current_claim, _request
 from tests.test_procedures.test_line_triggers import SELECTOR, line_world
-from tests.test_server.test_playbill_line_run_refusals import _acquisition_policy
 
 #: line_world accepts its Line in a change set stamped at this instant.
 LINE_ACCEPTED = "2026-08-24T15:00:00+00:00"
+
+
+def _unrelated_contract(name: str) -> Contract:
+    """An accepted member that moves nothing `since` cares about: a bare Contract."""
+
+    return Contract.model_validate(
+        {"name": f"test.unrelated-{name}", "version": 1, "fields": {"value": {"type": "int"}}}
+    )
 
 
 def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -150,7 +154,16 @@ def test_since_is_not_part_of_the_item_id(tmp_path: Path) -> None:
 def test_an_edit_before_enablement_keeps_since_and_reading_it_walks_no_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    instance, line, owner = _line_world(tmp_path)
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_digest,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from tests.test_server.test_playbill_line_run_refusals import _line_mandate as _propose_mandate
+
+    instance, line, accepted, owner = line_world(
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
+    )
     (before,) = _rows(instance)
     assert before.since == LINE_ACCEPTED
 
@@ -162,11 +175,34 @@ def test_an_edit_before_enablement_keeps_since_and_reading_it_walks_no_history(
             "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
         }
     )
-    _accept_lines(instance, owner, edited, timestamp="2026-08-24T15:10:00.000000Z", name="edit")
+    # The Line carries a live Mandate (line_world always pairs one, C3), so
+    # editing the Line requires an exact propose-only Mandate successor in the
+    # same change set (cruxible.procedure_mandate.successor_pair_required).
+    prior_mandate = _propose_mandate(accepted, line)
+    mandate_successor = prior_mandate.model_copy(
+        update={
+            "line": ArtifactPin(
+                role="line",
+                target=edited.identity,
+                artifact_digest=line_spec_digest(edited).tagged,
+            ),
+            "lifecycle": ArtifactLifecycle(
+                state="live", predecessor_digest=procedure_mandate_digest(prior_mandate).tagged
+            ),
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(edited.identity.name)] = render_line_spec(edited)
+    tree[procedure_mandate_path(mandate_successor.identity.name)] = render_procedure_mandate(
+        mandate_successor
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-24T15:10:00.000000Z", proposal_name="edit"
+    )
     for index in range(4):
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-        policy = _acquisition_policy(f"unrelated-{index}")
-        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+        contract = _unrelated_contract(f"unrelated-{index}")
+        tree[contract_path(contract.name, contract.version)] = render_contract(contract)
         _accept_tree(
             instance,
             owner,
@@ -238,8 +274,8 @@ def _restate(instance, owner, claim, *, unrelated: int, timestamp: str) -> None:
     )
     tree[claim_path(claim.identity.name)] = render_claim(successor)
     for index in range(unrelated):
-        policy = _acquisition_policy(f"unrelated-{index}")
-        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+        contract = _unrelated_contract(f"unrelated-{index}")
+        tree[contract_path(contract.name, contract.version)] = render_contract(contract)
     _accept_tree(instance, owner, tree, timestamp=timestamp, proposal_name="restate")
 
 
@@ -275,8 +311,8 @@ def test_a_conflicts_since_reads_no_change_set_however_large_its_accepting_batch
     # then a later generation moves it off the retained head.
     _restate(instance, owner, first, unrelated=unrelated, timestamp="2026-08-24T18:00:00.000000Z")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    later = _acquisition_policy("later")
-    tree[acquisition_policy_path(later.identity.name)] = render_acquisition_policy(later)
+    later = _unrelated_contract("later")
+    tree[contract_path(later.name, later.version)] = render_contract(later)
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-24T19:00:00.000000Z", proposal_name="later"
     )
