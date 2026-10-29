@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 
 from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
@@ -52,7 +48,6 @@ from tests.support.lines import action_trigger, trigger_members
 from tests.support.procedures import procedure_artifact
 from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_integration.test_acquisition_policies import _policy
 from tests.test_service.test_typed_source_catalogs import _published_sources
 
 
@@ -228,19 +223,6 @@ def complete_policy_inventory(
     instance, _owner = initialize_local(root)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
 
-    live_acquisition = _policy()
-    retired_acquisition = _policy().model_copy(
-        update={
-            "identity": ArtifactIdentity(
-                kind="SourceAcquisitionPolicy",
-                name="retired-order-release",
-            ),
-            "lifecycle": ArtifactLifecycle(state="retired"),
-        }
-    )
-    for policy in (live_acquisition, retired_acquisition):
-        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
-
     def governed_claim_type(index: int, *, retired: bool):  # type: ignore[no-untyped-def]
         return _claim_type(index).model_copy(
             update={
@@ -332,10 +314,6 @@ def complete_policy_inventory(
     expected = {
         "approval_policy": ("ApprovalPolicy:instance", None),
         "procedure_runtime_policy": ("ProcedureRuntimePolicy:instance", None),
-        "source_acquisition_policy": (
-            live_acquisition.identity.qualified,
-            retired_acquisition.identity.qualified,
-        ),
         "claim_evidence_admission_policy": (
             live_claim_type.identity.qualified,
             retired_claim_type.identity.qualified,
