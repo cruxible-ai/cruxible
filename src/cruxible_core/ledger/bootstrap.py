@@ -399,6 +399,70 @@ GENESIS_SEED_SETS: tuple[GenesisSeedSet, ...] = (
         ),
         artifact_kinds=frozenset({"trigger", "provider", "claim-type", "contract"}),
     ),
+    # 2026-10-29 (claim-authority B2 fix round): the built-in's typed refusals
+    # (providers/builtin_workspace_file.py's digest, length and size guards)
+    # are declared on the operation (F10), so they surface as typed node
+    # refusals instead of an undeclared-code protocol violation. Three new
+    # refusal-detail Contracts; everything else is byte-identical to the
+    # prior set.
+    GenesisSeedSet(
+        set_id="triggers-3-workspace-file-refusals",
+        files=(
+            (
+                "claim-types/semantic/alias.json",
+                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
+            ),
+            (
+                "claim-types/semantic/distinct_from.json",
+                "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
+            ),
+            (
+                "contracts/workspace.file.content/v1.json",
+                "a0a8908cbc65d9b5320a3bc34ebabd44356a7580e645509784819f60595ff5be",
+            ),
+            (
+                "contracts/workspace.file.refusal.invalid_parameter/v1.json",
+                "473440364b8c5c641aa7cd765ad4cb0b897e1fbafc18aad545b59e80b66021a8",
+            ),
+            (
+                "contracts/workspace.file.refusal.mismatched_lengths/v1.json",
+                "73646057965632d5fde5208a7d814fb3459057cbdb98488466eab81ea7f12868",
+            ),
+            (
+                "contracts/workspace.file.refusal.provider_declined/v1.json",
+                "989bc9541520590f0a9425488f477e97e0e515472d3003985667fa5bf54c29c5",
+            ),
+            (
+                "contracts/workspace.file.request/v1.json",
+                "c9ed78bc1265f0169e6e05c8f1a5cdec8f6dcc0cbff91de3d74f1e4bd43cd70c",
+            ),
+            (
+                "contracts/workspace.file.result/v1.json",
+                "e3966d5a88323a68de2da9e70d2513ab4db9750e239a82b6f4efffdaf1944b5c",
+            ),
+            (
+                "contracts/workspace.file.source/v1.json",
+                "c8508b48cb424fad39a34df454fa403cedece340df708f80c422293ccc663062",
+            ),
+            (
+                "providers/cruxible-builtin.json",
+                "0ef8007bf03ec92657a0b67f8f7da93be071d185070cb545913c147157d4c392",
+            ),
+            (
+                "triggers/evidence-sweep.json",
+                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
+            ),
+            (
+                "triggers/floor-refresh.json",
+                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
+            ),
+            (
+                "triggers/prediction-anchor-retry.json",
+                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
+            ),
+        ),
+        artifact_kinds=frozenset({"trigger", "provider", "claim-type", "contract"}),
+    ),
 )
 
 

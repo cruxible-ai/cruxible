@@ -1,0 +1,60 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Detail of an invalid_parameter refusal: the offending field(s).",
+  "fields": {
+    "content_encoding": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "declared": {
+      "optional": true,
+      "type": {
+        "item": {
+          "kind": "string"
+        },
+        "kind": "list",
+        "max_items": 16
+      }
+    },
+    "field": {
+      "optional": true,
+      "type": {
+        "kind": "string"
+      }
+    },
+    "missing": {
+      "optional": true,
+      "type": {
+        "item": {
+          "kind": "string"
+        },
+        "kind": "list",
+        "max_items": 16
+      }
+    },
+    "supported": {
+      "optional": true,
+      "type": {
+        "item": {
+          "kind": "string"
+        },
+        "kind": "list",
+        "max_items": 16
+      }
+    },
+    "unknown": {
+      "optional": true,
+      "type": {
+        "item": {
+          "kind": "string"
+        },
+        "kind": "list",
+        "max_items": 16
+      }
+    }
+  },
+  "name": "workspace.file.refusal.invalid_parameter",
+  "version": 1
+}

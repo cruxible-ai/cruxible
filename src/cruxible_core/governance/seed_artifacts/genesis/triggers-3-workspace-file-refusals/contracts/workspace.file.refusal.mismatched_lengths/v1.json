@@ -1,0 +1,22 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Detail of a mismatched_lengths refusal: declared vs decoded byte length.",
+  "fields": {
+    "declared": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    },
+    "decoded": {
+      "optional": true,
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    }
+  },
+  "name": "workspace.file.refusal.mismatched_lengths",
+  "version": 1
+}

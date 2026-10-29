@@ -1030,14 +1030,12 @@ def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
     ``refusals`` its complete domain vocabulary: any other code is a protocol
     violation, not a pass-through. The genesis-seeded ``workspace.file``
     operation (`governance/seed_artifacts/workspace_file.py:workspace_file_
-    operation`) declares no refusals at all, even though the real built-in
-    (`providers/builtin_workspace_file.py`) can itself return
+    operation`) now declares the real built-in's (`providers/
+    builtin_workspace_file.py`) own typed refusals --
     ``provider_declined``/``invalid_parameter``/``mismatched_lengths`` (its
-    own oversized-file and length/digest-mismatch guards). That gap looks like
-    a real inconsistency worth a maintainer's attention -- the built-in's own
-    documented failure modes can no longer surface as typed node refusals
-    through this executor path, only as this internal failure -- recorded
-    here rather than patched in src or the seed declaration.
+    oversized-file and length/digest-mismatch guards) -- so they surface as
+    typed node refusals through this executor path instead of an
+    undeclared-code protocol violation.
     """
 
     instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
@@ -1045,8 +1043,8 @@ def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
     state, invoker = _run(instance, root, invoker=_DecliningInvoker())
 
     assert invoker.spawn_calls == 1
-    assert state.status == "internal_failed", state.terminal
-    assert state.terminal.code == "provider_protocol_violation"
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "provider_declined"
 
 
 class _UnreachableInvoker(_WorkspaceInvoker):

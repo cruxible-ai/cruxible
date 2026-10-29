@@ -32,7 +32,10 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_client.contracts.shapes import Contract, contract_digest
-from cruxible_client.contracts.workspace_file import workspace_file_contracts
+from cruxible_client.contracts.workspace_file import (
+    workspace_file_contracts,
+    workspace_file_refusal_contracts,
+)
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST,
     WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST,
@@ -254,10 +257,17 @@ def test_the_seeded_provider_declares_exactly_the_fixtures_bucket_conformance_na
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
-    """A builder change that moves seeded bytes needs a new genesis seed set."""
+    """A builder change that moves seeded bytes needs a new genesis seed set.
+
+    ``triggers-3-workspace-file-refusals`` (B2 fix round) is that new set: the
+    prior ``triggers-3-workspace-file-operation`` set stays frozen exactly as
+    seeded (its own test below pins it byte-for-byte), and this one is the
+    newest, matching today's builder, which now declares the built-in's
+    typed refusals.
+    """
 
     seeded = next(
-        item for item in GENESIS_SEED_SETS if item.set_id == "triggers-3-workspace-file-operation"
+        item for item in GENESIS_SEED_SETS if item.set_id == "triggers-3-workspace-file-refusals"
     )
     seeds = genesis_seed_files(seeded)
     provider = workspace_file_builtin_provider()
@@ -265,7 +275,7 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
     assert seeds[path] == render_provider(provider)
     contracts = {
         (contract.name, contract.version): contract_digest(contract).tagged
-        for contract in workspace_file_contracts()
+        for contract in (*workspace_file_contracts(), *workspace_file_refusal_contracts())
         if isinstance(contract, Contract)
     }
     provider_law = evaluate_provider_law(
@@ -277,6 +287,23 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
     assert provider_law.verdict == "accepted"
     (record,) = provider.implementations
     assert record.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+
+
+def test_the_prior_seed_set_stays_frozen_exactly_as_seeded() -> None:
+    """``triggers-3-workspace-file-operation`` is a past generation's genesis.
+
+    An instance bootstrapped under it keeps those exact bytes forever
+    (``ledger/bootstrap.py``'s append-only law); this pins the set's own
+    digests against its checked-in files, independent of today's builder.
+    """
+
+    seeded = next(
+        item for item in GENESIS_SEED_SETS if item.set_id == "triggers-3-workspace-file-operation"
+    )
+    # genesis_seed_files() itself refuses any file that drifted from the
+    # table; reaching a result at all is the pin.
+    seeds = genesis_seed_files(seeded)
+    assert set(seeds) == seeded.paths
 
 
 #: Every module the adapter may import, by full dotted name, and nothing else:

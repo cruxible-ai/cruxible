@@ -47,6 +47,7 @@ from cruxible_client.contracts.shapes import Contract, contract_digest
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_OPERATION,
     workspace_file_contracts,
+    workspace_file_refusal_contracts,
 )
 
 #: The runtime-manifest implementation row's interface id and digest: the
@@ -146,10 +147,22 @@ _INERT_BUCKETS: tuple[tuple[str, str], ...] = (
 
 
 def workspace_file_operation() -> ProviderOperation:
-    """The ``workspace.file`` operation with its exact Contract pins."""
+    """The ``workspace.file`` operation with its exact Contract pins.
+
+    Declares the built-in's own typed refusals (``providers/
+    builtin_workspace_file.py``'s digest, length and size guards) so they
+    surface through the executor as typed node refusals (F10's
+    ``_typed_refusal``) instead of an undeclared-code protocol violation.
+    """
 
     _source, _content, request, result = workspace_file_contracts()
     assert isinstance(request, Contract) and isinstance(result, Contract)
+    declined, invalid, mismatched = workspace_file_refusal_contracts()
+    assert (
+        isinstance(declined, Contract)
+        and isinstance(invalid, Contract)
+        and isinstance(mismatched, Contract)
+    )
     return ProviderOperation.model_validate(
         {
             "name": WORKSPACE_FILE_OPERATION,
@@ -164,6 +177,32 @@ def workspace_file_operation() -> ProviderOperation:
                 "digest": contract_digest(result).tagged,
             },
             "effect": "pure",
+            "refusals": {
+                "provider_declined": {
+                    "contract": {
+                        "name": declined.name,
+                        "version": declined.version,
+                        "digest": contract_digest(declined).tagged,
+                    },
+                    "absorbable": True,
+                },
+                "invalid_parameter": {
+                    "contract": {
+                        "name": invalid.name,
+                        "version": invalid.version,
+                        "digest": contract_digest(invalid).tagged,
+                    },
+                    "absorbable": True,
+                },
+                "mismatched_lengths": {
+                    "contract": {
+                        "name": mismatched.name,
+                        "version": mismatched.version,
+                        "digest": contract_digest(mismatched).tagged,
+                    },
+                    "absorbable": True,
+                },
+            },
             "entrypoint": WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
         }
     )

@@ -71,6 +71,70 @@ WORKSPACE_FILE_RESULT_CONTRACT: dict[str, object] = {
         "content": "workspace.file.content@1",
     },
 }
+#: Detail of a ``provider_declined`` refusal: the built-in's digest mismatch
+#: guard (``declared``/``computed``) or its oversized-file guard
+#: (``byte_length``/``max_bytes``); every field optional since either pair,
+#: or neither (a plain decline with no detail), may be present.
+WORKSPACE_FILE_REFUSAL_PROVIDER_DECLINED_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.refusal.provider_declined",
+    "version": 1,
+    "description": "Detail of a provider_declined refusal: a digest or size guard.",
+    "fields": {
+        "declared": "string?",
+        "computed": "string?",
+        "byte_length": "int{0..}?",
+        "max_bytes": "int{0..}?",
+    },
+}
+#: Detail of an ``invalid_parameter`` refusal: the built-in's several shape
+#: guards share this one code. ``declared`` here is the fixed list of fields
+#: the interface declares (the "unknown fields" guard); the unrelated
+#: "content_encoding must be base64" guard also happens to name its own
+#: detail field ``declared`` (the encoding string the caller sent), a
+#: str-vs-list collision this Contract cannot represent both sides of without
+#: changing the built-in's wire shape (and its parity golden). That one path
+#: refuses ``contract_output_refused`` instead of a clean ``invalid_parameter``
+#: node refusal -- typed and legitimate, just less specific; a maintainer
+#: renaming one of the two ``declared`` keys (a revision-bumping change) would
+#: close the gap.
+WORKSPACE_FILE_REFUSAL_INVALID_PARAMETER_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.refusal.invalid_parameter",
+    "version": 1,
+    "description": "Detail of an invalid_parameter refusal: the offending field(s).",
+    "fields": {
+        "field": "string?",
+        "unknown": "list<string>{max_items: 16}?",
+        "missing": "list<string>{max_items: 16}?",
+        "supported": "list<string>{max_items: 16}?",
+        "content_encoding": "string?",
+        "declared": "list<string>{max_items: 16}?",
+    },
+}
+#: Detail of a ``mismatched_lengths`` refusal: the declared vs. decoded byte length.
+WORKSPACE_FILE_REFUSAL_MISMATCHED_LENGTHS_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.refusal.mismatched_lengths",
+    "version": 1,
+    "description": "Detail of a mismatched_lengths refusal: declared vs decoded byte length.",
+    "fields": {
+        "declared": "int{0..}?",
+        "decoded": "int{0..}?",
+    },
+}
+
+
+def workspace_file_refusal_contracts() -> tuple[object, object, object]:
+    """The three refusal-detail Contracts the ``workspace.file`` built-in's
+    typed refusals pin: ``provider_declined``, ``invalid_parameter``, and
+    ``mismatched_lengths``, none nested so each is its own leaf.
+    """
+
+    from cruxible_client.contracts.shapes import validate_contract
+
+    return (
+        validate_contract(WORKSPACE_FILE_REFUSAL_PROVIDER_DECLINED_CONTRACT),
+        validate_contract(WORKSPACE_FILE_REFUSAL_INVALID_PARAMETER_CONTRACT),
+        validate_contract(WORKSPACE_FILE_REFUSAL_MISMATCHED_LENGTHS_CONTRACT),
+    )
 
 
 def workspace_file_contracts() -> tuple[object, ...]:
@@ -434,11 +498,15 @@ __all__ = [
     "WorkspaceBindingDigestAuthored",
     "WORKSPACE_FILE_CONTENT_CONTRACT",
     "WORKSPACE_FILE_OPERATION",
+    "WORKSPACE_FILE_REFUSAL_INVALID_PARAMETER_CONTRACT",
+    "WORKSPACE_FILE_REFUSAL_MISMATCHED_LENGTHS_CONTRACT",
+    "WORKSPACE_FILE_REFUSAL_PROVIDER_DECLINED_CONTRACT",
     "WORKSPACE_FILE_REQUEST_CONTRACT",
     "WORKSPACE_FILE_RESULT_CONTRACT",
     "WORKSPACE_FILE_SOURCE_CONTRACT",
     "is_workspace_file_signature",
     "workspace_file_contracts",
+    "workspace_file_refusal_contracts",
     "workspace_file_signature_digest",
     "WorkspaceFileSourceRequest",
     "WorkspaceFileSourceRequestV2",
