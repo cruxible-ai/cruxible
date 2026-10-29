@@ -78,6 +78,31 @@ def test_the_current_compilers_projection_registry_declares_no_removed_noun() ->
     assert not registry.supports_artifact_kind("blueprint")
 
 
+def test_the_current_compilers_registry_declares_no_removed_noun_fact_schemas() -> None:
+    """F13 fix round 2: the *artifact-kind* remainder above was fixed first;
+    ProviderInterface's own *fact schemas* (never written by current
+    admission) still leaked into the current registry through
+    ``p2c_extension_registry``'s inheritance from P2_B1_COMPILER's frozen
+    one. P2_B1_COMPILER's own registry keeps them, unchanged, for replay."""
+
+    from cruxible_client.contracts.projection_extensions import (
+        PROVIDER_INTERFACE_FACT_SCHEMA_IDS,
+        provider_runtime_extension_registry,
+    )
+
+    current = projection_registry_for_compiler(current_compiler_coordinate())
+    for schema_id in PROVIDER_INTERFACE_FACT_SCHEMA_IDS:
+        assert not current.supports(schema_id, 1, classification="semantic")
+    # A sibling schema from the same P2_B1 registry is still declared: this
+    # is a removal of the three obsolete ids, not of the registry's P2_B1
+    # ancestry as a whole.
+    assert current.supports("cruxible.provider.runtime", 1, classification="semantic")
+
+    frozen = provider_runtime_extension_registry()
+    for schema_id in PROVIDER_INTERFACE_FACT_SCHEMA_IDS:
+        assert frozen.supports(schema_id, 1, classification="semantic")
+
+
 def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:
     assert _p2_c_kind("procedure-mandates/demo.json") == "procedure-mandate"
     with pytest.raises(ProjectionFormatError):

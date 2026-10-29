@@ -2303,7 +2303,7 @@ class ProposalTerminalEgressSink:
             or (
                 admission_record.settle_submission is not None
                 and admission_record.settle_submission.mandate_digest
-                != request.procedure_mandate_digest
+                != (request.procedure_mandate_digest or request.ephemeral_spec_digest)
             )
         ):
             raise ProposalDeliveryRefused(
@@ -2346,9 +2346,16 @@ class ProposalTerminalEgressSink:
         """
 
         digest = request.procedure_mandate_digest
-        assert digest is not None  # an effectful request binds its mandate
+        ephemeral_digest = request.ephemeral_spec_digest
+        # Ruling C4: a direct run's settle terminal always arrives here capped
+        # at propose (below), so it never needs a real accepted mandate --
+        # its ephemeral spec digest stands in as the submission's authority
+        # basis instead.
+        authority_digest = digest if digest is not None else ephemeral_digest
+        assert authority_digest is not None  # an effectful request binds one or the other
         mandate: ProcedureMandate | None = None
         if request.capped_by is None:
+            assert digest is not None  # an uncapped settle always binds an accepted mandate
             found = self.accepted_mandates.get(digest)
             if not isinstance(found, ProcedureMandate) or found.condition is None:
                 raise ProposalDeliveryRefused(
@@ -2370,10 +2377,11 @@ class ProposalTerminalEgressSink:
             if request.capped_by is not None:
                 submission = ProposalSettleSubmission(
                     mode="fallback",
-                    mandate_digest=digest,
+                    mandate_digest=authority_digest,
                     fallback_reason=settle_authority_capped_reason(request.capped_by),
                 )
             elif prepared.outside_scope_claim_types:
+                assert digest is not None  # reached only under a real accepted mandate
                 submission = ProposalSettleSubmission(
                     mode="fallback",
                     mandate_digest=digest,
@@ -2382,6 +2390,7 @@ class ProposalTerminalEgressSink:
                 )
             else:
                 assert mandate is not None and mandate.condition is not None  # checked above
+                assert digest is not None  # reached only under a real accepted mandate
                 head = self.instance.accepted_coordinate()
                 timestamp = canonical_candidate_timestamp(request.evaluation_time)
                 # Each facts build the condition consumes, bound to the mutable
@@ -2476,6 +2485,7 @@ class ProposalTerminalEgressSink:
                 "The operation key names a delegated settlement, not this capped proposal.",
                 details={"proposal_id": result.admission.proposal_id},
             )
+        assert digest is not None  # a delegated settlement always binds a real mandate
         if result.candidate is None:
             raise ProposalDeliveryRefused(
                 "settle_publication_refused",

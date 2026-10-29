@@ -9,8 +9,11 @@ admitted-input tuple and never relabels its capture time.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from collections.abc import Mapping as MappingABC
 from datetime import datetime, timedelta
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -53,6 +56,66 @@ ACQUISITION_REFUSED = "cruxible.acquisition.refused"
 #: F05: a Source whose Capture replays outside the rule's declared set. A
 #: hard eligibility gate, never an omit choice (unlike the three above).
 ACQUISITION_REPLAYABILITY_INELIGIBLE = "cruxible.acquisition.replayability_ineligible"
+#: F05/§4.1,§4.4: a ``url``/``final_url`` field naming an origin the Line's
+#: ``acquisition.origins`` does not permit. A hard eligibility gate, never an
+#: omit choice, exactly like the replayability gate above.
+ACQUISITION_ORIGIN_INELIGIBLE = "cruxible.acquisition.origin_ineligible"
+
+#: The field names core treats as URL-bearing wherever they appear in a
+#: request or a result (§4.1: "the URL fields and final_url").
+_ORIGIN_CHECKED_FIELD_NAMES = frozenset({"url", "final_url"})
+
+
+def url_origin(url: str) -> str:
+    """``scheme://host[:port]`` for an absolute URL; raises on anything else."""
+
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError(f"{url!r} is not an absolute URL")
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _named_urls(value: object) -> Iterator[str]:
+    """Every string reached under a ``url``/``final_url`` key, at any depth."""
+
+    if isinstance(value, MappingABC):
+        for key, item in value.items():
+            if key in _ORIGIN_CHECKED_FIELD_NAMES and isinstance(item, str):
+                yield item
+            else:
+                yield from _named_urls(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _named_urls(item)
+
+
+def disallowed_origin(rule: AcquisitionRule, *values: object) -> str | None:
+    """The first URL outside ``rule.origins``, or ``None`` when every one named
+    ``url``/``final_url`` in ``values`` is permitted (F05/§4.1, §4.4).
+
+    ``origins`` declared ``None`` permits any, including a value this run
+    cannot parse as absolute: an ordinary string-typed Contract field gives
+    no URL-origin validation of its own, so there is nothing else to fail
+    open to. Once ``origins`` is declared, it is a hard eligibility gate --
+    never an omit choice, like :data:`ACQUISITION_REPLAYABILITY_INELIGIBLE`
+    -- and a value whose origin cannot be established (scheme-relative,
+    relative, or otherwise not ``scheme://host[:port]``) fails closed,
+    exactly like one naming a disallowed origin: a restricted Line never
+    dispatches a URL it cannot prove belongs to the permitted set.
+    """
+
+    if rule.origins is None:
+        return None
+    for value in values:
+        for url in _named_urls(value):
+            try:
+                origin = url_origin(url)
+            except ValueError:
+                return url
+            if origin not in rule.origins:
+                return url
+    return None
+
 
 _OUTCOME_REASONS: dict[ProcedureAcquisitionOutcomeV1, str] = {
     "unavailable": ACQUISITION_UNAVAILABLE,
@@ -238,6 +301,7 @@ def apply_acquisition_result(
 
 
 __all__ = [
+    "ACQUISITION_ORIGIN_INELIGIBLE",
     "ACQUISITION_OVERSIZED",
     "ACQUISITION_REFUSED",
     "ACQUISITION_REPLAYABILITY_INELIGIBLE",
@@ -248,4 +312,5 @@ __all__ = [
     "ProcedureSourceAcquisitionResultV1",
     "apply_acquisition_result",
     "capture_provenance_grade",
+    "disallowed_origin",
 ]

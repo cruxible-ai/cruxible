@@ -2708,7 +2708,11 @@ def evaluate_claim_law(
             "An identity-sensitive Claim cannot add shell bytes to statement identity.",
             path=path,
         )
-    resolved_providers = providers or {}
+    # F08: ``providers`` may be a lazily-resolving Mapping over every Provider
+    # this evaluation resolved (e.g. SelectedRows); ``or {}`` would call its
+    # __bool__/__len__, enumerating the whole population just to test for
+    # None. An explicit identity check never does.
+    resolved_providers: Mapping[str, ProviderV1] = {} if providers is None else providers
     verified_attestations: list[VerifiedClaimAttestationV1] = []
     if claim.backing.attestation_digests:
         if instance_id is None or accepted_coordinate is None:
@@ -2980,7 +2984,10 @@ def evaluate_claim_law(
             known_producer_digests = (
                 producer_artifact_digests.overlay(provider_heads)
                 if isinstance(producer_artifact_digests, ProducerVersions)
-                else LazyKeyedOverlay(provider_heads, producer_artifact_digests or {})
+                else LazyKeyedOverlay(
+                    provider_heads,
+                    {} if producer_artifact_digests is None else producer_artifact_digests,
+                )
             )
         if contracts_by_digest is None:
             contracts_by_digest = {}
@@ -3193,7 +3200,9 @@ def evaluate_claim_law(
                 else {
                     version
                     for version in (
-                        (producer_artifact_digests or {}).get(procedure_identity.qualified),
+                        None
+                        if producer_artifact_digests is None
+                        else producer_artifact_digests.get(procedure_identity.qualified),
                     )
                     if version is not None
                 }

@@ -29,6 +29,7 @@ from cruxible_core.procedures.acquisition import (
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
     capture_selection_failure,
+    disallowed_origin,
 )
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
@@ -147,3 +148,100 @@ def test_an_unrestricted_rule_permits_every_replay_class():
     rule = AcquisitionRule(input_name="doc")
     envelope = SimpleNamespace(observed_at=NOW, source=_external_source("attested_only"))
     assert capture_selection_failure(rule, envelope, evaluation_time=NOW) is None
+
+
+# --- F05 fix round 2: acquisition.origins (§4.1, §4.4) -----------------------
+
+
+def test_acquisition_default_and_rule_declare_origins():
+    """Codex's reproduction: ``AcquisitionDefault.model_validate({'origins':
+    [...]})`` was rejected outright (extra="forbid" had no such field)."""
+
+    default = AcquisitionDefault.model_validate({"origins": ["https://www.cisa.gov"]})
+    assert default.origins == ("https://www.cisa.gov",)
+
+    rule = AcquisitionRule(input_name="doc", origins=("https://b.example", "https://a.example"))
+    # Declared unsorted; the model normalizes, like permitted_replayability.
+    assert rule.origins == ("https://a.example", "https://b.example")
+
+
+def test_an_undeclared_origins_must_not_be_empty():
+    with pytest.raises(ValidationError):
+        AcquisitionDefault(origins=())
+
+
+def test_an_origin_without_a_scheme_or_host_is_refused():
+    with pytest.raises(ValidationError):
+        AcquisitionDefault(origins=("www.cisa.gov",))
+    with pytest.raises(ValidationError):
+        AcquisitionDefault(origins=("https://www.cisa.gov/path",))
+
+
+def test_resolve_acquisition_rules_carries_origins_from_defaults_and_overrides():
+    rules = resolve_acquisition_rules(
+        ("doc",),
+        defaults={"doc": AcquisitionDefault(origins=("https://www.cisa.gov",))},
+        overrides={},
+    )
+    assert rules["doc"].origins == ("https://www.cisa.gov",)
+
+    overridden = resolve_acquisition_rules(
+        ("doc",),
+        defaults={"doc": AcquisitionDefault(origins=("https://www.cisa.gov",))},
+        overrides={"doc": AcquisitionDefault(origins=("https://override.example",))},
+    )
+    assert overridden["doc"].origins == ("https://override.example",)
+
+
+def test_disallowed_origin_is_a_hard_eligibility_gate_on_url_and_final_url_fields():
+    """F05/§4.1,§4.4: core checks every field named ``url``/``final_url``,
+    at any depth, never an omit choice -- like permitted_replayability."""
+
+    rule = AcquisitionRule(input_name="doc", origins=("https://permitted.example",))
+    assert disallowed_origin(rule, {"url": "https://permitted.example/feed.json"}) is None
+    assert (
+        disallowed_origin(rule, {"url": "https://evil.example/feed.json"})
+        == "https://evil.example/feed.json"
+    )
+    # Reached at any depth, and under the "final_url" spelling too.
+    assert (
+        disallowed_origin(rule, {"retrieved": {"final_url": "https://evil.example/x"}})
+        == "https://evil.example/x"
+    )
+    # A list of records is walked too.
+    assert disallowed_origin(rule, [{"url": "https://permitted.example/a"}]) is None
+    assert disallowed_origin(rule, [{"url": "https://evil.example/a"}]) == "https://evil.example/a"
+    # Fields spelled otherwise are never origin-checked.
+    assert disallowed_origin(rule, {"homepage": "https://evil.example"}) is None
+
+
+def test_an_unrestricted_rule_permits_any_origin():
+    rule = AcquisitionRule(input_name="doc")
+    assert disallowed_origin(rule, {"url": "https://anywhere.example/x"}) is None
+
+
+def test_disallowed_origin_fails_closed_on_an_unparseable_url():
+    """F05a fix round 3: Codex's reproduction -- a scheme-relative value
+    (``//evil.example/feed``) raised inside the helper's own origin parse,
+    and the old code caught that ValueError and let it pass. Once origins
+    are restricted, a value whose origin cannot even be established must
+    refuse exactly like one naming a disallowed origin."""
+
+    rule = AcquisitionRule(input_name="doc", origins=("https://permitted.example",))
+    for unparseable in (
+        "//evil.example/feed",
+        "https:////evil.example/feed",
+        "relative/feed",
+    ):
+        assert disallowed_origin(rule, {"url": unparseable}) == unparseable
+
+    # Unrestricted, the same unparseable values are left alone (F05's
+    # original intent: nothing else validates a plain string field's URL
+    # shape, so an unrestricted Line permits them).
+    unrestricted = AcquisitionRule(input_name="doc")
+    for unparseable in (
+        "//evil.example/feed",
+        "https:////evil.example/feed",
+        "relative/feed",
+    ):
+        assert disallowed_origin(unrestricted, {"url": unparseable}) is None

@@ -21,6 +21,7 @@ from tests.support.operation_world import (
     Invoker,
     Operator,
     actor,
+    author,
     author_line,
     author_procedure,
     build_files,
@@ -533,6 +534,146 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
     assert recorded_digest == expected
 
 
+# --- F01 fix round 2: a direct run's propose/settle terminal really delivers -
+
+
+def _self_sourced_subject_item(rationale):  # type: ignore[no-untyped-def]
+    """A ``propose``/``settle`` candidate template: a self-sourced Subject.
+
+    No Capture, Source or provider is cited: the item's own body is its
+    evidence (``SelfSourceBody``), so a direct run with no provider/Source
+    node at all can still reach a real propose/settle delivery (F01).
+    """
+    import base64
+
+    return {
+        "tag": "playbill-procedure-subject-proposal-item-v1",
+        "subject_kind": "test.widget",
+        "key": {},
+        "rationale": rationale,
+        "create_new": True,
+        "source": {
+            "tag": "playbill-self-source-body-v1",
+            "content_base64": base64.b64encode(rationale.encode("utf-8")).decode("ascii"),
+        },
+    }
+
+
+def _author_widget_kind(instance):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput
+
+    author(
+        instance,
+        SubjectKindInput(kind="subject_kind", name="test.widget", minted=True),
+        name="subject-kind",
+    )
+
+
+def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
+    """No Call or Source node: a pure ``project`` feeding a propose/settle terminal."""
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": name,
+            "input": {},
+            "output": {"value": "integer"},
+            "steps": [
+                {"project": "shaped", "fields": {"value": 1}},
+                {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+            ],
+            "returns": "shaped",
+            "budget": {"provider_calls": 0},
+        }
+    )
+
+
+def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
+    """A slotted Call precedes the propose/settle terminal (a real provider run)."""
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": name,
+            "input": {"value": "integer"},
+            "output": {"value": "integer"},
+            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            "steps": [
+                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
+            ],
+            "returns": "result",
+            "budget": {"provider_calls": 1},
+        }
+    )
+
+
+def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: ignore[no-untyped-def]
+    """Shared body: a direct run's terminal always delivers a real proposal.
+
+    A ``propose`` terminal delivers under ``effective_authority == "propose"``.
+    A ``settle`` terminal, which no accepted Line and so no Mandate could ever
+    cover (ruling C4), falls back to the very same delivery -- never settling
+    (``outcome == "proposed"``, ``accepted_git_oid`` is ``None``).
+    """
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+
+    build = operation_build() if with_call else None
+    instance = world(tmp_path, *(() if build is None else (build,)))
+    _author_widget_kind(instance)
+    name = f"test.{verb}-{'called' if with_call else 'plain'}-direct"
+    spec = (
+        _call_terminal_spec(name=name, verb=verb)
+        if with_call
+        else _plain_terminal_spec(name=name, verb=verb)
+    )
+    author_procedure(instance, spec)
+    base = instance.accepted_coordinate()
+    kwargs = {}
+    if with_call:
+        kwargs["provider_runtime_operator"] = Operator(Invoker())
+    result = service_run_playbill_procedure(
+        instance,
+        name=name,
+        request=ProcedureRunRequest(input={"value": 4} if with_call else {}, evaluation_time=NOW),
+        actor_context=actor(),
+        **kwargs,
+    )
+    assert result.status == "succeeded", result.terminal
+    assert len(result.terminal_egress) == 1
+    egress = result.terminal_egress[0]
+    assert egress.kind == f"{verb}_change_set"
+    assert egress.verdict == "delivered"
+    assert egress.proposal_id is not None and egress.candidate_digest is not None
+    assert egress.effective_authority == "propose"
+    if verb == "settle":
+        assert egress.capped_by is not None
+        assert egress.settle_outcome == "proposed"
+        assert egress.accepted_git_oid is None
+    # Producing the proposal activated nothing: a direct run never settles.
+    assert instance.accepted_coordinate() == base
+    return instance, result
+
+
+@pytest.mark.parametrize("with_call", [False, True])
+def test_a_direct_run_propose_terminal_really_delivers_a_proposal(tmp_path, with_call):
+    """F01: a self-sourced Subject proposal, with and without a preceding Call."""
+
+    _direct_propose_or_settle_delivers(tmp_path, verb="propose", with_call=with_call)
+
+
+@pytest.mark.parametrize("with_call", [False, True])
+def test_a_direct_run_settle_terminal_falls_back_to_a_real_proposal(tmp_path, with_call):
+    """F01/C4: a settle terminal in a direct run proposes -- it never settles."""
+
+    _direct_propose_or_settle_delivers(tmp_path, verb="settle", with_call=with_call)
+
+
 # --- 10. removed nouns are refused, naming their replacement ------------------
 
 
@@ -1012,10 +1153,21 @@ def test_an_undeclared_provider_refusal_is_a_protocol_violation(tmp_path):
     assert state.terminal.code == "provider_protocol_violation"
 
 
-def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
+def _fetch_world(
+    tmp_path,
+    *,
+    line_name="test.fetched-line",
+    acquisition=None,
+    request_url=None,
+):  # type: ignore[no-untyped-def]
     """A world whose ``fetch`` slot is an ``external_read`` Source operation
     with a declared out Contract stricter than the generic Capture wire
-    shape (F02): it accepts only ``replayability: exact``."""
+    shape (F02): it accepts only ``replayability: exact``.
+
+    ``request_url``, when given, adds a ``url`` field (declared on the
+    request Contract, and named in the authored Source's own request) so a
+    Line's ``acquisition.origins`` (F05) has something real to check.
+    """
 
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
@@ -1037,8 +1189,11 @@ def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
 
+    request_fields = {"query": {"type": "string"}}
+    if request_url is not None:
+        request_fields["url"] = {"type": "string"}
     fetch_request = Contract.model_validate(
-        {"name": "demo.fetch.request", "version": 1, "fields": {"query": {"type": "string"}}}
+        {"name": "demo.fetch.request", "version": 1, "fields": request_fields}
     )
     fetch_result = Contract.model_validate(
         {
@@ -1107,7 +1262,10 @@ def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
     # before the build that pins them; see test_an_accepted_enum_of_...
     # above for why this cannot go through world()'s default-build path.
     instance, _owner = initialize_local(tmp_path)
-    capture_contract = record_contract(name="test.events-v1", replay="attested")
+    # "exact", matching the only replayability the operation's own out
+    # Contract permits (F02) -- so a wire-valid output can also satisfy the
+    # CaptureContract's own replay promise, not only the operation's.
+    capture_contract = record_contract(name="test.events-v1", replay="exact")
     accept_tree(
         instance,
         {
@@ -1123,6 +1281,9 @@ def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
         name="fetch-contracts",
     )
     accept_tree(instance, build_files(build), name="fetch-build")
+    request = {"query": "orders"}
+    if request_url is not None:
+        request["url"] = request_url
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
@@ -1142,7 +1303,7 @@ def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
                         "source": "doc",
                         "contract": capture_contract.identity.name,
                         "slot": "fetch",
-                        "request": {"query": "orders"},
+                        "request": request,
                     },
                     {"project": "out", "fields": {"ok": True}},
                 ],
@@ -1151,7 +1312,13 @@ def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
             }
         ),
     )
-    author_line(instance, name="test.fetched-line", procedure="test.fetched", parameters={})
+    author_line(
+        instance,
+        name=line_name,
+        procedure="test.fetched",
+        parameters={},
+        acquisition=acquisition,
+    )
     return instance
 
 
@@ -1183,6 +1350,167 @@ def test_an_external_read_sources_output_is_checked_against_its_operation_contra
     assert state.status == "node_refused", state.terminal
     assert state.terminal.code == "contract_output_refused"
     assert "replayability" in state.terminal.message
+
+
+def _fetch_output(*, byte_length=2, content_base64="e30=", coordinate_type="database-snapshot-v1"):  # type: ignore[no-untyped-def]
+    import base64
+    import hashlib
+
+    content = base64.b64decode(content_base64, validate=True)
+    assert len(content) == byte_length
+
+    def output(context):  # type: ignore[no-untyped-def]
+        return {
+            "source_identity": "demo.events",
+            "coordinate_type": coordinate_type,
+            "coordinate": "workspace",
+            "selector_type": "relation-primary-key-v1",
+            "selector": "orders",
+            "replayability": "exact",
+            "content_base64": content_base64,
+            "byte_length": byte_length,
+            "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "observed_at": "2026-10-29T12:00:00Z",
+        }
+
+    return output
+
+
+def test_a_real_oversized_read_routes_through_on_oversized_not_a_protocol_violation(tmp_path):
+    """F05: a real external Source over its CaptureContract's byte budget
+    (4,096 here, Codex's reproduction: 5,012 read bytes) reaches the typed
+    ``on_oversized`` decision -- refuse by default, omit when the Line's
+    acquisition says so -- never a generic ``provider_protocol_violation``.
+    """
+    import base64
+
+    oversized = base64.b64encode(b"x" * 5_012).decode("ascii")
+
+    (tmp_path / "refuse").mkdir()
+    (tmp_path / "omit").mkdir()
+    refusing = _fetch_world(tmp_path / "refuse", line_name="test.fetched-refuse")
+    state, _ = run_line(
+        refusing,
+        invoker=Invoker(output=_fetch_output(byte_length=5_012, content_base64=oversized)),
+        name="test.fetched-refuse",
+    )
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.oversized"
+
+    omitting = _fetch_world(
+        tmp_path / "omit",
+        line_name="test.fetched-omit",
+        acquisition={"doc": {"on_oversized": "omit"}},
+    )
+    state, _ = run_line(
+        omitting,
+        invoker=Invoker(output=_fetch_output(byte_length=5_012, content_base64=oversized)),
+        name="test.fetched-omit",
+    )
+    # Absorbed: the oversized Source is omitted, and the run moves past it.
+    assert getattr(state.terminal, "node_id", None) != "doc", state.terminal
+
+
+def test_an_oversized_and_schema_invalid_result_reports_the_schema_violation(tmp_path):
+    """F05b fix round 3: classifying a result as oversized must never
+    bypass an independent Capture-contract violation. Codex's reproduction:
+    an external Source naming an unadmitted coordinate schema
+    (``http-request-v1`` against the fixture's ``database-snapshot``
+    CaptureContract) fails on schema admission at a small size; at 5,012
+    bytes with ``on_oversized: omit`` the old code skipped straight to the
+    typed oversized omission instead of reporting that same violation."""
+
+    import base64
+
+    oversized = base64.b64encode(b"x" * 5_012).decode("ascii")
+
+    (tmp_path / "small-bad-schema").mkdir()
+    (tmp_path / "oversized-bad-schema").mkdir()
+
+    # Control: the same bad coordinate schema at two bytes already refuses
+    # on schema admission, never reaching size at all.
+    small = _fetch_world(tmp_path / "small-bad-schema", line_name="test.fetched-small-bad-schema")
+    state, _ = run_line(
+        small,
+        invoker=Invoker(output=_fetch_output(coordinate_type="http-request-v1")),
+        name="test.fetched-small-bad-schema",
+    )
+    assert state.status != "succeeded", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
+
+    # Oversized AND the same bad schema, with on_oversized: omit: the schema
+    # violation must still be reported, not silently omitted as oversized.
+    big = _fetch_world(
+        tmp_path / "oversized-bad-schema",
+        line_name="test.fetched-oversized-bad-schema",
+        acquisition={"doc": {"on_oversized": "omit"}},
+    )
+    state, _ = run_line(
+        big,
+        invoker=Invoker(
+            output=_fetch_output(
+                byte_length=5_012, content_base64=oversized, coordinate_type="http-request-v1"
+            )
+        ),
+        name="test.fetched-oversized-bad-schema",
+    )
+    assert state.status != "succeeded", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
+
+
+def test_a_line_acquisition_origin_outside_the_permitted_set_refuses(tmp_path):
+    """F05/§4.1,§4.4: ``acquisition.origins`` is a hard eligibility gate core
+    enforces on the Source's ``url`` field, before any provider call."""
+
+    (tmp_path / "bad-origin").mkdir()
+    instance = _fetch_world(
+        tmp_path / "bad-origin",
+        line_name="test.fetched-bad-origin",
+        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        request_url="https://not-permitted.example/feed",
+    )
+    state, _ = run_line(instance, invoker=Invoker(), name="test.fetched-bad-origin")
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.origin_ineligible"
+
+
+def test_a_line_acquisition_origin_inside_the_permitted_set_is_not_refused(tmp_path):
+    """The flip side of the gate above: a request naming a permitted origin
+    never reaches ``cruxible.acquisition.origin_ineligible`` -- the request
+    the Source actually sends (not merely the authored template) is checked.
+    """
+
+    (tmp_path / "good-origin").mkdir()
+    instance = _fetch_world(
+        tmp_path / "good-origin",
+        line_name="test.fetched-good-origin",
+        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        request_url="https://permitted.example/feed",
+    )
+    state, _ = run_line(
+        instance, invoker=Invoker(output=_fetch_output()), name="test.fetched-good-origin"
+    )
+    assert getattr(state.terminal, "code", None) != "cruxible.acquisition.origin_ineligible"
+
+
+def test_a_scheme_relative_url_under_restricted_origins_refuses_before_any_call(tmp_path):
+    """F05a fix round 3: a scheme-relative value (``//evil.example/feed``)
+    cannot be proven to belong to the permitted origin set, so a restricted
+    Line must refuse it exactly like a disallowed origin -- never dispatch
+    the provider call and then rely on a later failure to undo it."""
+
+    (tmp_path / "scheme-relative-origin").mkdir()
+    instance = _fetch_world(
+        tmp_path / "scheme-relative-origin",
+        line_name="test.fetched-scheme-relative",
+        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        request_url="//evil.example/feed",
+    )
+    invoker = Invoker()
+    state, _ = run_line(instance, invoker=invoker, name="test.fetched-scheme-relative")
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.origin_ineligible"
+    assert len(invoker.contexts) == 0
 
 
 # --- 8. exact producer versions -----------------------------------------------

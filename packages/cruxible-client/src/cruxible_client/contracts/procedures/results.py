@@ -157,6 +157,8 @@ ProcedureNodeRefusalCode: TypeAlias = Literal[
     "cruxible.acquisition.stale",
     "cruxible.acquisition.oversized",
     "cruxible.acquisition.refused",
+    "cruxible.acquisition.replayability_ineligible",
+    "cruxible.acquisition.origin_ineligible",
     "effect_grant_unrecognized",
     "effect_dispatch_requires_actor",
     "effect_dispatch_requires_authenticated_actor",

@@ -326,7 +326,10 @@ def settle_terminal_receipt(
     children, candidate = _receipt_children(
         request, result=result, item_paths=item_paths, unchanged=unchanged
     )
-    assert request.operation_key is not None and request.procedure_mandate_digest is not None
+    # Ruling C4: a direct run's settle terminal always falls back to propose
+    # under its ephemeral spec digest, never a real Procedure mandate.
+    authority_digest = request.procedure_mandate_digest or request.ephemeral_spec_digest
+    assert request.operation_key is not None and authority_digest is not None
     settled = accepted_git_oid is not None
     return TerminalEgressReceiptV4(
         kind=request.kind,
@@ -339,7 +342,7 @@ def settle_terminal_receipt(
         candidate_digest=candidate.candidate_digest,
         target_paths=request.target_paths,
         outcome="settled" if settled else "proposed",
-        procedure_mandate_digest=request.procedure_mandate_digest,
+        procedure_mandate_digest=authority_digest,
         accepted_git_oid=accepted_git_oid,
         fallback_reason=fallback_reason,
         capped_by=served_capped_by(request),
