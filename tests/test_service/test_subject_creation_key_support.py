@@ -227,8 +227,6 @@ def test_only_revisions_9_and_10_cover_a_key_claim_by_its_subjects_creation(
     a new Claim by revision 9, and one on an earlier compiler by revision 8.
     """
 
-    import cruxible_core.compiler.compiler as compiler_module
-    import cruxible_core.proposals.proposals as proposals_module
     from cruxible_client.contracts.laws import (
         CLAIM_LAW_V2_REVISION_8,
         CLAIM_LAW_V2_REVISION_9,
@@ -243,14 +241,6 @@ def test_only_revisions_9_and_10_cover_a_key_claim_by_its_subjects_creation(
     assert nine == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
     (eight,) = _judged_verdicts(instance, trees, CLAIM_LAW_V2_REVISION_8).values()
     assert eight == (CLAIM_LAW_V2_REVISION_8.digest, "uncovered")
-
-    monkeypatch.setattr(compiler_module, "admits_claim_rebind", lambda _compiler: False)
-    (before_rebind,) = _judged_verdicts(instance, trees, None).values()
-    assert before_rebind == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
-
-    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
-    (earlier,) = _judged_verdicts(instance, trees, None).values()
-    assert earlier == (CLAIM_LAW_V2_REVISION_8.digest, "uncovered")
 
 
 def test_a_key_claim_about_an_existing_subject_is_not_covered(

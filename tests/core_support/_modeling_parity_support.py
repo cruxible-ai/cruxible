@@ -54,7 +54,7 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
-from cruxible_core.compiler.compiler import PC_E1_COMPILER
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 
@@ -216,7 +216,7 @@ def coordinate(domain: str) -> AcceptedProjectionCoordinate:
         git_oid="44" * 20,
         semantic_root=SemanticRoot("55" * 32).tagged,
         generation_root=GenerationRoot("33" * 32).tagged,
-        compiler=PC_E1_COMPILER,
+        compiler=CURRENT_COMPILER,
     )
 
 

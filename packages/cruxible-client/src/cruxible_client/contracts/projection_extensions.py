@@ -289,15 +289,9 @@ class ProjectionFact(_StrictProjectionModel):
 class ProjectionExtensionRegistry:
     """Closed registry that prevents fact schemas from being invented by input."""
 
-    def __init__(
-        self,
-        declarations: Iterable[ProjectionFactDeclaration],
-        *,
-        artifact_kinds: Iterable[str] = (),
-    ) -> None:
+    def __init__(self, declarations: Iterable[ProjectionFactDeclaration]) -> None:
         self._declarations: dict[tuple[str, int], ProjectionFactDeclaration] = {}
         self._versions: dict[str, set[int]] = {}
-        self._artifact_kinds = frozenset(artifact_kinds)
         for declaration in declarations:
             key = (declaration.schema_id, declaration.schema_version)
             if key in self._declarations:
@@ -307,19 +301,6 @@ class ProjectionExtensionRegistry:
                 )
             self._declarations[key] = declaration
             self._versions.setdefault(declaration.schema_id, set()).add(declaration.schema_version)
-
-    def supports_artifact_kind(self, kind: str) -> bool:
-        """Return whether this compiler registry recognizes an additive artifact kind."""
-
-        return kind in self._artifact_kinds
-
-    def with_artifact_kinds(self, *artifact_kinds: str) -> "ProjectionExtensionRegistry":
-        """Copy every registered declaration while extending artifact-kind support."""
-
-        return ProjectionExtensionRegistry(
-            self._declarations.values(),
-            artifact_kinds=(*self._artifact_kinds, *artifact_kinds),
-        )
 
     def declarations(
         self,
@@ -395,323 +376,105 @@ class ProjectionExtensionRegistry:
         )
 
 
-def extension_registry() -> ProjectionExtensionRegistry:
-    """Return the declared Document facts used by the source compiler."""
-
-    document = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.document.metadata",
-            "cruxible.document.references",
-            "cruxible.document.source_mapping",
-            "cruxible.document.subject",
-        )
-    )
-    return ProjectionExtensionRegistry(document)
-
-
-def governance_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PB-D's additive accepted-governance explanation schemas."""
-
-    pb_c_semantic = extension_registry().declarations("semantic")
-    explanation = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.document.attestation_coverage",
-            "cruxible.document.governance",
-            "cruxible.document.history",
-            "cruxible.document.provenance",
-        )
-    )
-    return ProjectionExtensionRegistry((*pb_c_semantic, *explanation))
-
-
-def subject_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-A1's additive Subject and Subject-explanation schemas."""
-
-    prior = governance_extension_registry()
-    subject = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.subject.attestation_coverage",
-            "cruxible.subject.governance",
-            "cruxible.subject.history",
-            "cruxible.subject.identity",
-            "cruxible.subject.lifecycle",
-            "cruxible.subject.provenance",
-            "cruxible.subject.references",
-        )
-    )
-    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *subject))
-
-
-def claim_type_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-A2's additive ClaimType and explanation schemas."""
-
-    prior = subject_extension_registry()
-    claim_type = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.claim_type.attestation_coverage",
-            "cruxible.claim_type.governance",
-            "cruxible.claim_type.history",
-            "cruxible.claim_type.identity",
-            "cruxible.claim_type.policies",
-            "cruxible.claim_type.provenance",
-            "cruxible.claim_type.references",
-        )
-    )
-    claim_type_v2 = (
-        ProjectionFactDeclaration(
-            schema_id="cruxible.claim_type.identity",
-            schema_version=2,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        ),
-    )
-    return ProjectionExtensionRegistry(
-        (
-            *prior.declarations("semantic"),
-            *claim_type,
-            *claim_type_v2,
-        )
-    )
-
-
-def claim_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-B's additive CaptureContract and Claim projection schemas."""
-
-    prior = claim_type_extension_registry()
-    claim = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.capture_contract.contract",
-            "cruxible.capture_contract.references",
-            "cruxible.claim.backing",
-            "cruxible.claim.identity",
-            "cruxible.claim.lifecycle",
-            "cruxible.claim.source_mapping",
-            "cruxible.claim.statement",
-        )
-    )
-    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *claim))
-
-
-def evidence_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-C's additive provider, evidence, verdict, and mandate schemas."""
-
-    prior = claim_extension_registry()
-    evidence = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.claim.attestation_coverage",
-            "cruxible.claim.current_verdict",
-            "cruxible.claim.evidence_basis",
-            "cruxible.claim.governance",
-            "cruxible.claim.history",
-            "cruxible.claim.provenance",
-            "cruxible.provider.identity",
-            "cruxible.provider.keys",
-            "cruxible.provider.provenance",
-            "cruxible.source_acquisition_policy.policy",
-        )
-    )
-    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *evidence))
-
-
-def procedure_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-D's additive Procedure and LineSpec projection schemas."""
-
-    prior = evidence_extension_registry()
-    procedures = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.line.attestation_coverage",
-            "cruxible.line.governance",
-            "cruxible.line.history",
-            "cruxible.line.provenance",
-            "cruxible.line.source_mapping",
-            "cruxible.line.spec",
-            "cruxible.procedure.attestation_coverage",
-            "cruxible.procedure.definition",
-            "cruxible.procedure.governance",
-            "cruxible.procedure.graph",
-            "cruxible.procedure.history",
-            "cruxible.procedure.provenance",
-            "cruxible.procedure.source_mapping",
-        )
-    )
-    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *procedures))
-
-
-def runtime_extension_registry() -> ProjectionExtensionRegistry:
-    """Return the additive activation, promotion, and track-record schemas.
-
-    PC-E1 added the Procedure grain; PC-E2 adds the Line grain, keyed by Line
-    identity and occurrence epoch so a rebind never splits a Line's history.
-    PC-F adds the governed QueryDefinition grain so a canonical query's
-    declaration, verdict/conflict policy, and budgets project like every other
-    accepted artifact family.
-    """
-
-    prior = procedure_extension_registry()
-    runtime = tuple(
-        ProjectionFactDeclaration(
-            schema_id=schema_id,
-            schema_version=1,
-            classification="semantic",
-            constraints=("unique(subject_identity,fact_key)",),
-        )
-        for schema_id in (
-            "cruxible.citation_relation.capture_contract",
-            "cruxible.citation_relation.external_use",
-            "cruxible.citation_relation.retired_conflict",
-            "cruxible.citation_relation.source_use",
-            "cruxible.citation_relation.use",
-            "cruxible.exhaust_promotion.basis",
-            "cruxible.line.track_record",
-            "cruxible.procedure.resolution_activation",
-            "cruxible.procedure.track_record",
-            "cruxible.query_definition.attestation_coverage",
-            "cruxible.query_definition.definition",
-            "cruxible.query_definition.governance",
-            "cruxible.query_definition.history",
-            "cruxible.query_definition.policy",
-            "cruxible.query_definition.provenance",
-            "cruxible.query_definition.references",
-        )
-    )
-    return ProjectionExtensionRegistry((*prior.declarations("semantic"), *runtime))
-
-
-def replay_extension_registry() -> ProjectionExtensionRegistry:
-    """Return P2-B0 runtime schemas plus its governed runtime-policy kind."""
-
-    return runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
-
-
-#: F13 (C12 noun removal): ProviderInterface's own fact schemas. P2_B1_COMPILER
-#: is frozen (it predates the noun's removal) and keeps declaring these,
-#: unchanged, for any historical/bootstrap replay admitted under it. The
-#: current compiler (via ``p2c_extension_registry``) declares neither the
-#: "provider-interface" artifact kind nor these fact schemas: nothing current
-#: admission ever writes.
-PROVIDER_INTERFACE_FACT_SCHEMA_IDS = (
-    "cruxible.provider_interface.registration",
-    "cruxible.provider_interface.vocabulary",
-    "cruxible.provider_interface.classifier",
+#: Every semantic fact schema the current compiler projects, at version 1.
+_CURRENT_FACT_SCHEMA_IDS = (
+    "cruxible.capture_contract.contract",
+    "cruxible.capture_contract.references",
+    "cruxible.citation_relation.capture_contract",
+    "cruxible.citation_relation.external_use",
+    "cruxible.citation_relation.retired_conflict",
+    "cruxible.citation_relation.source_use",
+    "cruxible.citation_relation.use",
+    "cruxible.claim.attestation_coverage",
+    "cruxible.claim.backing",
+    "cruxible.claim.current_verdict",
+    "cruxible.claim.evidence_basis",
+    "cruxible.claim.governance",
+    "cruxible.claim.history",
+    "cruxible.claim.identity",
+    "cruxible.claim.lifecycle",
+    "cruxible.claim.provenance",
+    "cruxible.claim.source_mapping",
+    "cruxible.claim.statement",
+    "cruxible.claim_type.attestation_coverage",
+    "cruxible.claim_type.governance",
+    "cruxible.claim_type.history",
+    "cruxible.claim_type.identity",
+    "cruxible.claim_type.policies",
+    "cruxible.claim_type.provenance",
+    "cruxible.claim_type.references",
+    "cruxible.document.attestation_coverage",
+    "cruxible.document.governance",
+    "cruxible.document.history",
+    "cruxible.document.metadata",
+    "cruxible.document.provenance",
+    "cruxible.document.references",
+    "cruxible.document.source_mapping",
+    "cruxible.document.subject",
+    "cruxible.exhaust_promotion.basis",
+    "cruxible.line.attestation_coverage",
+    "cruxible.line.governance",
+    "cruxible.line.history",
+    "cruxible.line.provenance",
+    "cruxible.line.source_mapping",
+    "cruxible.line.spec",
+    "cruxible.line.track_record",
+    "cruxible.procedure.attestation_coverage",
+    "cruxible.procedure.definition",
+    "cruxible.procedure.governance",
+    "cruxible.procedure.graph",
+    "cruxible.procedure.history",
+    "cruxible.procedure.provenance",
+    "cruxible.procedure.resolution_activation",
+    "cruxible.procedure.source_mapping",
+    "cruxible.procedure.track_record",
+    "cruxible.procedure_mandate.authority",
+    "cruxible.provider.identity",
+    "cruxible.provider.implementations",
+    "cruxible.provider.keys",
+    "cruxible.provider.provenance",
+    "cruxible.provider.runtime",
+    "cruxible.query_definition.attestation_coverage",
+    "cruxible.query_definition.definition",
+    "cruxible.query_definition.governance",
+    "cruxible.query_definition.history",
+    "cruxible.query_definition.policy",
+    "cruxible.query_definition.provenance",
+    "cruxible.query_definition.references",
+    "cruxible.source_acquisition_policy.policy",
+    "cruxible.subject.attestation_coverage",
+    "cruxible.subject.governance",
+    "cruxible.subject.history",
+    "cruxible.subject.identity",
+    "cruxible.subject.lifecycle",
+    "cruxible.subject.provenance",
+    "cruxible.subject.references",
 )
 
 
-def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
-    """Return P2-B1 Provider runtime/interface schemas and governed kind.
+def current_extension_registry() -> ProjectionExtensionRegistry:
+    """Return the current compiler's closed fact-schema registry."""
 
-    Frozen: this is P2_B1_COMPILER's own registry, read verbatim for replay
-    of data admitted under that exact historical compiler coordinate.
-    """
-
-    prior = replay_extension_registry()
-    provider_runtime = tuple(
+    declarations = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
-            schema_version=1,
+            schema_version=version,
             classification="semantic",
             constraints=("unique(subject_identity,fact_key)",),
         )
-        for schema_id in (
-            "cruxible.provider.runtime",
-            "cruxible.provider.implementations",
-            *PROVIDER_INTERFACE_FACT_SCHEMA_IDS,
+        for schema_id, version in (
+            *((schema_id, 1) for schema_id in _CURRENT_FACT_SCHEMA_IDS),
+            ("cruxible.claim_type.identity", 2),
         )
     )
-    return ProjectionExtensionRegistry(
-        (
-            *prior.declarations("semantic"),
-            *provider_runtime,
-        ),
-        artifact_kinds=("procedure-runtime-policy",),
-    )
-
-
-def p2c_extension_registry() -> ProjectionExtensionRegistry:
-    """Return the P2-C registry with governed Procedure mandates.
-
-    F13 (C12 noun removal): this is the registry every compiler from P2-C
-    onward builds on, through the current one (``LIGHT_ARTIFACTS_COMPILER``).
-    ProviderInterface's fact schemas are excluded here -- current admission
-    never writes them -- while ``provider_runtime_extension_registry`` (read
-    only for P2_B1_COMPILER's own frozen replay) keeps declaring them.
-    """
-
-    prior = provider_runtime_extension_registry()
-    current_declarations = tuple(
-        declaration
-        for declaration in prior.declarations("semantic")
-        if declaration.schema_id not in PROVIDER_INTERFACE_FACT_SCHEMA_IDS
-    )
-    mandate = ProjectionFactDeclaration(
-        schema_id="cruxible.procedure_mandate.authority",
-        schema_version=1,
-        classification="semantic",
-        constraints=("unique(subject_identity,fact_key)",),
-    )
-    return ProjectionExtensionRegistry(
-        (*current_declarations, mandate),
-        artifact_kinds=("procedure-runtime-policy", "procedure-mandate"),
-    )
+    return ProjectionExtensionRegistry(declarations)
 
 
 __all__ = [
-    "PROVIDER_INTERFACE_FACT_SCHEMA_IDS",
     "ProjectionExtensionRegistry",
     "ProjectionFact",
     "ProjectionFactClassification",
     "ProjectionFactDeclaration",
+    "current_extension_registry",
     "normalize_projection_value",
-    "claim_extension_registry",
-    "evidence_extension_registry",
-    "procedure_extension_registry",
-    "provider_runtime_extension_registry",
-    "p2c_extension_registry",
-    "replay_extension_registry",
-    "runtime_extension_registry",
-    "claim_type_extension_registry",
-    "extension_registry",
-    "governance_extension_registry",
-    "subject_extension_registry",
 ]

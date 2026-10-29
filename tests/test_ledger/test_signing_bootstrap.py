@@ -247,7 +247,7 @@ def test_descriptor_root_tampering_is_refused(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field", "expected_error", "match"),
     (
-        ("compiler", FormatError, "compiler coordinate"),
+        ("compiler", FormatError, "reseed_required"),
         ("authority", BootstrapError, "authority matrix"),
         ("storage", FormatError, "storage layout"),
         ("recovery", BootstrapError, "recovery posture"),

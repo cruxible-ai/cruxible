@@ -1,6 +1,7 @@
-"""Compiler transition rules shared by evaluation, activation and historical reads."""
+"""Compiler transition rules shared by evaluation, activation and replay."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Protocol, cast
 
 from cruxible_client.contracts.candidates import (
@@ -14,69 +15,17 @@ from cruxible_client.contracts.compiler_upgrade import (
     CompilerUpgradeNotice,
 )
 from cruxible_client.contracts.errors import SettlementIntegrityError
-from cruxible_client.contracts.laws import (
-    AUTHORITY_VERBS_UPGRADE_LAW,
-    CLAIM_EVIDENCE_UPGRADE_LAW,
-    CLAIM_REBIND_UPGRADE_LAW,
-    COMPILER_UPGRADE_ACCEPTANCE_LAW,
-    GOVERNED_TRIGGERS_UPGRADE_LAW,
-    LIGHT_ARTIFACTS_UPGRADE_LAW,
-    PROVIDER_BUILDS_UPGRADE_LAW,
-    PROVIDER_CONTRACT_UPGRADE_LAW,
-    PROVIDER_PACKAGE_UPGRADE_LAW,
-    RESOURCE_BUDGET_UPGRADE_LAW,
-    SDK_SOURCE_UPGRADE_LAW,
-    SOURCE_CHECKED_UPGRADE_LAW,
-    SUBJECT_IDENTITY_UPGRADE_LAW,
-    TRIGGER_CAPTURE_UPGRADE_LAW,
-    InstalledAcceptanceLaw,
-)
+from cruxible_client.contracts.laws import InstalledAcceptanceLaw
 from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import (
-    ATTESTATION_COMPILER,
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    CLAIM_REBIND_COMPILER,
-    COMPILER_REVISION_LABELS,
-    GOVERNED_TRIGGERS_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    ONTOLOGY_COMPILER,
-    P2_B1_COMPILER,
-    P2_B2_COMPILER,
-    P2_B4_COMPILER,
-    P2_B4_UNIT2_COMPILER,
-    P2_B5_COMPILER,
-    P2_C_COMPILER,
-    PC_DF2_COMPILER,
-    PC_HR_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOLUTION_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-    TRIGGER_CAPTURE_COMPILER,
-    UPGRADE_COMPILER,
-)
+from cruxible_core.compiler.compiler import compiler_revision_label
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
-# Frozen by the v1 upgrade law. New installed compilers do not add edges.
-UPGRADE_V1_SOURCES = frozenset(
-    {
-        PC_HR_COMPILER,
-        P2_B1_COMPILER,
-        P2_C_COMPILER,
-        PC_DF2_COMPILER,
-        P2_B2_COMPILER,
-        P2_B4_COMPILER,
-        P2_B4_UNIT2_COMPILER,
-        P2_B5_COMPILER,
-        ATTESTATION_COMPILER,
-        RESOLUTION_COMPILER,
-        ONTOLOGY_COMPILER,
-    }
+#: Explicit forward edges: (source, target) -> the law that judges the
+#: transition. This release installs one compiler, so no edge exists; a future
+#: revision adds its edge from the current coordinate here, and nothing else
+#: implies permission to move.
+_UPGRADE_EDGES: Mapping[tuple[CompilerCoordinate, CompilerCoordinate], InstalledAcceptanceLaw] = (
+    MappingProxyType({})
 )
 
 
@@ -89,181 +38,20 @@ class CompilerBoundRecord(Protocol):
 
 
 def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> InstalledAcceptanceLaw:
-    if target == LIGHT_ARTIFACTS_COMPILER and source in {
-        SUBJECT_IDENTITY_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        CLAIM_REBIND_COMPILER,
-    }:
-        return LIGHT_ARTIFACTS_UPGRADE_LAW
-    if source in UPGRADE_V1_SOURCES and target == UPGRADE_COMPILER:
-        return COMPILER_UPGRADE_ACCEPTANCE_LAW
-    if source in {*UPGRADE_V1_SOURCES, UPGRADE_COMPILER} and target == PROVIDER_CONTRACT_COMPILER:
-        return PROVIDER_CONTRACT_UPGRADE_LAW
-    if (
-        source in {*UPGRADE_V1_SOURCES, UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER}
-        and target == PROVIDER_PACKAGE_COMPILER
-    ):
-        return PROVIDER_PACKAGE_UPGRADE_LAW
-    if (
-        source
-        in {
-            *UPGRADE_V1_SOURCES,
-            UPGRADE_COMPILER,
-            PROVIDER_CONTRACT_COMPILER,
-            PROVIDER_PACKAGE_COMPILER,
-        }
-        and target == RESOURCE_BUDGET_COMPILER
-    ):
-        return RESOURCE_BUDGET_UPGRADE_LAW
-    if (
-        source
-        in {
-            *UPGRADE_V1_SOURCES,
-            UPGRADE_COMPILER,
-            PROVIDER_CONTRACT_COMPILER,
-            PROVIDER_PACKAGE_COMPILER,
-            RESOURCE_BUDGET_COMPILER,
-        }
-        and target == SDK_SOURCE_COMPILER
-    ):
-        return SDK_SOURCE_UPGRADE_LAW
-    if (
-        source
-        in {
-            *UPGRADE_V1_SOURCES,
-            UPGRADE_COMPILER,
-            PROVIDER_CONTRACT_COMPILER,
-            PROVIDER_PACKAGE_COMPILER,
-            RESOURCE_BUDGET_COMPILER,
-            SDK_SOURCE_COMPILER,
-        }
-        and target == CLAIM_EVIDENCE_COMPILER
-    ):
-        return CLAIM_EVIDENCE_UPGRADE_LAW
-    if target == SOURCE_CHECKED_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-    }:
-        return SOURCE_CHECKED_UPGRADE_LAW
-    if target == TRIGGER_CAPTURE_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-    }:
-        return TRIGGER_CAPTURE_UPGRADE_LAW
-    if target == AUTHORITY_VERBS_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-    }:
-        return AUTHORITY_VERBS_UPGRADE_LAW
-    if target == GOVERNED_TRIGGERS_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-    }:
-        return GOVERNED_TRIGGERS_UPGRADE_LAW
-    if target == SUBJECT_IDENTITY_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-    }:
-        return SUBJECT_IDENTITY_UPGRADE_LAW
-    if target == PROVIDER_BUILDS_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-    }:
-        return PROVIDER_BUILDS_UPGRADE_LAW
-    if target == CLAIM_REBIND_COMPILER and source in {
-        *UPGRADE_V1_SOURCES,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-    }:
-        return CLAIM_REBIND_UPGRADE_LAW
-    raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
-
-
-# Every compiler an explicit forward edge can reach, in edge order.
-_UPGRADE_TARGETS = (
-    UPGRADE_COMPILER,
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    TRIGGER_CAPTURE_COMPILER,
-    AUTHORITY_VERBS_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    CLAIM_REBIND_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-)
+    try:
+        return _UPGRADE_EDGES[(source, target)]
+    except KeyError:
+        raise ValueError(
+            "unsupported compiler transition; only explicit forward edges are allowed"
+        ) from None
 
 
 def supported_upgrade_targets(source: CompilerCoordinate) -> tuple[str, ...]:
     """Name the compiler digests one explicit forward edge reaches from `source`."""
 
-    targets = []
-    for target in _UPGRADE_TARGETS:
-        try:
-            upgrade_law(source, target)
-        except ValueError:
-            continue
-        targets.append(target.rule_digest)
-    return tuple(targets)
+    return tuple(
+        target.rule_digest for edge_source, target in _UPGRADE_EDGES if edge_source == source
+    )
 
 
 def default_upgrade_proposal_name(target: CompilerCoordinate) -> str:
@@ -272,7 +60,7 @@ def default_upgrade_proposal_name(target: CompilerCoordinate) -> str:
     The revision label is display metadata; the proposal itself pins the digest.
     """
 
-    revision = COMPILER_REVISION_LABELS.get(target) or target.rule_digest.removeprefix("sha256:")
+    revision = compiler_revision_label(target) or target.rule_digest.removeprefix("sha256:")
     return f"upgrade-to-{revision[:64]}"
 
 
@@ -287,11 +75,11 @@ def upgrade_notice(value: CompilerUpgrade) -> CompilerUpgradeNotice:
 
     source = CompilerCoordinate(rule_digest=value.base.compiler_digest)
     target = value.target
-    target_label = COMPILER_REVISION_LABELS.get(target)
+    target_label = compiler_revision_label(target)
     named = f"{target_label} ({target.rule_digest})" if target_label else target.rule_digest
     return CompilerUpgradeNotice(
         source_compiler_digest=source.rule_digest,
-        source_revision=COMPILER_REVISION_LABELS.get(source),
+        source_revision=compiler_revision_label(source),
         target_compiler_digest=target.rule_digest,
         target_revision=target_label,
         message=(

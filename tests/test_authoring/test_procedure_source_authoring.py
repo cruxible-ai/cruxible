@@ -388,12 +388,11 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path, hist
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
     from tests.test_authoring.test_authoring_procedures import _change_set_query
     from tests.test_claims.test_claims import _claim_type
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
-    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     claim_type, query = _claim_type(), _change_set_query(named=not historical)

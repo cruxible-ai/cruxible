@@ -112,22 +112,34 @@ class InstanceIncompatiblePrereleaseContent(FormatError):
 
 
 class ReseedRequired(FormatError):
-    """A prerelease instance is readable but no longer accepts mutations."""
+    """This release cannot serve an instance's state: archive it and start fresh."""
 
     error_code = "cruxible.instance.reseed_required"
 
-    def __init__(self, *, found: str | None = None) -> None:
-        #: The pre-PC-HR file or directory that was found, when a layout (rather
-        #: than a compiler) is what requires the reseed.
+    def __init__(self, *, found: str | None = None, compiler_digest: str | None = None) -> None:
+        #: The retired-layout file or directory that was found, when a layout
+        #: (rather than a compiler) is what requires the reseed.
         self.found = found
-        super().__init__(
-            f"{self.error_code}: this instance's compiler selects the frozen compact "
-            "artifact codec from before PC-HR; archive it and initialize a fresh instance"
-            if found is None
-            else f"{self.error_code}: found {found}, a file of the layout from before "
-            "PC-HR; archive it (or, if nothing there is yours, remove it) and initialize a "
-            "fresh instance"
-        )
+        #: The accepted compiler this release does not install, when that is
+        #: what requires the reseed.
+        self.compiler_digest = compiler_digest
+        if found is not None:
+            message = (
+                f"{self.error_code}: found {found}, a file of a retired layout; archive it "
+                "(or, if nothing there is yours, remove it) and initialize a fresh instance"
+            )
+        elif compiler_digest is not None:
+            message = (
+                f"{self.error_code}: this instance's accepted compiler {compiler_digest} is "
+                "not the one this release installs; archive the instance and re-import its "
+                "content into a fresh instance"
+            )
+        else:
+            message = (
+                f"{self.error_code}: this instance's host state cannot be served; archive it "
+                "and initialize a fresh instance"
+            )
+        super().__init__(message)
 
 
 class InstanceDecommissioned(FormatError):

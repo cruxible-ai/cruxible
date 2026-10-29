@@ -1,48 +1,46 @@
-"""A compiler transition is approved state and survives loss of every projection."""
+"""One installed compiler: no upgrade edge exists, and every other coordinate refuses typed."""
+
+import json
+from dataclasses import dataclass
 
 import pytest
 
-from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH
-from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import (
-    ATTESTATION_COMPILER,
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    ONTOLOGY_COMPILER,
-    PC_HR_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOLUTION_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-    TRIGGER_CAPTURE_COMPILER,
-    UPGRADE_COMPILER,
+from cruxible_client.contracts.candidates import LawEvaluationCoordinate
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.compiler_upgrade import (
+    COMPILER_UPGRADE_PATH,
+    CompilerUpgrade,
+    render_compiler_upgrade,
 )
-from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_client.contracts.errors import (
+    InstanceDecommissioned,
+    ReseedRequired,
+    SettlementIntegrityError,
+)
+from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.compiler.compiler import CURRENT_COMPILER, require_current_compiler
+from cruxible_core.compiler.upgrades import (
+    compiler_after_record,
+    supported_upgrade_targets,
+    upgrade_law,
+)
+from cruxible_core.errors import RequestRefusedError
+from cruxible_core.proposals.proposals import evaluate_proposal_tree
+from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     AcceptedCoordinate,
-    service_activate_playbill_proposal,
     service_propose_compiler_upgrade,
-    service_submit_playbill_approval,
 )
-from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
-from tests.test_ledger.test_activation import TIMESTAMP, _instance, _sign
+from tests.test_ledger.test_activation import TIMESTAMP, _candidate, _instance
+
+#: The coordinate an earlier, unshipped build recorded (revision 35, claim-rebind-v1).
+EARLIER_COMPILER = CompilerCoordinate(
+    rule_digest="sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085"
+)
+UNKNOWN_COMPILER = CompilerCoordinate(rule_digest="sha256:" + "ff" * 32)
 
 
-def old_instance(tmp_path, monkeypatch, compiler=RESOLUTION_COMPILER):
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            "cruxible_core.runtime.instance.current_compiler_coordinate",
-            lambda: compiler,
-        )
-        return _instance(tmp_path)
-
-
-def propose(instance, target=UPGRADE_COMPILER):
+def _propose(instance, target=None):
     return service_propose_compiler_upgrade(
         instance,
         target=target,
@@ -50,281 +48,66 @@ def propose(instance, target=UPGRADE_COMPILER):
         proposal_name="upgrade",
         timestamp=TIMESTAMP,
         base=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-    ).proposal
-
-
-def approve(instance, proposal, reviewer):
-    assert proposal.candidate is not None, proposal.evaluation.diagnostics
-    candidate = proposal.candidate
-    signature = _sign(
-        reviewer, candidate.candidate_digest, candidate.candidate.parent_semantic_root
-    )
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=proposal.admission.proposal_id,
-        attestation=signature.attestation,
-        authenticated_submitter="reviewer",
     )
 
 
-@pytest.mark.parametrize(
-    "source,target",
-    [
-        (source, UPGRADE_COMPILER)
-        for source in [PC_HR_COMPILER, ATTESTATION_COMPILER, RESOLUTION_COMPILER, ONTOLOGY_COMPILER]
-    ]
-    + [
-        (SDK_SOURCE_COMPILER, CLAIM_EVIDENCE_COMPILER),
-        (CLAIM_EVIDENCE_COMPILER, SOURCE_CHECKED_COMPILER),
-        (SOURCE_CHECKED_COMPILER, TRIGGER_CAPTURE_COMPILER),
-        (TRIGGER_CAPTURE_COMPILER, AUTHORITY_VERBS_COMPILER),
-        (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER),
-        (GOVERNED_TRIGGERS_COMPILER, SUBJECT_IDENTITY_COMPILER),
-        (AUTHORITY_VERBS_COMPILER, SUBJECT_IDENTITY_COMPILER),
-        (PROVIDER_PACKAGE_COMPILER, RESOURCE_BUDGET_COMPILER),
-        (UPGRADE_COMPILER, PROVIDER_CONTRACT_COMPILER),
-        (RESOLUTION_COMPILER, PROVIDER_CONTRACT_COMPILER),
-    ],
-)
-def test_upgrade_preserves_historical_coordinates_and_reopens(
-    tmp_path, monkeypatch, source, target
-):
-    instance, owner, reviewer = old_instance(tmp_path, monkeypatch, source)
-    before = instance.accepted_coordinate()
-    proposal = propose(instance, target)
-    approve(instance, proposal, reviewer)
-    receipt = service_activate_playbill_proposal(
-        instance,
-        proposal_id=proposal.admission.proposal_id,
-        activated_by="owner",
-    )
-    assert receipt.status == "accepted"
-    assert instance.accepted_coordinate().compiler == target
-    assert instance.coordinate_for_oid(before.git_oid) == before
-    assert instance.descriptor.compiler == source
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert reopened.accepted_coordinate() == instance.accepted_coordinate()
-    assert reopened.coordinate_for_oid(before.git_oid) == before
-    assert reopened.inspect().compiler == target
-    with reopened._history_reader_for_epoch(reopened._recovered) as reader:
-        assert (
-            reader.resolve(AcceptedCoordinate.from_internal(before)).compiler_digest
-            == source.rule_digest
-        )
+def test_no_upgrade_edge_leaves_the_current_compiler() -> None:
+    assert supported_upgrade_targets(CURRENT_COMPILER) == ()
+    for source, target in (
+        (CURRENT_COMPILER, UNKNOWN_COMPILER),
+        (EARLIER_COMPILER, CURRENT_COMPILER),
+        (CURRENT_COMPILER, CURRENT_COMPILER),
+    ):
+        with pytest.raises(ValueError, match="unsupported compiler transition"):
+            upgrade_law(source, target)
 
 
 @pytest.mark.parametrize(
     ("target", "code"),
     [
-        (RESOLUTION_COMPILER, "cruxible.compiler_upgrade.already_current"),
-        (
-            CompilerCoordinate(rule_digest="sha256:" + "ff" * 32),
-            "cruxible.compiler_upgrade.unsupported_transition",
-        ),
+        (None, "cruxible.compiler_upgrade.already_current"),
+        (UNKNOWN_COMPILER, "cruxible.compiler_upgrade.unsupported_transition"),
+        (EARLIER_COMPILER, "cruxible.compiler_upgrade.unsupported_transition"),
     ],
 )
-def test_unsupported_transition_does_not_change_state(tmp_path, monkeypatch, target, code):
-    from cruxible_core.errors import RequestRefusedError
-
-    instance, _, _ = old_instance(tmp_path, monkeypatch)
+def test_an_upgrade_proposal_refuses_typed_and_changes_nothing(tmp_path, target, code):
+    instance, _, _ = _instance(tmp_path)
     before = instance.accepted_coordinate()
-    assert before.compiler == RESOLUTION_COMPILER
+    assert before.compiler == CURRENT_COMPILER
     with pytest.raises(RequestRefusedError, match=code) as refused:
-        propose(instance, target)
+        _propose(instance, target)
     assert refused.value.error_code == code
     if code.endswith("unsupported_transition"):
-        # The refusal names the forward edges that exist from here.
-        assert UPGRADE_COMPILER.rule_digest in str(refused.value)
+        assert "supported targets: none" in str(refused.value)
     assert instance.accepted_coordinate() == before
 
 
-def test_upgrade_requires_signed_approval_and_admin_activation(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import SettlementIntegrityError
-    from cruxible_core.errors import PermissionDeniedError
-    from cruxible_core.runtime.permissions import reset_permissions
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    before = instance.accepted_coordinate()
-    proposal = propose(instance)
-    with pytest.raises(SettlementIntegrityError, match="signed client approval"):
-        service_activate_playbill_proposal(
-            instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+def test_a_hand_built_transition_is_refused_alone_or_mixed(tmp_path):
+    instance, _, _ = _instance(tmp_path)
+    current = instance.accepted_coordinate()
+    transition = render_compiler_upgrade(
+        CompilerUpgrade(
+            instance_id=current.instance_id,
+            base=LawEvaluationCoordinate(
+                git_oid=current.git_oid,
+                semantic_root=current.semantic_root,
+                generation_root=current.generation_root,
+                compiler_digest=current.compiler.rule_digest,
+            ),
+            target=UNKNOWN_COMPILER,
         )
-    approve(instance, proposal, reviewer)
-    with monkeypatch.context() as patch:
-        patch.setenv("CRUXIBLE_MODE", "graph_write")
-        reset_permissions()
-        with pytest.raises(PermissionDeniedError):
-            service_activate_playbill_proposal(
-                instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-            )
-    reset_permissions()
-    assert instance.accepted_coordinate() == before
-
-
-def test_graph_write_approver_completes_compiler_upgrade_without_activating(tmp_path, monkeypatch):
-    """A GRAPH_WRITE reviewer's completing signature on a compiler upgrade stores the
-    signature and reports ``activation_not_permitted``, never a ``PermissionDeniedError``:
-    the candidate-specific ``cruxible_compiler_upgrade``/ADMIN requirement is separate
-    from the generic ``cruxible_proposal_activate``/GRAPH_WRITE one this reviewer's tier
-    already admits.
-    """
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    before = instance.accepted_coordinate()
-    proposal = propose(instance)
-    assert proposal.candidate is not None
-    signature = _sign(
-        reviewer,
-        proposal.candidate.candidate_digest,
-        proposal.candidate.candidate.parent_semantic_root,
     )
-
-    receipt = service_submit_playbill_approval(
-        instance,
-        proposal_id=proposal.admission.proposal_id,
-        attestation=signature.attestation,
-        authenticated_submitter="reviewer",
-        activate_when_complete=True,
-        may_activate=True,
-        may_activate_compiler_upgrade=False,
-    )
-
-    assert receipt.not_activated == "activation_not_permitted"
-    assert receipt.activation is None
-    assert instance.accepted_coordinate() == before
-    assert (
-        len(instance.proposal_evidence().read_approvals(proposal.candidate.candidate_digest)) == 1
-    )
-
-
-@pytest.mark.parametrize(
-    "point",
-    ["before:main.cas", "after:main.cas", "before:generation.note", "before:serving.publication"],
-)
-def test_upgrade_recovers_publication_crashes(tmp_path, monkeypatch, point):
-    from cruxible_core.ledger.activation import ActivationPublisher
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    before = instance.accepted_coordinate()
-    proposal = propose(instance)
-    approve(instance, proposal, reviewer)
-    activate = ActivationPublisher.activate
-
-    class Crash(BaseException):
-        pass
-
-    def crashing(self, *args, **kwargs):
-        def hook(checkpoint):
-            if checkpoint == point:
-                raise Crash(point)
-
-        return activate(self, *args, **{**kwargs, "crash_hook": hook})
-
-    with monkeypatch.context() as patch:
-        patch.setattr(ActivationPublisher, "activate", crashing)
-        with pytest.raises(Crash):
-            service_activate_playbill_proposal(
-                instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-            )
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    expected = RESOLUTION_COMPILER if point == "before:main.cas" else UPGRADE_COMPILER
-    assert reopened.accepted_coordinate().compiler == expected
-    assert reopened.coordinate_for_oid(before.git_oid) == before
-
-
-def test_upgrade_rebuild_and_new_query_preserve_old_receipts(tmp_path, monkeypatch):
-    import shutil
-
-    from cruxible_client.contracts.query.definitions import (
-        query_definition_path,
-        render_query_definition,
-    )
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-    from cruxible_core.proposals.settlement import ChangeActorBinding
-    from tests.test_ledger.test_activation import _candidate
-    from tests.test_query.test_artifact_queries import definition, run
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    base, tree, candidate = _candidate(instance)
-    approved = _sign(reviewer, candidate.candidate_digest, base.semantic_root)
-    result = instance.settle_and_activate(
-        base=base,
-        candidate_tree=tree,
-        candidate=candidate,
-        approvals=(approved,),
-        actor_binding=ChangeActorBinding(actor_id="owner", source_compilation_digest=None),
-        proposal_actor_id="owner",
-    )
-    old = result.accepted
-    assert old is not None
-    old_record = instance.accepted_history()[-1].record
-    proposal = propose(instance)
-    approve(instance, proposal, reviewer)
-    service_activate_playbill_proposal(
-        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-    )
-    query = definition(artifact_format="playbill-query-definition-v2")
-    tree = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
-    tree[query_definition_path(query.identity.name)] = render_query_definition(query)
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/new-query",
-            proposed_base_oid=instance.accepted_coordinate().git_oid,
-        ),
-        candidate_tree=tree,
-        timestamp=TIMESTAMP,
-    )
-    approve(instance, result, reviewer)
-    service_activate_playbill_proposal(
-        instance, proposal_id=result.admission.proposal_id, activated_by="owner"
-    )
-    run(instance, query)
-    before = instance.accepted_coordinate()
-    # Both verified-checkpoint and genesis-rooted recovery must agree.
-    assert (
-        PlaybillInstance.open(instance.root, trust_root=instance.trust_root).accepted_coordinate()
-        == before
-    )
-    # Queued advisory review-ref refreshes bind projections; let them finish first.
-    instance.settled_workspace_advertisement()
-    shutil.rmtree(instance.root / "projections")
-    (instance.root / "projections").mkdir()
-    shutil.rmtree(instance._checkpoint_directory(instance.root))
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert reopened.accepted_coordinate() == before
-    assert reopened.coordinate_for_oid(old.git_oid) == old
-    assert reopened.accepted_history()[1].record == old_record
-    run(reopened, query)
-
-
-def test_changed_base_and_mixed_proposal_refuse_upgrade(tmp_path, monkeypatch):
-    from cruxible_client.contracts.compiler_upgrade import (
-        parse_compiler_upgrade,
-        render_compiler_upgrade,
-    )
-    from cruxible_core.proposals.proposals import evaluate_proposal_tree
-    from tests.test_ledger.test_activation import _candidate
-
-    instance, _, _ = old_instance(tmp_path, monkeypatch)
-    original = instance.accepted_coordinate()
-    proposal = propose(instance)
-    tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
-    transition = parse_compiler_upgrade(tree[COMPILER_UPGRADE_PATH])
-    stale = transition.model_copy(
-        update={"base": transition.base.model_copy(update={"git_oid": "a" * len(original.git_oid)})}
-    )
+    tree = instance.tree_at(current.git_oid)
     _, mixed_tree, _ = _candidate(instance)
     for candidate_tree in (
-        {**tree, COMPILER_UPGRADE_PATH: render_compiler_upgrade(stale)},
-        {**mixed_tree, COMPILER_UPGRADE_PATH: tree[COMPILER_UPGRADE_PATH]},
+        {**tree, COMPILER_UPGRADE_PATH: transition},
+        {**mixed_tree, COMPILER_UPGRADE_PATH: transition},
     ):
         result = evaluate_proposal_tree(
-            base_tree=instance.tree_at(original.git_oid),
-            current_tree=instance.tree_at(original.git_oid),
+            base_tree=tree,
+            current_tree=tree,
             proposed_tree=candidate_tree,
-            current=original,
+            current=current,
             bodies=instance.body_store(),
             timestamp=TIMESTAMP,
             rebased=False,
@@ -332,293 +115,49 @@ def test_changed_base_and_mixed_proposal_refuse_upgrade(tmp_path, monkeypatch):
         )
         assert result.candidate is None
         assert any(d.code == "cruxible.compiler_upgrade.invalid" for d in result.diagnostics)
+    assert instance.accepted_coordinate() == current
 
 
-def test_upgrade_stale_candidate_cannot_cross_another_acceptance(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import ProposalStale
-    from cruxible_core.proposals.settlement import ChangeActorBinding
-    from tests.test_ledger.test_activation import _candidate
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    proposal = propose(instance)
-    approve(instance, proposal, reviewer)
-    base, tree, candidate = _candidate(instance)
-    instance.settle_and_activate(
-        base=base,
-        candidate_tree=tree,
-        candidate=candidate,
-        approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
-        actor_binding=ChangeActorBinding(actor_id="owner", source_compilation_digest=None),
-        proposal_actor_id="owner",
-    )
-    head = instance.accepted_coordinate()
-    # The upgrade candidate is stale now: refused with the readmit repair.
-    with pytest.raises(ProposalStale, match="cruxible proposal readmit"):
-        service_activate_playbill_proposal(
-            instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-        )
-    assert instance.accepted_coordinate() == head
-    assert (
-        PlaybillInstance.open(instance.root, trust_root=instance.trust_root).accepted_coordinate()
-        == head
-    )
-
-
-def test_failed_target_prebuild_leaves_original_compiler_and_serving(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import ProjectionFormatError
-    from cruxible_core.compiler.assembler import ProjectionAssembler
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    before = instance.accepted_coordinate()
-    proposal = propose(instance)
-    approve(instance, proposal, reviewer)
-    assemble = ProjectionAssembler.assemble
-
-    def refuse_target(self, request, **kwargs):
-        if request.compiler_digest == UPGRADE_COMPILER.rule_digest:
-            assert kwargs.get("delta") is None
-            raise ProjectionFormatError("target cannot interpret accepted state")
-        return assemble(self, request, **kwargs)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(ProjectionAssembler, "assemble", refuse_target)
-        with pytest.raises(ProjectionFormatError, match="target cannot"):
-            service_activate_playbill_proposal(
-                instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-            )
-    assert instance.accepted_coordinate() == before
-    assert (
-        PlaybillInstance.open(instance.root, trust_root=instance.trust_root).accepted_coordinate()
-        == before
-    )
-
-
-def test_decommissioned_instance_cannot_propose_upgrade(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import InstanceDecommissioned
-
-    instance, _, _ = old_instance(tmp_path, monkeypatch)
+def test_a_decommissioned_instance_cannot_propose_an_upgrade(tmp_path):
+    instance, _, _ = _instance(tmp_path)
     instance.decommission(reason="retired", decommissioned_by="owner")
     with pytest.raises(InstanceDecommissioned):
-        propose(instance)
+        _propose(instance)
 
 
-def test_old_query_receipt_is_identical_after_upgrade_and_rebuild(tmp_path, monkeypatch):
-    import shutil
+@dataclass(frozen=True)
+class _Member:
+    artifact_kind: str
+    path: str
 
-    from cruxible_core.service.discovery.query import service_run_playbill_query
-    from tests.core_support._knowledge_loop_support import QUERY_NAME
-    from tests.test_query.test_query_execution_service import READ_TIME, _instance_with_query
 
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            "cruxible_core.runtime.instance.current_compiler_coordinate",
-            lambda: RESOLUTION_COMPILER,
-        )
-        instance, owner = _instance_with_query(tmp_path)
-    old = service_run_playbill_query(instance, name=QUERY_NAME, evaluation_time=READ_TIME)
-    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    proposal = propose(instance)
-    candidate = proposal.candidate
-    signature = _sign(owner, candidate.candidate_digest, candidate.candidate.parent_semantic_root)
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=proposal.admission.proposal_id,
-        attestation=signature.attestation,
-        authenticated_submitter="owner",
+@dataclass(frozen=True)
+class _Record:
+    compiler_digest: str
+    members: tuple[_Member, ...]
+    law_evidence: tuple[object, ...] = ()
+
+
+def test_replay_refuses_a_recorded_compiler_transition() -> None:
+    plain = _Record(CURRENT_COMPILER.rule_digest, (_Member("document", "documents/d.json"),))
+    assert compiler_after_record(plain) == CURRENT_COMPILER  # type: ignore[arg-type]
+    transition = _Record(
+        CURRENT_COMPILER.rule_digest, (_Member("compiler-upgrade", COMPILER_UPGRADE_PATH),)
     )
-    service_activate_playbill_proposal(
-        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-    )
-    # Activation queues the advisory review-ref refresh on a background thread,
-    # which binds projections; let it finish before deleting derived state.
-    instance.settled_workspace_advertisement()
-    shutil.rmtree(instance.root / "projections")
-    (instance.root / "projections").mkdir()
-    shutil.rmtree(instance._checkpoint_directory(instance.root))
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    replay = service_run_playbill_query(reopened, name=QUERY_NAME, evaluation_time=READ_TIME, at=at)
-    assert replay.receipt.model_dump_json() == old.receipt.model_dump_json()
-    assert replay.result == old.result
+    with pytest.raises(SettlementIntegrityError):
+        compiler_after_record(transition)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("field", ["target", "base"])
-def test_approved_transition_cannot_be_retargeted(tmp_path, monkeypatch, field):
-    from cruxible_client.contracts.compiler_upgrade import (
-        parse_compiler_upgrade,
-        render_compiler_upgrade,
-    )
-    from cruxible_client.contracts.errors import SettlementIntegrityError
-    from cruxible_core.proposals.settlement import ChangeActorBinding
+def test_an_instance_recorded_under_an_earlier_compiler_refuses_to_open(tmp_path):
+    instance, _, _ = _instance(tmp_path)
+    descriptor_path = instance.root / DESCRIPTOR_FILE
+    payload = json.loads(descriptor_path.read_bytes())
+    payload["compiler"] = EARLIER_COMPILER.model_dump(mode="json")
+    descriptor_path.write_bytes(canonical_bytes(payload) + b"\n")
 
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    base = instance.accepted_coordinate()
-    proposal = propose(instance)
-    candidate = proposal.candidate
-    tree = dict(instance.proposal_tree(proposal.evaluation.evaluated_tree_oid))
-    transition = parse_compiler_upgrade(tree[COMPILER_UPGRADE_PATH])
-    changed = (
-        RESOLUTION_COMPILER
-        if field == "target"
-        else transition.base.model_copy(update={"semantic_root": "sha256:" + "ff" * 32})
-    )
-    tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(
-        transition.model_copy(update={field: changed})
-    )
-    with pytest.raises(SettlementIntegrityError, match="candidate"):
-        instance.prepare_generation(
-            base=base,
-            candidate_tree=tree,
-            candidate=candidate,
-            approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
-            actor_binding=ChangeActorBinding(actor_id="owner"),
-            proposal_actor_id="owner",
-            sequence=1,
-        )
-    assert instance.accepted_coordinate() == base
-
-
-def test_prebuilt_upgrade_loses_cas_to_an_ordinary_writer(tmp_path, monkeypatch):
-    from cruxible_core.ledger.activation import ActivationPublisher
-    from cruxible_core.proposals.settlement import ChangeActorBinding
-    from tests.test_ledger.test_activation import _candidate
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
-    other = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    proposal = propose(instance)
-    approve(instance, proposal, reviewer)
-    base, tree, candidate = _candidate(other)
-    activate = ActivationPublisher.activate
-
-    def competing_writer(self, bundle, projection, **kwargs):
-        if bundle.record.members[0].artifact_kind == "compiler-upgrade":
-            other.settle_and_activate(
-                base=base,
-                candidate_tree=tree,
-                candidate=candidate,
-                approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
-                actor_binding=ChangeActorBinding(actor_id="owner"),
-                proposal_actor_id="owner",
-            )
-        return activate(self, bundle, projection, **kwargs)
-
-    monkeypatch.setattr(ActivationPublisher, "activate", competing_writer)
-    receipt = service_activate_playbill_proposal(
-        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-    )
-    assert receipt.status == "lost_cas"
-    assert instance.accepted_coordinate() == other.accepted_coordinate()
-    assert instance.accepted_coordinate().compiler == RESOLUTION_COMPILER
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        assert projection.accepted == other.accepted_coordinate()
-
-
-def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
-    tmp_path, monkeypatch
-):
-    from cruxible_client.contracts.provider_installation import (
-        ProviderInstallRequest,
-        ProviderWheelObject,
-    )
-    from cruxible_core.errors import ConfigError
-    from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
-    from cruxible_core.service.procedures import provider_installation
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch, AUTHORITY_VERBS_COMPILER)
-    operator = ProviderRuntimeOperator(tmp_path / "operator")
-    request = ProviderInstallRequest(
-        wheel=ProviderWheelObject(filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64),
-        lock_digest="sha256:" + "b" * 64,
-    )
-    reached = []
-
-    def preparation(current, *args, **_kwargs):
-        reached.append(current.accepted_coordinate().compiler)
-
-    monkeypatch.setattr(provider_installation, "_install_locked", preparation)
-
-    def install(current):
-        provider_installation.service_install_provider(
-            current, operator=operator, request=request, actor_id="owner", timestamp=TIMESTAMP
-        )
-
-    with pytest.raises(ConfigError, match="compiler upgrade"):
-        install(instance)
-    assert not reached
-    proposal = propose(instance, PROVIDER_BUILDS_COMPILER)
-    approve(instance, proposal, reviewer)
-    receipt = service_activate_playbill_proposal(
-        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-    )
-    assert receipt.status == "accepted"
-    assert instance.descriptor.compiler == AUTHORITY_VERBS_COMPILER
-    install(instance)
-    install(PlaybillInstance.open(instance.root, trust_root=instance.trust_root))
-    assert reached == [PROVIDER_BUILDS_COMPILER, PROVIDER_BUILDS_COMPILER]
-
-
-def test_an_upgrade_with_no_target_targets_the_running_compiler_and_says_it_is_one_way(
-    tmp_path, monkeypatch
-):
-    """The bare upgrade pins the running compiler's full digest, named by its revision."""
-
-    from cruxible_client.contracts.compiler_upgrade import parse_compiler_upgrade
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, current_compiler_coordinate
-    from cruxible_core.service.proposals.review import (
-        render_playbill_approval_summary,
-        service_review_playbill_proposal,
-    )
-    from cruxible_core.storage.cas import BodyAccessContext
-
-    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
-    running = current_compiler_coordinate()
-    inspection = service_propose_compiler_upgrade(instance, actor_id="owner", timestamp=TIMESTAMP)
-    proposal = inspection.proposal
-    assert proposal.candidate is not None, proposal.evaluation.diagnostics
-    assert proposal.admission.target_ref == "refs/proposals/owner/upgrade-to-light-artifacts-v1"
-    tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
-    assert parse_compiler_upgrade(tree[COMPILER_UPGRADE_PATH]).target == running
-    notice = inspection.compiler_upgrade
-    assert notice is not None and notice.one_way is True
-    assert notice.source_compiler_digest == CLAIM_REBIND_COMPILER.rule_digest
-    assert notice.source_revision == "claim-rebind-v1"
-    assert notice.target_compiler_digest == running.rule_digest
-    assert notice.target_revision == "light-artifacts-v1"
-    assert "can no longer serve this instance" in notice.message
-
-    review = service_review_playbill_proposal(
-        instance,
-        proposal_id=proposal.admission.proposal_id,
-        access=BodyAccessContext(principal_id="owner", can_read_body=True),
-    )
-    assert review.compiler_upgrade == notice
-    summary = render_playbill_approval_summary(review)
-    assert running.rule_digest in summary and notice.message in summary
-    assert "Required approvals: one signature" in summary
-
-
-def test_provider_builds_upgrades_to_claim_rebind_and_its_claims_take_law_revision_10(
-    tmp_path, monkeypatch
-):
-    """Compiler revision 35 judges Claims under Claim law v2 revision 10; 34 keeps 9."""
-
-    from cruxible_client.contracts.laws import (
-        CLAIM_LAW_V2_REVISION_9,
-        CLAIM_LAW_V2_REVISION_10,
-    )
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, admits_claim_rebind
-    from cruxible_core.compiler.upgrades import supported_upgrade_targets, upgrade_law
-
-    assert CLAIM_REBIND_COMPILER.rule_digest in supported_upgrade_targets(PROVIDER_BUILDS_COMPILER)
-    assert upgrade_law(PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER).current is False
-    assert admits_claim_rebind(CLAIM_REBIND_COMPILER)
-    assert not admits_claim_rebind(PROVIDER_BUILDS_COMPILER)
-    assert CLAIM_LAW_V2_REVISION_10 != CLAIM_LAW_V2_REVISION_9
-
-    instance, _, reviewer = old_instance(tmp_path, monkeypatch, PROVIDER_BUILDS_COMPILER)
-    proposal = propose(instance, CLAIM_REBIND_COMPILER)
-    approve(instance, proposal, reviewer)
-    receipt = service_activate_playbill_proposal(
-        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
-    )
-    assert receipt.status == "accepted"
-    assert instance.accepted_coordinate().compiler == CLAIM_REBIND_COMPILER
+    with pytest.raises(ReseedRequired, match="cruxible.instance.reseed_required") as refused:
+        PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert refused.value.compiler_digest == EARLIER_COMPILER.rule_digest
+    with pytest.raises(ReseedRequired):
+        require_current_compiler(EARLIER_COMPILER)
+    require_current_compiler(CURRENT_COMPILER)

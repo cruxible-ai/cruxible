@@ -32,9 +32,7 @@ REFERENT = SimpleNamespace(git_oid="a" * 40)
 
 
 def _claim_type(**update: object) -> ClaimType:
-    return lower_claim_type_input(
-        claim_type_input_template(), tree={}, identity_rules=True
-    ).model_copy(update=update)
+    return lower_claim_type_input(claim_type_input_template(), tree={}).model_copy(update=update)
 
 
 def test_unsure_hold_for_is_a_claim_type_field_absent_from_the_wire_unless_declared() -> None:

@@ -1506,10 +1506,7 @@ the other's law.
 Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
 `propose --input`, the SDK draft, the authoring examples and change-set members.
 A rule that names an exact contract digest no accepted contract version carries
-is refused, never authored as an exact-digest rule. On an instance whose
-accepted compiler predates revision 31 (which admits neither v7 nor identity
-rules), authoring refuses `cruxible.claim_type.compiler_upgrade_required`, whose
-repair is `cruxible compiler upgrade --to <current compiler>`.
+is refused, never authored as an exact-digest rule.
 
 `upgrade` is the one move for an older ClaimType. A v1-v5 ClaimType whose rules
 still name contracts by exact digest first takes the identity-rule conversion,
@@ -1883,14 +1880,6 @@ as `identity` per kind in `orient`) declares how Subjects of one kind are named:
   shadows an existing alias.
 - **minted**: `{"minted": true}`; core mints `sub-<32 hex>` from the change and
   the member.
-
-SubjectKinds and identity admission come with compiler revision 33
-(`subject-identity-v1`). An instance pinned to an earlier compiler creates no
-new Subject at all -- every route refuses
-`cruxible.subject.compiler_upgrade_required`; upgrade
-(`cruxible compiler upgrade`) and declare the kind.
-Its existing Subjects stay readable, claimable and retirable, and accepted
-history replays as it was accepted.
 
 Every new Subject's id is checked against how core assigns it, at admission,
 readmission and settlement. A keyed first holder's id must be the rendering of
@@ -3792,7 +3781,7 @@ another Subject whose value it is refuses `cruxible.write.subject_referenced`
 until that Claim is re-pointed or retired. `rebind` re-cites CLAIM, whose cited
 text drifted, on the text it rests on now (FILE is a catalogued file's path or
 catalog name): the statement stays, the drifted citation is replaced, and
-history shows one `rebound` revision of the same Claim (compiler revision 35).
+history shows one `rebound` revision of the same Claim.
 `--capture` replaces a Capture citation with a fresh Capture under the same
 CaptureContract (by default the Claim's one evidence citation under it): how a
 Claim whose Capture body was erased moves onto a new observation.

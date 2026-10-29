@@ -63,7 +63,7 @@ from cruxible_core.storage.read_positions import (
     read_positions,
     reading_at,
 )
-from tests.core_support._subject_kind_support import declare_created_kinds, world_history
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
@@ -71,7 +71,6 @@ from tests.test_ledger.test_activation import _sign
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 
-@world_history
 def _seed_claim_surface(
     instance: PlaybillInstance,
     _owner: object,
@@ -80,12 +79,12 @@ def _seed_claim_surface(
     claim_type_override: ClaimType | None = None,
     additional_subjects: tuple[SubjectShell, ...] = (),
 ) -> None:
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
     if contract is None:
         contract = (
             builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
-            if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+            if instance.accepted_coordinate().compiler == CURRENT_COMPILER
             else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
         )
     shell = _subject()

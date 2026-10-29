@@ -19,15 +19,13 @@ from tests.core_support._subject_kind_support import fixture_key_claims
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
-def _parse(instance, *, blobs=None, registry=None):
+def _parse(instance, *, blobs=None):
     assembler = instance.projection_assembler()
     request = assembler.request(
         output_staging_directory=assembler.publication_directory / ".stage-reuse-test"
     )
     parsed = parse_projection_tree(
         instance.tree_at(instance.accepted_coordinate().git_oid) if blobs is None else blobs,
-        registry=assembler.registry if registry is None else registry,
-        artifact_kinds=assembler.artifact_kinds,
         artifact_codec=assembler.artifact_codec,
         bodies=instance.body_store(),
         coordinate=request,
@@ -122,10 +120,12 @@ def test_warm_entries_do_not_hide_corrupt_claim_or_history_bytes(tmp_path, targe
     assert errors[0] == errors[1]
 
 
-def test_warm_static_facts_still_require_current_registry_declarations(tmp_path):
+def test_warm_static_facts_still_require_current_registry_declarations(tmp_path, monkeypatch):
+    import cruxible_core.compiler.projection_artifacts as projection_artifacts
+
     instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
     _parse(instance)
-    registry = instance.projection_assembler().registry
+    registry = projection_artifacts.PROJECTION_REGISTRY
     without_statement = ProjectionExtensionRegistry(
         [
             d
@@ -133,8 +133,8 @@ def test_warm_static_facts_still_require_current_registry_declarations(tmp_path)
             for d in registry.declarations(kind)
             if d.schema_id != "cruxible.claim.statement"
         ],
-        artifact_kinds=registry._artifact_kinds,
     )
+    monkeypatch.setattr(projection_artifacts, "PROJECTION_REGISTRY", without_statement)
     for _ in range(2):
         with pytest.raises(ProjectionFormatError, match="undeclared.*cruxible.claim.statement"):
-            _parse(instance, registry=without_statement)
+            _parse(instance)

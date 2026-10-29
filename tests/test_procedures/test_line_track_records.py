@@ -28,7 +28,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     StateTapNode,
 )
-from cruxible_client.contracts.projection_extensions import runtime_extension_registry
+from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     ExhaustPromotionV1,
@@ -252,8 +252,7 @@ def _accepted_promotion(output: object):
 
 
 def test_the_runtime_projection_registry_declares_the_line_grain() -> None:
-    registry = runtime_extension_registry()
-    assert registry.supports("cruxible.line.track_record", 1, classification="semantic")
+    assert PROJECTION_REGISTRY.supports("cruxible.line.track_record", 1, classification="semantic")
 
 
 def test_a_promotion_that_declares_no_line_track_record_emits_no_line_fact() -> None:

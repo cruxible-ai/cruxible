@@ -29,8 +29,6 @@ def resolve_procedure_spec(
     tree: Mapping[str, bytes],
     spec: ProcedureSpec,
     candidate_paths: tuple[str, ...],
-    *,
-    named: bool = True,
 ) -> Any:
     """Resolve only named artifacts and the slot Contracts a Procedure pins.
 
@@ -188,4 +186,4 @@ def resolve_procedure_spec(
                 "output": output_view.fields,
             }
 
-        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve, named=named))
+        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve))

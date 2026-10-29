@@ -10,13 +10,10 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from cruxible_client.contracts import laws as laws_module
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import (
     ClaimType,
-    claim_type_digest,
     claim_type_path,
     parse_claim_type,
 )
@@ -30,34 +27,7 @@ from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
 )
-from cruxible_core.compiler.compiler import (
-    ATTESTATION_COMPILER,
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    ONTOLOGY_COMPILER,
-    P2_B1_COMPILER,
-    P2_B2_COMPILER,
-    P2_B4_COMPILER,
-    P2_B4_UNIT2_COMPILER,
-    P2_B5_COMPILER,
-    P2_C_COMPILER,
-    PC_DF2_COMPILER,
-    PC_HR_ARTIFACT_CODEC_COMPILERS,
-    PC_HR_COMPILER,
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOLUTION_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    SUPPORTED_COMPILERS,
-    TRIGGER_CAPTURE_COMPILER,
-    UPGRADE_COMPILER,
-    current_compiler_coordinate,
-)
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.runtime import instance as instance_module
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -71,147 +41,6 @@ from tests.test_claims.test_claim_type_migrations import (
 from tests.test_ledger.test_activation import _sign
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _genesis_replay_at_retained_compiler(
-    instance: PlaybillInstance, tmp_path: Path, name: str
-) -> None:
-    clone = tmp_path / name
-    # Acceptance queues an advisory review-ref refresh that rewrites the proposal
-    # index checkpoint; let it finish so the copy is not torn mid-rename.
-    instance.settled_workspace_advertisement()
-    shutil.copytree(instance.root, clone)
-    checkpoint = PlaybillInstance._checkpoint_directory(clone)
-    if checkpoint.exists():
-        shutil.rmtree(checkpoint)
-    script = textwrap.dedent(
-        """
-        import json, sys
-        from pathlib import Path
-        from cruxible_client.contracts.types import TrustRoot
-        from cruxible_core.compiler import compiler
-        from cruxible_core.runtime.instance import PlaybillInstance
-
-        assert compiler.current_compiler_coordinate() == compiler.LIGHT_ARTIFACTS_COMPILER
-        reopened = PlaybillInstance.open(
-            Path(sys.argv[1]),
-            trust_root=TrustRoot.model_validate(json.loads(sys.argv[2])),
-        )
-        assert reopened.descriptor.compiler.model_dump(mode="json") == json.loads(sys.argv[4])
-        assert reopened.accepted_coordinate().git_oid == sys.argv[3]
-        """
-    )
-    environment = os.environ.copy()
-    environment["PYTHONPATH"] = os.pathsep.join(
-        (str(ROOT / "src"), str(ROOT / "packages" / "cruxible-client" / "src"))
-    )
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            script,
-            str(clone),
-            json.dumps(instance.trust_root.model_dump(mode="json")),
-            instance.accepted_coordinate().git_oid,
-            json.dumps(instance.descriptor.compiler.model_dump(mode="json")),
-        ],
-        cwd=ROOT,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
-def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
-    assert current_compiler_coordinate() == LIGHT_ARTIFACTS_COMPILER
-    for succeeded in (
-        ATTESTATION_COMPILER,
-        RESOLUTION_COMPILER,
-        ONTOLOGY_COMPILER,
-        UPGRADE_COMPILER,
-        PROVIDER_CONTRACT_COMPILER,
-        PROVIDER_PACKAGE_COMPILER,
-        RESOURCE_BUDGET_COMPILER,
-        SDK_SOURCE_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-    ):
-        assert succeeded in SUPPORTED_COMPILERS
-        assert succeeded in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
-    assert P2_B4_UNIT2_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert P2_B5_COMPILER in SUPPORTED_COMPILERS
-    assert P2_B5_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert P2_B4_COMPILER in SUPPORTED_COMPILERS
-    assert P2_B4_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert P2_B2_COMPILER in SUPPORTED_COMPILERS
-    assert P2_B2_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
-    for retained in (PC_DF2_COMPILER, PC_HR_COMPILER):
-        assert retained in SUPPORTED_COMPILERS
-        assert retained in PC_HR_ARTIFACT_CODEC_COMPILERS
-
-
-@pytest.mark.parametrize(
-    "retained",
-    [
-        PC_HR_COMPILER,
-        P2_B1_COMPILER,
-        P2_C_COMPILER,
-        PC_DF2_COMPILER,
-        P2_B2_COMPILER,
-        P2_B4_COMPILER,
-        P2_B4_UNIT2_COMPILER,
-        P2_B5_COMPILER,
-    ],
-)
-def test_retained_codec_instance_stays_writable_and_replays_under_current_revision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retained
-) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(instance_module, "current_compiler_coordinate", lambda: retained)
-    instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
-    assert instance.descriptor.compiler == retained
-    monkeypatch.undo()
-
-    before = instance.accepted_coordinate().git_oid
-    _accept(
-        instance,
-        _migration(instance, claim_id, successor=_retained_format_successor(instance)),
-    )
-    assert instance.accepted_coordinate().git_oid != before
-    assert instance.descriptor.compiler == retained
-    _genesis_replay_at_retained_compiler(instance, tmp_path, f"clone-{retained.rule_digest[7:15]}")
-
-
-def _retained_format_successor(instance: PlaybillInstance) -> ClaimType:
-    """Author the subject-valued successor in the accepted ClaimType's own format.
-
-    A retained compiler predates producer-independent ClaimType v5 (revision
-    28), so its instance stays writable only in the historical formats it
-    installed; a v5 successor needs a governed compiler upgrade first.
-    """
-
-    predicate = "sec.vuln.affects_package"
-    path = claim_type_path(predicate)
-    current = parse_claim_type(
-        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
-        path=path,
-    )
-    assert current.artifact_format != "playbill-claim-type-v5"
-    return ClaimType.model_validate(
-        {
-            **current.model_dump(mode="json"),
-            "object_kind": "subject",
-            "literal_schema": None,
-            "allowed_object_subject_kinds": ("package",),
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=claim_type_digest(current).tagged
-            ).model_dump(mode="json"),
-        }
-    )
 
 
 def _migration(

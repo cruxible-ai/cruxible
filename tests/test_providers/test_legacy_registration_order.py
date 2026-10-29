@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
-from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER, artifact_codec_for_compiler
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes import provider_heads
 from cruxible_core.indexes.typed_sqlite import insert_members, parse_static_owners, replace_rows
@@ -64,7 +64,7 @@ def test_legacy_metadata_order_matches_cold_rebuild(tmp_path, monkeypatch, packa
     records = {}
     versions = {}
     instance = _instance(tmp_path, SnapshotTree({}))
-    codec = artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER)
+    codec = CURRENT_ARTIFACT_CODEC
     monkeypatch.setattr(provider_heads, "parse_change_set_record", lambda raw, **kw: records[raw])
     tree = {}
     for seq, provider in enumerate((legacy, newer, metadata, replacement), 0 if genesis else 1):

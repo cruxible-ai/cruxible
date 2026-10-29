@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.errors import ProjectionFormatError
-from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from tests.core_support._projection_support import MemoryLedger
 
@@ -25,7 +24,6 @@ def _read(repository: MemoryLedger, *, limits: TreeReadLimits) -> tuple[str, ...
             repository,
             repository.oid,
             limits=limits,
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
         )
     )
 
@@ -90,7 +88,6 @@ def test_selection_reads_only_members_but_checks_unselected_metadata(tmp_path, m
                 repository,
                 repository.oid,
                 limits=TreeReadLimits(),
-                artifact_kinds=P2_C_ARTIFACT_KINDS,
                 include_paths=frozenset({CAPTURE_PATH}),
             )
         assert requested == []
@@ -99,7 +96,6 @@ def test_selection_reads_only_members_but_checks_unselected_metadata(tmp_path, m
             repository,
             repository.oid,
             limits=TreeReadLimits(),
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
             include_paths=frozenset({CAPTURE_PATH}),
         )
         assert [b.path for b in blobs] == [CAPTURE_PATH]

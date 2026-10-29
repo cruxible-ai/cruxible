@@ -182,22 +182,18 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
-from cruxible_core.compiler.compiler import admits_claim_rebind
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     SubjectRefResolution,
 )
 from cruxible_core.indexes.subject_identity import (
-    SUBJECT_COMPILER_UPGRADE_REQUIRED,
     SUBJECT_KIND_UNDECLARED,
     IdentityOverlay,
     IdentityView,
     KeyReader,
     KeyTuple,
     SubjectKeyInvalid,
-    admits_subject_kinds,
     canonical_key,
-    compiler_upgrade_repair,
     key_ambiguous_message,
     key_encoding,
     subject_kind_of,
@@ -979,15 +975,6 @@ class _Planner:
         unresolved reference refuses with the creation shape in its repair.
         """
 
-        if not admits_subject_kinds(self.head.compiler):
-            raise _refuse(
-                SUBJECT_COMPILER_UPGRADE_REQUIRED,
-                f"this instance's compiler predates SubjectKinds, so no new {kind} Subject can "
-                "be created; existing ones stay readable, claimable and retirable",
-                change=index,
-                repair=compiler_upgrade_repair(kind),
-                field_path=path,
-            )
         declared = self.declared_kind(kind)
         if declared is None:
             raise _refuse(
@@ -1047,15 +1034,6 @@ class _Planner:
                 change=index,
                 candidates=nearest(kind, self.vocabulary.kinds),
                 repair="Use one of the listed kinds; orient names every kind",
-                field_path=path,
-            )
-        if not admits_subject_kinds(self.head.compiler):
-            raise _refuse(
-                SUBJECT_COMPILER_UPGRADE_REQUIRED,
-                f"this instance's compiler predates SubjectKinds, so no new {kind} Subject can "
-                "be created; existing ones stay readable, claimable and retirable",
-                change=index,
-                repair=compiler_upgrade_repair(kind),
                 field_path=path,
             )
         declared = self.declared_kind(kind)
@@ -2614,14 +2592,6 @@ class _Planner:
         claim_id = _bare(change.target)
         replacing = self._rebind_from.get(index)
         retire_repair = f"Retire it: {_render_write_call(self.request.surface, 'retire', claim_id)}"
-        if not admits_claim_rebind(self.head.compiler):
-            raise _refuse(
-                "cruxible.write.rebind_requires_compiler_upgrade",
-                "this instance's compiler predates re-binding a Claim (compiler revision 35)",
-                change=index,
-                repair="Upgrade the compiler first: cruxible compiler upgrade",
-                field_path=f"{prefix}.op",
-            )
         claim = self._live_claim(index, claim_id, path=f"{prefix}.target")
         statement = claim.statement
         evidence = change.evidence

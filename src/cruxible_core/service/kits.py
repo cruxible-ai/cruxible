@@ -99,7 +99,6 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -1926,7 +1925,7 @@ def _add_kit(
             contents,
             downgrade=transition == "downgrade" and not request.allow_downgrade,
             installed_version=installed_version,
-            by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=True,
         )
         # A definition another installed kit owns or holds, which the release
         # would replace: the initial tree's diff decides it, with the same keep
@@ -2003,9 +2002,7 @@ def _add_kit(
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
     assert mode.head is not None
-    blocked = _builtin_refusals(
-        tree, contents, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
-    )
+    blocked = _builtin_refusals(tree, contents, by_name=True)
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
     )
@@ -2035,7 +2032,7 @@ def _add_kit(
         keep=keep,
         retire_dependents=frozenset(request.retire_dependents),
         kept=kept,
-        by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
     )
     ownership = _foreign_takeovers(receipts, manifest, diff)
     blocked.extend(item.detail for item in ownership)
@@ -2089,7 +2086,7 @@ def _add_kit(
                     ),
                     diff.writes,
                     retire_with,
-                    by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
+                    by_name=True,
                 )
             except (ClaimTypeMigrationError, ValueError) as exc:
                 blocked.append(f"automation inventory incomplete: {exc}")
@@ -2106,7 +2103,7 @@ def _add_kit(
                 movers=movers,
                 moves=moves,
                 keep_build=frozenset(request.keep_build),
-                by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
+                by_name=True,
             )
             blocked.extend(settled.refused)
             blocked.extend(
@@ -2271,9 +2268,7 @@ def _remove_kit(
         diff.plan.append(
             KitPathPlan(path=entry.path, action="retire", identity=state.identity.qualified)
         )
-        diff.writes[entry.path] = _retirement(
-            entry.path, current, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
-        )
+        diff.writes[entry.path] = _retirement(entry.path, current, by_name=True)
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if edited:
         return KitChangeResult(

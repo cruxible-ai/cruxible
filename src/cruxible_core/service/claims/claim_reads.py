@@ -32,7 +32,6 @@ from cruxible_client.contracts.errors import (
     FormatError,
 )
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
-from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import (
@@ -228,9 +227,7 @@ def service_read_claim_backings(
     for name, path in zip(names, paths, strict=True):
         if path not in bodies:
             raise ClaimNotFoundError(f"Claim backing not found: {name}")
-        claim = parse_claim(
-            bodies[path], path=path, codec=artifact_codec_for_compiler(coordinate.compiler)
-        )
+        claim = parse_claim(bodies[path], path=path)
         if claim.identity != ArtifactIdentity(kind="Claim", name=name):
             raise FormatError("Claim backing identity differs from its accepted path")
         if claim.lifecycle.state != "live":

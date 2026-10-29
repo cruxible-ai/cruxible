@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.providers import (
     ProviderDistributionRef,
     ProviderImplementationManifest,
@@ -16,7 +17,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER, artifact_codec_for_compiler
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes.provider_heads import refresh_provider_heads
 from cruxible_core.indexes.typed_sqlite import insert_members, parse_static_owners, replace_rows
@@ -116,7 +117,7 @@ def test_install_work_is_flat_with_unrelated_build_population(
 
 def _instance(tmp_path, tree):
     coordinate = accepted_coordinate(MemoryLedger(tmp_path / "repository", tree)).model_copy(
-        update={"compiler": PROVIDER_BUILDS_COMPILER}
+        update={"compiler": CURRENT_COMPILER}
     )
     connection = sqlite3.connect(":memory:")
     connection.executescript(schema_sql())
@@ -167,7 +168,7 @@ def _population(tmp_path, package, size):
     )
     instance = _instance(tmp_path / str(size), tree)
     connection = instance.connection
-    codec = artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER)
+    codec = CURRENT_ARTIFACT_CODEC
     insert_members(connection, tree, instance.coordinate.git_object_format)
     insert_owners(
         connection,
@@ -331,7 +332,7 @@ def test_head_updates_are_flat_and_retirement_falls_back(tmp_path, monkeypatch, 
                 request=instance.coordinate,
                 parsed=parse_static_owners(changed, accepted=instance.coordinate),
                 sources=changed,
-                codec=artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER),
+                codec=CURRENT_ARTIFACT_CODEC,
                 changed_paths=(path,),
                 whole_checks=False,
             )

@@ -12,21 +12,17 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureContractAny,
     capture_contract_digest,
-    capture_contract_path,
-    render_capture_contract,
 )
-from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactV2,
     ClaimBacking,
     ClaimBackingV1,
-    ClaimLawEvidenceV1,
     ClaimReferentContext,
     ClaimRetirementAttribution,
     ClaimStatement,
@@ -45,7 +41,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.get_reads import GetHistory, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -55,21 +50,14 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
     SubjectShell,
-    render_subject,
     subject_digest,
     subject_path,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.discovery.get import service_playbill_get
-from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.core_support.legacy_capture_builders import (
     build_direct_claim_capture,
-    initialize_legacy_local,
 )
-from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 16, 18, 30, tzinfo=timezone.utc)
@@ -329,227 +317,3 @@ def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
             b'{"artifact_format":"playbill-claim-v999"}\n',
             path=claim_path(claim_id),
         )
-
-
-def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate(
-    tmp_path: Path,
-) -> None:
-    instance, _owner = initialize_legacy_local(tmp_path)
-    base = instance.accepted_coordinate()
-    claim_id = new_claim_id()
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=claim_id,
-        value="ready",
-        rationale="The accepted review inputs are complete.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=AcceptedCoordinate.from_internal(base),
-    )
-    assert capture.envelope.commitment.byte_length is not None
-    claim = _claim(
-        claim_id=claim_id,
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
-    shell = _subject()
-    claim_type = _claim_type()
-    tree = core_assigned(
-        instance,
-        {
-            **instance.tree_at(base.git_oid),
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            claim_path(claim_id): render_claim(claim),
-        },
-    )
-    evaluated = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/first-claim",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree=tree,
-        timestamp=TIMESTAMP,
-    )
-    assert not evaluated.evaluation.diagnostics
-    assert isinstance(evaluated.candidate, CandidateRecord)
-    # Core created the Subject by its slug: its key Claim, the slug ClaimType and
-    # the self-source capture contract that key Claim cites ride in the same candidate.
-    assert sorted(item.artifact_kind for item in evaluated.candidate.members) == sorted(
-        (
-            "capture-contract",
-            "capture-contract",
-            "claim-type",
-            "claim-type",
-            "claim",
-            "claim",
-            "subject-kind",
-            "subject",
-        )
-    )
-    claim_evidence = ClaimLawEvidenceV1.model_validate(
-        next(
-            item.result["claim_evidence"]
-            for item in evaluated.candidate.law_evidence
-            if item.path == claim_path(claim_id)
-        )
-    )
-    assert claim_evidence.initial_verdict == "uncovered"
-    assert claim_evidence.evidence_basis == ("origin_only",)
-
-
-def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_legacy_local(tmp_path)
-    base = instance.accepted_coordinate()
-    claim_id = "CLM-abcdefabcdefabcdefabcdefabcdefab"
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=claim_id,
-        value="ready",
-        rationale="Seed the v2 succession law.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=AcceptedCoordinate.from_internal(base),
-    )
-    assert capture.envelope.commitment.byte_length is not None
-    predecessor = _claim(
-        claim_id=claim_id,
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
-    shell = _subject()
-    tree = core_assigned(
-        instance,
-        {
-            **instance.tree_at(base.git_oid),
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            claim_path(claim_id): render_claim(predecessor),
-        },
-    )
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp=TIMESTAMP,
-        proposal_name="v2-authority-seed",
-    )
-
-    accepted = instance.accepted_coordinate()
-    successor = predecessor.model_copy(
-        update={
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=claim_artifact_digest(predecessor).tagged
-            ),
-        }
-    )
-    successor_tree = instance.tree_at(accepted.git_oid)
-    successor_tree[claim_path(claim_id)] = render_claim(successor)
-    evaluated = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/v2-authority-successor",
-            proposed_base_oid=accepted.git_oid,
-        ),
-        candidate_tree=successor_tree,
-        timestamp=TIMESTAMP,
-    )
-    assert evaluated.candidate is not None
-    assert "cruxible.claim.authority_change_unsupported" not in {
-        item.code for item in evaluated.evaluation.diagnostics
-    }
-
-
-def test_claim_history_returns_each_accepted_revision_located_by_the_index(
-    tmp_path: Path, monkeypatch
-) -> None:
-    instance, owner = initialize_legacy_local(tmp_path)
-    base = instance.accepted_coordinate()
-    claim_id = "CLM-aabbccddaabbccddaabbccddaabbccdd"
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=claim_id,
-        value="ready",
-        rationale="Seed the history service law.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=AcceptedCoordinate.from_internal(base),
-    )
-    assert capture.envelope.commitment.byte_length is not None
-    predecessor = _claim(
-        claim_id=claim_id,
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
-    shell = _subject()
-    tree = core_assigned(
-        instance,
-        {
-            **instance.tree_at(base.git_oid),
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            claim_path(claim_id): render_claim(predecessor),
-        },
-    )
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp=TIMESTAMP,
-        proposal_name="history-seed",
-    )
-
-    accepted = instance.accepted_coordinate()
-    successor = predecessor.model_copy(
-        update={
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=claim_artifact_digest(predecessor).tagged
-            ),
-        }
-    )
-    successor_tree = instance.tree_at(accepted.git_oid)
-    successor_tree[claim_path(claim_id)] = render_claim(successor)
-    _accept_tree(
-        instance,
-        owner,
-        successor_tree,
-        timestamp=TIMESTAMP,
-        proposal_name="history-successor",
-    )
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("Claim history must select indexed occurrences, not scan accepted history")
-
-    monkeypatch.setattr(instance, "accepted_history", forbidden)
-    monkeypatch.setattr(instance, "tree_at", forbidden)
-    monkeypatch.setattr(instance, "paths_at", forbidden)
-    history = service_playbill_get(
-        instance,
-        request=GetRequest(ref=claim_id, detail="history"),
-        access=BodyAccessContext(principal_id="owner", can_read_body=True),
-    ).history
-
-    assert isinstance(history, GetHistory)
-    # Newest first; ``revision`` counts from the oldest.
-    assert tuple(item.sequence for item in history.revisions) == (2, 1)
-    assert tuple(item.revision for item in history.revisions) == (2, 1)
-    assert history.revisions[0].digest == claim_artifact_digest(successor).tagged[:19]
-    assert history.revisions[1].digest == claim_artifact_digest(predecessor).tagged[:19]
-    assert tuple(item.lifecycle for item in history.revisions) == ("live", "live")
-    # The successor restates the same statement on new bytes: a reobservation.
-    assert tuple(item.change for item in history.revisions) == ("reobserved", "stated")

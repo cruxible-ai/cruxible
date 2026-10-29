@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.service.procedures.provider_installation import installed_providers
 from tests.core_support._support import initialize_local
@@ -135,8 +136,7 @@ def _population(tmp_path: Path, package, size: int):
     from types import SimpleNamespace
 
     from cruxible_core.compiler.compiler import (
-        PROVIDER_BUILDS_COMPILER,
-        artifact_codec_for_compiler,
+        CURRENT_COMPILER,
     )
     from cruxible_core.derived.derived_state import SnapshotTree
     from cruxible_core.indexes.provider_heads import refresh_provider_heads
@@ -148,7 +148,7 @@ def _population(tmp_path: Path, package, size: int):
     providers = tuple(build(i + 1) for i in range(size))
     tree = SnapshotTree({provider_path(p.identity.name): render_provider(p) for p in providers})
     coordinate = accepted_coordinate(MemoryLedger(tmp_path / "repository", tree)).model_copy(
-        update={"compiler": PROVIDER_BUILDS_COMPILER}
+        update={"compiler": CURRENT_COMPILER}
     )
     connection = sqlite3.connect(":memory:")
     connection.executescript(schema_sql())
@@ -163,7 +163,7 @@ def _population(tmp_path: Path, package, size: int):
         coordinate=coordinate,
         tree=tree,
     )
-    codec = artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER)
+    codec = CURRENT_ARTIFACT_CODEC
     insert_members(connection, tree, coordinate.git_object_format)
     insert_owners(
         connection,

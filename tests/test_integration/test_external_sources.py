@@ -190,9 +190,8 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     )
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
 
-    instance, _owner = (initialize_local if light else initialize_legacy_local)(tmp_path)
+    instance, _owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     contract = record_contract() if light else capture_contract()
     coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"

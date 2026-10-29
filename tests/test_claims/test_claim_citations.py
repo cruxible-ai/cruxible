@@ -9,19 +9,16 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.candidates import CandidateRecord
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     DirectByteSpanSelection,
     DirectForeignSourceSelection,
-    build_coordinator_self_source_capture,
     build_foreign_source_capture,
     capture_contract_digest,
     capture_contract_path,
-    classify_capture_reuse,
     foreign_source_capture_contract,
     render_capture_contract,
 )
@@ -53,13 +50,10 @@ from cruxible_client.contracts.subjects import render_subject, subject_digest, s
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.service.claims.claims import service_get_playbill_claim
-from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
 from tests.core_support._pc_c_support import capture_contract as _capture_contract
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.core_support.legacy_capture_builders import (
-    build_direct_claim_capture,
     build_direct_claim_selection_capture,
 )
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
@@ -210,295 +204,6 @@ def test_one_capture_can_have_different_roles_on_different_claims() -> None:
     assert evidence.backing.citations[0].citation_id != copy.citation_id
     assert evidence.backing.citations[0].role == "evidence"
     assert copy.role == "copy"
-
-
-def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
-    tmp_path,
-) -> None:
-    from tests.core_support.legacy_capture_builders import (
-        initialize_legacy_local,
-    )
-
-    instance, owner = initialize_legacy_local(tmp_path)
-    base = instance.accepted_coordinate()
-    first_capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=CLAIM_ID,
-        value="ready",
-        rationale="initial v1 evidence",
-        observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
-        accepted_coordinate=AcceptedCoordinate.from_internal(base),
-    )
-    assert first_capture.envelope.commitment.byte_length is not None
-    legacy = _claim(
-        claim_id=CLAIM_ID,
-        capture_digest=first_capture.capture_digest,
-        source_digest=first_capture.source_body_digest,
-        source_length=first_capture.envelope.commitment.byte_length,
-    )
-    shell = _subject()
-    claim_type = _claim_type()
-    initial_tree = core_assigned(
-        instance,
-        {
-            **instance.tree_at(base.git_oid),
-            subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-            ),
-            claim_path(CLAIM_ID): render_claim(legacy),
-        },
-    )
-    initial = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/citation-v1",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree=initial_tree,
-        timestamp="2026-08-20T12:00:00.000000Z",
-    )
-    assert isinstance(initial.candidate, CandidateRecord)
-    _activate(instance, owner, initial.candidate, initial.evaluation.evaluated_tree_oid, sequence=1)
-
-    accepted_v1 = instance.accepted_coordinate()
-    second_capture = build_coordinator_self_source_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=CLAIM_ID,
-        body=b"new v2 backing",
-        accepted_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
-        observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
-        accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
-    )
-    citation = build_claim_citation(
-        legacy.identity,
-        capture_digest=second_capture.capture_digest,
-        role="evidence",
-        origin="self_source",
-    )
-    substrate = b"status: ready\n"
-    substrate_digest = instance.body_store().store(substrate).digest
-    selection_capture = build_direct_claim_selection_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=CLAIM_ID,
-        rationale="existing source copy",
-        observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
-        accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
-        selection=DirectByteSpanSelection(
-            span=ContentSpan(
-                content_digest=substrate_digest,
-                start_byte=0,
-                end_byte=len(substrate),
-            )
-        ),
-    )
-    assert (
-        classify_capture_reuse(
-            selection_capture.envelope,
-            contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-            store=instance.body_store(),
-            claim_id=CLAIM_ID,
-        )
-        == "claim_bound"
-    )
-    assert (
-        classify_capture_reuse(
-            selection_capture.envelope,
-            contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-            store=instance.body_store(),
-            claim_id="CLM-abcdefabcdefabcdefabcdefabcdefab",
-        )
-        == "claim_bound_mismatch"
-    )
-    copy_citation = build_claim_citation(
-        legacy.identity,
-        capture_digest=selection_capture.capture_digest,
-        role="copy",
-        origin="independent",
-    )
-    v2 = ClaimArtifactV2(
-        identity=legacy.identity,
-        statement=legacy.statement,
-        backing=ClaimBacking(
-            referent_context=legacy.backing.referent_context.model_copy(
-                update={"observed_at": datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc)}
-            ),
-            capture_digests=tuple(
-                sorted(
-                    (
-                        first_capture.capture_digest,
-                        second_capture.capture_digest,
-                        selection_capture.capture_digest,
-                    )
-                )
-            ),
-            citations=merge_claim_citations(
-                legacy.backing.citations,
-                (citation,),
-                (copy_citation,),
-            ),
-            source_mappings=legacy.backing.source_mappings,
-        ),
-        pins=tuple(
-            sorted(
-                (
-                    *legacy.pins,
-                    ArtifactPin(
-                        role="capture-contract",
-                        target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
-                        artifact_digest=capture_contract_digest(
-                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-                        ).tagged,
-                    ),
-                ),
-                key=lambda item: (item.role.encode(), item.target.qualified.encode()),
-            )
-        ),
-        lifecycle=ArtifactLifecycle(predecessor_digest=claim_artifact_digest(legacy).tagged),
-    )
-    successor_tree = {
-        **instance.tree_at(accepted_v1.git_oid),
-        capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1)
-        ),
-        claim_path(CLAIM_ID): render_claim(v2),
-    }
-    forged_origin = v2.model_copy(
-        update={
-            "backing": v2.backing.model_copy(
-                update={
-                    "citations": merge_claim_citations(
-                        legacy.backing.citations,
-                        (
-                            build_claim_citation(
-                                legacy.identity,
-                                capture_digest=second_capture.capture_digest,
-                                role="copy",
-                                origin="independent",
-                            ),
-                        ),
-                        (copy_citation,),
-                    )
-                }
-            )
-        }
-    )
-    forged = _submit(
-        instance,
-        {
-            **instance.tree_at(accepted_v1.git_oid),
-            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1)
-            ),
-            claim_path(CLAIM_ID): render_claim(forged_origin),
-        },
-        accepted_v1.git_oid,
-        "citation-v2-forged-origin",
-        "2026-08-20T12:01:00.000000Z",
-    )
-    assert {item.code for item in forged.evaluation.diagnostics} == {
-        "cruxible.claim.self_source_origin_mismatch"
-    }
-    first_evaluation = _submit(
-        instance,
-        successor_tree,
-        accepted_v1.git_oid,
-        "citation-v2-a",
-        "2026-08-20T12:01:00.000000Z",
-    )
-    second_evaluation = _submit(
-        instance,
-        successor_tree,
-        accepted_v1.git_oid,
-        "citation-v2-b",
-        "2026-08-20T12:01:00.000000Z",
-    )
-    assert first_evaluation.evaluation.diagnostics == second_evaluation.evaluation.diagnostics == ()
-    assert first_evaluation.candidate is not None
-    assert second_evaluation.candidate is not None
-    assert first_evaluation.candidate.law_evidence == second_evaluation.candidate.law_evidence
-    initial_evidence = _claim_evidence(initial.candidate)
-    successor_evidence = _claim_evidence(first_evaluation.candidate)
-    assert successor_evidence.verdict_captures == ()
-    assert successor_evidence.evidence_basis == initial_evidence.evidence_basis
-    assert successor_evidence.verdict_result is not None
-    assert initial_evidence.verdict_result is not None
-    assert successor_evidence.verdict_result.supporting_evidence_digests == (
-        initial_evidence.verdict_result.supporting_evidence_digests
-    )
-    assert successor_evidence.verdict_result.provenance_grades == (
-        initial_evidence.verdict_result.provenance_grades
-    )
-    assert successor_evidence.verdict_result.control_components == (
-        initial_evidence.verdict_result.control_components
-    )
-    _activate(
-        instance,
-        owner,
-        first_evaluation.candidate,
-        first_evaluation.evaluation.evaluated_tree_oid,
-        sequence=2,
-    )
-
-    accepted_v2 = instance.accepted_coordinate()
-    read = service_get_playbill_claim(instance, identity=CLAIM_ID)
-    accounts = {item.citation_id: item for item in read.admission_accounts}
-    assert accounts[copy_citation.citation_id].status == "not_evidence"
-    assert accounts[copy_citation.citation_id].decision is None
-    assert accounts[citation.citation_id].status == "not_admitted"
-    assert accounts[citation.citation_id].decision.closest_rule_id is None
-    assert accounts[citation.citation_id].decision.refusal_code == (
-        "cruxible.evidence.undeclared_contract_kind"
-    )
-    coverage_index = build_accepted_evidence_index_v2(
-        instance,
-        at=AcceptedCoordinate.from_internal(accepted_v2),
-    )
-    rebuilt_coverage_index = build_accepted_evidence_index_v2(
-        instance,
-        at=AcceptedCoordinate.from_internal(accepted_v2),
-    )
-    assert canonical_bytes(coverage_index.model_dump(mode="json")) == canonical_bytes(
-        rebuilt_coverage_index.model_dump(mode="json")
-    )
-    # The Claim's own associations (its Subject's key Claim cites a Capture too).
-    coverage_associations = {
-        association.reference.citation_id: association
-        for row in coverage_index.citations
-        for association in row.citation_associations
-        if association.claim_address.artifact_path == claim_path(v2.identity.name)
-    }
-    assert set(coverage_associations) == {
-        reference.citation_id for reference in claim_citation_references(v2)
-    }
-    assert coverage_associations[citation.citation_id].reference.role == "evidence"
-    assert coverage_associations[citation.citation_id].reference.origin == "self_source"
-    assert coverage_associations[copy_citation.citation_id].reference.role == "copy"
-    assert coverage_associations[copy_citation.citation_id].observation_trust == (
-        "proposer_observed"
-    )
-    dropped = v2.model_copy(
-        update={
-            "backing": v2.backing.model_copy(update={"citations": ()}),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_artifact_digest(v2).tagged),
-        }
-    )
-    refused = _submit(
-        instance,
-        {**instance.tree_at(accepted_v2.git_oid), claim_path(CLAIM_ID): render_claim(dropped)},
-        accepted_v2.git_oid,
-        "citation-v2-drop",
-        "2026-08-20T12:02:00.000000Z",
-    )
-    # Claim law v2 revision 10: on an unchanged statement a citation leaves only
-    # by a re-bind that replaces it, so an unmatched drop refuses as such.
-    assert {item.code for item in refused.evaluation.diagnostics} == {
-        "cruxible.claim.rebind_unmatched"
-    }
 
 
 def _submit(instance, tree, base_oid: str, name: str, timestamp: str):
@@ -920,31 +625,3 @@ def test_a_copy_the_rule_admits_reads_admitted_in_the_claims_accounts(tmp_path) 
     assert statuses["named"][0] == "admitted"
     assert "page-copy" in statuses["named"][1]
     assert statuses["unnamed"] == ("not_evidence", ())
-
-
-def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_path) -> None:
-    """A domain type names the direct contract already; the gate still holds.
-
-    So the carve-out cannot be turned into a way for any Claim to cover itself
-    with a copy of the value it just authored -- the case the maintainer named.
-    """
-
-    from tests.core_support.legacy_capture_builders import (
-        initialize_legacy_local,
-    )
-
-    instance, _owner = initialize_legacy_local(tmp_path)
-    base = instance.accepted_coordinate()
-
-    evidence = _verdict(
-        instance,
-        base,
-        capture=_direct_selection_capture(instance, base),
-        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        claim_type=_claim_type(),
-        name="direct-copy",
-        assign=core_assigned,
-    )
-
-    assert evidence.initial_verdict == "uncovered"
-    assert evidence.evidence_basis == ("origin_only",)

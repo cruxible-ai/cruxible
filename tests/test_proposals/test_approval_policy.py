@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import cruxible_core.ledger.bootstrap as playbill_bootstrap_module
-import cruxible_core.runtime.instance as playbill_instance_module
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
     ApprovalPolicy,
@@ -15,7 +13,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.documents import render_document
-from cruxible_client.contracts.errors import ApprovalIntegrityError, ReseedRequired
+from cruxible_client.contracts.errors import ApprovalIntegrityError
 from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -23,12 +21,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
     parse_procedure_runtime_policy,
     render_procedure_runtime_policy,
-)
-from cruxible_core.compiler.compiler import (
-    P2_B0_COMPILER,
-    P2_B1_COMPILER,
-    PC_HR_COMPILER,
-    current_compiler_coordinate,
 )
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -149,67 +141,6 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     )
     assert row.declaring_artifact_identity == "ProcedureRuntimePolicy:instance"
     assert row.policy["provider_output_bytes_cap"] == 2_097_152
-
-
-@pytest.mark.parametrize(
-    ("compiler", "write_allowed"),
-    (
-        (P2_B0_COMPILER, False),
-        (PC_HR_COMPILER, True),
-        (P2_B1_COMPILER, True),
-        (current_compiler_coordinate(), True),
-    ),
-)
-def test_write_gate_uses_artifact_codec_lineage_before_candidate_time(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    compiler,  # type: ignore[no-untyped-def]
-    write_allowed: bool,
-) -> None:
-    with monkeypatch.context() as selected:
-        selected.setattr(
-            playbill_instance_module,
-            "current_compiler_coordinate",
-            lambda: compiler,
-        )
-        if compiler == P2_B0_COMPILER:
-            selected.setattr(
-                playbill_instance_module,
-                "seeded_procedure_runtime_policy",
-                lambda: None,
-            )
-            selected.setattr(
-                playbill_bootstrap_module,
-                "seeded_procedure_runtime_policy",
-                lambda: None,
-            )
-        instance, _owner = initialize_local(tmp_path)
-
-    # A frozen bootstrap stays replayable even when its write gate requires
-    # reseeding; opening its read coordinate must not assemble a newer format.
-    instance.refresh()
-    base = instance.accepted_coordinate()
-    tree = instance.tree_at(base.git_oid)
-    assert instance.descriptor.compiler == compiler
-    candidate_tree = {
-        **tree,
-        APPROVAL_POLICY_PATH: render_approval_policy(
-            ApprovalPolicy(mode="independent_approval_required")
-        ),
-    }
-
-    if write_allowed:
-        result = _submit_tree(instance, candidate_tree, name="codec-lineage-write")
-        assert result.candidate is not None
-    else:
-        with pytest.raises(
-            ReseedRequired,
-            match="compiler selects the frozen compact artifact codec from before PC-HR",
-        ):
-            _submit_tree(instance, candidate_tree, name="codec-lineage-write")
-        assert service_list_playbill_proposals(instance).entries == ()
-
-    assert instance.accepted_coordinate() == base
 
 
 def test_policy_tightening_and_loosening_follow_the_parent_policy(

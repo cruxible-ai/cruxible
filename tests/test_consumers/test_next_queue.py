@@ -1129,31 +1129,14 @@ def test_a_door_row_follows_the_repair_of_an_account_capture_it_could_not_read(
     assert statuses == {"proven"}
 
 
-@pytest.mark.parametrize(
-    "historical",
-    [
-        pytest.param(
-            True,
-            marks=pytest.mark.skip(
-                reason=(
-                    "KNOWN SRC BUG (not fixed here): derivation_world(historical=True)'s "
-                    "instance sits on a pre-36 compiler, and no Line can ever be newly "
-                    "accepted there -- see the note on "
-                    "tests.test_authoring.test_derivation_admission._run_and_accept."
-                )
-            ),
-        ),
-        False,
-    ],
-)
 def test_a_retired_dependency_capture_rewritten_in_place_is_caught_by_the_sweep(
-    tmp_path, historical
+    tmp_path,
 ) -> None:
     from tests.core_support._retirement_support import retire_claim
     from tests.test_authoring.test_derivation_admission import derivation_world
     from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
 
-    derived_world = derivation_world(tmp_path, historical=historical)
+    derived_world = derivation_world(tmp_path)
     derived = _run_and_accept(derived_world)
     retire_claim(derived_world.instance, derived_world.owner, derived.identity.name)
     instance = derived_world.instance

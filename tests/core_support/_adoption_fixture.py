@@ -484,7 +484,7 @@ class _Builder:
         # identity wrote it (``wire_version`` reaches back further still): its
         # Subjects are history an older build accepted, not new creations.
         candidate_tree = {**self.tree, **members}
-        with history_before_identity(None):
+        with history_before_identity():
             evaluation = evaluate_proposal_tree(
                 base_tree=self.tree,
                 current_tree=self.tree,
@@ -502,7 +502,7 @@ class _Builder:
         # and settles that OID, so the fixture must settle the same bytes: the
         # evaluated tree carries the derivative cards the settlement re-derives.
         candidate_tree = dict(evaluation.tree)
-        with history_before_identity(None):
+        with history_before_identity():
             bundle = prepare_generation(
                 self.instance._ledger,
                 base=self.base,

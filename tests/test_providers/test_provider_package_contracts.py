@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     Provider,
@@ -19,14 +18,7 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.compiler.compiler import (
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
-)
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-from cruxible_core.compiler.upgrades import upgrade_law
 from cruxible_core.providers.provider_local_runtime import (
     LocalProviderDeploymentV1,
     LocalProviderExecutionDriver,
@@ -114,32 +106,10 @@ def test_advertised_but_unprepared_implementation_refuses_before_reading_environ
     assert failure.value.code == "no_compatible_artifact"
 
 
-def test_new_registration_formats_require_the_explicit_compiler_succession() -> None:
-    # ProviderInterfaceRegistration (the "interface" package-registration kind
-    # this test used to also parametrize over) is removed (B2 C12); only the
-    # provider package-registration format remains to probe here.
+def test_a_package_provider_projects_under_the_current_compiler() -> None:
     value = package_provider()
     path, raw = provider_path(value.identity.name), render_provider(value)
-    for compiler in (PROVIDER_CONTRACT_COMPILER, PROVIDER_PACKAGE_COMPILER):
-
-        def project():
-            return parse_projection_tree(
-                {path: raw},
-                registry=projection_registry_for_compiler(compiler),
-                artifact_kinds=artifact_kinds_for_compiler(compiler),
-            )
-
-        if compiler == PROVIDER_CONTRACT_COMPILER:
-            with pytest.raises(ProjectionFormatError, match="provider-package compiler"):
-                project()
-        else:
-            assert project().envelopes
-    assert (
-        upgrade_law(PROVIDER_CONTRACT_COMPILER, PROVIDER_PACKAGE_COMPILER).coordinate.identifier
-        == "playbill.compiler-upgrade.v1"
-    )
-    with pytest.raises(ValueError, match="unsupported compiler transition"):
-        upgrade_law(PROVIDER_PACKAGE_COMPILER, PROVIDER_CONTRACT_COMPILER)
+    assert parse_projection_tree({path: raw}).envelopes
 
 
 def test_prepared_environment_can_supply_a_superset_of_operation_extras() -> None:

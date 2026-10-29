@@ -27,11 +27,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.query.definitions import (
-    query_definition_path,
-    render_query_definition,
-)
-from cruxible_core.claims.claim_retirement import ClaimRetireDependentUnsupported
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationDependentInvalid,
@@ -41,7 +36,6 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._claim_authoring_support import (
     STATUS_CLAIM_ID,
     SUMMARY_CLAIM_ID,
@@ -67,8 +61,6 @@ from tests.test_claims.test_claim_type_migrations import (
     _decision_only_input,
     _decision_only_successor,
 )
-from tests.test_claims.test_claims import _claim_type
-from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
 
@@ -675,47 +667,3 @@ def test_retire_refuses_an_extra_dependent(tmp_path: Path) -> None:
     )
     assert refused.status.proposal_id is None
     assert "cruxible.authoring.claim_retirement_closure_incomplete" in refusal_codes(refused)
-
-
-def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
-    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=True)
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
-    type_path = claim_type_path(_claim_type().predicate)
-    claim_type = parse_claim_type(tree[type_path], path=type_path)
-    query = _query_definition(1, claim_type, named=False)
-    query = query.model_copy(
-        update={
-            "pins": tuple(
-                sorted(
-                    (
-                        *query.pins,
-                        ArtifactPin(
-                            role="input-claim",
-                            target=claim.identity,
-                            artifact_digest=claim_artifact_digest(claim).tagged,
-                        ),
-                    ),
-                    key=lambda pin: (
-                        pin.role.encode("utf-8"),
-                        pin.target.qualified.encode("utf-8"),
-                    ),
-                )
-            )
-        }
-    )
-    tree[query_definition_path(query.identity.name)] = render_query_definition(query)
-    _accept_tree(
-        instance,
-        owner,
-        tree,
-        timestamp=TIMESTAMP,
-        proposal_name="retirement-unsupported-query",
-    )
-
-    with pytest.raises(ClaimRetireDependentUnsupported, match=query.identity.qualified):
-        retirement_inventory(instance, claim_id)
-    refused = submit_retirement(instance, retirement_member(instance, claim_id, dependents=()))
-    assert refused.status.proposal_id is None
-    assert "cruxible.authoring.claim_retirement_closure_unsupported" in refusal_codes(refused)
-    assert query.identity.qualified in refusal_messages(refused)

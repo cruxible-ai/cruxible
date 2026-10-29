@@ -630,40 +630,6 @@ def accepted_claim_providers(
     return result
 
 
-def _historical_verified_claim_attestations(
-    tree: Mapping[str, bytes],
-    claim: ClaimArtifactAny,
-    attestations: tuple[VerifiedClaimAttestationV1, ...],
-) -> tuple[VerifiedClaimAttestationV1, ...]:
-    """Re-grade accepted attestations against the current referent shells."""
-
-    subject_content_digest, object_content_digest = _referent_digests(tree, claim)
-    return tuple(
-        item.model_copy(
-            update={
-                "coverage": (
-                    "exact_subject"
-                    if item.statement.subject_content_digest == subject_content_digest
-                    and item.statement.object_content_digest == object_content_digest
-                    else "shell_stale"
-                ),
-                "current": item.statement.subject_content_digest == subject_content_digest
-                and item.statement.object_content_digest == object_content_digest,
-            }
-        )
-        for item in attestations
-    )
-
-
-def _serves_attestations(coordinate: AcceptedProjectionCoordinate) -> bool:
-    from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
-
-    return any(
-        entry.kind == "attestation"
-        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
-    )
-
-
 def accepted_claim_attestations(
     instance: Any,
     *,
@@ -679,8 +645,6 @@ def accepted_claim_attestations(
     remain evidence under the existing reducer; changing stance does not erase
     the earlier statement. Explicit replacement requires its own signed contract.
     """
-    if not _serves_attestations(coordinate):
-        return _historical_verified_claim_attestations(tree, claim, historical)
     if envelopes is None:
         with instance.bind_accepted_projection(coordinate) as projection:
             envelopes = projection.typed.claim_attestations(
@@ -1398,11 +1362,7 @@ def service_evaluate_playbill_claim_verdict(
         tree=tree,
         claim=accepted.claim,
         historical=evidence.verified_attestations,
-        envelopes=(
-            read_context.attestation_envelopes(accepted.claim)
-            if batched and _serves_attestations(coordinate)
-            else None
-        ),
+        envelopes=(read_context.attestation_envelopes(accepted.claim) if batched else None),
     )
     reading = reobservations_at(
         instance,

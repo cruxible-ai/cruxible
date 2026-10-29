@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import P2_B5_COMPILER
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes.evaluated_state import derive_indexed_state
@@ -38,7 +38,7 @@ def _tree():
 
 def _fixture(tmp_path, sources):
     repository = MemoryLedger(tmp_path / "repository", sources)
-    coordinate = accepted_coordinate(repository).model_copy(update={"compiler": P2_B5_COMPILER})
+    coordinate = accepted_coordinate(repository).model_copy(update={"compiler": CURRENT_COMPILER})
     directory = tmp_path / "projection"
     directory.mkdir()
     assembler = ProjectionAssembler(
@@ -47,8 +47,6 @@ def _fixture(tmp_path, sources):
     request = assembler.request(output_staging_directory=directory / ".stage")
     parsed = parse_projection_tree(
         sources,
-        registry=assembler.registry,
-        artifact_kinds=assembler.artifact_kinds,
         artifact_codec=assembler.artifact_codec,
     )
     path = directory / "fixture.sqlite"

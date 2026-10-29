@@ -43,8 +43,6 @@ def _stored_claim(claim_world, tmp_path, claim):
     # to the fixture's independently governed ClaimType or proof history.
     parsed = parse_projection_tree(
         {path: content},
-        registry=assembler.registry,
-        artifact_kinds=assembler.artifact_kinds,
         artifact_codec=assembler.artifact_codec,
         bodies=instance.body_store(),
     )
@@ -184,8 +182,6 @@ def test_filtered_claim_selection_distinguishes_selectors_before_materialization
     request = assembler.request(output_staging_directory=tmp_path / ".stage-filter")
     parsed = parse_projection_tree(
         {path: content},
-        registry=assembler.registry,
-        artifact_kinds=assembler.artifact_kinds,
         artifact_codec=assembler.artifact_codec,
         bodies=instance.body_store(),
     )

@@ -202,12 +202,11 @@ def test_subject_statuses_evaluate_only_that_subjects_claims(tmp_path, monkeypat
     assert evaluated and set(evaluated) == {subject.artifact_path}
     # Attestations are selected for this subject's exact Claim versions only,
     # never read for the whole population.
-    if playbill_evidence._serves_attestations(instance.accepted_coordinate()):
-        scoped_versions = {(c.identity.qualified, c.statement.subject) for c in scoped}
-        assert selections and None not in selections
-        assert {pair[0] for chunk in selections for pair in chunk} == {
-            identity for identity, _ in scoped_versions
-        }
+    scoped_versions = {(c.identity.qualified, c.statement.subject) for c in scoped}
+    assert selections and None not in selections
+    assert {pair[0] for chunk in selections for pair in chunk} == {
+        identity for identity, _ in scoped_versions
+    }
 
 
 def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monkeypatch):

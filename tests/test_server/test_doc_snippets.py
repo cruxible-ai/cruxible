@@ -291,7 +291,7 @@ def _define(
         {
             "kind": "claim_type",
             "claim_type": lower_claim_type_input(
-                ClaimTypeInputRecord.model_validate(record), tree=tree, identity_rules=True
+                ClaimTypeInputRecord.model_validate(record), tree=tree
             ).model_dump(mode="json"),
         }
         for record in fields

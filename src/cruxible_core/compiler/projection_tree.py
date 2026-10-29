@@ -21,7 +21,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.persistent import PersistentMap
-from cruxible_core.compiler.projection_artifacts import registered_path_kind
+from cruxible_core.compiler.projection_artifacts import ARTIFACT_KINDS, registered_path_kind
 from cruxible_core.ledger.git import GitLedger, GitTreeChange, GitTreeEntry
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
 
@@ -77,7 +77,6 @@ def read_registered_tree(
     oid: str,
     *,
     limits: TreeReadLimits,
-    artifact_kinds: ArtifactKindRegistry,
     include_paths: frozenset[str] | None = None,
 ) -> tuple[GitTreeBlob, ...]:
     """Read regular registered blobs only, with all metadata gates first."""
@@ -86,7 +85,6 @@ def read_registered_tree(
         repository,
         repository.list_tree_with_sizes(oid),
         limits=limits,
-        artifact_kinds=artifact_kinds,
         include_paths=include_paths,
     )
 
@@ -96,7 +94,6 @@ def _read_registered_entries(
     entries: tuple[GitTreeEntry, ...],
     *,
     limits: TreeReadLimits,
-    artifact_kinds: ArtifactKindRegistry,
     include_paths: frozenset[str] | None = None,
 ) -> tuple[GitTreeBlob, ...]:
     """Consume this operation's exact Git inventory; apply every reader gate."""
@@ -123,7 +120,7 @@ def _read_registered_entries(
             if normalize_ledger_path(path) != path:
                 raise ProjectionFormatError(f"ledger path is not canonical: {path}")
             if not is_candidate_card_path(path):
-                registered_path_kind(path, artifact_kinds=artifact_kinds)
+                registered_path_kind(path)
         except Exception as exc:
             if isinstance(exc, ProjectionFormatError):
                 raise
@@ -347,11 +344,8 @@ def _case_rigid_tops(artifact_kinds: ArtifactKindRegistry) -> frozenset[str]:
     read leaves no directory rigid, so every level is checked exactly.
     """
     # The inference assumes the parent tree passed these same gates under this
-    # same registry, which ``populate_successor`` guarantees: a delta is read
-    # only when the parent's compiler (hence its registry) is the successor's,
-    # and a cold build gates the whole tree with ``read_registered_tree``. A
-    # parent gated under another registry could hold names these patterns do
-    # not admit, so no caller may read a delta across compilers.
+    # same registry: a cold build gates the whole tree with
+    # ``read_registered_tree``, and every successor is gated by its changes.
     by_top: dict[str, list[str]] = {}
     for entry in artifact_kinds.entries():
         try:
@@ -512,8 +506,8 @@ def read_registered_delta(
     head_oid: str,
     parent_inventory: tuple[int, int],
     limits: TreeReadLimits,
-    artifact_kinds: ArtifactKindRegistry,
     include_paths: frozenset[str],
+    artifact_kinds: ArtifactKindRegistry = ARTIFACT_KINDS,
 ) -> tuple[tuple[GitTreeBlob, ...], tuple[int, int]]:
     """Apply every reader gate to a successor through its changed entries only.
 
@@ -549,7 +543,7 @@ def read_registered_delta(
             if normalize_ledger_path(path) != path:
                 raise ProjectionFormatError(f"ledger path is not canonical: {path}")
             if not is_candidate_card_path(path):
-                registered_path_kind(path, artifact_kinds=artifact_kinds)
+                artifact_kinds.resolve_path(path)
         except Exception as exc:
             if isinstance(exc, ProjectionFormatError):
                 raise

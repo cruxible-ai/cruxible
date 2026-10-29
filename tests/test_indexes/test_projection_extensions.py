@@ -15,8 +15,8 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
     ProjectionFactDeclaration,
+    current_extension_registry,
     normalize_projection_value,
-    subject_extension_registry,
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.indexes.sqlite import (
@@ -76,7 +76,7 @@ def test_projection_value_normalization_is_closed_and_explicit() -> None:
 
 
 def test_duplicate_extension_fact_refuses_at_registry_boundary() -> None:
-    registry = subject_extension_registry()
+    registry = current_extension_registry()
     fact = ProjectionFact(
         schema_id="cruxible.subject.identity",
         schema_version=1,

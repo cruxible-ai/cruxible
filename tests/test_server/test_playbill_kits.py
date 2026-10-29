@@ -76,7 +76,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._subject_kind_support import declare_by_slug
-from tests.core_support._support import build_inputs, restamp_state_root
+from tests.core_support._support import build_inputs, initialize_fresh, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
 
 SEATS = "acme.account.seats"
@@ -211,9 +211,8 @@ class _CoreWorld(_World):
             ProcedureRunRequest,
             service_run_playbill_procedure,
         )
-        from tests.core_support.legacy_capture_builders import initialize_legacy_local
 
-        self.instance, self.owner = initialize_legacy_local(root, instance_id=instance_id)
+        self.instance, self.owner = initialize_fresh(root, instance_id=instance_id)
         self.instance_id = instance_id
         self.root = root
 

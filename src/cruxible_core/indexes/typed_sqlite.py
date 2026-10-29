@@ -142,35 +142,30 @@ def parse_static_owners(
     """
     from dataclasses import replace
 
+    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_client.contracts.documents import document_digest, parse_document
-    from cruxible_core.compiler.compiler import (
-        artifact_codec_for_compiler,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
+    from cruxible_core.compiler.compiler import require_current_compiler
     from cruxible_core.compiler.projection_artifacts import (
         ArtifactEnvelopeRow,
         PinRow,
         parse_projection_tree,
+        registered_path_kind,
     )
 
-    kinds = artifact_kinds_for_compiler(accepted.compiler)
-    codec = artifact_codec_for_compiler(accepted.compiler)
+    require_current_compiler(accepted.compiler)
+    codec = CURRENT_ARTIFACT_CODEC
     source_kinds = {
-        path: None if is_candidate_card_path(path) else kinds.resolve_path(path) for path in sources
+        path: None if is_candidate_card_path(path) else registered_path_kind(path)
+        for path in sources
     }
     documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
     parsed = parse_projection_tree(
         {path: body for path, body in sources.items() if path not in documents},
-        registry=projection_registry_for_compiler(accepted.compiler),
-        artifact_kinds=kinds,
         artifact_codec=codec,
         verified_change_sets=verified_change_sets,
         selected_member_history=selected_member_history,
         carry_members=True,
-        by_name=accepted.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
     )
     envelopes = list(parsed.envelopes)
     # Keyed exactly as parse_projection_tree keys them: a Claim's capture-contract
@@ -221,23 +216,15 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
     inventory. Citation envelope availability is evaluated under
     its own live source rules, outside this proof.
     """
-    from cruxible_core.compiler.compiler import (
-        artifact_codec_for_compiler,
-        artifact_kinds_for_compiler,
-    )
+    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 
     accepted = projection.accepted
     sources = {
         blob.path: blob.content
-        for blob in read_registered_tree(
-            repository,
-            accepted.git_oid,
-            limits=TreeReadLimits(),
-            artifact_kinds=artifact_kinds_for_compiler(accepted.compiler),
-        )
+        for blob in read_registered_tree(repository, accepted.git_oid, limits=TreeReadLimits())
     }
-    codec = artifact_codec_for_compiler(accepted.compiler)
+    codec = CURRENT_ARTIFACT_CODEC
     parsed = parse_static_owners(sources, accepted=accepted)
     expected = sqlite3.connect(":memory:")
     try:

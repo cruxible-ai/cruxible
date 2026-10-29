@@ -9,19 +9,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
     ProjectionIntegrityError,
     ProjectionPublicationError,
 )
-from cruxible_client.contracts.projection_extensions import (
-    ProjectionExtensionRegistry,
-)
-from cruxible_core.compiler.compiler import (
-    artifact_codec_for_compiler,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
-)
+from cruxible_core.compiler.compiler import require_current_compiler
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree, parse_projection_tree
 from cruxible_core.compiler.projection_tree import read_registered_tree
 from cruxible_core.indexes.projection import (
@@ -161,7 +155,6 @@ class ProjectionAssembler:
         *,
         accepted: AcceptedProjectionCoordinate | CandidateGenerationProjectionCoordinate,
         publication_directory: Path,
-        registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
         resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
@@ -170,12 +163,11 @@ class ProjectionAssembler:
             raise ProjectionPublicationError(
                 "projection publication directory must be an existing regular directory"
             )
+        require_current_compiler(accepted.compiler)
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
-        self.registry = registry or projection_registry_for_compiler(accepted.compiler)
-        self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
-        self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
+        self.artifact_codec = CURRENT_ARTIFACT_CODEC
         self.bodies = bodies
         self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
         self.resolve_claim_digest = resolve_claim_digest
@@ -417,7 +409,6 @@ class ProjectionAssembler:
                 self._repository,
                 request.git_oid,
                 limits=request.limits,
-                artifact_kinds=self.artifact_kinds,
             ),
         )
         blob_map = {blob.path: blob.content for blob in blobs}
@@ -426,8 +417,6 @@ class ProjectionAssembler:
             "parse_normalize",
             lambda: parse_projection_tree(
                 blob_map,
-                registry=self.registry,
-                artifact_kinds=self.artifact_kinds,
                 artifact_codec=self.artifact_codec,
                 bodies=self.bodies,
                 coordinate=request,

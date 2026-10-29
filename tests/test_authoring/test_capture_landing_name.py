@@ -290,12 +290,6 @@ def test_payload_prepare_resolves_against_candidate_overlay_and_explains_the_pin
     assert stored.artifact_format == "cruxible-trigger-v2"
     assert stored.pins == ()
     assert stored.schedule.event.capture_contract_identity == contract.identity
-    # The frozen renderer still binds the overlay to its exact version.
-    _path, content, _digest = _render_trigger_member(
-        trigger, tree=computed.lowered.proposed_tree, light=False
-    )
-    frozen = parse_trigger(content, path=_path)
-    assert frozen.pins[0].artifact_digest == capture_contract_digest(contract).tagged
 
 
 @pytest.mark.parametrize("window_close", [False, True])

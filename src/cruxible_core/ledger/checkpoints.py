@@ -829,9 +829,7 @@ def verify_checkpoint(
             return tree, EvaluatedTreeState(
                 members=members,
                 merkle=merkle,
-                dependencies=build_dependency_index(
-                    projected, by_name=prefix[-1].compiler == _light_artifacts_compiler()
-                ),
+                dependencies=build_dependency_index(projected, by_name=True),
                 claim_subjects=build_claim_subject_index(projected),
             )
 
@@ -882,9 +880,7 @@ def verify_checkpoint(
             merkle=merkle,
             # Rebuilt from the coordinate's own member bytes. A checkpoint elides
             # the prefix's law evaluation, never the state the suffix reads.
-            dependencies=build_dependency_index(
-                projected, by_name=prefix[-1].compiler == _light_artifacts_compiler()
-            ),
+            dependencies=build_dependency_index(projected, by_name=True),
             claim_subjects=build_claim_subject_index(projected),
         )
 
@@ -990,9 +986,3 @@ __all__ = [
     "verify_checkpoint",
     "write_checkpoint",
 ]
-
-
-def _light_artifacts_compiler() -> CompilerCoordinate:
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-    return LIGHT_ARTIFACTS_COMPILER

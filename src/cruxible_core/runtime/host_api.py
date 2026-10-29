@@ -21,8 +21,8 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.workspace_layout import ensure_workspace_directory
 from cruxible_core import __version__
 from cruxible_core.compiler.compiler import (
-    COMPILER_REVISION_LABELS,
-    PC_HR_ARTIFACT_CODEC_COMPILERS,
+    CURRENT_COMPILER_REVISION,
+    compiler_revision_label,
     current_compiler_coordinate,
 )
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
@@ -126,7 +126,19 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
         instance = get_playbill_manager().get(instance_id)
         compiler = instance.inspect().compiler
         terminal = instance.descriptor.decommissioned
-    except ReseedRequired:
+    except ReseedRequired as exc:
+        if exc.compiler_digest is not None:
+            # Accepted state under a compiler this release does not install.
+            return contracts.HostInspection(
+                **common,
+                compiler_coordinate=exc.compiler_digest,
+                compatibility="reseed_required",
+                writable=False,
+                reason=_reseed_reason(
+                    "compiler_lineage_not_writable",
+                    "The accepted compiler is not the one this release installs.",
+                ),
+            )
         return contracts.HostInspection(
             **common,
             compatibility="reseed_required",
@@ -146,7 +158,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
                 f"The persisted host state is malformed ({type(exc).__name__}): {exc}",
             ),
         )
-    revision = COMPILER_REVISION_LABELS.get(compiler)
+    revision = compiler_revision_label(compiler)
     if terminal is not None:
         # Decommissioning is terminal: the host keeps serving reads but no
         # governed write is ever accepted again, whatever its compiler lineage.
@@ -165,21 +177,13 @@ def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
                 repair_commands=("cruxible host create",),
             ),
         )
-    writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
     return contracts.HostInspection(
         **common,
         compiler_coordinate=compiler.rule_digest,
         compiler_revision=revision,
-        compatibility="writable" if writable else "reseed_required",
-        writable=writable,
-        reason=(
-            None
-            if writable
-            else _reseed_reason(
-                "compiler_lineage_not_writable",
-                "The accepted compiler is outside the retained writable lineage.",
-            )
-        ),
+        compatibility="writable",
+        writable=True,
+        reason=None,
     )
 
 
@@ -676,7 +680,7 @@ def server_info() -> contracts.ServerInfoResult:
             ),
         ),
         compiler_coordinate=current.rule_digest,
-        compiler_revision=COMPILER_REVISION_LABELS[current],
+        compiler_revision=CURRENT_COMPILER_REVISION,
         hosts=hosts,
         consumers=consumer_statuses(get_playbill_manager()),
         # The display-name table, served once so clients apply it, never copy it.

@@ -9,10 +9,9 @@ ids that core assigned.
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.subject_kinds import (
@@ -71,12 +70,9 @@ def core_assigned(
     from cruxible_client.contracts.subject_kinds import SubjectKeyPart, live_subject_kind
     from cruxible_client.contracts.subjects import parse_subject
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-    from cruxible_core.indexes.subject_identity import admits_subject_kinds
     from cruxible_core.proposals.proposals import AuthenticatedActor
 
     head = base if base is not None else instance.accepted_coordinate()
-    if not admits_subject_kinds(head.compiler):
-        return updates
     tree = base_tree if base_tree is not None else instance.tree_at(head.git_oid)
     new: dict[str, Any] = {}
     for path, content in updates.items():
@@ -111,20 +107,6 @@ def core_assigned(
             predicate = f"{kind}.slug"
             if claim_type_path(predicate) not in tree and claim_type_path(predicate) not in updates:
                 slug = slug_claim_type(kind)
-                from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-                if head.compiler != LIGHT_ARTIFACTS_COMPILER:
-                    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
-
-                    policy = slug.evidence_admission_policy.model_dump(mode="json")
-                    policy["tag"] = "playbill-claim-evidence-admission-policy-v3"
-                    for rule in policy["rules"]:
-                        rule["tag"] = "playbill-claim-evidence-admission-rule-v3"
-                        rule["evidence_kinds"] = ["self_asserted"]
-                        for ref in rule["capture_contracts"]:
-                            ref.pop("logical_sources", None)
-                    legacy_policy = ClaimEvidenceAdmissionPolicyV3.model_validate(policy)
-                    slug = slug.model_copy(update={"evidence_admission_policy": legacy_policy})
                 members.append(ClaimTypeAuthoringPayload(claim_type=slug))
             members.append(
                 SubjectKindAuthoringPayload(name=kind, keys=(predicate,), uniqueness="unique")
@@ -167,51 +149,21 @@ def core_assigned(
 
 
 @contextmanager
-def history_before_identity(compiler: object | None) -> Iterator[None]:
-    """Build history an older build accepted, on a compiler before Subject identity.
+def history_before_identity() -> Iterator[None]:
+    """Write ledger history directly, without the candidate boundary's identity check.
 
-    An instance pinned to a compiler before SubjectKinds creates no new Subject
-    (the boundary refuses it, review F-005); a world modelling such an instance
-    holds Subjects only because a build before the rule accepted them. Inside
-    this context the candidate boundary's identity check is that older build's:
-    none. On a compiler that admits SubjectKinds it changes nothing, unless
-    ``compiler`` is None: a ledger builder that writes history as earlier builds
-    wrote it, whatever compiler it is pinned to.
+    A ledger builder that settles generations itself (``_adoption_fixture``)
+    holds Subjects it wrote as they stand, not new creations core names.
     """
 
     import cruxible_core.proposals.proposals as proposals_module
-    from cruxible_core.indexes.subject_identity import admits_subject_kinds
 
-    if compiler is not None and admits_subject_kinds(compiler):  # type: ignore[arg-type]
-        yield
-        return
-    original = proposals_module.boundary_identity_issues
-    proposals_module.boundary_identity_issues = lambda *_a, **_k: ()  # type: ignore[assignment]
+    original = proposals_module.candidate_identity_issues
+    proposals_module.candidate_identity_issues = lambda *_a, **_k: ()  # type: ignore[assignment]
     try:
         yield
     finally:
-        proposals_module.boundary_identity_issues = original
-
-
-_F = TypeVar("_F", bound=Callable[..., Any])
-
-
-def world_history(function: _F) -> _F:
-    """Run a world-building helper as history on an instance before Subject identity.
-
-    On an instance pinned to a compiler before SubjectKinds, the world's Subjects
-    are history an older build accepted (``history_before_identity``); on any
-    other, nothing changes and they go through core (``core_assigned``).
-    """
-
-    @functools.wraps(function)
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        instance = kwargs.get("instance", args[0] if args else None)
-        compiler = instance.accepted_coordinate().compiler  # type: ignore[union-attr]
-        with history_before_identity(compiler):
-            return function(*args, **kwargs)
-
-    return wrapped  # type: ignore[return-value]
+        proposals_module.candidate_identity_issues = original
 
 
 def declare_created_kinds(
@@ -239,7 +191,6 @@ __all__ = [
     "declare_created_kinds",
     "core_assigned",
     "history_before_identity",
-    "world_history",
     "keyed_subject_kind",
     "minted_subject_kind",
 ]

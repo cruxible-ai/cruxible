@@ -9,13 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.errors import ProjectionCoordinateError
 from cruxible_client.contracts.projection_extensions import (
-    ProjectionExtensionRegistry,
     ProjectionFact,
-)
-from cruxible_core.compiler.compiler import (
-    artifact_codec_for_compiler,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import (
     ArtifactEnvelopeRow,
@@ -162,16 +156,12 @@ def compile_provisional_document_projection(
     *,
     coordinate: ProvisionalProjectionCoordinate,
     bodies: BodyProjectionProtocol,
-    registry: ProjectionExtensionRegistry | None = None,
 ) -> ProvisionalDocumentProjection:
     """Compile an exact candidate projection without publishing serving state."""
 
     verify_provisional_tree(tree, coordinate=coordinate)
     parsed = parse_projection_tree(
         dict(tree),
-        registry=registry or projection_registry_for_compiler(coordinate.canonical.compiler),
-        artifact_kinds=artifact_kinds_for_compiler(coordinate.canonical.compiler),
-        artifact_codec=artifact_codec_for_compiler(coordinate.canonical.compiler),
         bodies=bodies,
     )
     return ProvisionalDocumentProjection(coordinate=coordinate, parsed=parsed)

@@ -8,16 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_core.compiler.compiler import (
-    artifact_codec_for_compiler,
-    current_compiler_coordinate,
-)
+from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.typed_sqlite import insert_members, parse_static_owners
 from cruxible_core.indexes.typed_state import TypedStateReader, insert_owners, schema_sql
@@ -64,7 +62,7 @@ def projection_factory():
             connection,
             parsed=parse_static_owners(sources, accepted=coordinate),
             blobs=sources,
-            codec=artifact_codec_for_compiler(coordinate.compiler),
+            codec=CURRENT_ARTIFACT_CODEC,
         )
         blobs = {
             oid: (path, sources[path])

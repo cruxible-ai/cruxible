@@ -60,9 +60,7 @@ _MINIMAL = {
 
 
 def _lower(record: dict[str, object], tree: dict[str, bytes] | None = None):  # type: ignore[no-untyped-def]
-    return lower_claim_type_input(
-        ClaimTypeInputRecord.model_validate(record), tree=tree or {}, identity_rules=True
-    )
+    return lower_claim_type_input(ClaimTypeInputRecord.model_validate(record), tree=tree or {})
 
 
 def test_a_minimal_claim_type_and_its_spelled_out_form_are_one_digest() -> None:
@@ -81,7 +79,7 @@ def test_a_minimal_claim_type_and_its_spelled_out_form_are_one_digest() -> None:
     assert rule["capture_contracts"] == ["cruxible.coordinator-self-source-v1"]
     lowered = _lower(_MINIMAL)
     assert claim_type_digest(lowered) == claim_type_digest(
-        lower_claim_type_input(expanded, tree={}, identity_rules=True)
+        lower_claim_type_input(expanded, tree={})
     )
     (stored,) = lowered.evidence_admission_policy.rules  # type: ignore[union-attr]
     assert stored.capture_contracts[0].target.name == COORDINATOR_SELF_SOURCE_CONTRACT_ID
@@ -193,7 +191,7 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
     assert dumped == {"predicate": "project.work_item.status", "cardinality": "one"}
     assert "evidence_admission_policy" not in dumped
     assert "playbill." not in str(claim_type_input_template(expanded=True).model_dump())
-    lowered = lower_claim_type_input(template, tree={}, identity_rules=True)
+    lowered = lower_claim_type_input(template, tree={})
     assert lowered.artifact_format == "playbill-claim-type-v8"
     v7 = KeyClaimTypeShape(
         predicate=template.predicate,
@@ -446,9 +444,7 @@ def test_security_kit_full_claim_type_keeps_identical_bytes() -> None:
             exclude={"artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"},
         )
     )
-    assert (
-        render_claim_type(lower_claim_type_input(record, tree={}, identity_rules=True)) == original
-    )
+    assert render_claim_type(lower_claim_type_input(record, tree={})) == original
 
 
 def test_minimal_input_lints_description_and_undeclared_inferred_kind(tmp_path: Path) -> None:

@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
 from cruxible_client.contracts.approval_policy import (
@@ -25,6 +25,7 @@ from cruxible_client.contracts.approval_policy import (
 )
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
     ArtifactCodec,
     artifact_path_for_codec,
     canonical_bytes,
@@ -39,7 +40,6 @@ from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.content_memo import sealed_derive
-from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
@@ -1115,9 +1115,7 @@ class TypedStateReader:
 
     @property
     def codec(self) -> ArtifactCodec:
-        from cruxible_core.compiler.compiler import artifact_codec_for_compiler
-
-        return artifact_codec_for_compiler(self.accepted.compiler)
+        return CURRENT_ARTIFACT_CODEC
 
     def member_bytes(self, path: str) -> bytes:
         self.prefetch_members((path,))
@@ -1402,53 +1400,25 @@ class TypedStateReader:
 
     def dependency_state(self, identity: str) -> ArtifactDependencyStateV1 | None:
         """Read one exact selected owner contract, preserving role-bearing pins."""
-        from cruxible_client.contracts.documents import DocumentArtifactAdapter
-        from cruxible_core.claims.closure import ArtifactDependencyStateV1
+        from cruxible_core.claims.closure import parse_dependency_artifact
 
         row = self.envelope(identity)
         if row is None or row.kind not in OWNER_BY_KIND:
             return None
-        from cruxible_client.contracts.canonical import ArtifactCodec
-
-        if self.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row.kind == "attestation":
-            from cruxible_core.claims.closure import parse_dependency_artifact
-            from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-            state = parse_dependency_artifact(
-                row.path,
-                self.member_bytes(row.path),
-                by_name=self.accepted.compiler == LIGHT_ARTIFACTS_COMPILER,
-            )
-            if state is None or (
-                state.artifact_kind,
-                state.artifact_tag,
-                state.artifact_digest,
-            ) != (row.kind, row.format_tag, row.artifact_digest):
-                raise ProjectionIntegrityError("dependency state differs from its selected owner")
-            return state
-        source = OWNER_BY_KIND[row.kind].parse(
-            self.member_bytes(row.path), path=row.path, codec=self.codec
-        )
-        adapted = DocumentArtifactAdapter(source) if row.kind == "document" else source
-        return ArtifactDependencyStateV1(
-            path=row.path,
-            artifact_kind=cast(Any, row.kind),
-            artifact_tag=row.format_tag,
-            identity=adapted.identity,
-            artifact_digest=row.artifact_digest,
-            pins=dependency_pins(adapted),
-            lifecycle=adapted.lifecycle,
-        )
+        state = parse_dependency_artifact(row.path, self.member_bytes(row.path), by_name=True)
+        if state is None or (
+            state.artifact_kind,
+            state.artifact_tag,
+            state.artifact_digest,
+        ) != (row.kind, row.format_tag, row.artifact_digest):
+            raise ProjectionIntegrityError("dependency state differs from its selected owner")
+        return state
 
     def principal_registry(self) -> PrincipalRegistrySnapshot:
         return principal_registry(self.connection, self.accepted.semantic_root)
 
     def _compile_paths(self, paths: tuple[str, ...]) -> ParsedProjectionTree:
         from cruxible_client.contracts.projection import AcceptedCoordinate
-        from cruxible_core.compiler.compiler import (
-            artifact_kinds_for_compiler,
-            projection_registry_for_compiler,
-        )
         from cruxible_core.compiler.projection_artifacts import parse_projection_tree
         from cruxible_core.indexes.projection import AssemblerRequest
         from cruxible_core.proposals.settlement import parse_change_set_record
@@ -1501,8 +1471,6 @@ class TypedStateReader:
         )
         return parse_projection_tree(
             {path: self.member_bytes(path) for path in paths},
-            registry=projection_registry_for_compiler(self.accepted.compiler),
-            artifact_kinds=artifact_kinds_for_compiler(self.accepted.compiler),
             artifact_codec=self.codec,
             bodies=self.bodies,
             coordinate=request,

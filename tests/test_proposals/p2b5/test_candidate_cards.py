@@ -19,8 +19,6 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
-from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
-from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     candidate_card_path,
@@ -65,7 +63,6 @@ def test_cards_cover_changes_removals_and_renames_without_semantic_authority() -
         base_tree=base,
         candidate_tree=candidate,
         coordinate="a" * 40,
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
 
     assert rendered[candidate_card_path(old)] == b"removed at " + b"a" * 40 + b"\n"
@@ -79,7 +76,6 @@ def test_cards_cover_changes_removals_and_renames_without_semantic_authority() -
             base_tree=base,
             candidate_tree=rendered,
             coordinate="a" * 40,
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
         )
         == rendered
     )
@@ -100,7 +96,6 @@ def test_card_rederivation_replaces_missing_stale_and_extra_derivatives() -> Non
         base_tree=base,
         candidate_tree=candidate,
         coordinate="b" * 40,
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
     card = candidate_card_path(path)
     variants = (
@@ -116,7 +111,6 @@ def test_card_rederivation_replaces_missing_stale_and_extra_derivatives() -> Non
                 base_tree=base,
                 candidate_tree=variant,
                 coordinate="b" * 40,
-                artifact_kinds=P2_C_ARTIFACT_KINDS,
             )
             == rendered
         )
@@ -138,7 +132,6 @@ def test_derivation_skips_a_member_the_evaluator_will_refuse_typed() -> None:
         base_tree={},
         candidate_tree=candidate,
         coordinate="c" * 40,
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
 
     assert candidate_card_path(bad) not in rendered
@@ -182,7 +175,6 @@ def test_proposal_admission_admits_card_paths_and_re_derives_their_bytes() -> No
             base_tree=base,
             candidate_tree=caller_tree,
             coordinate="d" * 40,
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
         )
         assert b"# procedure: demo-v2" in derived[card_path]
         assert b"caller-authored" not in derived[card_path]
@@ -304,7 +296,6 @@ def test_forged_cards_never_reach_the_evaluated_or_accepted_tree(
     expected_other_card = render_candidate_card(
         OTHER_DOCUMENT_PATH,
         other,
-        artifact_kinds=artifact_kinds_for_compiler(instance.accepted_coordinate().compiler),
     )
     forged_markers = (CALLER_MARKER, TOMBSTONE_LIE)
 

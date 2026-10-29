@@ -64,7 +64,6 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
-from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
@@ -406,7 +405,7 @@ def _world_holding_a_document(
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
     """One instance whose accepted tree governs a single Document."""
 
-    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     body = instance.store_document_body(b"# Accepted design\n")
     shell = DocumentShell(
         identity="document:design",
@@ -583,7 +582,7 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
 def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_legacy_local(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     tokens = iter(f"{value:032x}" for value in range(1, 20))
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -702,7 +701,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
 def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
     tmp_path: Path,
 ) -> None:
-    instance, owner = initialize_legacy_local(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     query_v1 = _change_set_query(named=False)
@@ -1390,7 +1389,7 @@ def _accepted_authoring_trio(tmp_path, *, historical=False):
         authoring_member_identity,
     )
 
-    instance, owner = (initialize_legacy_local if historical else initialize_local)(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     procedure = _list_contract_payload()

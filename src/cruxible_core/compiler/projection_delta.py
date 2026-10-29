@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 _LOCAL_KINDS = frozenset(
     {
         "attestation",
-        "blueprint",
         "contract",
         "exhaust-promotion",
         "resolution-contract",
@@ -159,7 +158,6 @@ def populate_successor(
                 head_oid=request.git_oid,
                 parent_inventory=projection_tree_inventory(parent),
                 limits=request.limits,
-                artifact_kinds=assembler.artifact_kinds,
                 include_paths=members | {bundle.record_path},
             )
             result = {blob.path: blob.content for blob in blobs}
@@ -179,8 +177,6 @@ def populate_successor(
             "parse_normalize",
             lambda: parse_projection_tree(
                 {p: body for p, body in inputs.items() if p in members},
-                registry=assembler.registry,
-                artifact_kinds=assembler.artifact_kinds,
                 artifact_codec=assembler.artifact_codec,
                 bodies=assembler.bodies,
                 coordinate=request,

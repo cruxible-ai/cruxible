@@ -4,7 +4,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_core.authoring.lowering import _reference_path
-from cruxible_core.compiler.compiler import artifact_kinds_for_compiler, current_compiler_coordinate
+from cruxible_core.compiler.compiler import ARTIFACT_KINDS
 
 # Registry path kinds and wire identity kinds deliberately have different names.
 # Each referenceable kind needs a real, canonical identity and its exact path.
@@ -39,7 +39,7 @@ NOT_REFERENCEABLE = {
 
 
 def test_every_registered_projected_kind_has_a_reference_path_decision() -> None:
-    registry = artifact_kinds_for_compiler(current_compiler_coordinate())
+    registry = ARTIFACT_KINDS
     registered = {entry.kind for entry in registry.entries()}
     assert not REFERENCEABLE.keys() & NOT_REFERENCEABLE.keys()
     assert REFERENCEABLE.keys() | NOT_REFERENCEABLE.keys() == registered
@@ -51,5 +51,5 @@ def test_referenceable_kind_resolves_its_exact_registered_path(kind: str) -> Non
     identity, expected = REFERENCEABLE[kind]
     path = _reference_path(parse_artifact_identity(identity))
     assert path == expected
-    registry = artifact_kinds_for_compiler(current_compiler_coordinate())
+    registry = ARTIFACT_KINDS
     assert registry.resolve_path(path) == kind

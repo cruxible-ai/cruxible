@@ -21,7 +21,6 @@ from cruxible_client.contracts.shapes import (
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError
-from cruxible_core.compiler.compiler import artifact_kinds_for_compiler, current_compiler_coordinate
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -92,11 +91,7 @@ def _accepted_tree(instance: PlaybillInstance) -> dict[str, bytes]:
 
 
 def test_the_contract_path_is_registered() -> None:
-    registry = artifact_kinds_for_compiler(current_compiler_coordinate())
-    assert (
-        registered_path_kind("contracts/security.epss-row/v1.json", artifact_kinds=registry)
-        == "contract"
-    )
+    assert registered_path_kind("contracts/security.epss-row/v1.json") == "contract"
 
 
 def test_a_contract_and_its_successor_are_accepted(tmp_path: Path) -> None:

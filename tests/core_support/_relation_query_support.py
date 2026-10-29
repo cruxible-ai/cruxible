@@ -44,7 +44,7 @@ from tests.core_support._claim_authoring_support import (
     service_propose_playbill_claim,
 )
 from tests.core_support._knowledge_loop_support import PREDICATE, SUBJECT_KIND, activate
-from tests.core_support._subject_kind_support import declare_created_kinds, world_history
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material
 from tests.test_ledger.test_activation import _sign
 
@@ -102,7 +102,6 @@ def _shell(kind: str, subject_id: str) -> SubjectShell:
     )
 
 
-@world_history
 def _accept_vocabulary(instance: PlaybillInstance, claim_types: tuple[ClaimType, ...]) -> None:
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)

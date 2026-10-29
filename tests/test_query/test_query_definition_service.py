@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
@@ -19,12 +18,10 @@ from cruxible_core.service.discovery.query_definitions import (
 )
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
-    PREDICATE,
     QUERY_NAME,
     TIMESTAMP,
     accept_proposal,
     seed_claims,
-    seed_claims_into,
     work_item_query,
 )
 
@@ -60,37 +57,6 @@ def test_absent_query_definition_is_refused_rather_than_returned_empty(tmp_path:
 
     with pytest.raises(ClaimNotFoundError):
         service_get_playbill_query_definition(instance, name="project.absent_query")
-
-
-def test_claim_type_pin_that_does_not_resolve_at_the_base_is_refused(tmp_path: Path) -> None:
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
-
-    instance, owner = initialize_legacy_local(tmp_path)
-    seed_claims_into(instance, owner)
-    stale = work_item_query(named=False).model_copy(
-        update={
-            "pins": (
-                ArtifactPin(
-                    role="claim-type",
-                    target=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
-                    artifact_digest="sha256:" + "11" * 32,
-                ),
-            )
-        }
-    )
-
-    refused = submit_query_definition_candidate(
-        instance,
-        query=stale,
-        actor_id="owner",
-        proposal_name="query-stale-pin",
-        timestamp=TIMESTAMP,
-    )
-
-    assert refused.proposal.candidate is None
-    assert [item.code for item in refused.proposal.evaluation.diagnostics] == [
-        "cruxible.change_set.unresolved_pin"
-    ]
 
 
 def test_query_definition_read_is_pinned_to_the_requested_accepted_coordinate(

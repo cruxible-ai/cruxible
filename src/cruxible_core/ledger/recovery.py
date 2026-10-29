@@ -47,7 +47,6 @@ from cruxible_client.contracts.types import (
     GitObjectFormat,
 )
 from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER, PC_HR_ARTIFACT_CODEC_COMPILERS
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_state import row_values
 from cruxible_core.indexes.projection import (
@@ -901,9 +900,7 @@ def _clean_unaccepted_generations(
                 window=_GenerationWindow(
                     generation=parent,
                     tree=parent_tree,
-                    state=build_tree_state(
-                        parent_tree, by_name=parent.compiler == LIGHT_ARTIFACTS_COMPILER
-                    ),
+                    state=build_tree_state(parent_tree, by_name=True),
                 ),
                 repository_path=repository_path,
                 object_format=object_format,
@@ -1109,9 +1106,7 @@ def recover_instance(
         window = _GenerationWindow(
             generation=genesis_generation,
             tree=genesis.tree,
-            state=build_tree_state(
-                genesis.tree, by_name=genesis_generation.compiler == LIGHT_ARTIFACTS_COMPILER
-            ),
+            state=build_tree_state(genesis.tree, by_name=True),
         )
     else:
         history = [
@@ -1260,24 +1255,18 @@ def recover_instance(
                     generation.oid,
                     render_generation_descriptor(generation.descriptor),
                 )
-    projection: AssemblerResult | None = None
-    # Current genesis has typed principal/policy readers too. Frozen compact
-    # compilers predate that publication contract: their separately verified
-    # bootstrap paths need not fit their artifact registry. Preserve their
-    # original genesis recovery; their write gate already requires reseeding.
-    if head.sequence > 0 or compiler in PC_HR_ARTIFACT_CODEC_COMPILERS:
-        projection = _projection_for_head(
-            ledger,
-            coordinate=coordinate,
-            history=recovered_history,
-            publication_directory=publication_directory,
-            bodies=bodies,
-        )
-        _repair_serving(
-            publication_directory,
-            coordinate=coordinate,
-            projection=projection,
-        )
+    projection = _projection_for_head(
+        ledger,
+        coordinate=coordinate,
+        history=recovered_history,
+        publication_directory=publication_directory,
+        bodies=bodies,
+    )
+    _repair_serving(
+        publication_directory,
+        coordinate=coordinate,
+        projection=projection,
+    )
     if witness is not None:
         _repair_witness(
             recovered_history,

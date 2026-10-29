@@ -264,31 +264,23 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
         # is meant to be reached, not a test-shape guess.
     ],
 )
-def test_new_formats_are_admitted_only_at_compiler_36_and_old_bytes_remain_verifiable(
-    path, old, new
-):
+def test_new_artifacts_take_the_named_format_and_recorded_old_bytes_still_replay(path, old, new):
     from types import SimpleNamespace
 
     from cruxible_client.contracts.errors import FormatError
     from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
     from cruxible_core.proposals.proposals import _installed
 
-    def context(compiler):
-        return SimpleNamespace(
-            path=path,
-            current=SimpleNamespace(compiler=compiler),
-            acceptance_laws=ACCEPTANCE_LAWS,
-            historical_law_coordinate=None,
-            rechecking=False,
-        )
-
-    before, current = context(CLAIM_REBIND_COMPILER), context(LIGHT_ARTIFACTS_COMPILER)
-    assert _installed(before, old).artifact_tag == old
+    current = SimpleNamespace(
+        path=path,
+        current=SimpleNamespace(compiler=CURRENT_COMPILER),
+        acceptance_laws=ACCEPTANCE_LAWS,
+        historical_law_coordinate=None,
+        rechecking=False,
+    )
     assert _installed(current, new).artifact_tag == new
-    with pytest.raises(FormatError, match="upgrade the compiler"):
-        _installed(before, new)
-    with pytest.raises(FormatError, match="upgrade the compiler"):
+    with pytest.raises(FormatError, match=f"require {new}"):
         _installed(current, old)
     law = ACCEPTANCE_LAWS.resolve_member(artifact_tag=old)
     current.historical_law_coordinate = (law.coordinate.identifier, law.coordinate.digest)
@@ -325,7 +317,7 @@ def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface()
     )
     payload = lower_authoring_input(input_)
     assert name_query(payload.query_definition) == named
-    path, content, _ = _render_non_procedure_member(payload, tree=tree, light=True)
+    path, content, _ = _render_non_procedure_member(payload, tree=tree)
     assert path == "query-definitions/claims-by-status.json"
     assert content == render_query_definition(named)
 
@@ -432,9 +424,8 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
     from cruxible_core.authoring.store import AuthoringIntentStore
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
 
-    initialize = initialize_legacy_local if historical else initialize_local
+    initialize = initialize_local
     instance, _ = initialize(tmp_path)
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -637,8 +628,8 @@ def test_named_trigger_noop_keeps_accepted_bytes():
         action="evidence.sweep",
         schedule=CadenceSchedule(interval_seconds=60),
     )
-    path, content, digest = _render_trigger_member(payload, tree={}, light=True)
-    assert _render_trigger_member(payload, tree={path: content}, light=True) == (
+    path, content, digest = _render_trigger_member(payload, tree={})
+    assert _render_trigger_member(payload, tree={path: content}) == (
         path,
         content,
         digest,

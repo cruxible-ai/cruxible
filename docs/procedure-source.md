@@ -1528,9 +1528,8 @@ parse its entries or author exposure Claims.
 ### Consume the Capture that triggered a Line
 
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
-Capture to the Procedure's Source alias `feed`. Every new Line authors as
-Line v6 under compiler revision 32, and declares the exact event that input
-accepts: the Source's CaptureContract. Once enabled, a Line runs on the
+Capture to the Procedure's Source alias `feed`. Every new Line declares the
+exact event that input accepts: the Source's CaptureContract. Once enabled, a Line runs on the
 Triggers aimed at it (a Trigger aimed at a Line that is not enabled does
 nothing); `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
 `schedule` is a `CadenceSchedule`, `CronSchedule(expression=...)`,

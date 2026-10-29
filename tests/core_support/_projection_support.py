@@ -13,11 +13,11 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
 from cruxible_client.contracts.types import CompilerCoordinate, GitObjectFormat
-from cruxible_core.compiler.compiler import P2_B5_COMPILER
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.ledger.git import GitTreeEntry
 
-COMPILER_DIGEST = P2_B5_COMPILER.rule_digest
+COMPILER_DIGEST = CURRENT_COMPILER.rule_digest
 SEMANTIC_ROOT = SemanticRoot("11" * 32).tagged
 
 

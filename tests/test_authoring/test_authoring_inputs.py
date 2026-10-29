@@ -237,9 +237,8 @@ def test_create_and_compile_refuse_working_selection_with_bind_repair(
 
 
 def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: Path) -> None:
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
 
-    instance, _owner = initialize_legacy_local(tmp_path)
+    instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
     definition = _triage_definition()
 
@@ -355,7 +354,6 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     lowered = lower_claim_type_input(
         source_intent,
         tree=instance.tree_at(instance.accepted_coordinate().git_oid),
-        identity_rules=True,
     )
     assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
 
@@ -525,8 +523,8 @@ def test_claim_type_input_preserves_optional_freshness_in_v8() -> None:
         }
     )
 
-    plain = lower_claim_type_input(original, tree={}, identity_rules=True)
-    governed = lower_claim_type_input(fresh, tree={}, identity_rules=True)
+    plain = lower_claim_type_input(original, tree={})
+    governed = lower_claim_type_input(fresh, tree={})
 
     assert plain.artifact_format == "playbill-claim-type-v8"
     assert plain.evidence_freshness is None
@@ -554,7 +552,6 @@ def test_claim_type_input_preserves_attestation_consequences_in_v8() -> None:
             }
         ),
         tree={},
-        identity_rules=True,
     )
 
     assert governed.artifact_format == "playbill-claim-type-v8"
@@ -582,7 +579,7 @@ def test_claim_type_input_refuses_producer_authorization() -> None:
         }
     )
     with pytest.raises(ClaimTypeInputValidationError, match="allowed_reducer_digests"):
-        lower_claim_type_input(producer_bound, tree={}, identity_rules=True)
+        lower_claim_type_input(producer_bound, tree={})
 
 
 def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
@@ -735,7 +732,6 @@ def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> Non
     key = lower_claim_type_input(
         ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
         tree={},
-        identity_rules=True,
     )
     payload = lower_authoring_input(
         ChangeSetInput(
@@ -771,7 +767,6 @@ def test_subject_kind_and_claim_type_description_lints_reach_preflight(tmp_path:
     key = lower_claim_type_input(
         ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
         tree={},
-        identity_rules=True,
     )
     for described in (False, True):
         definition = key.model_copy(update={"description": "A part's name."}) if described else key

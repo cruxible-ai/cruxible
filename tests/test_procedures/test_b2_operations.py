@@ -996,7 +996,7 @@ def _severity_claim_type():  # type: ignore[no-untyped-def]
             "literal_schema": {"type": "string", "enum": ["low", "high"]},
         }
     )
-    return lower_claim_type_input(record, tree={}, identity_rules=True)
+    return lower_claim_type_input(record, tree={})
 
 
 def _severity_world(tmp_path):  # type: ignore[no-untyped-def]

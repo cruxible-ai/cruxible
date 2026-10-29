@@ -22,7 +22,6 @@ import pytest
 
 import cruxible_core.runtime.instance as instance_module
 import tests.core_support._support as support_module
-from cruxible_core.compiler.compiler import P2_B5_COMPILER
 from cruxible_core.ledger.checkpoints import CHECKPOINT_DIRECTORY
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -249,10 +248,23 @@ def test_the_suites_autouse_isolation_patches_leave_templates_on(tmp_path: Path)
 def test_a_runtime_patched_before_the_build_gets_a_fresh_world(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(instance_module, "current_compiler_coordinate", lambda: P2_B5_COMPILER)
+    from cruxible_client.contracts.procedure_runtime_policy import (
+        PROCEDURE_RUNTIME_POLICY_PATH,
+        ProcedureRuntimePolicy,
+        parse_procedure_runtime_policy,
+    )
+
+    patched = ProcedureRuntimePolicy(provider_output_bytes_cap=4096)
+    monkeypatch.setattr(instance_module, "seeded_procedure_runtime_policy", lambda: patched)
     instance, _owner = initialize_local(tmp_path)
 
-    assert instance.descriptor.compiler == P2_B5_COMPILER
+    genesis = instance._verified_genesis.tree
+    assert (
+        parse_procedure_runtime_policy(
+            genesis[PROCEDURE_RUNTIME_POLICY_PATH], path=PROCEDURE_RUNTIME_POLICY_PATH
+        )
+        == patched
+    )
 
 
 def test_a_git_environment_change_gets_a_fresh_world(

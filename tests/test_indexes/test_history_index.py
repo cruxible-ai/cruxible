@@ -198,22 +198,13 @@ def test_instance_projection_parity_and_warm_no_history_source_work(seeded, monk
     # Cold oracle uses frozen compiler row derivation directly from retained Git.
     from types import SimpleNamespace
 
-    from cruxible_core.compiler.compiler import (
-        artifact_codec_for_compiler,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
-    compiler = instance.descriptor.compiler
     expected = []
     for n, generation in enumerate(instance.accepted_history()):
         at = instance.coordinate_for_oid(generation.oid)
         parsed = parse_projection_tree(
             instance.tree_at(generation.oid),
-            registry=projection_registry_for_compiler(compiler),
-            artifact_kinds=artifact_kinds_for_compiler(compiler),
-            artifact_codec=artifact_codec_for_compiler(compiler),
             bodies=instance.body_store(),
             coordinate=SimpleNamespace(
                 **AcceptedCoordinate.from_internal(at).model_dump(),

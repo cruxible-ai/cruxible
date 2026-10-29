@@ -344,7 +344,7 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
         "predicate",
         "cardinality",
     }
-    lowered = lower_claim_type_input(rendered, tree={}, identity_rules=True)
+    lowered = lower_claim_type_input(rendered, tree={})
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"
     assert lowered.artifact_format == "playbill-claim-type-v8"
     assert lowered.evidence_admission_policy.rules[0].rule_id == "self"

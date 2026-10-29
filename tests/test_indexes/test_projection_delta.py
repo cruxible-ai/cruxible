@@ -105,7 +105,6 @@ def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_pa
             assembler._repository,
             accepted=assembler.accepted,
             publication_directory=directory,
-            registry=assembler.registry,
             bodies=assembler.bodies,
             accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
         )

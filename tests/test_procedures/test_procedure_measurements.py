@@ -40,12 +40,7 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.compiler.compiler import (
-    GOVERNED_TRIGGERS_COMPILER,
-    projection_registry_for_compiler,
-)
 from cruxible_core.compiler.projection_artifacts import (
-    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
     parse_projection_tree,
 )
 from tests.support.procedures import owned_contract, owned_pin, procedure_artifact
@@ -249,8 +244,6 @@ def test_measurements_are_projected_from_the_typed_field_not_annotations() -> No
     path = "procedures/measured-procedure.json"
     projection = parse_projection_tree(
         {path: render_procedure(procedure)},
-        registry=projection_registry_for_compiler(GOVERNED_TRIGGERS_COMPILER),
-        artifact_kinds=GOVERNED_TRIGGERS_ARTIFACT_KINDS,
     )
     fact = next(
         item

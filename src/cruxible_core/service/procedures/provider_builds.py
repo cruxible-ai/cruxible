@@ -22,7 +22,6 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.build_moves import Mover, build_move, settle_changes
 from cruxible_core.providers.builds import (
@@ -156,9 +155,7 @@ def service_retire_provider(
                 ),
                 coordinate=AcceptedCoordinate.from_internal(mode.head),
             )
-        retired = _retired_provider(
-            provider, by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
-        )
+        retired = _retired_provider(provider, by_name=True)
         status, proposal_id, approval, detail = _submit(
             instance, mode, {path: render_provider(retired)}, actor_id=actor_id, timestamp=timestamp
         )
@@ -237,7 +234,7 @@ def service_move_provider(
                 connection=connection,
                 movers=movers,
                 moves=moves,
-                by_name=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER,
+                by_name=True,
             )
         if settled.refused or any(item.action == "refused" for item in settled.repins):
             status, proposal_id, approval, detail = (

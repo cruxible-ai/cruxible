@@ -54,8 +54,8 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.projection_extensions import (
-    ProjectionExtensionRegistry,
     ProjectionFact,
+    current_extension_registry,
 )
 from cruxible_client.contracts.semantic import (
     ContentSpan,
@@ -78,198 +78,44 @@ if TYPE_CHECKING:
     from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-P2_B0_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        ArtifactPathKind(
-            "approval-policy",
-            re.compile(r"^governance/approval-policy\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "procedure-runtime-policy",
-            re.compile(r"^governance/procedure-runtime-policy\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "principal",
-            re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "document",
-            re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "subject",
-            re.compile(
-                r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
-                r"[a-z][a-z0-9_.-]{0,255}\.yaml$"
-            ),
-        ),
-        ArtifactPathKind(
-            "claim-type",
-            re.compile(
-                r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
-                r"[a-z][a-z0-9_]{0,63}\.yaml$"
-            ),
-        ),
-        ArtifactPathKind(
-            "capture-contract",
-            re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "provider",
-            re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "source-acquisition-policy",
-            re.compile(r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "claim",
-            re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "procedure",
-            re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "line",
-            re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "query-definition",
-            re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "exhaust-promotion",
-            re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-        ),
-        ArtifactPathKind(
-            "changeset",
-            re.compile(r"^changesets/cs-[0-9]{20}\.json$"),
-        ),
-    )
-)
-PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
+_NAME = r"[a-z][a-z0-9_.-]{0,255}"
+_DOTTED = r"[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*"
+#: The current compiler's closed ledger path grammar: every accepted path
+#: resolves to exactly one of these kinds or refuses.
+ARTIFACT_KINDS = ArtifactKindRegistry(
     tuple(
-        ArtifactPathKind(
-            entry.kind,
-            re.compile(entry.pattern.pattern.replace(r"\.yaml", r"\.json")),
+        ArtifactPathKind(kind, re.compile(pattern))
+        for kind, pattern in (
+            ("approval-policy", r"^governance/approval-policy\.json$"),
+            ("attestation", r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$"),
+            ("capture-contract", rf"^capture-contracts/{_NAME}\.json$"),
+            ("changeset", r"^changesets/cs-[0-9]{20}\.json$"),
+            ("claim", r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$"),
+            ("claim-type", rf"^claim-types/{_DOTTED}/[a-z][a-z0-9_]{{0,63}}\.json$"),
+            ("compiler-upgrade", r"^compiler-upgrade\.json$"),
+            ("contract", r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$"),
+            ("document", rf"^documents/{_NAME}\.json$"),
+            ("exhaust-promotion", rf"^exhaust-promotions/{_NAME}\.json$"),
+            ("line", rf"^lines/{_NAME}\.json$"),
+            ("principal", r"^principals/[a-z][a-z0-9_.-]{0,127}\.json$"),
+            ("procedure", rf"^procedures/{_NAME}\.json$"),
+            ("procedure-mandate", rf"^procedure-mandates/{_NAME}\.json$"),
+            ("procedure-runtime-policy", r"^governance/procedure-runtime-policy\.json$"),
+            # A build is its own artifact beside the other builds of its name; a
+            # single-path Provider (the built-in) is one build of its name.
+            ("provider", rf"^providers/{_NAME}(?:/[0-9a-f]{{64}})?\.json$"),
+            ("query-definition", rf"^query-definitions/{_NAME}\.json$"),
+            ("resolution-contract", rf"^resolution-contracts/{_NAME}\.json$"),
+            ("subject", rf"^subjects/{_DOTTED}/{_NAME}\.json$"),
+            ("subject-kind", rf"^subject-kinds/{_DOTTED}\.json$"),
+            ("trigger", rf"^triggers/{_NAME}\.json$"),
         )
-        for entry in P2_B0_ARTIFACT_KINDS.entries()
-    )
-)
-P2_B1_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *PLAYBILL_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind(
-            "provider-interface",
-            re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}\.json$"),
-        ),
-    )
-)
-P2_C_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *P2_B1_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind(
-            "procedure-mandate",
-            re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$"),
-        ),
-    )
-)
-
-ATTESTATION_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *P2_C_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind(
-            "attestation", re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
-        ),
-    )
-)
-
-RESOLUTION_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *ATTESTATION_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind(
-            "resolution-contract",
-            re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
-        ),
-    )
-)
-
-ONTOLOGY_ARTIFACT_KINDS = ArtifactKindRegistry(RESOLUTION_ARTIFACT_KINDS.entries())
-UPGRADE_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *ONTOLOGY_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind("compiler-upgrade", re.compile(r"^compiler-upgrade\.json$")),
-    )
-)
-
-PROVIDER_CONTRACT_ARTIFACT_KINDS = ArtifactKindRegistry(UPGRADE_ARTIFACT_KINDS.entries())
-PROVIDER_PACKAGE_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_CONTRACT_ARTIFACT_KINDS.entries())
-RESOURCE_BUDGET_ARTIFACT_KINDS = ArtifactKindRegistry(PROVIDER_PACKAGE_ARTIFACT_KINDS.entries())
-SDK_SOURCE_ARTIFACT_KINDS = ArtifactKindRegistry(RESOURCE_BUDGET_ARTIFACT_KINDS.entries())
-CLAIM_EVIDENCE_ARTIFACT_KINDS = ArtifactKindRegistry(SDK_SOURCE_ARTIFACT_KINDS.entries())
-SOURCE_CHECKED_ARTIFACT_KINDS = ArtifactKindRegistry(CLAIM_EVIDENCE_ARTIFACT_KINDS.entries())
-TRIGGER_CAPTURE_ARTIFACT_KINDS = ArtifactKindRegistry(SOURCE_CHECKED_ARTIFACT_KINDS.entries())
-AUTHORITY_VERBS_ARTIFACT_KINDS = ArtifactKindRegistry(TRIGGER_CAPTURE_ARTIFACT_KINDS.entries())
-GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *AUTHORITY_VERBS_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind("trigger", re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")),
-        ArtifactPathKind("blueprint", re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")),
-    )
-)
-# Revision 33: SubjectKinds declare how core names each kind's Subjects, and the
-# candidate boundary holds every new Subject to its kind's rule.
-SUBJECT_IDENTITY_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *GOVERNED_TRIGGERS_ARTIFACT_KINDS.entries(),
-        ArtifactPathKind(
-            "subject-kind",
-            re.compile(r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"),
-        ),
     )
 )
 
 
-# Revision 34: several builds per provider name. Both forms of a provider path
-# are registered: a single-path Provider (the built-in) stays one build of its
-# name. Revisions 34 to 36 never shipped: their grammar holds no
-# ProviderInterface, Blueprint or SourceAcquisitionPolicy (a build declares
-# typed operations, a Procedure declares slots a Line binds, and a Line and its
-# Procedure carry the acquisition rules).
-_RETIRED_KINDS = frozenset({"provider-interface", "blueprint", "source-acquisition-policy"})
-
-
-def _with_build_paths(entry: ArtifactPathKind) -> ArtifactPathKind:
-    if entry.kind == "provider":
-        return ArtifactPathKind(
-            "provider",
-            re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"),
-        )
-    return entry
-
-
-PROVIDER_BUILDS_ARTIFACT_KINDS = ArtifactKindRegistry(
-    (
-        *(
-            _with_build_paths(entry)
-            for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries()
-            if entry.kind not in _RETIRED_KINDS
-        ),
-        # One immutable data shape per version. The path parses under revisions
-        # 34 and 35, which share this grammar; only revision 36 admits a Contract.
-        ArtifactPathKind(
-            "contract",
-            re.compile(r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$"),
-        ),
-    )
-)
-_REVISION_32_AND_LATER = (
-    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-    PROVIDER_BUILDS_ARTIFACT_KINDS,
-)
-_REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, *_REVISION_32_AND_LATER)
+#: The current compiler's closed fact-schema registry.
+PROJECTION_REGISTRY = current_extension_registry()
 
 
 RegisteredPathKind = Literal[
@@ -325,12 +171,8 @@ class ParsedProjectionTree:
     semantic_facts: tuple[ProjectionFact, ...]
 
 
-def registered_path_kind(
-    path: str,
-    *,
-    artifact_kinds: ArtifactKindRegistry,
-) -> RegisteredPathKind:
-    return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
+def registered_path_kind(path: str) -> RegisteredPathKind:
+    return cast(RegisteredPathKind, ARTIFACT_KINDS.resolve_path(path))
 
 
 class _IndexedRecords(tuple):  # type: ignore[type-arg]
@@ -601,28 +443,9 @@ def _claim_static_facts(
     return tuple(facts)
 
 
-def _requires_resource_budgets(value: object) -> bool:
-    if isinstance(value, dict):
-        return any(
-            (key == "max_result_bytes" and item is not None)
-            or (
-                key in {"max_repeat_attempts", "max_attempts"}
-                and isinstance(item, int)
-                and item > 25
-            )
-            or _requires_resource_budgets(item)
-            for key, item in value.items()
-        )
-    return isinstance(value, (list, tuple)) and any(
-        _requires_resource_budgets(item) for item in value
-    )
-
-
 def parse_projection_tree(
     blobs: Mapping[str, bytes],
     *,
-    registry: ProjectionExtensionRegistry,
-    artifact_kinds: ArtifactKindRegistry,
     artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
@@ -632,18 +455,10 @@ def parse_projection_tree(
     carry_members: bool = False,
     by_name: bool = False,
 ) -> ParsedProjectionTree:
-    """Parse all registered blobs and produce one sorted, typed row stream.
+    """Parse all registered blobs and produce one sorted, typed row stream."""
 
-    The path grammar is the caller's compiler's, always named: no default can
-    know which artifact kinds a given tree's compiler admits.
-    """
-
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-    by_name = by_name or (
-        coordinate is not None
-        and coordinate.compiler_digest == LIGHT_ARTIFACTS_COMPILER.rule_digest
-    )
+    by_name = by_name or coordinate is not None
+    registry = PROJECTION_REGISTRY
     from cruxible_client.contracts.captures import (
         CaptureFormatError,
         capture_contract_digest,
@@ -675,7 +490,7 @@ def parse_projection_tree(
         for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
             if is_candidate_card_path(path):
                 continue
-            if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
+            if registered_path_kind(path) != "changeset":
                 continue
             content = blobs[path]
             payload = _load_object(content, path=path)
@@ -711,7 +526,7 @@ def parse_projection_tree(
         if is_candidate_card_path(path):
             continue
         content = blobs[path]
-        kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
+        kind = registered_path_kind(path)
         payload = {} if kind == "claim" else _load_object(content, path=path)
         try:
             if kind == "approval-policy":
@@ -736,30 +551,9 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "procedure-runtime-policy":
-                if not registry.supports_artifact_kind(kind):
-                    raise ProjectionFormatError(
-                        "compiler coordinate does not recognize ProcedureRuntimePolicy"
-                    )
                 runtime_policy = parse_procedure_runtime_policy(
                     content, path=path, codec=artifact_codec
                 )
-                if artifact_kinds not in (
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                    PROVIDER_BUILDS_ARTIFACT_KINDS,
-                ) and (
-                    runtime_policy.result_bytes_cap is not None
-                    or runtime_policy.repeat_attempts_cap is not None
-                ):
-                    raise ProjectionFormatError(
-                        "resource policy budgets require compiler revision 26"
-                    )
                 digest = procedure_runtime_policy_digest(runtime_policy).tagged
                 identities[PROCEDURE_RUNTIME_POLICY_IDENTITY] = path
                 envelopes.append(
@@ -779,12 +573,6 @@ def parse_projection_tree(
                     )
                 )
                 continue
-            if kind in _RETIRED_KINDS:
-                raise ProjectionFormatError(
-                    f"{path}: {kind} is not an artifact kind any more; re-import this instance "
-                    "(a build declares operations, a Procedure declares slots, a Line binds "
-                    "them and carries its acquisition rules)"
-                )
             if kind == "contract":
                 from cruxible_client.contracts.shapes import (
                     CONTRACT_PIN_ROLE,
@@ -1067,11 +855,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.document.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_document_explanation_facts(
                             document_identity=document.identity,
@@ -1167,11 +951,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.subject.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_artifact_explanation_facts(
                             artifact_family="subject",
@@ -1194,43 +974,6 @@ def parse_projection_tree(
                     raise ProjectionFormatError(
                         f"registered ClaimType failed strict validation: {path}"
                     ) from exc
-                if (
-                    claim_type.artifact_format == "playbill-claim-type-v6"
-                    and artifact_kinds not in _REVISION_31_AND_LATER
-                ):
-                    raise ProjectionFormatError(
-                        "identity evidence rules (ClaimType v6) require compiler revision 31"
-                    )
-                if (
-                    claim_type.artifact_format
-                    in {"playbill-claim-type-v7", "playbill-claim-type-v8"}
-                    and artifact_kinds not in _REVISION_31_AND_LATER
-                ):
-                    raise ProjectionFormatError("ClaimType v7 and v8 require compiler revision 31")
-                if (
-                    claim_type.artifact_format == "cruxible-claim-type-v9"
-                    and artifact_kinds is not PROVIDER_BUILDS_ARTIFACT_KINDS
-                ):
-                    # Revision 35 admits v9; it shares revision 34's grammar, and
-                    # admission (not this parse) refuses v9 under revision 34.
-                    raise ProjectionFormatError("ClaimType v9 requires compiler revision 35")
-                if (
-                    claim_type.artifact_format == "playbill-claim-type-v5"
-                    and artifact_kinds
-                    not in (
-                        CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                        SOURCE_CHECKED_ARTIFACT_KINDS,
-                        TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                        AUTHORITY_VERBS_ARTIFACT_KINDS,
-                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        PROVIDER_BUILDS_ARTIFACT_KINDS,
-                    )
-                ):
-                    raise ProjectionFormatError(
-                        "producer-independent ClaimTypes require compiler revision 28"
-                    )
                 identity = claim_type.identity.qualified
                 previous = identities.get(identity)
                 if previous is not None:
@@ -1309,11 +1052,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.claim_type.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_artifact_explanation_facts(
                             artifact_family="claim_type",
@@ -1331,7 +1070,6 @@ def parse_projection_tree(
                 continue
             if kind == "provider":
                 from cruxible_client.contracts.providers import (
-                    Provider,
                     ProviderV2,
                     parse_provider,
                     provider_digest,
@@ -1339,21 +1077,6 @@ def parse_projection_tree(
                 )
 
                 provider = parse_provider(content, path=path, codec=artifact_codec)
-                if isinstance(provider, Provider) and artifact_kinds not in (
-                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                    PROVIDER_BUILDS_ARTIFACT_KINDS,
-                ):
-                    raise ProjectionFormatError(
-                        "Provider v3 requires the provider-package compiler"
-                    )
                 identity = provider.identity.qualified
                 previous = identities.get(identity)
                 if previous is not None:
@@ -1466,7 +1189,6 @@ def parse_projection_tree(
                 continue
             if kind == "procedure-mandate":
                 from cruxible_client.contracts.procedure_mandates import (
-                    ProcedureMandate,
                     parse_procedure_mandate_any,
                     procedure_mandate_digest,
                 )
@@ -1474,30 +1196,6 @@ def parse_projection_tree(
                 procedure_mandate = parse_procedure_mandate_any(
                     content, path=path, codec=artifact_codec
                 )
-                if (
-                    isinstance(procedure_mandate, ProcedureMandate)
-                    and artifact_kinds not in _REVISION_31_AND_LATER
-                ):
-                    raise ProjectionFormatError("ProcedureMandate v2 requires compiler revision 31")
-                resources = (
-                    procedure_mandate.resource_ceiling
-                    if isinstance(procedure_mandate, ProcedureMandate)
-                    else procedure_mandate.authority_ceiling
-                )
-                if artifact_kinds not in (
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                    PROVIDER_BUILDS_ARTIFACT_KINDS,
-                ) and _requires_resource_budgets(resources.model_dump(mode="json")):
-                    raise ProjectionFormatError(
-                        "resource mandate budgets require compiler revision 26"
-                    )
                 identity = procedure_mandate.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1554,40 +1252,6 @@ def parse_projection_tree(
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
-                if artifact_kinds not in (
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                    PROVIDER_BUILDS_ARTIFACT_KINDS,
-                ):
-                    raise ProjectionFormatError("graph-v6 Procedures require compiler revision 27")
-                if (
-                    any(
-                        getattr(node, "kind", None) == "settle_change_set"
-                        for node in procedure.definition.nodes
-                    )
-                    and artifact_kinds not in _REVISION_31_AND_LATER
-                ):
-                    raise ProjectionFormatError("settle_change_set requires compiler revision 31")
-                if (
-                    procedure.definition.source is not None
-                    and procedure.definition.source.rules == "cruxible.procedure-source.v2"
-                    and artifact_kinds
-                    not in (
-                        SOURCE_CHECKED_ARTIFACT_KINDS,
-                        TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                        AUTHORITY_VERBS_ARTIFACT_KINDS,
-                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        PROVIDER_BUILDS_ARTIFACT_KINDS,
-                    )
-                ):
-                    raise ProjectionFormatError("source-v2 requires compiler revision 29")
                 verify_source_graph(procedure)
                 identity = procedure.identity.qualified
                 if identity in identities:
@@ -1736,11 +1400,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.procedure.resolution_activation",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     from cruxible_client.contracts.procedures.artifacts import (
                         AcceptedProcedure,
                     )
@@ -1783,11 +1443,7 @@ def parse_projection_tree(
                         raise ProjectionFormatError(
                             "Procedure measurement activation lacks its accepting coordinate"
                         )
-                if coordinate is not None and registry.supports(
-                    "cruxible.procedure.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_artifact_explanation_facts(
                             artifact_family="procedure",
@@ -1810,8 +1466,6 @@ def parse_projection_tree(
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
-                if artifact_kinds not in _REVISION_32_AND_LATER:
-                    raise ProjectionFormatError("Line v6 requires compiler revision 32")
                 if isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
                     if "max_result_bytes" in line.budgets and (
@@ -1880,11 +1534,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.line.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_artifact_explanation_facts(
                             artifact_family="line",
@@ -1907,29 +1557,6 @@ def parse_projection_tree(
                 )
 
                 query = parse_query_definition(content, path=path, codec=artifact_codec)
-                if (
-                    query.artifact_format == "playbill-query-definition-v2"
-                    and artifact_kinds
-                    not in (
-                        ONTOLOGY_ARTIFACT_KINDS,
-                        UPGRADE_ARTIFACT_KINDS,
-                        PROVIDER_CONTRACT_ARTIFACT_KINDS,
-                        PROVIDER_PACKAGE_ARTIFACT_KINDS,
-                        RESOURCE_BUDGET_ARTIFACT_KINDS,
-                        SDK_SOURCE_ARTIFACT_KINDS,
-                        CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                        SOURCE_CHECKED_ARTIFACT_KINDS,
-                        TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                        AUTHORITY_VERBS_ARTIFACT_KINDS,
-                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                        PROVIDER_BUILDS_ARTIFACT_KINDS,
-                    )
-                ):
-                    raise ProjectionFormatError(
-                        "artifact queries require the ontology-query compiler"
-                    )
                 identity = query.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -2012,11 +1639,7 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.query_definition.attestation_coverage",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     semantic_facts.extend(
                         accepted_artifact_explanation_facts(
                             artifact_family="query_definition",
@@ -2087,11 +1710,7 @@ def parse_projection_tree(
                         },
                     )
                 )
-                if coordinate is not None and registry.supports(
-                    "cruxible.procedure.track_record",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     if bodies is None:
                         raise ProjectionFormatError(
                             "ExhaustPromotion projection requires its canonical output CAS object"
@@ -2131,24 +1750,19 @@ def parse_projection_tree(
                     semantic_facts.extend(
                         procedure_track_record_facts(accepted_promotion, output=output)
                     )
-                    if registry.supports(
-                        "cruxible.line.track_record",
-                        1,
-                        classification="semantic",
-                    ):
-                        from cruxible_core.exhaust.line_track_records import (
-                            LineTrackRecordError,
-                            line_track_record_facts,
-                        )
+                    from cruxible_core.exhaust.line_track_records import (
+                        LineTrackRecordError,
+                        line_track_record_facts,
+                    )
 
-                        try:
-                            semantic_facts.extend(
-                                line_track_record_facts(accepted_promotion, output=output)
-                            )
-                        except LineTrackRecordError as exc:
-                            raise ProjectionFormatError(
-                                "ExhaustPromotion declares an unprojectable Line track record"
-                            ) from exc
+                    try:
+                        semantic_facts.extend(
+                            line_track_record_facts(accepted_promotion, output=output)
+                        )
+                    except LineTrackRecordError as exc:
+                        raise ProjectionFormatError(
+                            "ExhaustPromotion declares an unprojectable Line track record"
+                        ) from exc
                 continue
             if kind == "capture-contract":
                 try:
@@ -2282,11 +1896,7 @@ def parse_projection_tree(
                 # reconstruction and read adapters retain their detached value
                 # contract, without parsing or normalizing the facts again.
                 semantic_facts.extend(member.facts if carry_members else deepcopy(member.facts))
-                if coordinate is not None and registry.supports(
-                    "cruxible.claim.current_verdict",
-                    1,
-                    classification="semantic",
-                ):
+                if coordinate is not None:
                     raw_result = _current_member_law_result(
                         accepted_change_sets,
                         path=path,
@@ -2404,10 +2014,8 @@ __all__ = [
     "projected_revision",
     "ArtifactEnvelopeRow",
     "ParsedProjectionTree",
-    "PLAYBILL_ARTIFACT_KINDS",
-    "P2_B1_ARTIFACT_KINDS",
-    "P2_C_ARTIFACT_KINDS",
-    "P2_B0_ARTIFACT_KINDS",
+    "ARTIFACT_KINDS",
+    "PROJECTION_REGISTRY",
     "PinRow",
     "parse_projection_tree",
     "registered_path_kind",

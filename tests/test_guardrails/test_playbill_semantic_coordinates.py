@@ -9,7 +9,6 @@ the authoring catalog/snapshot re-pins required by that change.
 from __future__ import annotations
 
 import ast
-import importlib.util
 from pathlib import Path
 
 import cruxible_client.contracts.captures as capture_contracts
@@ -94,36 +93,11 @@ from cruxible_client.contracts.laws import (
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
+from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
-    ATTESTATION_COMPILER,
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    CLAIM_REBIND_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    ONTOLOGY_COMPILER,
-    P2_B0_COMPILER,
-    P2_B1_COMPILER,
-    P2_B2_COMPILER,
-    P2_B4_COMPILER,
-    P2_B4_UNIT2_COMPILER,
-    P2_B5_COMPILER,
-    P2_C_COMPILER,
-    PC_DF2_COMPILER,
-    PC_E1_COMPILER,
-    PC_HR_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    PROVIDER_CONTRACT_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOLUTION_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-    SUPPORTED_COMPILERS,
-    TRIGGER_CAPTURE_COMPILER,
-    UPGRADE_COMPILER,
-    candidate_card_renderer_digest_for_compiler,
+    CURRENT_COMPILER,
+    CURRENT_COMPILER_REVISION,
+    compiler_revision_label,
     current_compiler_coordinate,
 )
 from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
@@ -697,269 +671,21 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    pc_e1_expected = "sha256:62d6aa3f0c7b8657d9ecbdb1a7e5c8bd02fc711e114f850ce35e212035efa9df"
-    pc_e1_computed = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 10,
-        },
-    )
-    expected = "sha256:58e6c8db50a1fd7e9f73578a2f827c86aa741ab6b4e60aa38ea08d6d792ae0b5"
+    expected = "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
             "schema_version": 1,
-            "semantic_revision": 11,
+            "projection_content": "claims-procedures-runtime-v1",
+            "semantic_revision": 36,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+            "revision_name": "light-artifacts-v1",
         },
     )
-    assert pc_e1_computed == pc_e1_expected
-    assert PC_E1_COMPILER.rule_digest == pc_e1_expected
     assert computed == expected
-    assert P2_B0_COMPILER.rule_digest == expected
-    pc_hr_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 12,
-        },
-    )
-    assert PC_HR_COMPILER.rule_digest == pc_hr_expected
-    p2_b1_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 13,
-        },
-    )
-    assert P2_B1_COMPILER.rule_digest == p2_b1_expected
-    p2_c_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 14,
-        },
-    )
-    assert p2_c_expected == (
-        "sha256:189154dd919b8f88091da2053b1fe07c80e5074e93e7290c3b5a11c01370da1e"
-    )
-    assert P2_C_COMPILER.rule_digest == p2_c_expected
-    pc_df2_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 15,
-        },
-    )
-    assert pc_df2_expected == (
-        "sha256:b8865b17412aa7d8606e44ee7d713858dbac9a4845e7b953e0e6a6800fb8735d"
-    )
-    assert PC_DF2_COMPILER.rule_digest == pc_df2_expected
-    p2_b2_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 16,
-        },
-    )
-    assert p2_b2_expected == (
-        "sha256:dbe2bd6c03327a15e49712acd40c5cc6528e9b135374793c513519c83c687648"
-    )
-    assert P2_B2_COMPILER.rule_digest == p2_b2_expected
-    p2_b4_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 17,
-        },
-    )
-    assert p2_b4_expected == (
-        "sha256:22e75aebcb286ed356cf34390230ef8b5adaaa326f4107b67d0b992009153331"
-    )
-    assert P2_B4_COMPILER.rule_digest == p2_b4_expected
-    p2_b4_unit2_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 18,
-        },
-    )
-    assert p2_b4_unit2_expected == (
-        "sha256:05fd436c117d820ca870ce0cd276c1e7b9e97075d68435aa2f548256199bc458"
-    )
-    assert P2_B4_UNIT2_COMPILER.rule_digest == p2_b4_unit2_expected
-    p2_b5_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 19,
-            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-        },
-    )
-    assert p2_b5_expected == (
-        "sha256:97dc147603444a6f910e9edde93ed56f20e196cceefa02280f26572553e53cab"
-    )
-    assert P2_B5_COMPILER.rule_digest == p2_b5_expected
-    attestation_expected = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "projection_content": "claims-procedures-runtime-v1",
-            "schema_version": 1,
-            "semantic_revision": 20,
-            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-        },
-    )
-    assert attestation_expected == (
-        "sha256:d98c2200d77534868510aac15f52e646ed973b8177a0468e6aa069f8c848dea9"
-    )
-    assert ATTESTATION_COMPILER.rule_digest == attestation_expected
-    assert (
-        RESOLUTION_COMPILER.rule_digest
-        == "sha256:492275f171993c039166cfaccd6aa549ca74f143d35978b70e045d9c504cb598"
-    )
-    assert (
-        ONTOLOGY_COMPILER.rule_digest
-        == "sha256:79a81d311a00ca59aa5dc292708ecaa698e6205e1e8fe48d939025e8276b4089"
-    )
-    assert (
-        UPGRADE_COMPILER.rule_digest
-        == "sha256:2ae1626324c9bb33ac1d802cd1e0e79546ff3019333a9723062eda271ae89a7e"
-    )
-    assert (
-        PROVIDER_CONTRACT_COMPILER.rule_digest
-        == "sha256:a9f867686aa9ed6c39261a473ae09efcfa34f9efcdbd1ae1ba3e8281ae6cc1a8"
-    )
-    assert (
-        PROVIDER_PACKAGE_COMPILER.rule_digest
-        == "sha256:f20251ccf9d3545882683c2d9693745b2cecf6e119c7b471f8c14414f1aa7628"
-    )
-    assert (
-        RESOURCE_BUDGET_COMPILER.rule_digest
-        == "sha256:1498eb0f56d995753d3db504723d14eabdc6b4cdc66832c613b31a755645a098"
-    )
-    assert (
-        SDK_SOURCE_COMPILER.rule_digest
-        == "sha256:ccaf2bbe59d12bf76465774f869c017084343c64adc23573f694008a8051382d"
-    )
-    assert (
-        CLAIM_EVIDENCE_COMPILER.rule_digest
-        == "sha256:1086f50631d0189cfda34737f02e0af5e951bb643dcd22d702ff411386698164"
-    )
-    assert (
-        SOURCE_CHECKED_COMPILER.rule_digest
-        == "sha256:b5801e1343a5df75a62efd80e02f5a09f5bfeb6650be6ef981b3e62c1482e11a"
-    )
-    assert (
-        TRIGGER_CAPTURE_COMPILER.rule_digest
-        == "sha256:ac77438c6269c3268fbd2c850c41172aceb8d8f0bcfac6ebf6f0ee01161e8cb9"
-    )
-    assert (
-        AUTHORITY_VERBS_COMPILER.rule_digest
-        == "sha256:644ac81170dd005ab18b2d882dd9f6525cbb41264be27aa69bee4c9b1a4acebf"
-    )
-    assert (
-        GOVERNED_TRIGGERS_COMPILER.rule_digest
-        == "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7"
-    )
-    assert (
-        SUBJECT_IDENTITY_COMPILER.rule_digest
-        == "sha256:29c8c866159d449c28320d49ad9f6f400aa40bb923c2334f34db74aec4b59f22"
-    )
-    assert PROVIDER_BUILDS_COMPILER.rule_digest == (
-        "sha256:8b1fc4c429fbbdc9eee3915dc3c22af64fdbdba3465795ceb270b01371f899bd"
-    )
-    assert CLAIM_REBIND_COMPILER.rule_digest == (
-        "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085"
-    )
-    assert (
-        LIGHT_ARTIFACTS_COMPILER.rule_digest
-        == "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924"
-    )
-    assert current_compiler_coordinate() == LIGHT_ARTIFACTS_COMPILER
-    assert P2_B4_COMPILER in SUPPORTED_COMPILERS
-    assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
-    # The renderer resolves from the current coordinate itself, so cards derive
-    # under whatever revision the current compiler carries.
-    assert candidate_card_renderer_digest_for_compiler(current_compiler_coordinate()) == (
-        CARD_RENDERER_DIGEST
-    )
-
-
-def test_revision_32_never_shares_the_reverted_identity_refs_coordinate() -> None:
-    """A reverted change minted revision 32 from the bare preimage; this one is distinct."""
-
-    reverted_identity_refs = "sha256:" + canonical_digest(
-        "playbill-compiler-v1",
-        {
-            "implementation": "python-reference",
-            "schema_version": 1,
-            "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 32,
-            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-        },
-    )
-    assert reverted_identity_refs == (
-        "sha256:2f7406d706d3e7c086bdb038ec2861329243e9f93f10791f02c11ce65d4031cc"
-    )
-    assert GOVERNED_TRIGGERS_COMPILER.rule_digest != reverted_identity_refs
-    assert reverted_identity_refs not in {item.rule_digest for item in SUPPORTED_COMPILERS}
-    assert len({item.rule_digest for item in SUPPORTED_COMPILERS}) == len(SUPPORTED_COMPILERS)
-
-
-def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
-    tmp_path: Path,
-) -> None:
-    """Bump the revision the way the next batch will and prove cards survive.
-
-    A second copy of the coordinate preimage, keyed by its own revision literal,
-    returns None the moment the revision moves: cards then stop being derived,
-    verified, and re-derived while every card test stays green, because they all
-    build their coordinate the same wrong way.
-    """
-
-    source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 36
-    anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
-    bumped = source.replace(
-        f"    semantic_revision={current_revision},{anchor}",
-        f"    semantic_revision={current_revision + 1},{anchor}",
-    )
-    assert bumped != source, "the current revision literal moved; update this guard"
-    module_path = tmp_path / "bumped_compiler.py"
-    module_path.write_text(bumped, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("bumped_playbill_compiler", module_path)
-    assert spec is not None and spec.loader is not None
-    bumped_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(bumped_module)
-
-    assert bumped_module.current_compiler_coordinate() != current_compiler_coordinate()
-    assert (
-        bumped_module.candidate_card_renderer_digest_for_compiler(
-            bumped_module.current_compiler_coordinate()
-        )
-        == CARD_RENDERER_DIGEST
-    )
+    assert CURRENT_COMPILER.rule_digest == expected
+    assert current_compiler_coordinate() == CURRENT_COMPILER
 
 
 def test_no_revision_literal_lives_outside_the_compiler_and_this_guard() -> None:
@@ -996,72 +722,17 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
     )
 
 
-def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
-    from cruxible_core.compiler.compiler import (
-        COMPILER_REVISION_LABELS,
-        SUPPORTED_COMPILERS,
-        current_compiler_coordinate,
+def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
+    """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
+
+    assert CURRENT_COMPILER_REVISION == "light-artifacts-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "light-artifacts-v1"
+    earlier = CompilerCoordinate(
+        rule_digest="sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085"
     )
-
-    assert tuple(COMPILER_REVISION_LABELS) == SUPPORTED_COMPILERS
-    assert tuple(COMPILER_REVISION_LABELS.values()) == (
-        "pb-b",
-        "pb-c",
-        "pb-d",
-        "pc-a1",
-        "pc-a2",
-        "pc-b",
-        "pc-c",
-        "pc-d",
-        "pc-e1",
-        "p2-b0",
-        "pc-hr",
-        "p2-b1",
-        "p2-c",
-        "pc-df2",
-        "p2-b2",
-        "p2-b4",
-        "p2-b4-u2",
-        "p2-b5",
-        "accepted-attestations-v1",
-        "independent-resolution-contracts-v1",
-        "ontology-queries-v2",
-        "governed-compiler-upgrade-v1",
-        "provider-operation-contracts-v1",
-        "provider-package-registration-v1",
-        "bounded-resource-budgets-v1",
-        "typed-procedure-source-v1",
-        "producer-independent-claim-types-v1",
-        "checked-procedure-source-v2",
-        "line-trigger-capture-input-v1",
-        "authority-verbs-settle-mandates-v1",
-        "governed-triggers-v1",
-        "subject-identity-v1",
-        "provider-builds-v1",
-        "claim-rebind-v1",
-        "light-artifacts-v1",
-    )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "light-artifacts-v1"
-
-
-def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
-    """The September 23 rung-3 ruling (R5) authorizes settle mandates and verbs in revision 31.
-
-    The September 30 ruling (one-trigger-home-0930) authorizes revision 32:
-    every trigger is a governed Trigger artifact and a Line no longer embeds one.
-    The October 9 identity review ruling (E-b F-005/F-006) authorizes revision 33
-    alone: SubjectKinds, and the candidate boundary holding every new Subject to
-    its kind's rule. The October 15 multi-build ruling authorizes revision 34.
-    The October 24 light-artifacts ruling authorizes revision 36.
-    The October 21 citation-rebind ruling authorizes revision 35: Claim law v2
-    revision 10 lets a same-statement revision replace a drifted citation.
-    Historical admission bytes and compiler rules remain unchanged.
-    """
-
-    from cruxible_core.compiler.compiler import (
-        COMPILER_REVISION_LABELS,
-        current_compiler_coordinate,
-    )
-
-    assert len(COMPILER_REVISION_LABELS) == 35
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "light-artifacts-v1"
+    assert compiler_revision_label(earlier) is None
+    assert {
+        name
+        for name, value in vars(compiler_module).items()
+        if isinstance(value, CompilerCoordinate)
+    } == {"CURRENT_COMPILER"}

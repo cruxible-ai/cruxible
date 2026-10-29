@@ -35,7 +35,7 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-from tests.core_support._subject_kind_support import declare_created_kinds, world_history
+from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import initialize_local
 
 KIND = "inv.package"
@@ -131,7 +131,6 @@ def shell(subject_id: str, kind: str = KIND) -> SubjectShell:
     )
 
 
-@world_history
 def accept_tree(
     instance: PlaybillInstance, updates: dict[str, bytes], *, name: str, actor_id: str = "owner"
 ) -> None:

@@ -59,7 +59,7 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historica
     `triggers` replaces the one default Trigger with several (or none).
     """
 
-    instance, owner, contract = contract_world(tmp_path, historical=historical)
+    instance, owner, contract = contract_world(tmp_path)
     accepted = _slotless_procedure("trigger-method", historical=historical)
     procedure = accepted.procedure
     profile = TRIGGER_CONTRACT
@@ -118,11 +118,11 @@ def capture(
 ):
     if digest is None:
         from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-        from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+        from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
         digest = capture_contract_digest(
             TRIGGER_CONTRACT
-            if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+            if instance.accepted_coordinate().compiler == CURRENT_COMPILER
             else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
         ).tagged
     journal, _ = _journal(instance)

@@ -271,30 +271,10 @@ def test_exact_version_survives_successor_and_projection_rebuild(tmp_path: Path)
         )
 
 
-def test_new_kind_does_not_change_previous_compiler_registration() -> None:
-    import pytest
+def test_the_current_grammar_registers_the_attestation_path() -> None:
+    from cruxible_core.compiler.projection_artifacts import registered_path_kind
 
-    from cruxible_client.contracts.errors import ProjectionFormatError
-    from cruxible_core.compiler.compiler import (
-        P2_B5_COMPILER,
-        artifact_kinds_for_compiler,
-        current_compiler_coordinate,
-        projection_registry_for_compiler,
-    )
-
-    path = attestation_path("sha256:" + "a" * 64)
-    with pytest.raises(ProjectionFormatError):
-        artifact_kinds_for_compiler(P2_B5_COMPILER).resolve_path(path)
-    assert (
-        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(path)
-        == "attestation"
-    )
-    assert not projection_registry_for_compiler(P2_B5_COMPILER).supports_artifact_kind(
-        "attestation"
-    )
-    assert projection_registry_for_compiler(current_compiler_coordinate()).supports_artifact_kind(
-        "attestation"
-    )
+    assert registered_path_kind(attestation_path("sha256:" + "a" * 64)) == "attestation"
 
 
 def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: Path) -> None:
@@ -431,7 +411,7 @@ def test_current_threshold_uses_signed_artifacts_not_embedded_v1_evidence(
         threshold_world,
     )
 
-    instance, owner, claim = threshold_world(tmp_path, monkeypatch, frozen=False)
+    instance, owner, claim = threshold_world(tmp_path, monkeypatch)
     assert _rows(instance) == ()  # Old embedded V1 fixture evidence is ignored.
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     digests = []

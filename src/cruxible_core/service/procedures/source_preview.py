@@ -10,7 +10,6 @@ from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequest,
 )
 from cruxible_core.authoring.procedure_source import resolve_indexed_source
-from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -27,16 +26,15 @@ def service_preview_procedure_source(
             compiled = resolve_indexed_source(request.source, rows)
         definition = compiled.definition
         contracts = compiled.contracts
-        if coordinate.compiler == LIGHT_ARTIFACTS_COMPILER:
-            definition = NamedProcedureDefinition.model_validate(
-                named_graph(definition.model_dump(mode="json", by_alias=True))
-            )
-            required = {
-                ref.target.name
-                for ref in iter_pin_bindings(definition)
-                if isinstance(ref, ArtifactNameRef) and ref.target.kind == "Contract"
-            }
-            contracts = tuple(contract for contract in contracts if contract.name in required)
+        definition = NamedProcedureDefinition.model_validate(
+            named_graph(definition.model_dump(mode="json", by_alias=True))
+        )
+        required = {
+            ref.target.name
+            for ref in iter_pin_bindings(definition)
+            if isinstance(ref, ArtifactNameRef) and ref.target.kind == "Contract"
+        }
+        contracts = tuple(contract for contract in contracts if contract.name in required)
         return ProcedureSourcePreview(
             name=request.source.name,
             coordinate=request.at,

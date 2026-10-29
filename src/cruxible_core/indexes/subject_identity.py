@@ -38,7 +38,6 @@ from cruxible_client.contracts.subject_kinds import (
 from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts.types import CompilerCoordinate
     from cruxible_core.indexes.subject_aliases import SubjectRefResolution
 
 _SUBJECTS = "subjects/"
@@ -56,24 +55,6 @@ class SubjectIdentityIssue:
     message: str
     #: The live Subjects the issue names (``kind/id``), when it names any.
     existing: tuple[str, ...] = ()
-
-
-SUBJECT_COMPILER_UPGRADE_REQUIRED = "cruxible.subject.compiler_upgrade_required"
-
-
-def admits_subject_kinds(compiler: CompilerCoordinate) -> bool:
-    """Whether a compiler admits SubjectKinds (revision 33, subject identity).
-
-    An instance on an earlier compiler cannot declare a kind, so it creates no
-    new Subject at all until it upgrades; its existing Subjects stay readable,
-    claimable and retirable.
-    """
-
-    from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
-
-    return any(
-        entry.kind == "subject-kind" for entry in artifact_kinds_for_compiler(compiler).entries()
-    )
 
 
 def subject_kind_of(path: str) -> tuple[str, str]:
@@ -731,59 +712,6 @@ def undeclared_kind_repair(kind: str) -> str:
         f"Author a SubjectKind for {kind} first: keyed by a key ClaimType (a ClaimType v8 about "
         f"{kind} only, literal and one-valued, accepted in the same change or earlier), e.g. "
         f"{keyed}, or minted, {minted}. `cruxible authoring example subject-kind` prints one."
-    )
-
-
-def compiler_upgrade_repair(kind: str) -> str:
-    """What an instance on a compiler before SubjectKinds does to create a ``kind``."""
-
-    return (
-        "Upgrade the instance's compiler (`cruxible compiler upgrade`; `cruxible next` names "
-        f"the exact command), then declare {kind} with a SubjectKind and create by its key. "
-        + undeclared_kind_repair(kind)
-    )
-
-
-def compiler_upgrade_message(kind: str) -> str:
-    return (
-        f"This instance's compiler predates SubjectKinds, so no new Subject can be created; "
-        f"existing {kind} Subjects stay readable, claimable and retirable. "
-        + compiler_upgrade_repair(kind)
-    )
-
-
-def boundary_identity_issues(
-    compiler: CompilerCoordinate,
-    *,
-    current_tree: Mapping[str, bytes],
-    candidate_tree: Mapping[str, bytes],
-    scope: tuple[str, ...],
-    assignment_authority: SubjectAssignmentAuthority | None = None,
-) -> tuple[SubjectIdentityIssue, ...]:
-    """The identity issues of a change on its instance's compiler (live admission only).
-
-    Under a compiler that admits SubjectKinds, every rule of
-    ``candidate_identity_issues``; under an earlier one, every new Subject
-    refuses (``compiler_upgrade_required``). Recovery replay of accepted history
-    does not come here.
-    """
-
-    if admits_subject_kinds(compiler):
-        return candidate_identity_issues(
-            current_tree=current_tree,
-            candidate_tree=candidate_tree,
-            scope=scope,
-            assignment_authority=assignment_authority,
-        )
-    return tuple(
-        SubjectIdentityIssue(
-            SUBJECT_COMPILER_UPGRADE_REQUIRED,
-            path,
-            compiler_upgrade_message(subject_kind_of(path)[0]),
-        )
-        for path in created_subjects(
-            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
-        )
     )
 
 
@@ -1570,15 +1498,12 @@ def _kind_wide_conflicts(
 
 
 __all__ = [
-    "SUBJECT_COMPILER_UPGRADE_REQUIRED",
     "SUBJECT_ID_NOT_ASSIGNED",
     "RecordedCreation",
     "SubjectAssignmentAuthority",
     "SUBJECT_KIND_KEY_BROKEN",
     "SUBJECT_KIND_REKEY_UNHANDLED",
     "key_claim_type_shape",
-    "boundary_identity_issues",
-    "compiler_upgrade_repair",
     "SUBJECT_KEY_CONFLICT",
     "SUBJECT_KEY_CONTENDED",
     "SUBJECT_KEY_INVALID",
@@ -1602,7 +1527,6 @@ __all__ = [
     "subjects_with_key",
     "SUBJECT_KIND_UNDECLARED",
     "SubjectIdentityIssue",
-    "admits_subject_kinds",
     "candidate_identity_issues",
     "created_subjects",
     "subject_kind_of",

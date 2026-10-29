@@ -70,7 +70,6 @@ def delta_kinds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> set[str]:
             assembler._repository,
             accepted=assembler.accepted,
             publication_directory=directory,
-            registry=assembler.registry,
             bodies=assembler.bodies,
             accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
         )

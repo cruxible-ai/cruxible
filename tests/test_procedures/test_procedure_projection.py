@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from typing import get_args
-
-import pytest
-
-import cruxible_client.contracts.projection_extensions as projection_extensions_module
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicy,
@@ -14,33 +9,9 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import render_line_spec
-from cruxible_client.contracts.projection_extensions import ProjectionFactClassification
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.compiler.compiler import (
-    GOVERNED_TRIGGERS_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    P2_B0_COMPILER,
-    P2_B1_COMPILER,
-    P2_B2_COMPILER,
-    P2_B4_COMPILER,
-    P2_B4_UNIT2_COMPILER,
-    P2_B5_COMPILER,
-    P2_C_COMPILER,
-    PC_C_COMPILER,
-    PC_D_COMPILER,
-    PC_E1_COMPILER,
-    PC_HR_COMPILER,
-    PROVIDER_PACKAGE_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    artifact_kinds_for_compiler,
-    current_compiler_coordinate,
-    projection_registry_for_compiler,
-)
-from cruxible_core.compiler.projection_artifacts import (
-    P2_C_ARTIFACT_KINDS,
-    ProjectionFormatError,
-    parse_projection_tree,
-)
+from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
+from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from tests.test_procedures.test_line_specs import _accepted_procedure, _line
 
 
@@ -55,8 +26,6 @@ def test_projects_procedure_graph_line_and_exact_source_mappings() -> None:
             accepted.path: procedure_content,
             "lines/triage-hourly.json": line_content,
         },
-        registry=projection_registry_for_compiler(GOVERNED_TRIGGERS_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(GOVERNED_TRIGGERS_COMPILER),
     )
 
     assert tuple((row.kind, row.identity) for row in projection.envelopes) == (
@@ -96,132 +65,27 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     after = SemanticAddress.procedure_node(accepted.path, "read")
 
     assert before == after
-    assert P2_B2_COMPILER != P2_B4_COMPILER
-    assert P2_B4_COMPILER != P2_B4_UNIT2_COMPILER
-    assert P2_B4_UNIT2_COMPILER != P2_B5_COMPILER
-    assert current_compiler_coordinate() == LIGHT_ARTIFACTS_COMPILER
-    assert (
-        projection_registry_for_compiler(PC_HR_COMPILER).supports(
-            "cruxible.provider.runtime",
-            1,
-            classification="semantic",
-        )
-        is False
-    )
-    assert (
-        projection_registry_for_compiler(P2_B1_COMPILER).supports(
-            "cruxible.provider.runtime",
-            1,
-            classification="semantic",
-        )
-        is True
-    )
-    assert (
-        projection_registry_for_compiler(P2_C_COMPILER).supports(
-            "cruxible.procedure_mandate.authority",
-            1,
-            classification="semantic",
-        )
-        is True
-    )
-    assert (
-        projection_registry_for_compiler(PC_C_COMPILER).supports(
-            "cruxible.procedure.definition",
-            1,
-            classification="semantic",
-        )
-        is False
-    )
-    assert (
-        projection_registry_for_compiler(PC_D_COMPILER).supports(
-            "cruxible.procedure.definition",
-            1,
-            classification="semantic",
-        )
-        is True
-    )
-    assert (
-        projection_registry_for_compiler(PC_E1_COMPILER).supports(
-            "cruxible.procedure.resolution_activation",
-            1,
-            classification="semantic",
-        )
-        is True
-    )
-
-
-def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
-    tree = {
-        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-            ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576)
-        )
-    }
-
-    with pytest.raises(
-        ProjectionFormatError,
-        match="does not recognize ProcedureRuntimePolicy",
+    for schema_id in (
+        "cruxible.provider.runtime",
+        "cruxible.procedure_mandate.authority",
+        "cruxible.procedure.definition",
+        "cruxible.procedure.resolution_activation",
     ):
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(PC_E1_COMPILER),
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
+        assert PROJECTION_REGISTRY.supports(schema_id, 1, classification="semantic")
+
+
+def test_the_runtime_policy_and_its_resource_budgets_project() -> None:
+    for policy in (
+        ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576),
+        ProcedureRuntimePolicy(
+            provider_output_bytes_cap=64 * 1024 * 1024,
+            result_bytes_cap=16 * 1024 * 1024,
+            repeat_attempts_cap=100,
+        ),
+    ):
+        parsed = parse_projection_tree(
+            {PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(policy)}
         )
-
-    parsed = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(P2_B0_COMPILER),
-        artifact_kinds=P2_C_ARTIFACT_KINDS,
-    )
-    assert [(row.kind, row.identity) for row in parsed.envelopes] == [
-        ("procedure-runtime-policy", "ProcedureRuntimePolicy:instance")
-    ]
-
-
-def test_replay_registry_copies_the_authoritative_runtime_registry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = projection_extensions_module.runtime_extension_registry()
-
-    def classification_listing_is_not_a_copy(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("registry copy must not enumerate known classifications")
-
-    with monkeypatch.context() as guarded:
-        guarded.setattr(
-            projection_extensions_module,
-            "runtime_extension_registry",
-            lambda: runtime,
-        )
-        guarded.setattr(
-            projection_extensions_module.ProjectionExtensionRegistry,
-            "declarations",
-            classification_listing_is_not_a_copy,
-        )
-        replay = projection_extensions_module.replay_extension_registry()
-
-    for classification in get_args(ProjectionFactClassification):
-        assert replay.declarations(classification) == runtime.declarations(classification)
-    assert replay.supports_artifact_kind("procedure-runtime-policy")
-
-
-def test_resource_policy_requires_explicit_compiler_succession():
-    tree = {
-        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-            ProcedureRuntimePolicy(
-                provider_output_bytes_cap=64 * 1024 * 1024,
-                result_bytes_cap=16 * 1024 * 1024,
-                repeat_attempts_cap=100,
-            )
-        )
-    }
-    with pytest.raises(ProjectionFormatError, match="revision 26"):
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(PROVIDER_PACKAGE_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(PROVIDER_PACKAGE_COMPILER),
-        )
-    parsed = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(RESOURCE_BUDGET_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(RESOURCE_BUDGET_COMPILER),
-    )
-    assert parsed.envelopes[0].identity == "ProcedureRuntimePolicy:instance"
+        assert [(row.kind, row.identity) for row in parsed.envelopes] == [
+            ("procedure-runtime-policy", "ProcedureRuntimePolicy:instance")
+        ]

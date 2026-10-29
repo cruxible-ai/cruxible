@@ -331,54 +331,6 @@ def test_an_unknown_creation_reference_refuses(instance: PlaybillInstance) -> No
     }
 
 
-# -- F-005 / F-006: a compiler before subject identity creates nothing -------------------
-
-
-def test_revision_33_is_its_own_coordinate_and_revision_32_keeps_its_grammar() -> None:
-    from cruxible_core.compiler.compiler import (
-        GOVERNED_TRIGGERS_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        artifact_kinds_for_compiler,
-        current_compiler_coordinate,
-        projection_registry_for_compiler,
-    )
-
-    assert SUBJECT_IDENTITY_COMPILER != GOVERNED_TRIGGERS_COMPILER
-    assert current_compiler_coordinate() == LIGHT_ARTIFACTS_COMPILER
-    old = {
-        entry.kind for entry in artifact_kinds_for_compiler(GOVERNED_TRIGGERS_COMPILER).entries()
-    }
-    new = {entry.kind for entry in artifact_kinds_for_compiler(SUBJECT_IDENTITY_COMPILER).entries()}
-    assert new - old == {"subject-kind"}
-    assert projection_registry_for_compiler(
-        GOVERNED_TRIGGERS_COMPILER
-    ) != projection_registry_for_compiler(SUBJECT_IDENTITY_COMPILER)
-
-
-def test_an_instance_before_subject_identity_creates_no_subject(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER
-    from tests.test_ledger.test_compiler_upgrade import old_instance
-
-    old, _owner, _reviewer = old_instance(tmp_path, monkeypatch, GOVERNED_TRIGGERS_COMPILER)
-    raw = _submit_raw(
-        old, {subject_path(DECISION, "fresh"): render_subject(shell("fresh", DECISION))}, "old-raw"
-    )
-    assert raw.candidate is None
-    assert {item.code for item in raw.evaluation.diagnostics} == {
-        "cruxible.subject.compiler_upgrade_required"
-    }
-    authored = compile_(
-        old, lower_authoring_input(SubjectInput(kind="subject", subject_kind=DECISION, key="x"))
-    )
-    assert authored.verdict == "refused"
-    assert "cruxible.subject.compiler_upgrade_required" in {
-        item.code for item in authored.frontier.diagnostics
-    }
-
-
 # -- F-004: a key ClaimType's change is judged against the kinds it keys --------------
 
 
@@ -1519,31 +1471,6 @@ def test_only_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
         assert {item.code for item in refused.diagnostics} == {
             "cruxible.claim.subject_context_mismatch"
         }
-
-
-def test_claim_law_revision_11_is_adopted_with_subject_identity_only(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A Claim judged on a compiler before revision 33 is judged by revision 10."""
-
-    import cruxible_core.proposals.proposals as proposals_module
-    from cruxible_client.contracts.claims import render_claim
-    from cruxible_client.contracts.laws import CLAIM_LAW_V3_REVISION_10, CLAIM_LAW_V3_REVISION_11
-    from cruxible_core.claims.key_claims import retired_key_claim
-
-    (parent, _candidate), claims = _retirement_candidate(instance, "zeta")
-    title = parse_claim(parent[claims["title"]], path=claims["title"])
-    only_title = {**parent, claims["title"]: render_claim(retired_key_claim(title))}
-
-    def law_of(trees: Any) -> str:
-        judged = _judged(instance, trees, None)
-        assert judged.candidate is not None, judged.diagnostics
-        (member,) = [item for item in judged.candidate.members if item.path == claims["title"]]
-        return str(judged.candidate.law_digests[member.law_identifier])
-
-    assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_11.digest
-    monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
-    assert law_of((parent, only_title)) == CLAIM_LAW_V3_REVISION_10.digest
 
 
 # E-b delta-4 F-002: a carried key Claim composes with later lifecycle changes.

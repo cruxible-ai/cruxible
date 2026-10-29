@@ -22,7 +22,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_V6_ACCEPTANCE_LAW,
 )
 from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
-from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
+from cruxible_client.contracts.types import CompilerCoordinate
 from tests.test_indexes.test_vocabulary_index import _descriptor, _tree, _type
 
 COORDINATE = AcceptedProjectionCoordinate(
@@ -32,7 +32,9 @@ COORDINATE = AcceptedProjectionCoordinate(
     git_oid="3" * 40,
     semantic_root="sha256:" + "44" * 32,
     generation_root="sha256:" + "55" * 32,
-    compiler=AUTHORITY_VERBS_COMPILER,
+    compiler=CompilerCoordinate(
+        rule_digest="sha256:644ac81170dd005ab18b2d882dd9f6525cbb41264be27aa69bee4c9b1a4acebf"
+    ),
 )
 _DISTINCT_TARGETS = (
     claim_type_path("project.work_item.status"),

@@ -36,7 +36,6 @@ from cruxible_core.query.engine import claim_query_result_digest
 from cruxible_core.service.discovery.query import service_run_playbill_query
 from tests.core_support._knowledge_loop_support import TIMESTAMP, accept_proposal, work_item_query
 from tests.core_support._support import initialize_local
-from tests.core_support.legacy_capture_builders import initialize_legacy_local
 from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
 NOW = datetime(2026, 9, 16, tzinfo=UTC)
@@ -414,35 +413,9 @@ def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, polic
     assert rows[0].detail["backing_state"] == "unchecked"
 
 
-def test_old_compiler_cannot_reinterpret_artifact_query_format():
-    from cruxible_client.contracts.errors import ProjectionFormatError
-    from cruxible_core.compiler.compiler import (
-        ONTOLOGY_COMPILER,
-        RESOLUTION_COMPILER,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
-    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-
-    query = definition(artifact_format="playbill-query-definition-v2")
-    tree = {query_definition_path(query.identity.name): render_query_definition(query)}
-    with pytest.raises(ProjectionFormatError):
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(RESOLUTION_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(RESOLUTION_COMPILER),
-        )
-    projected = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(ONTOLOGY_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(ONTOLOGY_COMPILER),
-    )
-    assert projected.envelopes[0].artifact_digest == query_definition_digest(query).tagged
-
-
-@pytest.mark.parametrize("failure", ["absent", "retired", "explicit_mismatch"])
-def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, failure):
-    instance, owner = initialize_legacy_local(tmp_path)
+@pytest.mark.parametrize("failure", ["absent", "retired"])
+def test_query_lowering_refuses_a_missing_or_retired_predicate(tmp_path, failure):
+    instance, owner = initialize_local(tmp_path)
     claim_type = _predicate_type("project.work_item.status")
     if failure != "absent":
         accept(instance, owner, claim_type)
@@ -459,10 +432,7 @@ def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, 
             ),
         )
     body = work_item_query(named=False).model_dump(mode="json")
-    if failure == "explicit_mismatch":
-        body["pins"][0]["artifact_digest"] = "sha256:" + "0" * 64
-    else:
-        body["pins"] = []
+    body["pins"] = []
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create_input(
@@ -474,8 +444,4 @@ def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, 
     ).intent
     result = coordinator.preflight(intent.intent_id, actor=actor)
     assert result.verdict == "refused"
-    assert result.frontier.diagnostics[0].code == (
-        "cruxible.authoring.query_pin_mismatch"
-        if failure == "explicit_mismatch"
-        else "cruxible.authoring.claim_type_missing"
-    )
+    assert result.frontier.diagnostics[0].code == "cruxible.authoring.claim_type_missing"

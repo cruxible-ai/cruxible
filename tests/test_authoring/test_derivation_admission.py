@@ -67,18 +67,11 @@ def world(tmp_path):
     return derivation_world(tmp_path)
 
 
-def derivation_world(tmp_path, *, historical=False):
-    instance, claim_id, owner = _accepted_claim_world(tmp_path, historical=historical)
-    from cruxible_client.contracts.captures import (
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
-        builtin_contract_for_write,
-    )
+def derivation_world(tmp_path):
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    from cruxible_client.contracts.captures import builtin_contract_for_write
 
-    profile = (
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-        if historical
-        else builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
-    )
+    profile = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     definition = _claim_type().model_copy(
         update={
             "artifact_format": "playbill-claim-type-v5",
@@ -305,7 +298,7 @@ def _install_line(world):
 
 def _run_and_accept(world):
     # KNOWN SRC BUG (not fixed here): _install_line's Line can only be
-    # accepted when world.instance's compiler is LIGHT_ARTIFACTS_COMPILER
+    # accepted when world.instance's compiler is CURRENT_COMPILER
     # (revision 36). proposals.py's _installed() gates every
     # NAMED_REFERENCE_FORMATS kind by `(artifact_tag == named) != light`,
     # which assumes a non-light compiler accepts some OTHER (historical)

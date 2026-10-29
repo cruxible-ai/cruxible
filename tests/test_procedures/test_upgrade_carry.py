@@ -57,7 +57,7 @@ def line_world(*args, **kwargs):
 
 _NEEDS_HISTORICAL_LINE_FIXTURE = pytest.mark.skip(
     reason="blocked outside test_procedures scope: line_world(historical=True) builds its "
-    "instance via _accepted_claim_world's initialize_legacy_local, which pins the compiler to "
+    "instance via _accepted_claim_world's initialize_local, which pins the compiler to "
     "CLAIM_REBIND_COMPILER (revision 35); no Line can be newly accepted under any revision "
     "before 36, which requires cruxible-line-v8 for every new Line artifact. Needs "
     "test_line_triggers.line_world's historical path redesigned to carry an old-format "
@@ -75,7 +75,7 @@ def _changed(procedure):
 
 
 def _settled(instance, procedure, writes=None):
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
@@ -86,7 +86,7 @@ def _settled(instance, procedure, writes=None):
             if writes is None
             else writes,
             connection=projection.typed.connection,
-            by_name=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=coordinate.compiler == CURRENT_COMPILER,
         )
     assert not result.refused, result.refused
     return tree, result

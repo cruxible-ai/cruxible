@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactKindRegistry
 from cruxible_client.contracts.canonical import (
     CARD_NAMESPACE,
     canonical_digest,
@@ -13,6 +12,7 @@ from cruxible_client.contracts.canonical import (
     normalize_ledger_path,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
+from cruxible_core.compiler.projection_artifacts import ARTIFACT_KINDS
 from cruxible_core.derived.derived_state import SnapshotTree, card_free_edits, fork_tree
 
 CARD_RENDERER_IMPLEMENTATION = "python-reference-v2"
@@ -67,14 +67,12 @@ def _identity(payload: Mapping[str, object], *, path: str) -> str:
 def render_candidate_card(
     artifact_path: str,
     content: bytes,
-    *,
-    artifact_kinds: ArtifactKindRegistry,
 ) -> bytes:
     """Render one compiler-recognized canonical JSON artifact as stable Markdown."""
 
     path = normalize_ledger_path(artifact_path)
     try:
-        kind = artifact_kinds.resolve_path(path)
+        kind = ARTIFACT_KINDS.resolve_path(path)
         payload = json.loads(content)
     except (ProjectionFormatError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProposalIntegrityError(
@@ -100,7 +98,6 @@ def derive_candidate_cards(
     base_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     coordinate: str,
-    artifact_kinds: ArtifactKindRegistry,
 ) -> SnapshotTree:
     """Return the candidate tree with exact derivative cards for semantic changes."""
 
@@ -162,7 +159,7 @@ def derive_candidate_cards(
         )
     for path in semantic_paths:
         try:
-            kind = artifact_kinds.resolve_path(path)
+            kind = ARTIFACT_KINDS.resolve_path(path)
         except ProjectionFormatError:
             continue
         if kind in {"changeset", "presentation", "compiler-upgrade"} or not path.endswith(".json"):
@@ -173,7 +170,7 @@ def derive_candidate_cards(
             result[card_path] = render_removal_card(coordinate=coordinate)
             continue
         try:
-            result[card_path] = render_candidate_card(path, content, artifact_kinds=artifact_kinds)
+            result[card_path] = render_candidate_card(path, content)
         except ProposalIntegrityError:
             # Derivation runs before member evaluation, so a member whose bytes the
             # evaluator is about to refuse typed must not abort it first: the caller

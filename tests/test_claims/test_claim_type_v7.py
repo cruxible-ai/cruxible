@@ -352,10 +352,10 @@ def _input(**update: object) -> object:
     )
 
 
-def _lower(value: object, tree: dict[str, bytes], *, identity_rules: bool = True) -> ClaimType:
+def _lower(value: object, tree: dict[str, bytes]) -> ClaimType:
     from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
 
-    return lower_claim_type_input(value, tree=tree, identity_rules=identity_rules)  # type: ignore[arg-type]
+    return lower_claim_type_input(value, tree=tree)  # type: ignore[arg-type]
 
 
 def _as_v6(claim_type: ClaimType) -> ClaimType:
@@ -446,12 +446,6 @@ def test_lowering_never_falls_back_to_v5() -> None:
         ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
     ):
         _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
-    # A compiler without identity rules gets no v5 fallback either: it refuses
-    # toward a compiler upgrade.
-    from cruxible_core.claims.claim_type_inputs import ClaimTypeRequiresCompilerUpgrade
-
-    with pytest.raises(ClaimTypeRequiresCompilerUpgrade):
-        _lower(_input(description="Status."), {}, identity_rules=False)
 
 
 def _described_v7() -> ClaimType:

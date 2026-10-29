@@ -32,9 +32,6 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
-from cruxible_core.compiler.compiler import (
-    artifact_codec_for_compiler,
-)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.list_pages import (
@@ -131,7 +128,6 @@ def service_playbill_policies_in_force(
             )
         at = pinned
     coordinate = _coordinate(instance, at)
-    artifact_codec = artifact_codec_for_compiler(coordinate.compiler)
     kinds = (
         "approval-policy",
         "procedure-runtime-policy",
@@ -151,7 +147,7 @@ def service_playbill_policies_in_force(
     rows: list[contracts.PolicyInForce] = []
     for path, kind, content in selected:
         if kind == "approval-policy":
-            approval_policy = parse_approval_policy(content, path=path, codec=artifact_codec)
+            approval_policy = parse_approval_policy(content, path=path)
             rows.append(
                 _row(
                     placement="standalone",
@@ -165,9 +161,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "procedure-runtime-policy":
-            runtime_policy = parse_procedure_runtime_policy(
-                content, path=path, codec=artifact_codec
-            )
+            runtime_policy = parse_procedure_runtime_policy(content, path=path)
             rows.append(
                 _row(
                     placement="standalone",
@@ -181,7 +175,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "claim-type":
-            claim_type = parse_claim_type(content, path=path, codec=artifact_codec)
+            claim_type = parse_claim_type(content, path=path)
             if claim_type.lifecycle.state != "live":
                 continue
             digest = claim_type_digest(claim_type).tagged
@@ -230,7 +224,7 @@ def service_playbill_policies_in_force(
                 if value is not None
             )
         elif kind == "capture-contract":
-            contract = parse_capture_contract(content, path=path, codec=artifact_codec)
+            contract = parse_capture_contract(content, path=path)
             if contract.lifecycle.state != "live":
                 continue
             rows.append(
@@ -245,7 +239,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "query-definition":
-            query = parse_query_definition(content, path=path, codec=artifact_codec)
+            query = parse_query_definition(content, path=path)
             if query.lifecycle.state != "live":
                 continue
             rows.append(
@@ -260,7 +254,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "document":
-            document = parse_document(content, path=path, codec=artifact_codec)
+            document = parse_document(content, path=path)
             rows.append(
                 _embedded(
                     policy_kind="document_activation_policy",
@@ -273,7 +267,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "procedure":
-            procedure = parse_procedure(content, path=path, codec=artifact_codec)
+            procedure = parse_procedure(content, path=path)
             if procedure.lifecycle.state != "live":
                 continue
             rows.append(
@@ -288,7 +282,7 @@ def service_playbill_policies_in_force(
                 )
             )
         elif kind == "trigger":
-            trigger = parse_trigger(content, path=path, codec=artifact_codec)
+            trigger = parse_trigger(content, path=path)
             if trigger.lifecycle.state != "live":
                 continue
             rows.append(

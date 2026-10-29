@@ -15,7 +15,6 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
     procedure_mandate_path,
@@ -51,12 +50,6 @@ from cruxible_client.contracts.triggers import (
     schedule_satisfies_input,
     trigger_digest,
     trigger_path,
-)
-from cruxible_core.compiler.compiler import (
-    AUTHORITY_VERBS_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -299,22 +292,11 @@ def test_the_trigger_law_holds_succession_and_never_revives() -> None:
     )
 
 
-def test_only_compiler_revision_32_admits_triggers_and_v6_lines() -> None:
+def test_a_trigger_projects_under_the_current_compiler() -> None:
     trigger = action_trigger("sweep", action="evidence.sweep", interval_seconds=86400, named=False)
-    tree = trigger_members(trigger)
-    parsed = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(GOVERNED_TRIGGERS_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(GOVERNED_TRIGGERS_COMPILER),
-    )
+    parsed = parse_projection_tree(trigger_members(trigger))
     (envelope,) = parsed.envelopes
     assert (envelope.identity, envelope.kind) == ("Trigger:sweep", "trigger")
-    with pytest.raises(ProjectionFormatError, match="no registered format"):
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(AUTHORITY_VERBS_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(AUTHORITY_VERBS_COMPILER),
-        )
 
 
 def _line_world(tmp_path):  # type: ignore[no-untyped-def]
@@ -564,23 +546,21 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
     )
     assert isinstance(payload, TriggerAuthoringPayload)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path, content, digest = _render_trigger_member(payload, tree=tree, light=True)
+    path, content, digest = _render_trigger_member(payload, tree=tree)
     authored = parse_trigger(content, path=path)
     assert path == trigger_path("hourly") and digest == trigger_digest(authored).tagged
     assert authored.line == line.identity and authored.lifecycle.predecessor_digest is None
     with pytest.raises(AuthoringLoweringError) as missing:
-        _render_trigger_member(
-            payload.model_copy(update={"line_name": "absent"}), tree=tree, light=True
-        )
+        _render_trigger_member(payload.model_copy(update={"line_name": "absent"}), tree=tree)
     assert missing.value.code == "cruxible.authoring.trigger_line_missing"
 
     tree[path] = content
     _accept_tree(instance, owner, tree, timestamp="2026-09-30T10:02:00.000000Z", proposal_name="a")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     # Unchanged, it lowers to the accepted bytes; changed, to a successor of them.
-    assert _render_trigger_member(payload, tree=tree, light=True)[1] == content
+    assert _render_trigger_member(payload, tree=tree)[1] == content
     _path, retired, _digest = _render_trigger_member(
-        payload.model_copy(update={"retire": True}), tree=tree, light=True
+        payload.model_copy(update={"retire": True}), tree=tree
     )
     successor_trigger = parse_trigger(retired, path=path)
     assert successor_trigger.lifecycle.state == "retired"

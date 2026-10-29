@@ -1,236 +1,70 @@
-"""PC-D and PC-F artifact-path and component-tag activation."""
+"""The current compiler's closed ledger path grammar and projection registry."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import (
-    P2_B0_ARTIFACT_CODEC,
-    canonical_bytes,
-    file_digest,
+from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_core.compiler.compiler import ARTIFACT_KINDS, PROJECTION_REGISTRY
+from cruxible_core.compiler.projection_artifacts import registered_path_kind
+
+
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        ("governance/approval-policy.json", "approval-policy"),
+        ("governance/procedure-runtime-policy.json", "procedure-runtime-policy"),
+        ("claim-types/project.work_item/status.json", "claim-type"),
+        ("capture-contracts/erp-release.json", "capture-contract"),
+        ("claims/12/CLM-12" + "ab" * 15 + ".json", "claim"),
+        ("procedures/product-lot-release.json", "procedure"),
+        ("lines/product-lot-release.json", "line"),
+        ("query-definitions/project.active_work.json", "query-definition"),
+        ("procedure-mandates/demo.json", "procedure-mandate"),
+        ("providers/cruxible-builtin.json", "provider"),
+        ("providers/demo/" + "ab" * 32 + ".json", "provider"),
+        ("contracts/workspace.file.request/v1.json", "contract"),
+        ("triggers/evidence-sweep.json", "trigger"),
+        ("subject-kinds/project.work_item.json", "subject-kind"),
+        ("compiler-upgrade.json", "compiler-upgrade"),
+    ],
 )
-from cruxible_client.contracts.errors import ProjectionFormatError, SubjectFormatError
-from cruxible_client.contracts.subjects import SubjectShell, parse_subject, render_subject
-from cruxible_core.compiler.compiler import (
-    P2_B0_COMPILER,
-    P2_B2_COMPILER,
-    P2_B4_COMPILER,
-    P2_B4_UNIT2_COMPILER,
-    P2_B5_COMPILER,
-    PC_DF2_COMPILER,
-    PC_HR_ARTIFACT_CODEC_COMPILERS,
-    SUPPORTED_COMPILERS,
-    artifact_kinds_for_compiler,
-    current_compiler_coordinate,
-    projection_registry_for_compiler,
+def test_the_current_grammar_resolves_each_kind(path: str, kind: str) -> None:
+    assert registered_path_kind(path) == kind
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Removed nouns (C12) have no path kind.
+        "provider-interfaces/demo.interface.json",
+        "blueprints/demo.json",
+        "source-acquisition-policies/demo.json",
+        # The compact codec's .yaml spelling is not a path of this compiler.
+        "subjects/project.work_item/wi-1.yaml",
+        "governance/approval-policy.yaml",
+    ],
 )
-from cruxible_core.compiler.projection_artifacts import (
-    P2_B0_ARTIFACT_KINDS,
-    P2_C_ARTIFACT_KINDS,
-    PLAYBILL_ARTIFACT_KINDS,
-    registered_path_kind,
-)
-
-
-def _p2_c_kind(path: str) -> str:
-    """The path kind the P2-C registry resolves; the paths below all predate Triggers."""
-
-    return registered_path_kind(path, artifact_kinds=P2_C_ARTIFACT_KINDS)
-
-
-def test_pc_d_activates_procedure_and_line_paths() -> None:
-    assert _p2_c_kind("governance/approval-policy.json") == "approval-policy"
-    assert _p2_c_kind("claim-types/project.work_item/status.json") == "claim-type"
-    assert _p2_c_kind("capture-contracts/erp-release.json") == "capture-contract"
-    assert _p2_c_kind("claims/12/CLM-12" + "ab" * 15 + ".json") == "claim"
-    assert _p2_c_kind("procedures/product-lot-release.json") == "procedure"
-    assert _p2_c_kind("lines/product-lot-release.json") == "line"
-
-
-def test_pc_f_activates_the_query_definition_path_kind() -> None:
-    assert _p2_c_kind("query-definitions/project.active_work.json") == "query-definition"
-    assert "query-definition" in {entry.kind for entry in PLAYBILL_ARTIFACT_KINDS.entries()}
-
-
-def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> None:
-    assert _p2_c_kind("provider-interfaces/demo.interface.json") == ("provider-interface")
+def test_the_current_grammar_refuses_retired_paths(path: str) -> None:
     with pytest.raises(ProjectionFormatError):
-        PLAYBILL_ARTIFACT_KINDS.resolve_path("provider-interfaces/demo.interface.json")
-    assert (
-        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(
-            "provider-interfaces/demo.interface.json"
-        )
-        == "provider-interface"
-    )
+        ARTIFACT_KINDS.resolve_path(path)
 
 
-def test_the_current_compilers_projection_registry_declares_no_removed_noun() -> None:
-    """F13: ProviderInterface and Blueprint are gone (C12); the current
-    compiler's *projection extension* registry (additive-fact permission,
-    not the path-kind registry above) must not still permit either kind."""
+def test_the_projection_registry_declares_no_removed_noun() -> None:
+    """ProviderInterface and Blueprint are gone (C12): no kind and no fact schema remains."""
 
-    registry = projection_registry_for_compiler(current_compiler_coordinate())
-    assert not registry.supports_artifact_kind("provider-interface")
-    assert not registry.supports_artifact_kind("blueprint")
-
-
-def test_the_current_compilers_registry_declares_no_removed_noun_fact_schemas() -> None:
-    """F13 fix round 2: the *artifact-kind* remainder above was fixed first;
-    ProviderInterface's own *fact schemas* (never written by current
-    admission) still leaked into the current registry through
-    ``p2c_extension_registry``'s inheritance from P2_B1_COMPILER's frozen
-    one. P2_B1_COMPILER's own registry keeps them, unchanged, for replay."""
-
-    from cruxible_client.contracts.projection_extensions import (
-        PROVIDER_INTERFACE_FACT_SCHEMA_IDS,
-        provider_runtime_extension_registry,
-    )
-
-    current = projection_registry_for_compiler(current_compiler_coordinate())
-    for schema_id in PROVIDER_INTERFACE_FACT_SCHEMA_IDS:
-        assert not current.supports(schema_id, 1, classification="semantic")
-    # A sibling schema from the same P2_B1 registry is still declared: this
-    # is a removal of the three obsolete ids, not of the registry's P2_B1
-    # ancestry as a whole.
-    assert current.supports("cruxible.provider.runtime", 1, classification="semantic")
-
-    frozen = provider_runtime_extension_registry()
-    for schema_id in PROVIDER_INTERFACE_FACT_SCHEMA_IDS:
-        assert frozen.supports(schema_id, 1, classification="semantic")
-
-
-def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:
-    assert _p2_c_kind("procedure-mandates/demo.json") == "procedure-mandate"
-    with pytest.raises(ProjectionFormatError):
-        PLAYBILL_ARTIFACT_KINDS.resolve_path("procedure-mandates/demo.json")
-    assert (
-        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(
-            "procedure-mandates/demo.json"
-        )
-        == "procedure-mandate"
-    )
-
-
-def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
-    legacy = artifact_kinds_for_compiler(P2_B0_COMPILER)
-    current = artifact_kinds_for_compiler(current_compiler_coordinate())
-    assert legacy.resolve_path("subjects/project.work_item/wi-1.yaml") == "subject"
-    assert current.resolve_path("subjects/project.work_item/wi-1.json") == "subject"
-    with pytest.raises(ProjectionFormatError):
-        legacy.resolve_path("subjects/project.work_item/wi-1.json")
-    with pytest.raises(ProjectionFormatError):
-        current.resolve_path("subjects/project.work_item/wi-1.yaml")
-
-    subject = SubjectShell(
-        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-1"),
-        subject_kind="project.work_item",
-        subject_id="wi-1",
-    )
-    legacy_bytes = canonical_bytes(subject.model_dump(mode="json")) + b"\n"
-    assert (
-        parse_subject(
-            legacy_bytes,
-            path="subjects/project.work_item/wi-1.yaml",
-            codec=P2_B0_ARTIFACT_CODEC,
-        )
-        == subject
-    )
-    assert (
-        parse_subject(render_subject(subject), path="subjects/project.work_item/wi-1.json")
-        == subject
-    )
-    with pytest.raises(SubjectFormatError):
-        parse_subject(render_subject(subject), path="subjects/project.work_item/wi-1.yaml")
-
-
-def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
-    assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
-    assert current_compiler_coordinate() in PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert {
-        PC_DF2_COMPILER,
-        P2_B2_COMPILER,
-        P2_B4_COMPILER,
-        P2_B4_UNIT2_COMPILER,
-        P2_B5_COMPILER,
-    } <= PC_HR_ARTIFACT_CODEC_COMPILERS
-    assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
-
-
-def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() -> None:
-    from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
-
-    from cruxible_client.contracts.approval_policy import parse_approval_policy
-    from cruxible_client.contracts.captures import parse_capture_contract
-    from cruxible_client.contracts.claim_types import parse_claim_type
-    from cruxible_client.contracts.claims import parse_claim
-    from cruxible_client.contracts.documents import parse_document
-    from cruxible_client.contracts.procedure_runtime_policy import (
-        parse_procedure_runtime_policy,
-    )
-    from cruxible_client.contracts.providers import parse_provider
-    from cruxible_client.contracts.query.definitions import parse_query_definition
-    from cruxible_client.contracts.types import PrincipalRecord
-    from cruxible_core.exhaust.promotions import parse_exhaust_promotion
-
-    fixture_path = Path(__file__).parents[1] / "goldens/playbill/p2-b0-artifact-codec-v1.json"
-    fixture = json.loads(fixture_path.read_bytes())
-    parsers = {
-        "approval-policy": parse_approval_policy,
-        "capture-contract": parse_capture_contract,
-        "claim": parse_claim,
-        "claim-type": parse_claim_type,
-        "document": parse_document,
-        "exhaust-promotion": parse_exhaust_promotion,
-        "procedure-runtime-policy": parse_procedure_runtime_policy,
-        "provider": parse_provider,
-        "query-definition": parse_query_definition,
-        "source-acquisition-policy": parse_acquisition_policy,
-        "subject": parse_subject,
-    }
-    seen: set[str] = set()
-    for row in fixture["artifacts"]:
-        kind = row["kind"]
-        path = row["p2_b0_path"]
-        content = row["compact_wire"].encode("utf-8")
-        assert P2_B0_ARTIFACT_KINDS.resolve_path(path) == kind
-        assert file_digest(content).tagged == row["exact_member_digest"]
-        if kind in parsers:
-            parsers[kind](content, path=path, codec=P2_B0_ARTIFACT_CODEC)
-        elif kind == "principal":
-            assert PrincipalRecord.model_validate_json(content).principal_id == "owner"
-        else:  # pragma: no cover - the fixture inventory is closed
-            raise AssertionError(f"unverified P2-B0 artifact kind: {kind}")
-        seen.add(kind)
-
-    # No instance ever accepted a Procedure or Line, and their pre-v6 formats are
-    # deleted: a Procedure is graph v6 (compiler revision 27+), a Line v6 (32).
-    assert seen == {entry.kind for entry in P2_B0_ARTIFACT_KINDS.entries()} - {
-        "changeset",
-        "line",
-        "procedure",
-    }
-
-
-def test_historical_claim_type_path_error_names_the_historical_spelling() -> None:
-    from cruxible_client.contracts.claim_types import ClaimTypeFormatError, parse_claim_type
-
-    fixture_path = Path(__file__).parents[1] / "goldens/playbill/p2-b0-artifact-codec-v1.json"
-    fixture = json.loads(fixture_path.read_bytes())
-    row = next(item for item in fixture["artifacts"] if item["kind"] == "claim-type")
-
-    with pytest.raises(ClaimTypeFormatError, match=r"attribute_0000\.yaml"):
-        parse_claim_type(
-            row["compact_wire"].encode("utf-8"),
-            path="claim-types/project.work_item/wrong.yaml",
-            codec=P2_B0_ARTIFACT_CODEC,
-        )
+    kinds = {entry.kind for entry in ARTIFACT_KINDS.entries()}
+    assert not kinds & {"provider-interface", "blueprint", "source-acquisition-policy"}
+    for schema_id in (
+        "cruxible.provider_interface.registration",
+        "cruxible.provider_interface.vocabulary",
+        "cruxible.provider_interface.classifier",
+    ):
+        assert not PROJECTION_REGISTRY.supports(schema_id, 1, classification="semantic")
+    assert PROJECTION_REGISTRY.supports("cruxible.provider.runtime", 1, classification="semantic")
 
 
 def test_calibration_readings_have_no_governed_path_kind() -> None:
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
     # governed tree path would collapse the ratified policy/readings/mandates split.
-    assert "calibration-reading" not in {entry.kind for entry in P2_C_ARTIFACT_KINDS.entries()}
+    assert "calibration-reading" not in {entry.kind for entry in ARTIFACT_KINDS.entries()}

@@ -128,7 +128,6 @@ from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
-    ReseedRequired,
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
@@ -153,7 +152,6 @@ from cruxible_client.contracts.laws import (
     LIGHT_CAPTURE_CONTRACT_LAW,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
-    QUERY_DEFINITION_LAW,
     AcceptanceLawRegistry,
     InstalledAcceptanceLaw,
 )
@@ -271,7 +269,7 @@ from cruxible_client.contracts.triggers import (
     schedule_satisfies_input,
     trigger_digest,
 )
-from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     WorkspaceAdvertisement,
@@ -296,13 +294,6 @@ from cruxible_core.claims.key_claims import (
     is_subject_creation_key_claim,
     retired_claim_names_subject_version,
     subject_versions,
-)
-from cruxible_core.compiler.compiler import (
-    LIGHT_ARTIFACTS_COMPILER,
-    PC_HR_ARTIFACT_CODEC_COMPILERS,
-    artifact_kinds_for_compiler,
-    candidate_card_renderer_digest_for_compiler,
-    projection_registry_for_compiler,
 )
 from cruxible_core.derived.derived_state import SnapshotTree, paths_with_prefix, snapshot_against
 from cruxible_core.exhaust.promotions import (
@@ -336,8 +327,7 @@ from cruxible_core.indexes.subject_aliases import (
 )
 from cruxible_core.indexes.subject_identity import (
     SubjectAssignmentAuthority,
-    admits_subject_kinds,
-    boundary_identity_issues,
+    candidate_identity_issues,
     key_claim_type_shape,
 )
 from cruxible_core.proposals.candidate_cards import (
@@ -430,8 +420,7 @@ REMOVED_NOUNS: Final[Mapping[str, str]] = {
 
 _ATTESTATION_PATH_RE = re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
-# A single-path Provider or registration, or one build / contract registration
-# (compiler revision 34); the path grammar decides which a coordinate admits.
+# A single-path Provider (the built-in) or one build.
 _PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
 _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -1894,46 +1883,11 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
         kind = _member_kind(context.path)
         if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
             named = NAMED_REFERENCE_FORMATS[kind.name]
-            light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
-            if (
-                artifact_tag == named
-                or (kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2")
-            ) != light:
-                raise FormatError(
-                    f"New {kind.name} artifacts require {named} on compiler revision 36; "
-                    "upgrade the compiler or author the admitted format."
-                )
+            if artifact_tag != named and not (
+                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+            ):
+                raise FormatError(f"New {kind.name} artifacts require {named}.")
     if context.historical_law_coordinate is None:
-        if artifact_tag == "playbill-claim-v3" and not admits_subject_kinds(
-            context.current.compiler
-        ):
-            # Claim law v3 revision 11 is adopted with Subject identity (compiler
-            # revision 33); an instance on an earlier compiler keeps revision 10.
-            return context.acceptance_laws.require_historical(
-                identifier=CLAIM_LAW_V3_REVISION_10.identifier,
-                digest=CLAIM_LAW_V3_REVISION_10.digest,
-            )
-        if artifact_tag == "playbill-claim-v2" and not admits_subject_kinds(
-            context.current.compiler
-        ):
-            # Claim law v2 revision 9 (key Claims covered by their Subject's
-            # creation) is adopted with Subject identity too; an earlier compiler
-            # keeps revision 8.
-            return context.acceptance_laws.require_historical(
-                identifier=CLAIM_LAW_V2_REVISION_8.identifier,
-                digest=CLAIM_LAW_V2_REVISION_8.digest,
-            )
-        from cruxible_core.compiler.compiler import admits_claim_rebind
-
-        if artifact_tag == "playbill-claim-v2" and not admits_claim_rebind(
-            context.current.compiler
-        ):
-            # Claim law v2 revision 10 (re-bind) is adopted with compiler
-            # revision 35; revisions 33 and 34 keep revision 9.
-            return context.acceptance_laws.require_historical(
-                identifier=CLAIM_LAW_V2_REVISION_9.identifier,
-                digest=CLAIM_LAW_V2_REVISION_9.digest,
-            )
         return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
     identifier, digest = context.historical_law_coordinate
     installed = context.acceptance_laws.require_historical(
@@ -2048,7 +2002,7 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
         lookup=source_lookup,
         claim_types=(source_lookup(identity) for identity in type_ids),
         subject_kinds=subject_kinds,
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
     )
 
 
@@ -2169,7 +2123,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             context,
             (ref for slot in procedure.definition.slots.values() for ref in (slot.in_, slot.out)),
         ),
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2279,12 +2233,6 @@ def _artifact_digest_identities(
     return {state.artifact_digest: state.artifact_digest for state in states.values()}
 
 
-def _admits_triggers(compiler: CompilerCoordinate) -> bool:
-    """Whether a compiler admits Trigger artifacts, and with them only v6 Lines."""
-
-    return any(entry.kind == "trigger" for entry in artifact_kinds_for_compiler(compiler).entries())
-
-
 def _line_trigger_input(line: LineSpec) -> TriggerInputRecord:
     """The event a Line accepts: exactly its declared one when it binds its Capture."""
 
@@ -2304,18 +2252,10 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
     identity = line.identity.qualified
     stranded: set[str] = set()
-    triggers: Iterable[AcceptedTrigger | None]
-    if context.current.compiler == LIGHT_ARTIFACTS_COMPILER:
-        triggers = (
-            context.resolved.triggers.get(
-                context.candidate_states[edge.source_path].identity.qualified
-            )
-            for edge in context.candidate_dependencies.edges_by_target.get(context.path, ())
-        )
-    else:
-        # Frozen Trigger-v1 pins omit the target Line. Preserve the original
-        # pre-36 law's scan; only the current index has that identity edge.
-        triggers = iter(context.resolved.triggers.values())
+    triggers: Iterable[AcceptedTrigger | None] = (
+        context.resolved.triggers.get(context.candidate_states[edge.source_path].identity.qualified)
+        for edge in context.candidate_dependencies.edges_by_target.get(context.path, ())
+    )
     for accepted in triggers:
         if accepted is None:
             continue
@@ -2329,7 +2269,7 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
         if line.lifecycle.state == "retired" or not schedule_satisfies_input(
             trigger.schedule,
             _line_trigger_input(line),
-            by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=True,
         ):
             stranded.add(trigger.identity.qualified)
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
@@ -2337,16 +2277,6 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
 
 def _line_member(context: _MemberContext) -> _MemberVerdict:
     line = parse_line_spec(context.content, path=context.path)
-    if not _admits_triggers(context.current.compiler):
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.line.governed_triggers_required",
-                    "A Line v6 requires compiler revision 32; upgrade the instance first.",
-                    context.path,
-                ),
-            )
-        )
     accepted_procedure = context.resolved.procedures.get(line.procedure.target.qualified)
     if accepted_procedure is None:
         return _MemberVerdict(
@@ -2406,7 +2336,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             if (provider := context.resolved.providers.get(binding.build.target.qualified))
             is not None
         },
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2443,16 +2373,6 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _trigger_member(context: _MemberContext) -> _MemberVerdict:
-    if not _admits_triggers(context.current.compiler):
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.trigger.compiler_unsupported",
-                    "Trigger artifacts require compiler revision 32; upgrade the instance first.",
-                    context.path,
-                ),
-            )
-        )
     trigger = parse_trigger(context.content, path=context.path)
     predecessor: AcceptedTrigger | None = None
     if context.parent_content is not None:
@@ -2475,7 +2395,7 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         trigger,
         path=context.path,
         predecessor=predecessor,
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
         target_line_live=line_live,
         target_line_input=line_input,
     )
@@ -2500,20 +2420,9 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one SubjectKind: its succession, and the key ClaimTypes it names.
 
     A key ClaimType is read from the candidate, so one accepted in the same
-    change counts. SubjectKinds are admitted from compiler revision 33.
+    change counts.
     """
 
-    if not admits_subject_kinds(context.current.compiler):
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.subject_kind.compiler_unsupported",
-                    "SubjectKind artifacts require compiler revision 33 (subject identity); "
-                    "upgrade the instance first.",
-                    context.path,
-                ),
-            )
-        )
     subject_kind = parse_subject_kind(context.content, path=context.path)
     predecessor: AcceptedSubjectKind | None = None
     if context.parent_content is not None:
@@ -2568,8 +2477,7 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
 def _contract_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one Contract version: immutable, succeeding exactly, every pin exact.
 
-    Contracts are admitted from compiler revision 36. A refused field type earns
-    ``cruxible.contract.contract_type_refused``.
+    A refused field type earns ``cruxible.contract.contract_type_refused``.
     """
 
     from cruxible_client.contracts.shapes import (
@@ -2579,16 +2487,6 @@ def _contract_member(context: _MemberContext) -> _MemberVerdict:
         parse_contract,
     )
 
-    if context.current.compiler != LIGHT_ARTIFACTS_COMPILER:
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.contract.compiler_unsupported",
-                    "Contract artifacts require compiler revision 36; upgrade the instance first.",
-                    context.path,
-                ),
-            )
-        )
     try:
         contract = parse_contract(context.content, path=context.path)
     except ContractTypeRefused as exc:
@@ -2705,7 +2603,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         path=context.path,
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
         contracts=_candidate_contract_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
@@ -2715,14 +2613,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=(literal_traversal,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
-    if (
-        (
-            installed.coordinate == QUERY_DEFINITION_LAW
-            or context.current.compiler == LIGHT_ARTIFACTS_COMPILER
-        )
-        and predecessor is not None
-        and predecessor.artifact_digest != law.artifact_digest
-    ):
+    if predecessor is not None and predecessor.artifact_digest != law.artifact_digest:
         # Corroboration names its query by exact digest, so moving the query
         # would silently leave every ClaimType that corroborates through it
         # unable to admit a Claim. Read in the final candidate: a ClaimType
@@ -2798,16 +2689,8 @@ def _sibling_control_domains(
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
-    from cruxible_core.compiler.compiler import (
-        CLAIM_REBIND_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-    )
-
     if (
-        context.current.compiler
-        in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER}
-        and context.parent_content is None
+        context.parent_content is None
         and not context.rechecking
         and "/" not in provider.identity.name
         and provider.identity.name != "cruxible-builtin"
@@ -2843,7 +2726,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
             ),
         ),
         refusal_codes=_PROVIDER_REFUSAL_CODES,
-        by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        by_name=True,
         sibling_control_domains=(
             _sibling_control_domains(
                 context.candidate_tree, provider, context.path, context.candidate_states
@@ -3002,14 +2885,7 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
         parse_resolution_contract,
         resolution_contract_digest,
     )
-    from cruxible_client.contracts.types import CompilerCoordinate
-    from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 
-    if not any(
-        k.kind == "resolution-contract"
-        for k in artifact_kinds_for_compiler(context.current.compiler).entries()
-    ):
-        raise FormatError("compiler does not admit independent resolution contracts")
     value = parse_resolution_contract(context.content, path=context.path)
     previous = (
         None
@@ -3036,15 +2912,7 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
     raw = tree.get(claim_path(h.identity.name))
     if raw is None:
         raise FormatError("resolution hypothesis Claim is absent at its bound coordinate")
-    value.verify_hypothesis(
-        parse_claim(
-            raw,
-            path=claim_path(h.identity.name),
-            codec=artifact_codec_for_compiler(
-                CompilerCoordinate(rule_digest=h.coordinate.compiler_digest)
-            ),
-        )
-    )
+    value.verify_hypothesis(parse_claim(raw, path=claim_path(h.identity.name)))
     digest = resolution_contract_digest(value).tagged
     return _accepted(
         context,
@@ -3062,19 +2930,6 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
 def _attestation_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.evidence.attestation_verification import ClaimAttestationRefusal
 
-    if not any(
-        entry.kind == "attestation"
-        for entry in artifact_kinds_for_compiler(context.current.compiler).entries()
-    ):
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.attestation.compiler_unsupported",
-                    "This compiler does not admit standalone attestations.",
-                    context.path,
-                ),
-            )
-        )
     try:
         return _verified_attestation_member(context)
     except ClaimAttestationRefusal as exc:
@@ -3169,7 +3024,7 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         historical_capture_contract=historical_capture_contract_resolver(
             context.historical_artifact_provider,
             s.referent_coordinate,
-            indexed_compiler=context.current.compiler in PC_HR_ARTIFACT_CODEC_COMPILERS,
+            indexed=True,
         ),
         # New evidence needs daemon proof a run produced it, at admission and
         # again at settlement; only recovery of accepted state re-derives it.
@@ -3308,17 +3163,12 @@ def _capture_contract_dependents(
 
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-    if context.historical_law_coordinate is None and not context.rechecking:
-        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
-        if contract.artifact_format != (
-            "cruxible-capture-contract-v3" if light else "playbill-capture-contract-v1"
-        ):
-            raise FormatError(
-                "new CaptureContracts require v3 on compiler revision 36; "
-                "upgrade the compiler or use a new v3 artifact"
-            )
+    if (
+        context.historical_law_coordinate is None
+        and not context.rechecking
+        and contract.artifact_format != "cruxible-capture-contract-v3"
+    ):
+        raise FormatError("new CaptureContracts require cruxible-capture-contract-v3")
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
         previous = parse_capture_contract(context.parent_content, path=context.path)
@@ -3409,7 +3259,7 @@ def historical_capture_contract_resolver(
     provider: HistoricalArtifactProvider | None,
     at: AcceptedCoordinate,
     *,
-    indexed_compiler: bool = False,
+    indexed: bool = False,
 ) -> "CaptureContractVersions":
     """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
 
@@ -3417,8 +3267,7 @@ def historical_capture_contract_resolver(
     what its first evaluation read. Without a provider nothing historical
     resolves and only live contracts verify. The answer is authoritative (a
     None means no such version was accepted) only with a provider over an
-    instance whose compiler indexes every accepted generation, genesis
-    included (``indexed_compiler``).
+    index of every accepted generation, genesis included (``indexed``).
     """
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
@@ -3439,9 +3288,7 @@ def historical_capture_contract_resolver(
         cache[digest] = accepted
         return accepted
 
-    return CaptureContractVersions(
-        resolve=resolve, authoritative=provider is not None and indexed_compiler
-    )
+    return CaptureContractVersions(resolve=resolve, authoritative=provider is not None and indexed)
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
@@ -3449,10 +3296,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.indexes.evaluated_state import mapped_values
 
     claim = sealed_claim_member(context.content, path=context.path).claim
-    if claim.backing.attestation_digests and any(
-        entry.kind == "attestation"
-        for entry in artifact_kinds_for_compiler(context.current.compiler).entries()
-    ):
+    if claim.backing.attestation_digests:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
@@ -3719,9 +3563,7 @@ def _erasure_records(
     are gone. The verification context answers it, when it can.
     """
 
-    from cruxible_core.compiler.compiler import admits_claim_rebind
-
-    compiler_35 = admits_claim_rebind(context.current.compiler) and installed.coordinate in {
+    compiler_35 = installed.coordinate in {
         CLAIM_LAW_V2_REVISION_10,
         CLAIM_LAW_V3_REVISION_11,
     }
@@ -3750,27 +3592,19 @@ def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) ->
     return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
 
 
-def _validate_identity_evidence_policy_format(claim_type: ClaimType, compiler: object) -> None:
+def _validate_identity_evidence_policy_format(claim_type: ClaimType) -> None:
     """The identity-policy write gate; proposal orchestration renders its typed refusal.
 
     It judges only a ClaimType the write creates or changes. An accepted
     ClaimType keeps the policy format it was accepted with until a governed
     upgrade restates it, so neither a referrer recheck nor a replay asks.
     """
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 
-    tag = claim_type.evidence_admission_policy.tag
-    light = compiler == LIGHT_ARTIFACTS_COMPILER
-    if light and tag == "playbill-claim-evidence-admission-policy-v3":
+    if claim_type.evidence_admission_policy.tag == "playbill-claim-evidence-admission-policy-v3":
         raise FormatError(
-            "a ClaimType written on compiler revision 36 states evidence policy v4; "
+            "a ClaimType written now states evidence policy v4; "
             "`cruxible claim-type upgrade` restates accepted v3 policies as v4, "
             "or author this one with a v4 policy"
-        )
-    if not light and tag == "cruxible-claim-evidence-admission-policy-v4":
-        raise FormatError(
-            "evidence policy v4 requires compiler revision 36; "
-            "run `cruxible compiler upgrade` first, or author a v3 policy"
         )
 
 
@@ -3786,36 +3620,14 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             claim_type=previous,
             artifact_digest=claim_type_digest(previous).tagged,
         )
-    from cruxible_core.compiler.compiler import (
-        AUTHORITY_VERBS_COMPILER,
-        CLAIM_EVIDENCE_COMPILER,
-        CLAIM_REBIND_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-    )
-
     if (
         context.historical_law_coordinate is None
         and not context.rechecking
         and not context.replaying_accepted
     ):
-        _validate_identity_evidence_policy_format(claim_type, context.current.compiler)
+        _validate_identity_evidence_policy_format(claim_type)
 
-    if context.historical_law_coordinate is None and context.current.compiler in {
-        CLAIM_EVIDENCE_COMPILER,
-        SOURCE_CHECKED_COMPILER,
-        TRIGGER_CAPTURE_COMPILER,
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        CLAIM_REBIND_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-    }:
+    if context.historical_law_coordinate is None:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
             for rule in claim_type.evidence_admission_policy.rules
@@ -3829,25 +3641,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
-    from cruxible_core.compiler.compiler import admits_claim_rebind
-
-    if (
-        claim_type.artifact_format == CLAIM_TYPE_V9_FORMAT
-        and context.historical_law_coordinate is None
-        and not admits_claim_rebind(context.current.compiler)
-    ):
-        # ClaimType v9 (inverses) is admitted with compiler revision 35, as
-        # revision 31 admitted v8; an earlier compiler has no law for it.
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.claim_type.compiler_unsupported",
-                    "A ClaimType that declares an inverse (v9) requires compiler revision 35; "
-                    "upgrade the instance first.",
-                    context.path,
-                ),
-            )
-        )
     law = evaluate_claim_type_law(
         claim_type,
         path=context.path,
@@ -4110,19 +3903,6 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
         PROCEDURE_RUNTIME_POLICY_PATH,
     ):
         return _MemberVerdict(diagnostics=(_unregistered(context.path),))
-    if not projection_registry_for_compiler(context.current.compiler).supports_artifact_kind(
-        "procedure-runtime-policy"
-    ):
-        return _MemberVerdict(
-            diagnostics=(
-                _diagnostic(
-                    "cruxible.procedure_runtime_policy.compiler_unsupported",
-                    "The instance compiler does not recognize ProcedureRuntimePolicy; "
-                    "migrate the instance compiler before proposing this singleton.",
-                    context.path,
-                ),
-            )
-        )
     try:
         policy = parse_procedure_runtime_policy(context.content, path=context.path)
     except ProcedureRuntimePolicyFormatError as exc:
@@ -4802,10 +4582,10 @@ def _evaluate_scoped_members(
             parent=parent.dependencies,
             candidate=candidate_dependencies,
             scope=scope,
-            by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=True,
         )
     )
-    if facts is not None and facts.verdict == "refused" and admits_subject_kinds(current.compiler):
+    if facts is not None and facts.verdict == "refused":
         # Key Claims follow their keyed Subject (maintainer ruling): a succeeded
         # Subject carries them unchanged, so they are not dependents the change
         # must disposition; a Claim retired with its Subject keeps the pin on the
@@ -5040,122 +4820,119 @@ def _evaluate_scoped_members(
         if verdict.member is not None:
             accepted.append(verdict.member)
 
-    if current.compiler == LIGHT_ARTIFACTS_COMPILER:
-        # The reverse index is maintained from changed paths. Recheck only live
-        # governed referrers, never Claims or mandate authority pins.
-        from cruxible_client.contracts.canonical import pretty_canonical_bytes
-        from cruxible_client.contracts.dependencies import dependency_follows_name
+    # The reverse index is maintained from changed paths. Recheck only live
+    # governed referrers, never Claims or mandate authority pins.
+    from cruxible_client.contracts.canonical import pretty_canonical_bytes
+    from cruxible_client.contracts.dependencies import dependency_follows_name
 
-        # Annotation is consensus evidence, so replay computes it too. The
-        # unchanged referrers retain their references in the candidate; reuse
-        # this one incoming bucket read for both rechecks and review evidence.
-        referrers_by_target: dict[str, set[str]] = {}
-        for changed_path in scope:
-            incoming = parent.dependencies.edges_by_target.get(changed_path, ())
-            paths = set()
-            for edge in incoming:
-                state = candidate_states.get(edge.source_path)
-                if (
-                    edge.source_path not in scope
-                    and state is not None
-                    and state.lifecycle.state == "live"
-                    and dependency_follows_name(
-                        state.artifact_kind,
-                        state.pins,
-                        parent.dependencies.states[changed_path].identity,
-                        edge.pin_role,
-                    )
-                ):
-                    paths.add(edge.source_path)
-            referrers_by_target[changed_path] = paths
-        referrers = {path for paths in referrers_by_target.values() for path in paths}
-        # A refused changed member already prevents acceptance. Rechecking
-        # unchanged referrers would only duplicate its domain-law repair.
-        refused_member = any(item.severity == "error" for item in diagnostics)
-        for referrer_path in () if replaying_accepted or refused_member else sorted(referrers):
-            state = candidate_states.get(referrer_path)
-            if state is None or state.lifecycle.state != "live":
-                continue
-            referrer_kind = _member_kind(referrer_path)
-            if referrer_kind is None:
-                continue
-            payload = json.loads(candidate_tree[referrer_path])
-            payload["lifecycle"] = {"state": "live", "predecessor_digest": None}
-            if state.artifact_kind == "line":
-                payload["occurrence_epoch"] = 1
-            unresolved = judge_dependency_closure(
-                parent=candidate_dependencies,
-                candidate=candidate_dependencies,
-                scope=(referrer_path,),
-                by_name=True,
-            ).unresolved_pins
-            if unresolved:
-                diagnostics.extend(
-                    d.model_copy(
-                        update={
-                            "message": f"Broken referrer {state.identity.qualified}: " + d.message
-                        }
-                    )
-                    for d in _refused_closure((), unresolved)
+    # Annotation is consensus evidence, so replay computes it too. The
+    # unchanged referrers retain their references in the candidate; reuse
+    # this one incoming bucket read for both rechecks and review evidence.
+    referrers_by_target: dict[str, set[str]] = {}
+    for changed_path in scope:
+        incoming = parent.dependencies.edges_by_target.get(changed_path, ())
+        paths = set()
+        for edge in incoming:
+            state = candidate_states.get(edge.source_path)
+            if (
+                edge.source_path not in scope
+                and state is not None
+                and state.lifecycle.state == "live"
+                and dependency_follows_name(
+                    state.artifact_kind,
+                    state.pins,
+                    parent.dependencies.states[changed_path].identity,
+                    edge.pin_role,
                 )
-                continue
-            content = pretty_canonical_bytes(payload)
-            if state.artifact_tag == "cruxible-procedure-v3":
-                from cruxible_client.contracts.procedures.artifacts import (
-                    NamedProcedureArtifact,
-                    render_procedure,
+            ):
+                paths.add(edge.source_path)
+        referrers_by_target[changed_path] = paths
+    referrers = {path for paths in referrers_by_target.values() for path in paths}
+    # A refused changed member already prevents acceptance. Rechecking
+    # unchanged referrers would only duplicate its domain-law repair.
+    refused_member = any(item.severity == "error" for item in diagnostics)
+    for referrer_path in () if replaying_accepted or refused_member else sorted(referrers):
+        state = candidate_states.get(referrer_path)
+        if state is None or state.lifecycle.state != "live":
+            continue
+        referrer_kind = _member_kind(referrer_path)
+        if referrer_kind is None:
+            continue
+        payload = json.loads(candidate_tree[referrer_path])
+        payload["lifecycle"] = {"state": "live", "predecessor_digest": None}
+        if state.artifact_kind == "line":
+            payload["occurrence_epoch"] = 1
+        unresolved = judge_dependency_closure(
+            parent=candidate_dependencies,
+            candidate=candidate_dependencies,
+            scope=(referrer_path,),
+            by_name=True,
+        ).unresolved_pins
+        if unresolved:
+            diagnostics.extend(
+                d.model_copy(
+                    update={"message": f"Broken referrer {state.identity.qualified}: " + d.message}
                 )
-
-                content = render_procedure(NamedProcedureArtifact.model_validate(payload))
-            elif state.artifact_tag == "cruxible-query-definition-v3":
-                from cruxible_client.contracts.query.definitions import (
-                    NamedQueryDefinition,
-                    render_query_definition,
-                )
-
-                content = render_query_definition(NamedQueryDefinition.model_validate(payload))
-            try:
-                recheck = referrer_kind.evaluate(
-                    dataclasses.replace(
-                        member_context,
-                        path=referrer_path,
-                        content=content,
-                        parent_content=None,
-                        historical_law_coordinate=None,
-                        rechecking=True,
-                        replaying_accepted=True,
-                    )
-                )
-            except (CruxibleError, ValueError) as exc:
-                recheck = _MemberVerdict(
-                    diagnostics=(_diagnostic(referrer_kind.format_code, str(exc), referrer_path),)
-                )
-            for diagnostic in recheck.diagnostics:
-                diagnostics.append(
-                    diagnostic.model_copy(
-                        update={
-                            "message": (
-                                f"Broken referrer {state.identity.qualified}: " + diagnostic.message
-                            ),
-                        }
-                    )
-                )
-
-        accepted = [
-            dataclasses.replace(
-                member,
-                result={
-                    **member.result,
-                    "referrers": sorted(
-                        {
-                            candidate_states[path].identity.qualified
-                            for path in referrers_by_target.get(member.path, ())
-                        }
-                    ),
-                },
+                for d in _refused_closure((), unresolved)
             )
-            for member in accepted
-        ]
+            continue
+        content = pretty_canonical_bytes(payload)
+        if state.artifact_tag == "cruxible-procedure-v3":
+            from cruxible_client.contracts.procedures.artifacts import (
+                NamedProcedureArtifact,
+                render_procedure,
+            )
+
+            content = render_procedure(NamedProcedureArtifact.model_validate(payload))
+        elif state.artifact_tag == "cruxible-query-definition-v3":
+            from cruxible_client.contracts.query.definitions import (
+                NamedQueryDefinition,
+                render_query_definition,
+            )
+
+            content = render_query_definition(NamedQueryDefinition.model_validate(payload))
+        try:
+            recheck = referrer_kind.evaluate(
+                dataclasses.replace(
+                    member_context,
+                    path=referrer_path,
+                    content=content,
+                    parent_content=None,
+                    historical_law_coordinate=None,
+                    rechecking=True,
+                    replaying_accepted=True,
+                )
+            )
+        except (CruxibleError, ValueError) as exc:
+            recheck = _MemberVerdict(
+                diagnostics=(_diagnostic(referrer_kind.format_code, str(exc), referrer_path),)
+            )
+        for diagnostic in recheck.diagnostics:
+            diagnostics.append(
+                diagnostic.model_copy(
+                    update={
+                        "message": (
+                            f"Broken referrer {state.identity.qualified}: " + diagnostic.message
+                        ),
+                    }
+                )
+            )
+
+    accepted = [
+        dataclasses.replace(
+            member,
+            result={
+                **member.result,
+                "referrers": sorted(
+                    {
+                        candidate_states[path].identity.qualified
+                        for path in referrers_by_target.get(member.path, ())
+                    }
+                ),
+            },
+        )
+        for member in accepted
+    ]
 
     if any(item.expanded_artifact_digest not in used_expansions for item in claim_type_expansions):
         diagnostics.append(
@@ -5180,8 +4957,7 @@ def _evaluate_scoped_members(
         # kind, read from the parent overlaid with this change. Admission and
         # settlement both evaluate here, so every route is held to it. History
         # accepted before the rule is not refused again on replay.
-        identity_issues = boundary_identity_issues(
-            current.compiler,
+        identity_issues = candidate_identity_issues(
             current_tree=current_tree,
             candidate_tree=candidate_tree,
             scope=scope,
@@ -5730,27 +5506,19 @@ def evaluate_proposal_tree(
                     True,
                 )
 
-    if admits_subject_kinds(current.compiler):
-        # A keyed Subject retired here takes its live key Claims with it, in this
-        # same change (maintainer ruling): derived before scoping, like cards.
-        derived = derive_key_claim_retirements(
-            current_tree=current_tree, candidate_tree=candidate_tree
-        )
-        if derived is not candidate_tree:
-            candidate_tree = derived if isinstance(derived, SnapshotTree) else SnapshotTree(derived)
+    # A keyed Subject retired here takes its live key Claims with it, in this
+    # same change (maintainer ruling): derived before scoping, like cards.
+    derived = derive_key_claim_retirements(current_tree=current_tree, candidate_tree=candidate_tree)
+    if derived is not candidate_tree:
+        candidate_tree = derived if isinstance(derived, SnapshotTree) else SnapshotTree(derived)
 
-    selected_card_renderer = candidate_card_renderer_digest
-    if selected_card_renderer is None:
-        selected_card_renderer = candidate_card_renderer_digest_for_compiler(current.compiler)
-    if selected_card_renderer is not None:
-        if selected_card_renderer != CARD_RENDERER_DIGEST:
-            raise ProposalIntegrityError("candidate card renderer differs from compiler coordinate")
-        candidate_tree = derive_candidate_cards(
-            base_tree=current_tree,
-            candidate_tree=candidate_tree,
-            coordinate=current.git_oid,
-            artifact_kinds=artifact_kinds_for_compiler(current.compiler),
-        )
+    if candidate_card_renderer_digest not in {None, CARD_RENDERER_DIGEST}:
+        raise ProposalIntegrityError("candidate card renderer differs from compiler coordinate")
+    candidate_tree = derive_candidate_cards(
+        base_tree=current_tree,
+        candidate_tree=candidate_tree,
+        coordinate=current.git_oid,
+    )
 
     parent = (
         parent_state
@@ -5758,20 +5526,16 @@ def evaluate_proposal_tree(
         else (
             tree_state_provider(current_tree)
             if tree_state_provider is not None
-            else build_tree_state(
-                current_tree, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
-            )
+            else build_tree_state(current_tree, by_name=True)
         )
     )
-    if parent.dependencies.by_name != (current.compiler == LIGHT_ARTIFACTS_COMPILER):
+    if not parent.dependencies.by_name:
         # A compiler adoption changes dependency interpretation once. Rebuild
         # only this derived index at that boundary; ordinary generations carry it.
         parent = EvaluatedTreeState(
             parent.members,
             parent.merkle,
-            build_dependency_index(
-                current_tree, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
-            ),
+            build_dependency_index(current_tree, by_name=True),
             parent.claim_subjects,
         )
     with getattr(parent, "scope", nullcontext)():
@@ -5989,8 +5753,6 @@ class ProposalService:
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
-        if current.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS:
-            raise ReseedRequired()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:
             raise ProposalAdmissionError(

@@ -63,19 +63,8 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
-from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
-from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import (
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_REBIND_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-    current_compiler_coordinate,
-)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import ProposalInspection
@@ -599,19 +588,6 @@ def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord
     return claim_type_input_defaults(minimal, None) if expanded else minimal
 
 
-def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
-    """Whether this compiler accepts ClaimType v6/v7 identity evidence rules."""
-
-    return compiler in (
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        CLAIM_REBIND_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-    )
-
-
 def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...]) -> dict[str, str]:
     """Accepted (and anticipated foreign-source) contract digests to their identities."""
 
@@ -712,25 +688,6 @@ class ClaimTypeInputReferenceError(FormatError):
     """An authored evidence rule names a contract that cannot be referenced."""
 
     error_code = "cruxible.claim_type.input_invalid"
-
-
-class ClaimTypeRequiresCompilerUpgrade(FormatError):
-    """ClaimType authoring writes v7 with identity rules; this compiler admits neither."""
-
-    error_code = "cruxible.claim_type.compiler_upgrade_required"
-
-    def __init__(self) -> None:
-        target = current_compiler_coordinate()
-        super().__init__(
-            f"{self.error_code}: ClaimType authoring writes ClaimType v7 with identity "
-            "evidence rules, which need compiler revision 31 or later; this instance's "
-            "accepted compiler predates them. Repair: propose `cruxible compiler upgrade "
-            f"--to {target.rule_digest}`, activate it, then author the ClaimType again."
-        )
-        self.repair = RepairOperation(
-            operation="cruxible.compiler.upgrade",
-            arguments={"to": target.rule_digest, "name": "upgrade-for-claim-type-v7"},
-        )
 
 
 class ClaimTypeMemberDescriptionsStale(FormatError):
@@ -854,13 +811,7 @@ def lower_claim_type_input(
     value: ClaimTypeInputRecord,
     *,
     tree: Mapping[str, bytes],
-    identity_rules: bool = False,
 ) -> ClaimType:
-    if not identity_rules:
-        # Every ClaimType authoring path writes v7 with identity evidence rules;
-        # a compiler before revision 31 admits neither, so it is upgraded first
-        # rather than handed a v5 exact-digest ClaimType.
-        raise ClaimTypeRequiresCompilerUpgrade()
     path = claim_type_path(value.predicate)
     predecessor = None
     if path in tree:
@@ -1207,7 +1158,6 @@ __all__ = [
     "ClaimTypeProposalLintV1",
     "claim_type_input_defaults",
     "claim_type_input_template",
-    "identity_rules_supported",
     "lint_claim_type_input",
     "lint_description",
     "lower_claim_type_input",

@@ -109,13 +109,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime, pars
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.claim_slots import classify_claim_slot
-from cruxible_core.compiler.compiler import (
-    COMPILER_REVISION_LABELS,
-    LIGHT_ARTIFACTS_COMPILER,
-    artifact_kinds_for_compiler,
-    current_compiler_coordinate,
-)
-from cruxible_core.compiler.upgrades import upgrade_law
+from cruxible_core.compiler.compiler import compiler_revision_label, current_compiler_coordinate
 from cruxible_core.consumers.protocol import ConsumerHealth
 from cruxible_core.coverage.contracts import (
     CitationWindowObservation,
@@ -5383,43 +5377,21 @@ def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
 
 
 def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
-    """Whether accepted state runs an older compiler than this process installs.
+    """The accepted compiler and the ClaimType upgrade it leaves to run.
 
-    Measured at the accepted head, where an upgrade is proposed. Installing a
-    newer compiler never switches accepted state onto it: only an approved
-    upgrade proposal does, and only along an explicit forward edge. A compiler
-    with no edge to the running one -- newer, or retired -- is reported and
-    left alone.
+    Accepted state always runs the compiler this process installs: an instance
+    under any other coordinate refuses to open.
     """
 
     accepted = instance.accepted_coordinate().compiler
     running = current_compiler_coordinate()
     detail = {
         "accepted_compiler_digest": accepted.rule_digest,
-        "accepted_compiler_revision": COMPILER_REVISION_LABELS.get(accepted),
+        "accepted_compiler_revision": compiler_revision_label(accepted),
         "running_compiler_digest": running.rule_digest,
-        "running_compiler_revision": COMPILER_REVISION_LABELS.get(running),
+        "running_compiler_revision": compiler_revision_label(running),
     }
-    if accepted == running:
-        return _claim_type_upgrade_health(instance, detail)
-    try:
-        upgrade_law(accepted, running)
-    except ValueError:
-        return PlaybillNextHealthV1(state="no_upgrade_path", detail=detail)
-    # The bare command targets the compiler this daemon runs (the facet's
-    # `running_compiler_digest`) and names the proposal after its revision.
-    upgrade = PlaybillNextRepairV1(
-        operation="cruxible.compiler.upgrade",
-        target=instance.descriptor.instance_id,
-        required_change="propose_approve_and_activate_the_compiler_upgrade",
-    )
-    return PlaybillNextHealthV1(
-        state="upgrade_available",
-        detail=detail,
-        repair=upgrade.model_copy(
-            update={"command": _repair_command(upgrade.operation, arguments=upgrade.arguments)}
-        ),
-    )
+    return _claim_type_upgrade_health(instance, detail)
 
 
 def _claim_type_upgrade_health(
@@ -5427,7 +5399,7 @@ def _claim_type_upgrade_health(
 ) -> PlaybillNextHealthV1:
     """A current compiler, or the ClaimType upgrade it leaves to run.
 
-    Compiler revision 36 writes only v4 identity evidence policies. A ClaimType
+    The compiler writes only v4 identity evidence policies. A ClaimType
     accepted with a v3 policy keeps working as it is, but is edited only after
     the governed `claim-type upgrade` restates its policy. The genesis seeds a
     new instance starts with are not counted: nothing is pending on an instance
@@ -5435,8 +5407,6 @@ def _claim_type_upgrade_health(
     """
 
     head = instance.accepted_coordinate()
-    if head.compiler != LIGHT_ARTIFACTS_COMPILER:
-        return PlaybillNextHealthV1(state="current", detail=detail)
     pending = instance.pending_policy_restatements(head.git_oid)
     if not pending.count:
         return PlaybillNextHealthV1(state="current", detail=detail)
@@ -5585,10 +5555,6 @@ def _triggers_health(
     detail: dict[str, object] = {"scheduled": scheduled}
     if not unscheduled:
         return PlaybillNextHealthV1(state="scheduled", detail=detail)
-    admits = any(
-        entry.kind == "trigger"
-        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
-    )
     detail.update(
         unscheduled=unscheduled,
         message="; ".join(f"no trigger schedules {action}" for action in unscheduled),
@@ -5596,11 +5562,7 @@ def _triggers_health(
     author = PlaybillNextRepairV1(
         operation="cruxible.authoring.example",
         target=unscheduled[0],
-        required_change=(
-            "author_a_trigger_aimed_at_the_unscheduled_action"
-            if admits
-            else "upgrade_the_compiler_then_author_a_trigger_aimed_at_the_unscheduled_action"
-        ),
+        required_change="author_a_trigger_aimed_at_the_unscheduled_action",
         arguments={"example": "trigger"},
     )
     return PlaybillNextHealthV1(
@@ -6230,9 +6192,7 @@ def _undeclared_kind_items(
     are grouped once.
     """
 
-    from cruxible_core.indexes.subject_identity import admits_subject_kinds
-
-    if not access_profile.permits("instance") or not admits_subject_kinds(coordinate.compiler):
+    if not access_profile.permits("instance"):
         return ()
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection

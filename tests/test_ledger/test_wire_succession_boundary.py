@@ -32,10 +32,6 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
-from cruxible_core.compiler.compiler import (
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
-)
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.ledger.checkpoints import (
     checkpoint_body,
@@ -357,8 +353,6 @@ def test_accepted_projection_reads_a_crossed_ledger(
         dict(reopened.tree_at(head.git_oid)),
         # The head compiler's registry: genesis now seeds Provider artifacts,
         # whose facts the older replay-only registry does not declare.
-        registry=projection_registry_for_compiler(head.compiler),
-        artifact_kinds=artifact_kinds_for_compiler(head.compiler),
         bodies=reopened.body_store(),
     )
     identities = {row.identity for row in parsed.envelopes}

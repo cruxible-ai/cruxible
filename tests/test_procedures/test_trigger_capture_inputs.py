@@ -381,18 +381,11 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.authoring.models import LineAuthoringPayload
-    from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.line_specs import (
         evaluate_line_spec_law,
         parse_line_spec,
     )
     from cruxible_core.authoring.lowering import _render_line_member
-    from cruxible_core.compiler.compiler import (
-        AUTHORITY_VERBS_COMPILER,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
-    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
     instance, _, line = world(tmp_path)
@@ -409,7 +402,6 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     path, raw, _ = _render_line_member(
         payload,
         tree=tree,
-        light=True,
         resolve_provider=_line_provider_resolver(instance, instance.accepted_coordinate(), tree),
     )
     authored = parse_line_spec(raw, path=path)
@@ -440,15 +432,6 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         )
         assert verdict.verdict == "refused"
         assert verdict.diagnostics[0].code == "cruxible.line.trigger_input_mismatch"
-    with pytest.raises(
-        ProjectionFormatError,
-        match="compiler revision",
-    ):
-        parse_projection_tree(
-            {line_spec_path(line.identity.name): render_line_spec(line)},
-            registry=projection_registry_for_compiler(AUTHORITY_VERBS_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(AUTHORITY_VERBS_COMPILER),
-        )
 
 
 @pytest.mark.parametrize("failure", ["boundary", "head_moved", "unexpected"])

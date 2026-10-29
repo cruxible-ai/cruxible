@@ -16,7 +16,6 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject
-from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -223,10 +222,7 @@ def service_explain_playbill_subject(
         # format, so resolving one here raised an untyped ProjectionFormatError.
         # They are not explainable subjects; the artifact they render is.
         raise SubjectNotFoundError(subject.artifact_path)
-    kind = registered_path_kind(
-        subject.artifact_path,
-        artifact_kinds=artifact_kinds_for_compiler(coordinate.compiler),
-    )
+    kind = registered_path_kind(subject.artifact_path)
     if kind == "document":
         document_shell = parse_document(content, path=subject.artifact_path)
         projected_document = service_get_playbill_document(

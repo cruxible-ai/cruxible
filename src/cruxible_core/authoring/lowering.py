@@ -77,7 +77,6 @@ from cruxible_client.contracts.builtin_claim_types import (
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
-    artifact_path_for_codec,
     canonical_bytes,
     file_digest,
     normalize_canonical,
@@ -93,7 +92,6 @@ from cruxible_client.contracts.capture_contract_inputs import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureContractAny,
@@ -111,7 +109,6 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
-    foreign_source_capture_contract_v1,
     observed_content,
     parse_capture_contract,
     parse_capture_envelope,
@@ -226,7 +223,6 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.query.definitions import (
-    CLAIM_TYPE_PIN_ROLE,
     QueryDefinition,
     parse_query_definition,
     query_definition_digest,
@@ -295,19 +291,12 @@ from cruxible_core.claims.claim_retirement import (
     build_claim_retirement_candidate,
     claim_retirement_inventory,
 )
-from cruxible_core.claims.claim_type_inputs import identity_rules_supported
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
     build_claim_type_migration_candidate,
     claim_type_migration_inventory,
     resolve_claim_type_succession,
-)
-from cruxible_core.compiler.compiler import (
-    LIGHT_ARTIFACTS_COMPILER,
-    artifact_codec_for_compiler,
-    artifact_kinds_for_compiler,
-    projection_registry_for_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import (
     ParsedProjectionTree,
@@ -324,7 +313,6 @@ from cruxible_core.indexes.subject_aliases import (
     subject_collision_message,
 )
 from cruxible_core.indexes.subject_identity import (
-    SUBJECT_COMPILER_UPGRADE_REQUIRED,
     SUBJECT_KEY_MISSING,
     SUBJECT_KIND_UNDECLARED,
     IdentityOverlay,
@@ -333,11 +321,9 @@ from cruxible_core.indexes.subject_identity import (
     RecordedCreation,
     SubjectAssignmentAuthority,
     SubjectKeyInvalid,
-    admits_subject_kinds,
     assign_creation_id,
-    boundary_identity_issues,
+    candidate_identity_issues,
     canonical_key,
-    compiler_upgrade_repair,
     key_ambiguous_message,
     key_encoding,
     key_order,
@@ -1229,7 +1215,6 @@ def _install_claim_dependencies(
     payload: ClaimAuthoringPayloadV1,
     *,
     base_tree: Mapping[str, bytes],
-    light: bool = False,
 ) -> tuple[MutableMapping[str, bytes], set[str]]:
     """Install a Claim's Subject and ClaimType drafts against the tree it lowers on.
 
@@ -1321,14 +1306,13 @@ def _install_claim_dependencies(
         if accepted is None:
             candidate_tree[draft_path] = rendered
             changed_paths.add(draft_path)
-            if light:
-                from cruxible_core.claims.claim_type_inputs import (
-                    install_builtin_capture_dependencies,
-                )
+            from cruxible_core.claims.claim_type_inputs import (
+                install_builtin_capture_dependencies,
+            )
 
-                changed_paths.update(
-                    install_builtin_capture_dependencies(claim_type_draft, candidate_tree)
-                )
+            changed_paths.update(
+                install_builtin_capture_dependencies(claim_type_draft, candidate_tree)
+            )
     elif type_artifact_path not in base_tree:
         _refuse(
             "cruxible.authoring.dependency_claim_type_required",
@@ -1553,7 +1537,6 @@ def _lower_claim(
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
         payload,
         base_tree=base_tree,
-        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
     )
     type_content = candidate_base_tree.get(type_path)
     if type_content is None:
@@ -1731,27 +1714,16 @@ def _lower_claim(
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
     contract: CaptureContractAny
-    light_contracts = base.compiler == LIGHT_ARTIFACTS_COMPILER
-    coordinator_contract = (
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-        if light_contracts
-        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-    )
-    foreign_contract = (
-        foreign_source_capture_contract if light_contracts else foreign_source_capture_contract_v1
-    )
     if isinstance(payload.source, SelfSourceBody):
-        profile_path = capture_contract_path(coordinator_contract.identity.name)
+        profile_path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
         previous_profile_bytes = candidate_base_tree.get(profile_path)
         previous_profile = (
             None
             if previous_profile_bytes is None
             else parse_capture_contract(previous_profile_bytes, path=profile_path)
         )
-        contract = (
-            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile)
-            if light_contracts
-            else previous_profile or coordinator_contract
+        contract = builtin_contract_for_write(
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile
         )
         install_contract = previous_profile != contract
         built_capture = build_coordinator_self_source_capture(
@@ -1858,16 +1830,12 @@ def _lower_claim(
         # A source contract improved through a successor is captured under its
         # accepted head, which is then already installed; the first capture of a
         # source installs its deterministic contract.
-        head_path = capture_contract_path(foreign_contract(source.source_id).identity.name)
+        head_path = capture_contract_path(
+            foreign_source_capture_contract(source.source_id).identity.name
+        )
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
-        if not light_contracts:
-            head = (
-                head
-                if head is not None and head.lifecycle.state == "live"
-                else foreign_contract(source.source_id)
-            )
-        elif head is not None and head.lifecycle.state == "live":
+        if head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(
                 foreign_source_capture_contract(source.source_id), head
             )
@@ -1986,19 +1954,17 @@ def _lower_claim(
                 repair_kind="observe_section",
                 repair_description="Observe the authored section again.",
             )
-        located_path = capture_contract_path(foreign_contract(location.source_id).identity.name)
+        located_path = capture_contract_path(
+            foreign_source_capture_contract(location.source_id).identity.name
+        )
         previous_contract = candidate_base_tree.get(located_path)
         located_contract = (
             None
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
         )
-        located_successor = (
-            builtin_contract_for_write(
-                foreign_source_capture_contract(location.source_id), located_contract
-            )
-            if light_contracts
-            else located_contract or foreign_contract(location.source_id)
+        located_successor = builtin_contract_for_write(
+            foreign_source_capture_contract(location.source_id), located_contract
         )
         located_install = located_successor != located_contract
         located_contract = located_successor
@@ -2584,13 +2550,11 @@ def _reference_blobs(
     base: AcceptedProjectionCoordinate,
 ) -> Mapping[str, bytes]:
     """Read exact paths, with work bounded by the Procedure's reference set."""
-    codec = artifact_codec_for_compiler(base.compiler)
     selected: dict[str, bytes] = {}
     for identity in sorted(identities, key=lambda item: item.qualified.encode("utf-8")):
         path = _reference_path(identity)
         if path is None:
             continue
-        path = artifact_path_for_codec(path, codec)
         content = tree.get(path)
         if content is not None:
             selected[path] = content
@@ -2613,10 +2577,7 @@ def _parse_reference_tree(
     try:
         return parse_projection_tree(
             tree,
-            registry=projection_registry_for_compiler(base.compiler),
-            artifact_kinds=artifact_kinds_for_compiler(base.compiler),
-            artifact_codec=artifact_codec_for_compiler(base.compiler),
-            by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=True,
             bodies=instance.body_store(),
         )
     except CruxibleError as exc:
@@ -2699,7 +2660,6 @@ def _lower_procedure(
                 base_tree,
                 spec,
                 candidate_paths,
-                named=base.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
             payload = payload.model_copy(update={"retire": retiring})
         except ProcedureSpecError as exc:
@@ -2761,15 +2721,14 @@ def _lower_procedure(
                 acquisition_defaults=payload.acquisition_defaults,
                 retire=payload.retire,
             )
-            if base.compiler == LIGHT_ARTIFACTS_COMPILER:
-                from cruxible_client.contracts.procedures.names import named_graph
+            from cruxible_client.contracts.procedures.names import named_graph
 
-                # The compiler's transient graph may retain a native Query.
-                # Select graph 7 before validating a serialized graph-6 model,
-                # whose frozen source bindings cannot contain v3 Queries.
-                payload = payload.model_copy(update={"definition": named_graph(payload.definition)})
-                _refuse_unserved_procedure(payload.definition)
-                return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
+            # The compiler's transient graph may retain a native Query.
+            # Select graph 7 before validating a serialized graph-6 model,
+            # whose frozen source bindings cannot contain v3 Queries.
+            payload = payload.model_copy(update={"definition": named_graph(payload.definition)})
+            _refuse_unserved_procedure(payload.definition)
+            return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
         except (SourceCompileError, ValueError) as exc:
             diagnostic = exc.diagnostic if isinstance(exc, SourceCompileError) else None
             _refuse(
@@ -2967,14 +2926,6 @@ def _lower_named_procedure(
     from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 
-    if base.compiler != LIGHT_ARTIFACTS_COMPILER:
-        _refuse(
-            "cruxible.authoring.procedure_definition_invalid",
-            "definition.graph_format",
-            "Named graph 7 requires compiler revision 36.",
-            repair_kind="upgrade_compiler",
-            repair_description="Upgrade the compiler.",
-        )
     try:
         definition = NamedProcedureDefinition.model_validate(
             _pin_slot_contracts(payload.definition, base_tree)
@@ -3084,7 +3035,7 @@ def _procedure_lowered(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    if base.compiler == LIGHT_ARTIFACTS_COMPILER and int(procedure.definition.graph_format) != 7:
+    if int(procedure.definition.graph_format) != 7:
         named = name_procedure(procedure)
         assert isinstance(named, ProcedureArtifact)
         procedure = named
@@ -3158,7 +3109,6 @@ def _render_non_procedure_member(
     | CaptureContractAuthoringPayload,
     *,
     tree: Mapping[str, bytes] | None = None,
-    light: bool = False,
     query_paths: tuple[str, ...] | None = None,
 ) -> tuple[str, bytes, str]:
     if isinstance(payload, ResolutionContractAuthoringPayload):
@@ -3198,7 +3148,7 @@ def _render_non_procedure_member(
                 if previous_bytes is None
                 else parse_capture_contract(previous_bytes, path=path)
             )
-            contract = lower_capture_contract_input(record, predecessor=previous, named=light)
+            contract = lower_capture_contract_input(record, predecessor=previous, named=True)
         else:
             contract = payload.capture_contract
         return (
@@ -3240,7 +3190,6 @@ def _render_non_procedure_member(
                     AuthoredQueryResolver(
                         candidate_query_vocabulary(tree or {}, paths=query_paths)
                     ),
-                    named=light,
                 )
             except (QuerySpecError, ReadRefusalError) as exc:
                 _refuse(
@@ -3262,16 +3211,15 @@ def _render_non_procedure_member(
                 )
         else:
             query = source
-        if light:
-            from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+        from cruxible_client.contracts.query.definitions import NamedQueryDefinition
 
-            if not isinstance(query, NamedQueryDefinition):
-                query = NamedQueryDefinition.model_validate(
-                    {
-                        **query.model_dump(mode="python", exclude={"pins", "artifact_format"}),
-                        "artifact_format": "cruxible-query-definition-v3",
-                    }
-                )
+        if not isinstance(query, NamedQueryDefinition):
+            query = NamedQueryDefinition.model_validate(
+                {
+                    **query.model_dump(mode="python", exclude={"pins", "artifact_format"}),
+                    "artifact_format": "cruxible-query-definition-v3",
+                }
+            )
         previous_query: QueryDefinition | None = None
         previous_content = None
         if isinstance(source, QuerySpecInput) and tree is not None:
@@ -3296,7 +3244,6 @@ def _render_non_procedure_member(
                     }
                 )
         if tree is not None:
-            pins = {} if light else {(pin.role, pin.target.qualified): pin for pin in query.pins}
             for predicate in query.referenced_predicates:
                 target_path = claim_type_path(predicate)
                 content = tree.get(target_path)
@@ -3317,38 +3264,12 @@ def _render_non_procedure_member(
                         repair_kind="replace_input",
                         repair_description="Choose a live ClaimType.",
                     )
-                if light:
-                    continue
-                pin = ArtifactPin(
-                    role=CLAIM_TYPE_PIN_ROLE,
-                    target=target.identity,
-                    artifact_digest=claim_type_digest(target).tagged,
-                )
-                key = (pin.role, pin.target.qualified)
-                if key in pins and pins[key] != pin:
-                    _refuse(
-                        "cruxible.authoring.query_pin_mismatch",
-                        "query_definition.pins",
-                        "Explicit query pin differs from the resolved definition.",
-                        repair_kind="replace_input",
-                        repair_description="Use the accepted pin or omit it for base resolution.",
-                    )
-                pins[key] = pin
             for attr, label in (("parameter_contract", "parameter"), ("row_contract", "row")):
                 ref = getattr(query, attr)
                 if ref is not None:
                     query = query.model_copy(
                         update={attr: _pin_query_contract_ref(ref, tree=tree, label=label)}
                     )
-            if not light:
-                body = query.model_dump(mode="json")
-                body["pins"] = [
-                    p.model_dump(mode="json")
-                    for p in sorted(
-                        pins.values(), key=lambda p: (p.role, p.target.qualified, p.artifact_digest)
-                    )
-                ]
-                query = QueryDefinition.model_validate(body)
         if previous_query is not None and _same_revision_content(query, previous_query):
             assert previous_content is not None
             return (
@@ -3439,7 +3360,6 @@ def _render_line_member(
     payload: LineAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
-    light: bool = True,
     resolve_provider: Callable[[Mapping[str, Any], Mapping[str, str]], dict[str, Any]]
     | None = None,
 ) -> tuple[str, bytes, str]:
@@ -3453,7 +3373,6 @@ def _render_line_member(
     accepts, read from that Source's CaptureContract.
     """
 
-    del light
     from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
     from cruxible_core.providers.operation_index import line_slot_map
 
@@ -3656,7 +3575,6 @@ def _render_trigger_member(
     payload: TriggerAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
-    light: bool = False,
 ) -> tuple[str, bytes, str]:
     """Lower one Trigger decision; a Line target is named by identity, never pinned.
 
@@ -3689,8 +3607,7 @@ def _render_trigger_member(
                 ),
             }
         )
-        if light:
-            retired = name_trigger(retired)
+        retired = name_trigger(retired)
         return path, render_trigger(retired), trigger_digest(retired).tagged
     if payload.line_name is not None:
         if line_spec_path(payload.line_name) not in tree:
@@ -3716,7 +3633,7 @@ def _render_trigger_member(
         line_path = line_spec_path(payload.line_name)
         line = parse_line_spec(tree[line_path], path=line_path)
         if line.trigger_event is not None and not schedule_satisfies_input(
-            schedule, CaptureEventInput(event=line.trigger_event), by_name=light
+            schedule, CaptureEventInput(event=line.trigger_event), by_name=True
         ):
             _refuse(
                 "cruxible.trigger.event_not_accepted",
@@ -3743,8 +3660,7 @@ def _render_trigger_member(
             predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
         ),
     )
-    if light:
-        trigger = name_trigger(trigger)
+    trigger = name_trigger(trigger)
     if previous_content is not None and previous is not None:
         if _same_revision_content(trigger, previous):
             return path, previous_content, trigger_digest(previous).tagged
@@ -4106,7 +4022,6 @@ def _lower_non_procedure(
     path, content, digest = _render_non_procedure_member(
         payload,
         tree=base_tree,
-        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
         query_paths=_authored_query_paths(payload, instance, base, base_tree),
     )
     candidate_tree = fork_tree(base_tree)
@@ -4363,16 +4278,6 @@ def _assign_creations(
             continue
         element = f"members[{index}]"
         kind = member.subject_kind
-        if not admits_subject_kinds(base.compiler):
-            _refuse(
-                SUBJECT_COMPILER_UPGRADE_REQUIRED,
-                f"{element}.subject_kind",
-                f"This instance's compiler predates SubjectKinds, so no new {kind} Subject "
-                "can be created.",
-                repair_kind="upgrade_compiler",
-                repair_description=compiler_upgrade_repair(kind),
-                replacement={"subject_kind": kind},
-            )
         declared = _declared_in_change(kind, members=members, base_tree=base_tree)
         if declared is None:
             _refuse(
@@ -5721,7 +5626,6 @@ def _stage_change_set_member(
         line_path, content, digest = _render_line_member(
             member,
             tree=staged_tree,
-            light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
             resolve_provider=_line_provider_resolver(instance, base, staged_tree),
         )
         candidate_tree = fork_tree(staged_tree)
@@ -5735,7 +5639,6 @@ def _stage_change_set_member(
         trigger_member_path, content, digest = _render_trigger_member(
             member,
             tree=staged_tree,
-            light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
@@ -5761,13 +5664,12 @@ def _stage_change_set_member(
     _path, content, digest = _render_non_procedure_member(
         member,
         tree=staged_tree,
-        light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
         query_paths=_authored_query_paths(member, instance, base, staged_tree),
     )
     candidate_tree = fork_tree(staged_tree)
     candidate_tree[path] = content
     builtin_paths: set[str] = set()
-    if isinstance(member, ClaimTypeAuthoringPayload) and base.compiler == LIGHT_ARTIFACTS_COMPILER:
+    if isinstance(member, ClaimTypeAuthoringPayload):
         from cruxible_core.claims.claim_type_inputs import install_builtin_capture_dependencies
 
         builtin_paths = install_builtin_capture_dependencies(member.claim_type, candidate_tree)
@@ -5985,7 +5887,6 @@ def _stage_claim_type_succession(
         type_path, predecessor, successor = resolve_claim_type_succession(
             staged_tree,
             member.successor,
-            identity_rules=identity_rules_supported(base.compiler),
         )
     except ClaimTypeMigrationError as error:
         _refuse(
@@ -5999,7 +5900,7 @@ def _stage_claim_type_succession(
         )
     try:
         inventory = claim_type_migration_inventory(
-            staged_tree, root=successor.identity, by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER
+            staged_tree, root=successor.identity, by_name=True
         )
     except ClaimTypeMigrationError as error:
         _refuse(
@@ -6413,8 +6314,7 @@ def _refuse_subject_collisions(
     )
     current_tree = instance.immutable_tree_at(base.git_oid)
     scope = tuple(path for path, _content in lowered.changed_members)
-    for issue in boundary_identity_issues(
-        base.compiler,
+    for issue in candidate_identity_issues(
         current_tree=current_tree,
         candidate_tree=lowered.proposed_tree,
         scope=scope,
@@ -6431,15 +6331,11 @@ def _refuse_subject_collisions(
             repair_kind=(
                 "author_subject_kind"
                 if issue.code == SUBJECT_KIND_UNDECLARED
-                else "upgrade_compiler"
-                if issue.code == SUBJECT_COMPILER_UPGRADE_REQUIRED
                 else "use_existing_subject"
             ),
             repair_description=(
                 undeclared_kind_repair(kind)
                 if issue.code == SUBJECT_KIND_UNDECLARED
-                else compiler_upgrade_repair(kind)
-                if issue.code == SUBJECT_COMPILER_UPGRADE_REQUIRED
                 else issue.message
             ),
             replacement={"subject_kind": kind, "existing": list(issue.existing)},
@@ -6560,14 +6456,12 @@ def _lower_authoring(
             _render_line_member(
                 intent.payload,
                 tree=base_tree,
-                light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
                 resolve_provider=_line_provider_resolver(instance, base, base_tree),
             )
             if isinstance(intent.payload, LineAuthoringPayload)
             else _render_trigger_member(
                 intent.payload,
                 tree=base_tree,
-                light=base.compiler == LIGHT_ARTIFACTS_COMPILER,
             )
             if isinstance(intent.payload, TriggerAuthoringPayload)
             else _render_subject_kind_member(intent.payload, tree=base_tree)

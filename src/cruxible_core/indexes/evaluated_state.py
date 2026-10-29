@@ -125,9 +125,7 @@ class EvaluationRows:
             except BaseException:
                 projection.close()
                 raise
-        from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-        self.by_name = projection.accepted.compiler == LIGHT_ARTIFACTS_COMPILER
+        self.by_name = True
         self.projection = projection
         self.connection = projection._connection
         self.reader = projection.typed

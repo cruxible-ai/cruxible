@@ -49,7 +49,6 @@ from cruxible_core.claims.artifact_references import (
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
     ClaimTypeProposalLintV1,
-    identity_rules_supported,
     lint_claim_type_input,
     lower_claim_type_input,
 )
@@ -58,7 +57,6 @@ from cruxible_core.claims.closure import (
     parse_dependency_artifact,
     reverse_pin_closure,
 )
-from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -425,8 +423,6 @@ def _successor_claim(
 def resolve_claim_type_succession(
     tree: Mapping[str, bytes],
     value: ClaimTypeInputRecord | ClaimType,
-    *,
-    identity_rules: bool = False,
 ) -> tuple[str, ClaimType, ClaimType]:
     """Resolve one ClaimType succession against the tree it is written onto.
 
@@ -441,9 +437,7 @@ def resolve_claim_type_succession(
     """
 
     successor = (
-        value
-        if isinstance(value, ClaimType)
-        else lower_claim_type_input(value, tree=dict(tree), identity_rules=identity_rules)
+        value if isinstance(value, ClaimType) else lower_claim_type_input(value, tree=dict(tree))
     )
     if any(
         pin.role == "predecessor" and pin.target == successor.identity for pin in successor.pins
@@ -1125,17 +1119,13 @@ def _service_migrate_claim_type_v1(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(
-        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
-    )
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
 
-    inventory = claim_type_migration_inventory(
-        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
-    )
+    inventory = claim_type_migration_inventory(tree, root=successor.identity, by_name=True)
     if any(item.artifact_kind != "claim" for item in inventory):
         kinds = tuple(sorted({item.artifact_kind for item in inventory}))
         raise ClaimTypeMigrationDependentSetMismatch(
@@ -1214,16 +1204,12 @@ def _service_migrate_claim_type_v2(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(
-        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
-    )
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = claim_type_migration_inventory(
-        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
-    )
+    inventory = claim_type_migration_inventory(tree, root=successor.identity, by_name=True)
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(
@@ -1316,16 +1302,12 @@ def _service_migrate_claim_type_v3(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(
-        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
-    )
+    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = claim_type_migration_inventory(
-        tree, root=successor.identity, by_name=current.compiler == LIGHT_ARTIFACTS_COMPILER
-    )
+    inventory = claim_type_migration_inventory(tree, root=successor.identity, by_name=True)
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(

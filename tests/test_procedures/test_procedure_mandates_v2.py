@@ -708,24 +708,6 @@ def test_only_a_purely_narrowing_candidate_skips_independent_approval(
     assert governed.candidate.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
 
 
-def test_v2_mandates_require_compiler_revision_31(tmp_path) -> None:
-    from cruxible_client.contracts.errors import ProjectionFormatError
-    from cruxible_core.compiler.compiler import (
-        TRIGGER_CAPTURE_COMPILER,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
-    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-
-    mandate = _settle(_accepted_query(_query()))
-    with pytest.raises(ProjectionFormatError, match="ProcedureMandate v2 requires"):
-        parse_projection_tree(
-            {procedure_mandate_path("triage"): render_procedure_mandate(mandate)},
-            registry=projection_registry_for_compiler(TRIGGER_CAPTURE_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(TRIGGER_CAPTURE_COMPILER),
-        )
-
-
 def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(tmp_path) -> None:
     from cruxible_client.contracts.authoring.models import (
         MandateConditionAuthoring,

@@ -82,9 +82,8 @@ from cruxible_client.contracts.workspace_advertisement import (
 from cruxible_core.authoring.assignment_records import SubjectAssignmentRecords
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
-    PC_HR_ARTIFACT_CODEC_COMPILERS,
-    SUPPORTED_COMPILERS,
     current_compiler_coordinate,
+    require_current_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import (
     ArtifactEnvelopeRow,
@@ -778,8 +777,7 @@ class PlaybillInstance:
             raise BootstrapError("descriptor instance ID differs from trust root")
         if descriptor.daemon_public_key != trust_root.daemon_public_key:
             raise BootstrapError("descriptor daemon key differs from trust root")
-        if descriptor.compiler not in SUPPORTED_COMPILERS:
-            raise FormatError("descriptor compiler coordinate is unsupported")
+        require_current_compiler(descriptor.compiler)
         if descriptor.authority != initial_authority_matrix():
             raise BootstrapError(
                 "PB-A descriptor authority matrix differs from the initial migration state"
@@ -1625,16 +1623,15 @@ class PlaybillInstance:
     ) -> "CaptureContractVersions":
         """``accepted_capture_contract_version`` at one referent, with its authority.
 
-        Authoritative when this instance's history index holds every accepted
-        artifact version, genesis included: its compiler is one that indexes
-        genesis (``_history_reader_for_epoch``).
+        Authoritative: this instance's history index holds every accepted
+        artifact version, genesis included (``_history_reader_for_epoch``).
         """
 
         from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
         return CaptureContractVersions(
             resolve=lambda digest: self.accepted_capture_contract_version(coordinate, digest),
-            authoritative=self._recovered.coordinate.compiler in PC_HR_ARTIFACT_CODEC_COMPILERS,
+            authoritative=True,
         )
 
     def capture_verification_context(self) -> LocalProducerReceiptResolver:
@@ -2243,14 +2240,6 @@ class PlaybillInstance:
         def envelopes(
             sequence: int, prior_members: PriorMemberSequences
         ) -> tuple[ArtifactEnvelopeRow, ...]:
-            if (
-                sequence == 0
-                and recovered.coordinate.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS
-            ):
-                # Frozen bootstrap was verified separately, before typed owner
-                # publication existed. Record its generation binding without
-                # interpreting those bytes under a different artifact codec.
-                return ()
             generation = recovered.history[sequence]
             coordinate = recovered.coordinate.model_copy(
                 update={
@@ -2285,7 +2274,6 @@ class PlaybillInstance:
                         self._ledger,
                         generation.oid,
                         limits=TreeReadLimits(),
-                        artifact_kinds=assembler.artifact_kinds,
                     )
                 }
                 return parse_static_owners(sources, accepted=coordinate).envelopes
@@ -2299,9 +2287,7 @@ class PlaybillInstance:
             member_paths = tuple(
                 path
                 for path in changed
-                if is_candidate_card_path(path)
-                or registered_path_kind(path, artifact_kinds=assembler.artifact_kinds)
-                != "changeset"
+                if is_candidate_card_path(path) or registered_path_kind(path) != "changeset"
             )
             # Only the records that touched these members bear on their
             # revisions and proofs: earlier ones from the rows this sync already

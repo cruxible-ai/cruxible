@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_core.indexes import provider_heads
 from cruxible_core.indexes.sql_batch import insert_rows
 from cruxible_core.indexes.typed_state import schema_sql
@@ -187,10 +188,6 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
         procedure_artifact_digest,
         render_procedure,
     )
-    from cruxible_core.compiler.compiler import (
-        PROVIDER_BUILDS_COMPILER,
-        artifact_codec_for_compiler,
-    )
     from cruxible_core.derived.derived_state import SnapshotTree
     from cruxible_core.indexes.typed_sqlite import parse_static_owners, replace_rows
     from tests.test_providers.test_legacy_blueprint_build_move import legacy_blueprint_move
@@ -208,7 +205,7 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
         for i in range(20)
     ]
     sources = tree | {f"procedures/{p.identity.name}.json": render_procedure(p) for p in procedures}
-    codec = artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER)
+    codec = CURRENT_ARTIFACT_CODEC
     instance = _instance(tmp_path / "warm", SnapshotTree({}))
     instance.connection.execute("PRAGMA foreign_keys=ON")
 

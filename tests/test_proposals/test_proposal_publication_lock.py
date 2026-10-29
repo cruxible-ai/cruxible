@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_core.compiler.compiler import PC_HR_COMPILER
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals import proposals
 
@@ -24,7 +24,7 @@ def test_publication_integrity_check_finishes_before_activation_unlock(
         git_oid="11" * 20,
         semantic_root="sha256:" + "22" * 32,
         generation_root="sha256:" + "33" * 32,
-        compiler=PC_HR_COMPILER,
+        compiler=CURRENT_COMPILER,
     )
     head = coordinate.git_oid
     review_locked = False

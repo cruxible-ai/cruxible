@@ -426,12 +426,12 @@ def _world_on(
             statement_digest=statement_digest,
             query_options=query_options,
         )
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
     procedure = _procedure(
         accepted_query_digest,
         declarations,
-        named=instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER,
+        named=instance.accepted_coordinate().compiler == CURRENT_COMPILER,
     )
     _activate_procedure(instance, owner, procedure, sequence=4, timestamp=ACCEPT_STAMP)
     return instance, owner, procedure

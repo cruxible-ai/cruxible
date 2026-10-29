@@ -115,13 +115,13 @@ def accept_blueprint(instance, owner, blueprint, **bindings):
     lowered = compute_preflight(instance, intent=pending, actor=actor).lowered
     assert lowered is not None
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
 
     authored_path = procedure_path(blueprint.name)
     assert parse_procedure(
         lowered.proposed_tree[authored_path], path=authored_path
     ).definition.graph_format == (
-        7 if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER else 6
+        7 if instance.accepted_coordinate().compiler == CURRENT_COMPILER else 6
     )
     _accept_tree(
         instance,

@@ -9,7 +9,7 @@ import pytest
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import P2_B5_COMPILER
+from cruxible_core.compiler.compiler import CURRENT_COMPILER
 from cruxible_core.indexes import sqlite as storage
 from cruxible_core.indexes.acquisition import ACQUISITION_ATTEMPTS
 from cruxible_core.indexes.logical_digest import compute_table_sums, store_table_sums
@@ -32,7 +32,7 @@ def _publication(tmp_path):
     repository = MemoryLedger(
         tmp_path / "repository", {**_tree(), "cards/documents/review.md": b"review card"}
     )
-    coordinate = accepted_coordinate(repository).model_copy(update={"compiler": P2_B5_COMPILER})
+    coordinate = accepted_coordinate(repository).model_copy(update={"compiler": CURRENT_COMPILER})
     directory = tmp_path / "projection"
     directory.mkdir()
     assembler = ProjectionAssembler(

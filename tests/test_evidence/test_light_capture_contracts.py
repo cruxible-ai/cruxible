@@ -6,7 +6,6 @@ import re
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.capture_contract_inputs import (
     CaptureContractInputRecord,
     lower_capture_contract_input,
@@ -163,12 +162,10 @@ def test_claim_type_edit_preserves_expanded_contract_source_admission(sources):
             },
         ),
         tree={},
-        identity_rules=True,
     )
     edited = lower_claim_type_input(
         ClaimTypeInputRecord(predicate=original.predicate, description="Observed severity."),
         tree={claim_type_path(original.predicate): render_claim_type(original)},
-        identity_rules=True,
     )
     assert edited.evidence_admission_policy == original.evidence_admission_policy
     (ref,) = edited.evidence_admission_policy.rules[0].capture_contracts
@@ -418,34 +415,20 @@ def test_capture_contract_proposal_cannot_retire_reserved_coordinator(tmp_path):
     assert _write(instance, _set(f"{KIND}/wi-1", "title", "Still writable")).status == "accepted"
 
 
-@pytest.mark.parametrize("revision", [33, 34, 35, 36])
 @pytest.mark.parametrize("policy_version", [3, 4])
-def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, policy_version):
+def test_a_new_identity_policy_is_written_as_v4(tmp_path, policy_version):
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
     from cruxible_client.contracts.errors import FormatError
-    from cruxible_core.compiler.compiler import (
-        CLAIM_REBIND_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-    )
     from cruxible_core.proposals.proposals import (
         AuthenticatedActor,
         ProposalAdmissionRequest,
         _validate_identity_evidence_policy_format,
     )
     from tests.core_support._light_capture_support import record_contract
-    from tests.core_support._pc_c_support import capture_contract as frozen_contract
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.core_support._support import initialize_local
     from tests.test_claims.test_claims import TIMESTAMP, _claim_type
 
-    compiler = {
-        33: SUBJECT_IDENTITY_COMPILER,
-        34: PROVIDER_BUILDS_COMPILER,
-        35: CLAIM_REBIND_COMPILER,
-        36: LIGHT_ARTIFACTS_COMPILER,
-    }[revision]
-    instance, _owner = initialize_legacy_local(tmp_path, compiler=compiler)
+    instance, _owner = initialize_local(tmp_path)
     if policy_version == 4:
         policy = ClaimEvidenceAdmissionPolicy(
             rules=(
@@ -482,13 +465,7 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
             "evidence_admission_policy": policy,
         }
     )
-    contract = (
-        record_contract(name="test.capture")
-        if revision == 36
-        else frozen_contract().model_copy(
-            update={"identity": ArtifactIdentity(kind="CaptureContract", name="test.capture")}
-        )
-    )
+    contract = record_contract(name="test.capture")
     base = instance.accepted_coordinate()
     tree = {
         **instance.tree_at(base.git_oid),
@@ -506,13 +483,11 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
             timestamp=TIMESTAMP,
         )
 
-    if (revision == 36) != (policy_version == 4):
+    if policy_version == 3:
         # The refusal names the governed command that fixes it.
-        repair = (
-            "`cruxible claim-type upgrade`" if revision == 36 else "`cruxible compiler upgrade`"
-        )
+        repair = "`cruxible claim-type upgrade`"
         with pytest.raises(FormatError, match=re.escape(repair)):
-            _validate_identity_evidence_policy_format(claim_type, compiler)
+            _validate_identity_evidence_policy_format(claim_type)
         result = submit()
         assert result.candidate is None
         (diagnostic,) = result.evaluation.diagnostics
@@ -568,7 +543,6 @@ def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
         lower_claim_type_input(
             ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
             tree=tree,
-            identity_rules=True,
         )
     # Covering the contract is lossless; an inherited legacy policy still upgrades.
     covered = predecessor.model_copy(
@@ -586,7 +560,6 @@ def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
     result = lower_claim_type_input(
         ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
         tree=tree,
-        identity_rules=True,
     )
     assert isinstance(result.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)
 

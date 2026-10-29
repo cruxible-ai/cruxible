@@ -11,7 +11,6 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_path,
     render_capture_contract,
 )
@@ -41,7 +40,6 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
-from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
 from tests.core_support._adoption_fixture import _Builder
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
@@ -109,30 +107,12 @@ def threshold_world(
     monkeypatch: pytest.MonkeyPatch,
     *,
     minimum: int = 2,
-    frozen: bool = True,
     attestation_mutator=None,  # type: ignore[no-untyped-def]
 ):
-    # These fixtures inject V1 law evidence to exercise the frozen reducer.
-    # Keep their ledger bound to the compiler that actually consumed that form.
-    if frozen:
-        from cruxible_core.compiler.compiler import P2_B5_COMPILER
+    from cruxible_client.contracts.captures import builtin_contract_for_write
 
-        with monkeypatch.context() as init_patch:
-            init_patch.setattr(
-                "cruxible_core.runtime.instance.current_compiler_coordinate", lambda: P2_B5_COMPILER
-            )
-            instance, owner = initialize_local(root)
-    else:
-        instance, owner = initialize_local(root)
-    contract = (
-        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
-        if frozen
-        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-    )
-    if not frozen:
-        from cruxible_client.contracts.captures import builtin_contract_for_write
-
-        contract = builtin_contract_for_write(contract, None)
+    instance, owner = initialize_local(root)
+    contract = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     base_type = _claim_type(contract=contract)
     claim_type = base_type.model_copy(
         update={
@@ -206,254 +186,6 @@ def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
         ).items
         if item.reason == "claim_attestation_threshold_met"
     )
-
-
-def test_two_distinct_current_principals_emit_one_deterministic_queue_row(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    instance, _owner, claim = threshold_world(tmp_path, monkeypatch)
-    before_coordinate = instance.accepted_coordinate()
-    before_verdict = service_evaluate_playbill_claim_verdict(
-        instance,
-        claim_identity=claim.identity.qualified,
-        evaluation_time=EVALUATION_TIME,
-    )
-    before_claims = service_list_playbill_claims(instance)
-
-    first = _rows(instance)
-    retry = _rows(instance)
-
-    assert retry == first
-    assert len(first) == 1
-    row = first[0]
-    assert row.repair.operation == "cruxible.set"
-    assert row.repair.required_change == "resolve_attestation_threshold"
-    assert row.detail["independent_control_component_count"] == 2
-    assert row.detail["attestation_digests"] == [
-        "sha256:" + "a" * 64,
-        "sha256:" + "b" * 64,
-    ]
-    assert instance.accepted_coordinate() == before_coordinate
-    assert service_list_playbill_claims(instance) == before_claims
-    assert (
-        service_evaluate_playbill_claim_verdict(
-            instance,
-            claim_identity=claim.identity.qualified,
-            evaluation_time=EVALUATION_TIME,
-        )
-        == before_verdict
-    )
-
-
-def test_latest_door_record_supersedes_all_legacy_for_that_principal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def legacy(_instance, claim, items):  # type: ignore[no-untyped-def]
-        return (
-            _verified(
-                _instance,
-                claim,
-                suffix="a",
-                control_domain="owner-unsure",
-                principal_name="owner",
-            ),
-            _verified(
-                _instance,
-                claim,
-                suffix="c",
-                control_domain="owner-contradict",
-                principal_name="owner",
-            ).model_copy(
-                update={
-                    "statement": _verified(
-                        _instance,
-                        claim,
-                        suffix="c",
-                        control_domain="owner-contradict",
-                        principal_name="owner",
-                    ).statement.model_copy(update={"stance": "contradict"})
-                }
-            ),
-            _verified(
-                _instance,
-                claim,
-                suffix="b",
-                control_domain="reviewer-b",
-                principal_name="reviewer-b",
-            ),
-        )
-
-    instance, owner, claim = threshold_world(
-        tmp_path,
-        monkeypatch,
-        attestation_mutator=legacy,
-    )
-    first = _request(
-        instance,
-        owner,
-        claim.identity.name,
-        tmp_path,
-        stance="unsure",
-        attested_at=EVALUATION_TIME - timedelta(minutes=4),
-    )
-    first_receipt = service_append_claim_attestation(
-        instance,
-        request=first,
-        actor_id="owner",
-        recorded_at=EVALUATION_TIME - timedelta(minutes=3),
-    )
-
-    def rows() -> tuple:  # type: ignore[no-untyped-def]
-        return tuple(
-            item
-            for item in service_playbill_next(
-                instance,
-                request=NextRequest(
-                    evaluation_time=EVALUATION_TIME,
-                    access_profile=_access(),
-                ),
-            ).items
-            if item.reason == "claim_attestation_threshold_met"
-        )
-
-    assert len(rows()) == 1
-    support = _request(
-        instance,
-        owner,
-        claim.identity.name,
-        tmp_path,
-        stance="support",
-        attested_at=EVALUATION_TIME - timedelta(minutes=2),
-    )
-    service_append_claim_attestation(
-        instance,
-        request=support,
-        actor_id="owner",
-        recorded_at=EVALUATION_TIME - timedelta(minutes=1),
-    )
-    assert rows() == ()
-
-    expired = _request(
-        instance,
-        owner,
-        claim.identity.name,
-        tmp_path,
-        stance="unsure",
-        attested_at=EVALUATION_TIME - timedelta(seconds=30),
-        valid_until=EVALUATION_TIME,
-    )
-    latest = service_append_claim_attestation(
-        instance,
-        request=expired,
-        actor_id="owner",
-        recorded_at=EVALUATION_TIME - timedelta(seconds=15),
-    )
-    assert latest.partition_sequence > first_receipt.partition_sequence
-    assert rows() == ()
-
-
-@pytest.mark.parametrize(
-    "case", ["duplicate_principal", "provider", "expired", "shell_stale", "future", "below"]
-)
-def test_nonqualifying_attestation_sets_are_silent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    case: str,
-) -> None:
-    def mutate(instance, claim, items):  # type: ignore[no-untyped-def]
-        if case == "duplicate_principal":
-            return (
-                items[0],
-                items[1].model_copy(
-                    update={
-                        "statement": items[1].statement.model_copy(
-                            update={
-                                "provider_or_principal": items[0].statement.provider_or_principal
-                            }
-                        )
-                    }
-                ),
-            )
-        if case == "provider":
-            return (
-                items[0],
-                _verified(
-                    instance,
-                    claim,
-                    suffix="b",
-                    control_domain="independent-b",
-                    signer_kind="Provider",
-                ),
-            )
-        if case == "expired":
-            return (
-                items[0],
-                _verified(
-                    instance,
-                    claim,
-                    suffix="b",
-                    control_domain="independent-b",
-                    valid_until=EVALUATION_TIME,
-                ),
-            )
-        if case == "shell_stale":
-            return (
-                items[0],
-                _verified(
-                    instance,
-                    claim,
-                    suffix="b",
-                    control_domain="independent-b",
-                    subject_content_digest="sha256:" + "f" * 64,
-                ),
-            )
-        if case == "future":
-            return (
-                items[0],
-                _verified(
-                    instance,
-                    claim,
-                    suffix="b",
-                    control_domain="independent-b",
-                    observed_at=EVALUATION_TIME + timedelta(seconds=1),
-                ),
-            )
-        return (items[0],)
-
-    instance, _owner, _claim = threshold_world(
-        tmp_path,
-        monkeypatch,
-        attestation_mutator=mutate,
-    )
-
-    assert _rows(instance) == ()
-
-
-@pytest.mark.parametrize(
-    ("minimum", "attestation_count", "expected_rows"),
-    # A zero threshold disables the rule: it escalates nothing, however many attest.
-    ((0, 0, 0), (0, 2, 0), (1, 1, 1), (2, 1, 0), (2, 2, 1)),
-)
-def test_thresholds_zero_one_and_two_count_distinct_principals(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    minimum: int,
-    attestation_count: int,
-    expected_rows: int,
-) -> None:
-    instance, _owner, _claim = threshold_world(
-        tmp_path,
-        monkeypatch,
-        minimum=minimum,
-        attestation_mutator=lambda _instance, _claim, items: items[:attestation_count],
-    )
-
-    rows = _rows(instance)
-    assert len(rows) == expected_rows
-    if rows:
-        assert rows[0].detail["independent_control_component_count"] == attestation_count
 
 
 def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(

@@ -595,16 +595,9 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     assert review.members[0].closure_role == "authored"
 
 
-def test_current_claim_type_has_no_producer_dependencies_and_requires_new_compiler():
+def test_current_claim_type_has_no_producer_dependencies():
     from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
-    from cruxible_core.compiler.compiler import (
-        CLAIM_EVIDENCE_COMPILER,
-        SDK_SOURCE_COMPILER,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
     definition = literal_claim_type().model_copy(
@@ -623,17 +616,7 @@ def test_current_claim_type_has_no_producer_dependencies_and_requires_new_compil
     with pytest.raises(ValueError, match="cannot depend"):
         ClaimType.model_validate({**definition.model_dump(), "pins": [producer]})
     tree = {claim_type_path(definition.predicate): render_claim_type(definition)}
-    with pytest.raises(ProjectionFormatError, match="revision 28"):
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(SDK_SOURCE_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(SDK_SOURCE_COMPILER),
-        )
-    parsed = parse_projection_tree(
-        tree,
-        registry=projection_registry_for_compiler(CLAIM_EVIDENCE_COMPILER),
-        artifact_kinds=artifact_kinds_for_compiler(CLAIM_EVIDENCE_COMPILER),
-    )
+    parsed = parse_projection_tree(tree)
     assert parsed.envelopes[0].artifact_digest == claim_type_digest(definition).tagged
 
 

@@ -44,7 +44,6 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
     resolution_contract_path,
 )
-from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.exhaust.capture_selectors import landing_logical_source
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload_bytes
 from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
@@ -78,7 +77,7 @@ def read_claim_reference(
     raw = instance.blob_at(coordinate.git_oid, path)
     if raw is None:
         raise FormatError("exact accepted Claim is absent")
-    claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
+    claim = parse_claim(raw, path=path)
     reference.verify(claim)
     return claim
 
@@ -107,7 +106,7 @@ def resolve_claim_version(
             f"Claim {claim_id} is not accepted at the requested coordinate; "
             "find it with `cruxible query KIND --claims`"
         )
-    claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
+    claim = parse_claim(raw, path=path)
     artifact_digest = claim_artifact_digest(claim).tagged
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
@@ -143,7 +142,6 @@ def read_resolution_contract(
         contract = parse_resolution_contract(
             projection.typed.member_bytes(path),
             path=path,
-            codec=artifact_codec_for_compiler(coordinate.compiler),
         )
     if resolution_contract_digest(contract).tagged != reference.artifact_digest:
         raise ExecutionError("resolution contract digest does not reproduce")
@@ -378,7 +376,6 @@ def service_resolution_contracts(
             contract = parse_resolution_contract(
                 projection.typed.member_bytes(path),
                 path=path,
-                codec=artifact_codec_for_compiler(at.compiler),
             )
             if (
                 resolution_contract_digest(contract).tagged != digest

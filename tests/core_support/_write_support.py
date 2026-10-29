@@ -51,7 +51,6 @@ from cruxible_core.service.authoring.write_verbs import WriteCaller
 from tests.core_support._subject_kind_support import (
     declare_created_kinds,
     key_by_slug,
-    world_history,
 )
 from tests.core_support._support import initialize_local
 
@@ -140,7 +139,6 @@ def _shell(subject_id: str) -> SubjectShell:
     )
 
 
-@world_history
 def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner") -> None:
     """Accept the write vocabulary and three work items into ``instance``.
 

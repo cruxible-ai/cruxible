@@ -783,7 +783,7 @@ def test_raw_claim_type_envelopes_are_no_longer_an_http_variant(playbill_http) -
     from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
 
     client, instance_id, _key = playbill_http
-    raw = lower_claim_type_input(claim_type_input_example(), tree={}, identity_rules=True)
+    raw = lower_claim_type_input(claim_type_input_example(), tree={})
     response = client.post(
         f"/api/v1/{instance_id}/claim-types/proposals",
         json={"claim_type": raw.model_dump(mode="json"), "proposal_name": "removed-raw"},

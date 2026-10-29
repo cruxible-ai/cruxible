@@ -8,8 +8,8 @@ import pytest
 
 from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
 from cruxible_client.contracts.canonical import (
-    artifact_bytes_for_path,
     canonical_bytes,
+    canonical_digest,
     manifest_root,
     semantic_diff,
 )
@@ -21,13 +21,12 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import ProjectionCoordinateError, ProjectionFormatError
-from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import (
-    PB_B_COMPILER,
-    PB_C_COMPILER,
-    artifact_codec_for_compiler,
+from cruxible_client.contracts.errors import (
+    ProjectionCoordinateError,
+    ReseedRequired,
 )
+from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.documents.projection_documents import (
     DocumentProjectionView,
     compile_provisional_document_projection,
@@ -39,7 +38,7 @@ from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodySto
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
 from tests.core_support._support import initialize_local
 
-DOCUMENT_PATH = "documents/playbill-design.yaml"
+DOCUMENT_PATH = "documents/playbill-design.json"
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
 
 
@@ -78,20 +77,14 @@ def _shell(body_digest: str) -> DocumentShell:
 
 
 def _render(shell: DocumentShell) -> bytes:
-    """Render bytes selected by the historical PB-C compiler coordinate."""
-
-    return artifact_bytes_for_path(
-        render_document(shell),
-        DOCUMENT_PATH,
-        codec=artifact_codec_for_compiler(PB_C_COMPILER),
-    )
+    return render_document(shell)
 
 
 def _candidate_coordinate(
     repository: MemoryLedger,
     tree: dict[str, bytes],
 ) -> ProvisionalProjectionCoordinate:
-    canonical = accepted_coordinate(repository).model_copy(update={"compiler": PB_C_COMPILER})
+    canonical = accepted_coordinate(repository)
     difference, scope = semantic_diff({}, tree)
     candidate = SemanticCandidateV1(
         parent_semantic_root=canonical.semantic_root,
@@ -121,7 +114,7 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
     repository = MemoryLedger(tmp_path / "repository", tree)
     publication = tmp_path / "published"
     publication.mkdir()
-    accepted = accepted_coordinate(repository).model_copy(update={"compiler": PB_C_COMPILER})
+    accepted = accepted_coordinate(repository)
     assembler = ProjectionAssembler(
         repository,
         accepted=accepted,
@@ -187,9 +180,7 @@ def test_canonical_query_ignores_candidate_projection_and_provisional_read_names
     bodies = _store(tmp_path)
     body = bodies.store(b"candidate only")
     canonical_repository = MemoryLedger(tmp_path / "repository", {})
-    canonical = accepted_coordinate(canonical_repository).model_copy(
-        update={"compiler": PB_C_COMPILER}
-    )
+    canonical = accepted_coordinate(canonical_repository)
     publication = tmp_path / "published"
     publication.mkdir()
     assembler = ProjectionAssembler(
@@ -265,31 +256,36 @@ def test_whole_document_subject_survives_line_movement_while_byte_span_changes(
     assert second_mapping["spans"][0]["end_byte"] == len("\n\n# Café\n".encode())  # type: ignore[index]
 
 
-def test_compiler_coordinate_checkpoint_preserves_pb_b_registry(tmp_path: Path) -> None:
-    assert PB_B_COMPILER != PB_C_COMPILER
-    bodies = _store(tmp_path)
-    body = bodies.store(b"body")
-    tree = {DOCUMENT_PATH: _render(_shell(body.digest))}
-    repository = MemoryLedger(tmp_path / "repository", tree)
+#: The coordinate an earlier, unshipped build recorded (PB-B).
+_EARLIER_COMPILER = CompilerCoordinate(
+    rule_digest="sha256:"
+    + canonical_digest(
+        "playbill-compiler-v1", {"implementation": "python-reference", "schema_version": 1}
+    )
+)
+
+
+def test_a_projection_under_an_earlier_compiler_refuses(tmp_path: Path) -> None:
+    repository = MemoryLedger(tmp_path / "repository", {})
     publication = tmp_path / "published"
     publication.mkdir()
-    assembler = ProjectionAssembler(
-        repository,
-        accepted=accepted_coordinate(repository).model_copy(update={"compiler": PB_B_COMPILER}),
-        publication_directory=publication,
-        bodies=bodies,
-    )
-    with pytest.raises(ProjectionFormatError, match="undeclared projection fact"):
-        assembler.assemble(
-            assembler.request(output_staging_directory=publication / ".stage-old-compiler")
+    with pytest.raises(ReseedRequired):
+        ProjectionAssembler(
+            repository,
+            accepted=accepted_coordinate(repository).model_copy(
+                update={"compiler": _EARLIER_COMPILER}
+            ),
+            publication_directory=publication,
+            bodies=_store(tmp_path),
         )
 
 
-def test_existing_pb_b_descriptor_coordinate_still_reopens(tmp_path: Path) -> None:
+def test_an_earlier_descriptor_coordinate_refuses_to_reopen(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
-    descriptor = instance.descriptor.model_copy(update={"compiler": PB_B_COMPILER})
+    descriptor = instance.descriptor.model_copy(update={"compiler": _EARLIER_COMPILER})
     descriptor_path = instance.root / "instance.json"
     descriptor_path.write_bytes(canonical_bytes(descriptor.model_dump(mode="json")) + b"\n")
 
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert reopened.descriptor.compiler == PB_B_COMPILER
+    with pytest.raises(ReseedRequired) as refused:
+        PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert refused.value.compiler_digest == _EARLIER_COMPILER.rule_digest

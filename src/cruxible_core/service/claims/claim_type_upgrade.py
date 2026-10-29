@@ -60,15 +60,6 @@ from cruxible_core.claims.claim_type_migrations import (
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
-from cruxible_core.compiler.compiler import (
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_REBIND_COMPILER,
-    GOVERNED_TRIGGERS_COMPILER,
-    LIGHT_ARTIFACTS_COMPILER,
-    PROVIDER_BUILDS_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
-)
-from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -217,22 +208,9 @@ def _upgrade(
 ) -> ClaimTypeUpgradeResult:
     assert mode.head is not None
     base = mode.head
-    if base.compiler not in (
-        AUTHORITY_VERBS_COMPILER,
-        GOVERNED_TRIGGERS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        PROVIDER_BUILDS_COMPILER,
-        CLAIM_REBIND_COMPILER,
-        LIGHT_ARTIFACTS_COMPILER,
-    ):
-        raise DataValidationError(
-            "ClaimType v7 needs compiler revision 31 or later; upgrade it first"
-        )
     tree = instance.immutable_tree_at(base.git_oid)
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))
     wanted = set(request.claim_types)
-    # Revision 36 writes only v4 identity evidence policies; below it, v3.
-    restating = base.compiler == LIGHT_ARTIFACTS_COMPILER
     changed: dict[str, bytes] = {}
     upgraded: list[ClaimTypeUpgrade] = []
     restated: list[ClaimTypePolicyRestatement] = []
@@ -273,23 +251,21 @@ def _upgrade(
                 )
                 continue
         successor = None if moved is None else moved[0]
-        if restating:
-            try:
-                restatement = _restate(claim_type, successor, lineages)
-            except (_Inexact, _Refused) as error:
-                refused.append(
-                    ClaimTypeUpgradeRefusal(
-                        claim_type=claim_type.identity.qualified,
-                        reason=str(error),
-                        code="cruxible.claim_type.policy_restatement_inexact",
-                    )
+        # The compiler writes only v4 identity evidence policies; a v3 one is restated.
+        try:
+            restatement = _restate(claim_type, successor, lineages)
+        except (_Inexact, _Refused) as error:
+            refused.append(
+                ClaimTypeUpgradeRefusal(
+                    claim_type=claim_type.identity.qualified,
+                    reason=str(error),
+                    code="cruxible.claim_type.policy_restatement_inexact",
                 )
-                continue
-            if restatement is not None:
-                successor = restatement
-                restated.append(
-                    ClaimTypePolicyRestatement(claim_type=claim_type.identity.qualified)
-                )
+            )
+            continue
+        if restatement is not None:
+            successor = restatement
+            restated.append(ClaimTypePolicyRestatement(claim_type=claim_type.identity.qualified))
         if successor is None:
             unchanged.append(claim_type.identity.qualified)
             continue
@@ -311,7 +287,7 @@ def _upgrade(
             tree,
             roots=roots,
             fixed_paths=frozenset(changed),
-            by_name=base.compiler == LIGHT_ARTIFACTS_COMPILER,
+            by_name=True,
         )
         settled, _normalized = build_dependent_closure_candidate(
             tree=tree,

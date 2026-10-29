@@ -7,7 +7,7 @@ import hashlib
 import pytest
 
 from cruxible_client.contracts.errors import ProjectionFormatError
-from cruxible_core.compiler.compiler import SUPPORTED_COMPILERS, artifact_kinds_for_compiler
+from cruxible_core.compiler.compiler import ARTIFACT_KINDS
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_delta
 from cruxible_core.ledger.git import (
     GitTreeChange,
@@ -16,7 +16,7 @@ from cruxible_core.ledger.git import (
     _listing_has_path,
 )
 
-KINDS = artifact_kinds_for_compiler(SUPPORTED_COMPILERS[-1])
+KINDS = ARTIFACT_KINDS
 
 
 def _oid(content: bytes) -> str:

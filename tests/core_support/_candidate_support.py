@@ -139,17 +139,7 @@ def submit_query_definition_candidate(
     base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
 ) -> ProposalInspection:
-    from cruxible_client.contracts.query.grammar import QueryArtifactsEntry
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-
-    artifact_format = (
-        "cruxible-query-definition-v3"
-        if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
-        else "playbill-query-definition-v2"
-        if isinstance(query.entry, QueryArtifactsEntry)
-        else "playbill-query-definition-v1"
-    )
-    query = query.model_copy(update={"artifact_format": artifact_format})
+    query = query.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
     return _submit_candidate(
         instance,
         path=query_definition_path(query.identity.name),
