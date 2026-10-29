@@ -78,9 +78,17 @@ def fitting_operations(
     signature: OperationSignature,
     *,
     build: str | None = None,
+    operation: str | None = None,
     limit: int = FIT_CANDIDATE_LIMIT + 1,
 ) -> tuple[FittingOperation, ...]:
-    """Live operations serving ``signature`` exactly, optionally within one build."""
+    """Live operations serving ``signature`` exactly, optionally within one build.
+
+    ``operation``, when named, is an exact-seek predicate in the SQL itself,
+    not a Python filter over the (candidate-limited) row set: an explicit
+    ``build#operation`` reference must resolve regardless of how many other
+    operations of that build also fit the signature. ``limit`` only bounds
+    the candidates a fitting/ambiguity refusal lists.
+    """
 
     in_digest, out_digest, effect = signature.key()
     sql = (
@@ -93,6 +101,9 @@ def fitting_operations(
     if build is not None:
         sql += " AND o.source_identity=?"
         parameters.append(build)
+    if operation is not None:
+        sql += " AND o.operation=?"
+        parameters.append(operation)
     sql += " ORDER BY o.source_identity,o.operation LIMIT ?"
     parameters.append(limit)
     return tuple(
@@ -203,9 +214,9 @@ def resolve_slot_bindings(
                     )
                 ),
             )
-        candidates = fitting_operations(connection, signature, build=row.identity)
-        if operation is not None:
-            candidates = tuple(item for item in candidates if item.operation == operation)
+        candidates = fitting_operations(
+            connection, signature, build=row.identity, operation=operation
+        )
         resolved[key] = exactly_one_fit(
             key, signature, candidates, within=row.identity.removeprefix("Provider:")
         ).binding()

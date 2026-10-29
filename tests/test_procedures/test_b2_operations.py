@@ -21,6 +21,7 @@ from tests.support.operation_world import (
     actor,
     author_line,
     author_procedure,
+    operation,
     operation_build,
     slotted_spec,
     world,
@@ -174,6 +175,18 @@ def test_line_acceptance_refuses_ambiguous_and_unfilled_slots_listing_candidates
     unfilled = _refusal(lambda: author_line(other))
     assert unfilled.error_code == "cruxible.line.slot_unfilled"
     assert "test.value@1 -> test.value@1 (external_read)" in str(unfilled)
+
+
+def test_an_explicit_operation_binding_resolves_past_the_candidate_limit(tmp_path):
+    """F11: an exact build#operation reference is a SQL seek, not a Python
+    filter over the (candidate-limited) fitting set: it resolves even when
+    more operations than the candidate limit fit the same signature."""
+
+    build = operation_build(operations=tuple(operation(name=f"op{i:02d}") for i in range(22)))
+    instance = world(tmp_path, build)
+    author_procedure(instance, slotted_spec())
+    author_line(instance, bindings={"compute": f"{build.identity.name}#op21"})
+    assert accepted_line(instance).bindings["compute"].operation == "op21"
 
 
 # --- 3. provider move: Line successors and propose-only Mandate successors ----
