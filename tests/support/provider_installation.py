@@ -259,11 +259,10 @@ def build_web_fetch_alternative(
     index. ``claims`` maps each declared selector to its fixture id.
     """
 
-    from cruxible_provider_runtime.canonical import domain_digest
-
     from cruxible_core.providers.web_fetch import (
         WEB_FETCH_INTERFACE_DEFINITION,
     )
+    from cruxible_provider_runtime.canonical import domain_digest
 
     # The lock is the workspace package's, renamed: the same version and runtime.
     version = "0.2.0"

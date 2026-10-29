@@ -2,12 +2,11 @@
 
 A provider name holds any number of builds, each its own artifact
 (``Provider:<name>/<build key>``); a single-path Provider (the built-in, or one
-registered before builds) is one more build of its name. Pins name exact builds.
-Only new authoring and unpinned references -- a Blueprint slot bound by name, a
-source selection, ``provider move --to newest`` -- resolve a bare name, to the
-most recently registered live build: the one first accepted last. Later
-signing-key or capture-declaration successors do not re-register a build.
-Interface registrations resolve the same way, per interface id.
+registered before builds) is one more build of its name. Lines bind exact builds.
+Only new authoring -- a Line binding that names a provider, ``provider move --to
+newest`` -- resolves a bare name, to the most recently registered live build:
+the one first accepted last. Later signing-key or capture-declaration
+successors do not re-register a build.
 
 Inventory and authoring resolutions read maintained rows and registration order.
 Installation and move use the maintained name head instead, without enumerating
@@ -17,17 +16,13 @@ retained builds; move selects only live reverse pinners from its name index.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     ProviderBuildResolutionV1,
     ProviderBuildSummaryV1,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    provider_interface_id_of,
 )
 from cruxible_client.contracts.providers import (
     ProviderFormatError,
@@ -44,7 +39,7 @@ from cruxible_core.errors import RequestRefusedError
 
 @dataclass(frozen=True)
 class BuildRow:
-    """One build of a provider name (or one registration of an interface id)."""
+    """One build of a provider name."""
 
     identity: str
     path: str
@@ -123,96 +118,35 @@ def indexed_move_pinners(
     connection: sqlite3.Connection,
     name: str,
     target: str,
-    only: tuple[str, ...],
-    *,
-    procedures_only: bool = False,
-    include_blueprints: bool = True,
+    only: tuple[str, ...] = (),
 ) -> tuple[tuple[str, str, str], ...]:
-    """Live Procedure and Line bindings affected by this build move.
+    """Live Lines binding a build of ``name`` other than ``target``.
 
-    The derived relation excludes retired sources and has a name prefix index;
-    builds without pinners never enter the explicit read. Unbound Lines use
-    target-interface incoming buckets, with a name-local predecessor lookup
-    only for each affected Line.
+    A Line binds exact builds; the maintained ``provider_pinners`` relation has
+    a name prefix index and excludes retired sources, so builds without binders
+    never enter the read.
     """
-    # Probe the unique identity index, then check the exact digest. The
-    # non-unique by-digest index needs a data-dependent range-end step even
-    # though the identity already determines one row.
+
     select = (
-        "SELECT p.source_identity,coalesce(proc.path,bp.path,l.path),p.target_identity "
+        "SELECT p.source_identity,l.path,p.target_identity "
         "FROM main.provider_pinners p "
-        "LEFT JOIN main.procedures proc ON proc.identity=p.source_identity "
-        "LEFT JOIN main.blueprints bp ON bp.identity=p.source_identity "
-        "LEFT JOIN main.lines l ON l.identity=p.source_identity "
+        "JOIN main.lines l ON l.identity=p.source_identity "
         "JOIN main.providers b INDEXED BY sqlite_autoindex_providers_1 "
         "ON b.identity=p.target_identity "
         "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
     )
-    if not include_blueprints:
-        select += " AND bp.identity IS NULL"
-    if procedures_only:
-        select += " AND (proc.identity IS NOT NULL OR l.format_tag='cruxible-line-v7')"
     parameters: list[str] = [name, target]
     if only:
         select += " AND p.source_identity IN (" + ",".join("?" for _ in only) + ")"
         parameters.extend(only)
-    explicit = tuple(
-        connection.execute(select + " ORDER BY p.source_identity,p.target_identity", parameters)
-    )
-    # Only ProviderInterface -> Procedure -> Line incoming buckets. This is
-    # administrative build-move work per affected Line, never per generation.
-    implicit_sql = (
-        "SELECT DISTINCT l.identity,l.path,("
-        "SELECT b.identity FROM main.providers b "
-        "JOIN main.pins bi ON bi.source_identity=b.identity "
-        "AND bi.pin_role='provider-interface' "
-        "WHERE b.provider_name=? AND b.identity!=? AND b.lifecycle='live' "
-        "AND bi.target_identity=target_interface.target_identity "
-        "ORDER BY b.registration_sequence DESC,b.identity LIMIT 1) "
-        "FROM main.pins target_interface "
-        "JOIN main.procedure_provider_slots slots "
-        "ON slots.interface_identity=target_interface.target_identity "
-        "JOIN main.procedures proc ON proc.identity=slots.source_identity "
-        "JOIN main.lines l ON l.procedure_identity=proc.identity "
-        "WHERE target_interface.source_identity=? "
-        "AND target_interface.pin_role='provider-interface' "
-        "AND proc.lifecycle='live' AND proc.format_tag='cruxible-procedure-v3' "
-        "AND l.lifecycle='live' AND l.format_tag='cruxible-line-v7'"
-    )
-    implicit_params = [name, target, target]
-    if only:
-        implicit_sql += " AND l.identity IN (" + ",".join("?" for _ in only) + ")"
-        implicit_params.extend(only)
-    implicit = tuple(connection.execute(implicit_sql, implicit_params))
     return tuple(
         sorted(
             {
                 (str(row[0]), str(row[1]), str(row[2]))
-                for row in (*explicit, *implicit)
-                if row[2] is not None
+                for row in connection.execute(
+                    select + " ORDER BY p.source_identity,p.target_identity", parameters
+                )
             }
-        )
-    )
-
-
-def indexed_interface_registrations(
-    connection: sqlite3.Connection, interface_id: str
-) -> tuple[BuildRow, ...]:
-    """Every registration of ``interface_id`` from the typed index."""
-
-    return tuple(
-        BuildRow(
-            str(identity),
-            str(path),
-            str(digest),
-            lifecycle == "live",
-            registration_sequence=sequence,
-        )
-        for identity, path, digest, lifecycle, sequence in connection.execute(
-            "SELECT identity,path,artifact_digest,lifecycle,registration_sequence "
-            "FROM main.provider_interfaces "
-            "WHERE interface_id=? ORDER BY identity",
-            (interface_id,),
         )
     )
 
@@ -335,118 +269,3 @@ def resolve_provider_build(
         ),
         coordinate=coordinate,
     )
-
-
-class BuildResolver:
-    """Resolve bare provider names and interface ids for one authoring base.
-
-    ``provider_rows`` and ``interface_rows`` read one name's (or interface id's)
-    rows; registration sequences are maintained by accepted deltas. Exact references
-    seek one row without enumerating sibling builds. Every provider resolution made is
-    kept in ``resolutions``, in request order.
-    """
-
-    def __init__(
-        self,
-        *,
-        provider_rows: Callable[[str], Sequence[BuildRow]],
-        interface_rows: Callable[[str], Sequence[BuildRow]],
-        exact_provider: Callable[[str], BuildRow | None],
-        coordinate: AcceptedCoordinate,
-    ) -> None:
-        self._provider_rows = provider_rows
-        self._interface_rows = interface_rows
-        self._exact_provider = exact_provider
-        self._coordinate = coordinate
-        self.resolutions: list[ProviderBuildResolutionV1] = []
-
-    def _sequences(self, rows: Sequence[BuildRow]) -> dict[str, int]:
-        return {row.identity: row.registration_sequence for row in rows}
-
-    def provider(self, requested: str) -> ProviderBuildResolutionV1:
-        """The build a provider reference names (exact, or most recently registered)."""
-
-        name = requested.removeprefix("Provider:")
-        rows: Sequence[BuildRow]
-        if "/" in name:
-            exact = self._exact_provider("Provider:" + name)
-            rows = () if exact is None else (exact,)
-        else:
-            rows = self._provider_rows(name)
-        resolution = resolve_provider_build(
-            name,
-            rows=rows,
-            sequences={row.identity: 0 for row in rows} if "/" in name else self._sequences(rows),
-            coordinate=self._coordinate,
-        )
-        if resolution not in self.resolutions:
-            self.resolutions.append(resolution)
-        return resolution
-
-    def interface(self, requested: str) -> str:
-        """The registration identity a bare interface id names: its most recently
-        registered live registration. An exact name (``id/<key>``) is itself."""
-
-        name = requested.removeprefix("ProviderInterface:")
-        if "/" in name:
-            return f"ProviderInterface:{name}"
-        rows = self._interface_rows(provider_interface_id_of(name))
-        newest = newest_live(rows, self._sequences(rows))
-        return f"ProviderInterface:{name}" if newest is None else newest.identity
-
-    def resolve(self, kind: str, name: str) -> str:
-        """The exact identity a ``kind:name`` reference names (``resolve_source``)."""
-
-        if kind == "Provider":
-            return "Provider:" + self.provider(name).resolved
-        return self.interface(name)
-
-
-def pinned_interface(provider: Any, interface_id: str) -> str | None:
-    """The registration identity ``provider`` binds for ``interface_id``, if any."""
-
-    from cruxible_client.contracts.providers import provider_interface_pin
-
-    pin = provider_interface_pin(provider, provider_interface_id_of(interface_id))
-    return None if pin is None else pin.target.qualified
-
-
-def names_of(rows: Iterable[BuildRow]) -> tuple[str, ...]:
-    return tuple(row.identity.partition(":")[2] for row in rows)
-
-
-def resolve_in_tree(
-    instance: Any,
-    coordinate: Any,
-    tree: Mapping[str, bytes],
-    requested: str,
-) -> ProviderBuildResolutionV1:
-    """Resolve a provider reference against one authoring tree at ``coordinate``.
-
-    The coordinate-bound projection supplies maintained registration order.
-    """
-
-    name = requested.removeprefix("Provider:")
-    try:
-        base = parse_provider_build_name(name).name
-    except ProviderFormatError as exc:
-        raise RequestRefusedError(
-            "cruxible.provider.unknown",
-            f"{requested!r} is not a provider name or build",
-            repair=RepairOperation(operation="cruxible.provider.list"),
-        ) from exc
-    served = AcceptedCoordinate.from_internal(coordinate)
-    with instance.bind_accepted_projection(coordinate) as projection:
-        connection = projection.typed.connection
-        rows: Sequence[BuildRow]
-        if "/" in name:
-            exact = indexed_exact_provider(connection, "Provider:" + name)
-            rows = () if exact is None else (exact,)
-        else:
-            rows = indexed_provider_builds(connection, base)
-        return resolve_provider_build(
-            name,
-            rows=rows,
-            sequences={row.identity: row.registration_sequence for row in rows},
-            coordinate=served,
-        )

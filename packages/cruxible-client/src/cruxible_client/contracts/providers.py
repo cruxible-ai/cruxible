@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Literal, TypeAlias, cast
+from typing import Annotated, ClassVar, Literal, TypeAlias
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -40,6 +40,7 @@ from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, sealed_
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.provider_operations import ProviderOperation, validate_operations
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -173,7 +174,7 @@ class ProviderV1(_StrictProviderModel):
         # format is the single artifact of its name. ``/`` is outside the name
         # grammar, so the two spellings never collide.
         name, slash, build = self.identity.name.partition("/")
-        built = self.artifact_format in {PROVIDER_BUILD_FORMAT, "cruxible-provider-v5"}
+        built = self.artifact_format in {PROVIDER_BUILD_FORMAT, "cruxible-provider-v6"}
         if (
             self.identity.kind != "Provider"
             or not _PROVIDER_NAME_RE.fullmatch(name)
@@ -680,6 +681,13 @@ class ProviderV2(ProviderV1):
     artifact_format: Literal["playbill-provider-v2"] = "playbill-provider-v2"  # type: ignore[assignment]
     runtime_artifact: ProviderRuntimeArtifactPayloadV1
     implementations: tuple[ProviderImplementationRecord, ...]
+    #: What this build serves: typed operations, sorted by name. Each names a
+    #: manifest entrypoint; a Line binds a Procedure slot to one of them.
+    operations: tuple[ProviderOperation, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+
+    _operations = field_validator("operations")(validate_operations)
 
     @field_validator("implementations")
     @classmethod
@@ -724,6 +732,13 @@ class ProviderV2(ProviderV1):
         expected = provider_expected_implementation_records(payload)
         if self.implementations != expected:
             raise ValueError("implementation_digest_mismatch: implementation table diverges")
+        entrypoints = {item.entrypoint for item in payload.manifest.implementations}
+        for operation in self.operations:
+            if operation.entrypoint not in entrypoints:
+                raise ValueError(
+                    f"operation_entrypoint_unknown: {operation.name} names "
+                    f"{operation.entrypoint!r}, which the manifest does not export"
+                )
         if payload.container is not None:
             external_digest = provider_runtime_artifact_digest(payload)
             provenance = payload.container.provenance
@@ -816,21 +831,12 @@ class ProviderBuild(Provider):
 
 
 class NamedProviderBuild(ProviderBuild):
-    artifact_format: Literal["cruxible-provider-v5"] = "cruxible-provider-v5"  # type: ignore[assignment]
-    interfaces: tuple[ArtifactNameRef, ...]
+    """A provider build as revision 36 accepts it: named references and typed operations."""
+
+    artifact_format: Literal["cruxible-provider-v6"] = "cruxible-provider-v6"  # type: ignore[assignment]
     capture_contracts: tuple[ArtifactNameRef, ...] = ()
     capture_contract_digests: ClassVar[tuple[str, ...]] = ()  # type: ignore[misc]
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
-
-    @field_validator("interfaces")
-    @classmethod
-    def _named_interfaces(cls, value: tuple[ArtifactNameRef, ...]) -> tuple[ArtifactNameRef, ...]:
-        names = tuple(item.target.qualified for item in value)
-        if any(item.target.kind != "ProviderInterface" for item in value) or names != tuple(
-            sorted(set(names))
-        ):
-            raise ValueError("Provider interfaces must name sorted unique registrations")
-        return value
 
     @field_validator("capture_contracts")
     @classmethod
@@ -846,9 +852,8 @@ class NamedProviderBuild(ProviderBuild):
 class NamedProviderIdentity(ProviderV1):
     """A signing Provider identity without a package runtime."""
 
-    artifact_format: Literal["cruxible-provider-identity-v2"] = "cruxible-provider-identity-v2"  # type: ignore[assignment]
+    artifact_format: Literal["cruxible-provider-identity-v3"] = "cruxible-provider-identity-v3"  # type: ignore[assignment]
     capture_contracts: tuple[ArtifactNameRef, ...] = ()
-    interfaces: tuple[ArtifactNameRef, ...] = ()
     capture_contract_digests: ClassVar[tuple[str, ...]] = ()  # type: ignore[misc]
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
 
@@ -856,13 +861,11 @@ class NamedProviderIdentity(ProviderV1):
     def _declarations(self) -> NamedProviderIdentity:
         if not self.signing_keys:
             raise ValueError("a signing Provider requires signing keys")
-        for refs, kind in (
-            (self.capture_contracts, "CaptureContract"),
-            (self.interfaces, "ProviderInterface"),
+        names = tuple(ref.target.qualified for ref in self.capture_contracts)
+        if any(ref.target.kind != "CaptureContract" for ref in self.capture_contracts) or (
+            names != tuple(sorted(set(names)))
         ):
-            names = tuple(ref.target.qualified for ref in refs)
-            if any(ref.target.kind != kind for ref in refs) or names != tuple(sorted(set(names))):
-                raise ValueError("Provider declarations must name sorted unique artifacts")
+            raise ValueError("Provider declarations must name sorted unique artifacts")
         return self
 
 
@@ -1031,30 +1034,6 @@ def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResult:
     )
 
 
-def provider_interface_pin(
-    provider: ProviderV1, interface_id: str
-) -> ArtifactPin | ArtifactNameRef | None:
-    """The pin naming the registration ``provider`` binds for ``interface_id``.
-
-    A registration is named ``ProviderInterface:<id>`` (single path) or
-    ``ProviderInterface:<id>/<contract key>`` (one per contract), so the pin is
-    found by the interface id its target names, never by spelling the identity.
-    """
-
-    for pin in (
-        provider.interfaces
-        if isinstance(provider, NamedProviderBuild | NamedProviderIdentity)
-        else provider.pins
-    ):
-        if (
-            (not isinstance(pin, ArtifactPin) or pin.role == "provider-interface")
-            and pin.target.kind == "ProviderInterface"
-            and pin.target.name.partition("/")[0] == interface_id
-        ):
-            return pin
-    return None
-
-
 def _build_runtime(provider: ProviderBuild, *, by_name: bool = False) -> dict[str, object]:
     """What a build runs: fixed for its whole lineage."""
 
@@ -1062,13 +1041,9 @@ def _build_runtime(provider: ProviderBuild, *, by_name: bool = False) -> dict[st
         "control_domain": provider.control_domain,
         "runtime_artifact": provider.runtime_artifact.model_dump(mode="json"),
         "implementations": [item.model_dump(mode="json") for item in provider.implementations],
+        "operations": [item.model_dump(mode="json") for item in provider.operations],
     }
-    if not by_name:
-        result["interface_pins"] = [
-            item.model_dump(mode="json")
-            for item in provider.pins
-            if item.role == "provider-interface"
-        ]
+    del by_name
     return result
 
 
@@ -1077,12 +1052,16 @@ def evaluate_provider_law(
     *,
     path: str,
     predecessor: AcceptedProvider | None,
-    interface_registrations: Mapping[str, object] | None = None,
+    contracts: Mapping[tuple[str, int], str] | None = None,
+    refusal_codes: frozenset[str] | None = None,
     sibling_control_domains: frozenset[str] = frozenset(),
     by_name: bool = False,
 ) -> ProviderLawResult:
-    """Identity, path, succession and the registrations a Provider binds.
+    """Identity, path, succession and the operation law.
 
+    ``contracts`` maps each accepted Contract ``(name, version)`` to its
+    digest: every operation pin must resolve to it exactly. ``refusal_codes``
+    is the closed vocabulary a provider may refuse with.
     ``sibling_control_domains`` are the control domains of the other builds of
     this provider name: a new build joins its name's one control domain.
     """
@@ -1155,59 +1134,71 @@ def evaluate_provider_law(
             path=path,
         )
     if isinstance(provider, ProviderV2):
-        registrations = {} if interface_registrations is None else interface_registrations
-        for implementation in provider.runtime_artifact.manifest.implementations:
-            interface_pin = provider_interface_pin(provider, implementation.interface_id)
-            accepted = registrations.get(
-                f"ProviderInterface:{implementation.interface_id}"
-                if interface_pin is None
-                else interface_pin.target.qualified
-            )
-            registration = getattr(accepted, "registration", accepted)
-            if registration is None:
-                return _law_refusal(
-                    "cruxible.provider.unknown_interface",
-                    f"Provider interface {implementation.interface_id!r} is not accepted.",
-                    path=path,
-                )
-            if interface_pin is None or (
-                not by_name
-                and getattr(interface_pin, "artifact_digest", None)
-                != getattr(accepted, "artifact_digest", None)
-            ):
-                return _law_refusal(
-                    "cruxible.provider.interface_pin_missing",
-                    "Provider interface declarations must name an accepted registration.",
-                    path=path,
-                )
-            from cruxible_client.contracts.provider_interfaces import interface_definition_digest
-
-            if (
-                interface_definition_digest(cast(Any, registration))
-                != implementation.interface_digest
-            ):
-                return _law_refusal(
-                    "cruxible.provider.interface_digest_mismatch",
-                    "Provider manifest and governed interface digest disagree.",
-                    path=path,
-                )
-            # A manifest's declared input buckets are inert: core classifies no
-            # input, so no selector needs a proof from the registration it binds.
-            expected_side_effects = getattr(registration, "effect_class", None) == (
-                "external_mutation"
-            )
-            if implementation.side_effects != expected_side_effects:
-                return _law_refusal(
-                    "cruxible.provider.effect_declaration_mismatch",
-                    "Provider side_effects must equal the governed interface effect class.",
-                    path=path,
-                )
+        problem = operation_law_problem(
+            provider, contracts=contracts or {}, refusal_codes=refusal_codes
+        )
+        if problem is not None:
+            return _law_refusal(problem[0], problem[1], path=path)
     return ProviderLawResult(
         verdict="accepted",
         artifact_digest=provider_digest(provider).tagged,
         required_tier="governed_write",
         approval_scope=(),
     )
+
+
+def operation_law_problem(
+    provider: ProviderV2,
+    *,
+    contracts: Mapping[tuple[str, int], str],
+    refusal_codes: frozenset[str] | None,
+) -> tuple[str, str] | None:
+    """The install law for one build's operations: ``(code, message)`` or ``None``.
+
+    Every pin resolves to the exact accepted Contract; names are unique (the
+    model enforces it); every refusal code has a Contract and is a code the
+    provider runtime can return; every entrypoint is one the manifest exports
+    (the model enforces it); and an operation's effect agrees with the side
+    effects its manifest implementation declares.
+    """
+
+    by_entrypoint = {
+        item.entrypoint: item for item in provider.runtime_artifact.manifest.implementations
+    }
+    for operation in provider.operations:
+        for ref in operation.contract_refs():
+            accepted = contracts.get((ref.name, ref.version))
+            if accepted is None:
+                return (
+                    "cruxible.provider.operation_contract_unresolved",
+                    f"Operation {operation.name!r} pins {ref.spelling}, which is not accepted.",
+                )
+            if ref.digest != accepted:
+                return (
+                    "cruxible.provider.operation_contract_unresolved",
+                    f"Operation {operation.name!r} must pin {ref.spelling} at {accepted}.",
+                )
+        if refusal_codes is not None:
+            unknown = sorted(set(operation.refusals) - refusal_codes)
+            if unknown:
+                return (
+                    "cruxible.provider.operation_refusal_unknown",
+                    f"Operation {operation.name!r} declares refusal codes the provider "
+                    f"runtime cannot return: {unknown}.",
+                )
+        implementation = by_entrypoint.get(operation.entrypoint)
+        if implementation is None:
+            return (
+                "cruxible.provider.operation_entrypoint_unknown",
+                f"Operation {operation.name!r} names an entrypoint the manifest lacks.",
+            )
+        if implementation.side_effects != (operation.effect == "external_mutation"):
+            return (
+                "cruxible.provider.effect_declaration_mismatch",
+                f"Operation {operation.name!r} is {operation.effect}, but its entrypoint "
+                f"declares side_effects={implementation.side_effects}.",
+            )
+    return None
 
 
 __all__ = [
@@ -1246,7 +1237,7 @@ __all__ = [
     "provider_build_key_of",
     "provider_builds_prefix",
     "provider_digest",
-    "provider_interface_pin",
+    "operation_law_problem",
     "provider_expected_implementation_records",
     "provider_implementation_digest",
     "provider_manifest_digest",

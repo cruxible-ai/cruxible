@@ -71,8 +71,9 @@ def capture_provider_build(contract: CaptureContract, *, named: bool = True) -> 
 
     template = provider_v2()
     if isinstance(contract, NamedCaptureContract):
-        from cruxible_client.contracts.artifacts import ArtifactPin
         from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
+        from cruxible_client.contracts.artifacts import ArtifactPin
         from cruxible_client.contracts.providers import provider_manifest_digest
 
         interface = capture_provider_interface()
@@ -130,11 +131,12 @@ def capture_provider_build(contract: CaptureContract, *, named: bool = True) -> 
 
 
 def legacy_interface_contract(**kwargs):
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.provider_interfaces import (
         ProviderInterfaceContractV3,
         provider_interface_contract_key,
     )
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
 
     key = provider_interface_contract_key(
         **{k: v for k, v in kwargs.items() if k != "interface_bytes_hex"}

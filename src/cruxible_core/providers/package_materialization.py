@@ -228,7 +228,6 @@ def prepare_provider_package(
     )
     pin, document, lock, resolved = package.pin, package.document, package.lock, package.resolved
     materialization = package.materialization
-    interfaces = document.interface_registrations()
     distribution = ProviderLocalDistributionPin(
         name=pin.name,
         version=pin.version,
@@ -243,7 +242,8 @@ def prepare_provider_package(
         distribution=distribution,
         local_env=local_env,
         control_domain=control_domain,
-        interfaces=interfaces,
+        # Unpinned here: the install pins each Contract at its base.
+        operations=document.operations,
     )
     custody = wheel.parent.resolve()
     fetcher = toolchain("index").ArtifactFetcher(

@@ -1,10 +1,9 @@
-"""Read a provider package a kit bundles: its identity and what installing it registers.
+"""Read a provider package a kit bundles: its identity and the operations it declares.
 
-Metadata only: the registration through core's own reader (``package_metadata``,
-bucket data inert), the wheel pin and lock through the first-party toolchain. No
-provider code runs. ``kit build`` uses it to record the package in the kit
-manifest and to check that every ProviderInterface the kit carries is exactly
-what installing the bundled wheel registers.
+Metadata only: the registration through core's own reader (``package_metadata``),
+the wheel pin and lock through the first-party toolchain. No provider code
+runs. ``kit build`` uses it to record the package, with its operation names,
+in the kit manifest.
 """
 
 from __future__ import annotations
@@ -15,10 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_client.contracts.kits import KitProvider, KitProviderDelivery, KitProviderFile
-from cruxible_client.contracts.provider_interfaces import (
-    provider_interface_path,
-    render_provider_interface,
-)
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.providers.package_index import embedded_lock
@@ -35,11 +30,9 @@ _REPAIR = RepairOperation(operation="cruxible.kit.build")
 
 @dataclass(frozen=True)
 class InspectedProviderPackage:
-    """One bundled package: its manifest entry and the interface bytes it registers."""
+    """One bundled package: its manifest entry and the operations it declares."""
 
     provider: KitProvider
-    #: ProviderInterface path -> the exact artifact bytes installing the wheel writes.
-    interfaces: dict[str, bytes]
     #: This host's environment pin key and the materialization digest installing
     #: these exact bytes records there: the whole dependency closure, path
     #: dependency wheels included, which the lock pins only by name and version.
@@ -65,7 +58,6 @@ def inspect_provider_package(
     lock: bytes,
     dependencies: tuple[tuple[str, bytes], ...] = (),
     delivery: KitProviderDelivery = "bundled",
-    named: bool = True,
 ) -> InspectedProviderPackage:
     """The manifest entry for one wheel, its lock and its path-sourced dependency wheels.
 
@@ -106,12 +98,6 @@ def inspect_provider_package(
                     "index default installs by name from that embedded lock, so name the "
                     "package directory whose uv.lock the published wheel was built with",
                 )
-    if document.governed_definitions:
-        raise _refuse(
-            "cruxible.kit.provider_carries_definitions",
-            f"{pin.filename} carries governed definitions; a provider package registers "
-            "only its Provider and interfaces, and the kit carries the definitions",
-        )
     rows: tuple[dict[str, Any], ...] = locked.packages
     roots = [row for row in rows if row["name"] == pin.name]
     if len(roots) != 1 or str(roots[0]["version"]) != pin.version:
@@ -127,16 +113,11 @@ def inspect_provider_package(
     }
     supplied = {item.name: item.version for item in dependency_pins}
     check_path_dependencies(pin.name, by_path, supplied, delivery=delivery)
-    registrations = document.interface_registrations(named=named)
     if set(by_path) - set(supplied):
         # An index default given no wheel for a path dependency: the consumer's
         # closure is the index's, so there is no exact closure to record here.
         return InspectedProviderPackage(
-            provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
-            interfaces={
-                provider_interface_path(item.identity.name): render_provider_interface(item)
-                for item in registrations
-            },
+            provider=_kit_provider(document, pin, locked, dependency_pins),
             pin_key=None,
             materialization=None,
         )
@@ -153,11 +134,7 @@ def inspect_provider_package(
                 ),
             )
     return InspectedProviderPackage(
-        provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
-        interfaces={
-            provider_interface_path(item.identity.name): render_provider_interface(item)
-            for item in registrations
-        },
+        provider=_kit_provider(document, pin, locked, dependency_pins),
         pin_key=resolved.pin_key,
         materialization=resolved.materialization,
     )
@@ -201,7 +178,6 @@ def _kit_provider(
     pin: Any,
     locked: Any,
     dependency_pins: tuple[Any, ...],
-    registrations: Any,
 ) -> KitProvider:
     return KitProvider(
         provider_id=document.manifest.provider_id,
@@ -215,7 +191,7 @@ def _kit_provider(
             KitProviderFile(filename=item.filename, sha256=item.artifact_id)
             for item in sorted(dependency_pins, key=lambda item: item.filename)
         ),
-        interfaces=tuple(sorted(item.interface_id for item in registrations)),
+        operations=tuple(sorted(item.name for item in document.operations)),
     )
 
 

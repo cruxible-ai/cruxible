@@ -43,21 +43,17 @@ KIT_FILE_DIRECTORY = "files"
 
 # The definition families a kit may carry. Authority (governance, principals,
 # mandates), local binding (providers, lines) and state (subjects, claims,
-# attestations) are never kit content. A Procedure or Blueprint moves its pins
-# through its typed graph (they feed its definition digest); a
-# SourceAcquisitionPolicy moves only its pins, never the digests its rules hold
-# as values. A SubjectKind (how a kind's Subjects are named) names its key
-# ClaimTypes by predicate, so it travels with them. A ProviderInterface is
-# carried only as the exact bytes its provider package registers, and never
-# owned: the kit bundles that package.
+# attestations) are never kit content. A Procedure moves its pins through its
+# typed graph (they feed its definition digest). A SubjectKind (how a kind's
+# Subjects are named) names its key ClaimTypes by predicate, so it travels with
+# them. A Contract (one immutable data shape) travels with the Procedures and
+# provider operations whose slots and signatures pin it.
 KIT_ARTIFACT_PREFIXES: tuple[str, ...] = (
-    "blueprints/",
     "capture-contracts/",
     "claim-types/",
+    "contracts/",
     "procedures/",
-    "provider-interfaces/",
     "query-definitions/",
-    "source-acquisition-policies/",
     "subject-kinds/",
 )
 
@@ -176,7 +172,7 @@ class KitProviderFile(_Strict):
 #: How ``kit add`` obtains a provider package: ``bundled`` (the kit carries its
 #: wheel, lock and path-dependency wheels) or ``index`` (a default provider: the
 #: kit names its published package and exact version, installed by name from the
-#: daemon's provider index when no Provider here implements its interfaces).
+#: daemon's provider index when no Provider here serves its operations).
 KitProviderDelivery = Literal["bundled", "index"]
 
 
@@ -189,13 +185,13 @@ class KitProvider(_Strict):
 
     A bundled package (the default delivery) is carried as those files; ``kit
     add`` installs it before the kit's definitions, through the ordinary
-    transfer install, so the Provider and ProviderInterfaces it registers are the
-    ones the kit's Procedures and Blueprints pin. An ``index`` package is the
-    kit's default implementation of its interfaces: the kit carries no file of
-    it, ``kit add`` installs ``package`` at exactly ``version`` by name (its lock
-    is the one the wheel embeds, its path dependencies come from the same index)
-    unless another live Provider here already implements every one of its
-    interfaces, and ``wheel`` and ``lock`` name the published build it verifies.
+    transfer install, so the operations it declares are there for the kit's Lines
+    to bind. An ``index`` package is the kit's default provider of its
+    operations: the kit carries no file of it, ``kit add`` installs ``package``
+    at exactly ``version`` by name (its lock is the one the wheel embeds, its path
+    dependencies come from the same index) unless another live Provider here
+    already serves every one of its operations' signatures, and ``wheel`` and
+    ``lock`` name the published build it verifies.
     """
 
     provider_id: str
@@ -204,8 +200,8 @@ class KitProvider(_Strict):
     wheel: KitProviderFile
     lock: KitProviderFile
     dependencies: tuple[KitProviderFile, ...] = ()
-    #: The ProviderInterfaces the package registers.
-    interfaces: tuple[str, ...] = ()
+    #: The operations the package declares, by name.
+    operations: tuple[str, ...] = ()
     delivery: KitProviderDelivery = Field(
         default="bundled", exclude_if=lambda value: value == "bundled"
     )
@@ -225,16 +221,16 @@ class KitProvider(_Strict):
         _sorted_unique(tuple(item.filename for item in value), label="provider dependencies")
         return value
 
-    @field_validator("interfaces")
+    @field_validator("operations")
     @classmethod
-    def _interfaces(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _sorted_unique(value, label="provider interfaces")
+    def _operations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _sorted_unique(value, label="provider operations")
 
     @model_validator(mode="after")
     def _index_entry(self) -> KitProvider:
-        if self.delivery == "index" and (self.dependencies or not self.interfaces):
+        if self.delivery == "index" and (self.dependencies or not self.operations):
             raise ValueError(
-                "a default provider names the interfaces it implements and no dependency "
+                "a default provider names the operations it serves and no dependency "
                 "files: its path dependencies come from the index that serves it"
             )
         return self
@@ -747,7 +743,7 @@ class KitBuildProvider(_Strict):
     ``delivery`` ``index`` makes it the kit's default provider: the kit records
     the package, version, wheel and lock digests and carries none of the files,
     and ``kit add`` installs it by name from the consumer's provider index when no
-    Provider there implements its interfaces. The staged wheel must be the
+    Provider there serves its operations. The staged wheel must be the
     published build and the lock the one it embeds.
     """
 
@@ -765,10 +761,8 @@ class KitBuildProvider(_Strict):
 class KitBuildRequest(_Strict):
     """Export this instance's definitions under ``owns`` as one kit release.
 
-    ``providers`` bundles provider packages with the release. Every Provider a
-    carried Procedure pins must be bundled (the same wheel this instance
-    installed), and every ProviderInterface the kit carries must be exactly what
-    a bundled wheel registers.
+    ``providers`` bundles provider packages with the release (the same wheels
+    this instance installed), so the kit's Lines can bind their operations.
     """
 
     kit_id: str
@@ -893,7 +887,7 @@ KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 #: is installed), ``install`` (installed and registered now), ``would_install``
 #: (a preview), ``awaiting_approval`` (its install proposal needs approval),
 #: ``satisfied`` (an index default not installed: another live Provider here
-#: implements its interfaces), ``blocked`` (this build is retired here, or its
+#: serves its operations), ``blocked`` (this build is retired here, or its
 #: install refused). Another installed build of the provider never blocks: the
 #: kit's build installs beside it.
 KitProviderAction = Literal[
@@ -1002,7 +996,7 @@ KitUpdateCheck = Literal["not_checked", "checked", "offline", "local_source", "u
 
 #: A kit's provider package here: ``installed`` (this build is the live
 #: Provider), ``differs`` (another build of it is), ``satisfied`` (an index
-#: default that is not: another live Provider implements its interfaces),
+#: default that is not: another live Provider serves its operations),
 #: ``missing`` (none is live).
 KitProviderInstallState = Literal["installed", "differs", "satisfied", "missing"]
 

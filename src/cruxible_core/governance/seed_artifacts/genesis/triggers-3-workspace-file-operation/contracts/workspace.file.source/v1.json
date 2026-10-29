@@ -1,0 +1,32 @@
+{
+  "artifact_format": "cruxible-contract-v1",
+  "description": "Which supplied bytes a workspace.file result structured.",
+  "fields": {
+    "byte_length": {
+      "type": {
+        "kind": "int",
+        "min": 0
+      }
+    },
+    "bytes_digest": {
+      "type": {
+        "kind": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "commitment_digest": {
+      "type": {
+        "kind": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "logical_source": {
+      "type": {
+        "kind": "string",
+        "min_len": 1
+      }
+    }
+  },
+  "name": "workspace.file.source",
+  "version": 1
+}

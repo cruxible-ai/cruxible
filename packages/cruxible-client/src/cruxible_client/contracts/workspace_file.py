@@ -12,18 +12,138 @@ from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 _RELATIVE_COMPONENT_RE = re.compile(r"^[^/\\\x00]+$")
-WORKSPACE_FILE_INTERFACE_DIGEST = (
-    "sha256:372bc808d6bd77627bdda7bc67586300e2eb812bf0a4fb3769283a26cc021f88"
-)
+_DIGEST_PATTERN = '"^sha256:[0-9a-f]{64}$"'
 
-# Package-owned v2 operation schema. Both revisions use the same host-owned
-# file-read protocol: the provider structures supplied bytes, never opens paths.
-WORKSPACE_FILE_INTERFACE_V2_DIGEST = (
-    "sha256:faa92552bd6032d3280753881ce991501013b2eaa2005e0f974820f01248d866"
-)
-WORKSPACE_FILE_INTERFACE_DIGESTS = frozenset(
-    (WORKSPACE_FILE_INTERFACE_DIGEST, WORKSPACE_FILE_INTERFACE_V2_DIGEST)
-)
+#: The ``workspace.file`` operation core serves in process. Its Contracts are
+#: core-owned and seeded at genesis; core recognizes the operation by its exact
+#: signature (in and out digests and effect), never by a provider's name for it.
+WORKSPACE_FILE_OPERATION = "workspace.file"
+
+WORKSPACE_FILE_SOURCE_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.source",
+    "version": 1,
+    "description": "Which supplied bytes a workspace.file result structured.",
+    "fields": {
+        "logical_source": "string{min_len: 1}",
+        "commitment_digest": f"string{{pattern: {_DIGEST_PATTERN}}}",
+        "bytes_digest": f"string{{pattern: {_DIGEST_PATTERN}}}",
+        "byte_length": "int{0..}",
+    },
+}
+WORKSPACE_FILE_CONTENT_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.content",
+    "version": 1,
+    "description": "A workspace file as text (utf-8) or as base64 bytes.",
+    "fields": {
+        "kind": "enum[bytes, text]",
+        "encoding": "enum[base64, utf-8]",
+        "bom": "bool?",
+        "newline": "enum[cr, crlf, lf, mixed, none]?",
+        "trailing_newline": "bool?",
+        "line_count": "int{0..}?",
+        "character_count": "int{0..}?",
+        "text": "string?",
+        "lines": "list<string>{max_items: 1000000}?",
+        "byte_length": "int{0..}?",
+        "bytes": "string?",
+    },
+}
+WORKSPACE_FILE_REQUEST_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.request",
+    "version": 1,
+    "description": "Bytes the daemon read, handed to the structuring operation.",
+    "fields": {
+        "logical_source": "string{min_len: 1}",
+        "commitment_digest": f"string{{pattern: {_DIGEST_PATTERN}}}",
+        "content_encoding": "enum[base64]",
+        "bytes": "string",
+        "byte_length": "int{0..}",
+        "bytes_digest": f"string{{pattern: {_DIGEST_PATTERN}}}",
+    },
+}
+WORKSPACE_FILE_RESULT_CONTRACT: dict[str, object] = {
+    "name": "workspace.file.result",
+    "version": 1,
+    "description": "One structured workspace file.",
+    "fields": {
+        "input_bucket": "string",
+        "source": "workspace.file.source@1",
+        "content": "workspace.file.content@1",
+    },
+}
+
+
+def workspace_file_contracts() -> tuple[object, ...]:
+    """The four core-owned workspace.file Contracts, nested pins resolved, leaves first."""
+
+    from cruxible_client.contracts.shapes import (
+        ContractRef,
+        contract_digest,
+        pin_contract_refs,
+        validate_contract,
+    )
+
+    accepted: dict[tuple[str, int], object] = {}
+    order = (
+        WORKSPACE_FILE_SOURCE_CONTRACT,
+        WORKSPACE_FILE_CONTENT_CONTRACT,
+        WORKSPACE_FILE_REQUEST_CONTRACT,
+        WORKSPACE_FILE_RESULT_CONTRACT,
+    )
+    result = []
+    for data in order:
+        contract = validate_contract(data)
+
+        def pin(ref: ContractRef) -> ContractRef:
+            target = accepted[(ref.name, ref.version)]
+            return ref.model_copy(update={"digest": contract_digest(target).tagged})  # type: ignore[arg-type]
+
+        contract = pin_contract_refs(contract, pin)
+        accepted[(contract.name, contract.version)] = contract
+        result.append(contract)
+    return tuple(result)
+
+
+def workspace_file_signature_digest() -> str:
+    """The exact signature digest of the core-served ``workspace.file`` operation."""
+
+    from cruxible_client.contracts.provider_operations import (
+        OperationSignature,
+        operation_signature_digest,
+    )
+    from cruxible_client.contracts.shapes import contract_digest
+
+    _source, _content, request, result = workspace_file_contracts()
+    return operation_signature_digest(
+        OperationSignature.model_validate(
+            {
+                "in": {
+                    "name": "workspace.file.request",
+                    "version": 1,
+                    "digest": contract_digest(request).tagged,  # type: ignore[arg-type]
+                },
+                "out": {
+                    "name": "workspace.file.result",
+                    "version": 1,
+                    "digest": contract_digest(result).tagged,  # type: ignore[arg-type]
+                },
+                "effect": "pure",
+            }
+        )
+    )
+
+
+_SIGNATURE: list[str] = []
+
+
+def is_workspace_file_signature(digest: str | None) -> bool:
+    """Whether an operation signature digest is the core-served ``workspace.file``'s."""
+
+    if digest is None:
+        return False
+    if not _SIGNATURE:
+        _SIGNATURE.append(workspace_file_signature_digest())
+    return digest == _SIGNATURE[0]
 
 
 class _StrictWorkspaceFileModel(BaseModel):
@@ -312,9 +432,14 @@ __all__ = [
     "ExecutedWorkspaceFileSourceRequestV2",
     "SourceReadReceipt",
     "WorkspaceBindingDigestAuthored",
-    "WORKSPACE_FILE_INTERFACE_DIGEST",
-    "WORKSPACE_FILE_INTERFACE_V2_DIGEST",
-    "WORKSPACE_FILE_INTERFACE_DIGESTS",
+    "WORKSPACE_FILE_CONTENT_CONTRACT",
+    "WORKSPACE_FILE_OPERATION",
+    "WORKSPACE_FILE_REQUEST_CONTRACT",
+    "WORKSPACE_FILE_RESULT_CONTRACT",
+    "WORKSPACE_FILE_SOURCE_CONTRACT",
+    "is_workspace_file_signature",
+    "workspace_file_contracts",
+    "workspace_file_signature_digest",
     "WorkspaceFileSourceRequest",
     "WorkspaceFileSourceRequestV2",
     "parse_authored_workspace_request",

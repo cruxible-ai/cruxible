@@ -19,8 +19,6 @@ from pydantic import TypeAdapter
 
 from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     InstalledProvider,
@@ -29,15 +27,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderInstallResult,
     ProviderOperationReadiness,
     ProviderPackageSummary,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    ProviderInterfaceRegistrationAny,
-    interface_definition_bytes,
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_path,
-    render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
     Provider,
@@ -62,9 +51,6 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, ProviderLaneRefusedError, RequestRefusedError
-from cruxible_core.governance.seed_artifacts.workspace_file import (
-    is_builtin_workspace_file_registration,
-)
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.package_index import (
     DEFAULT_PROVIDER_INDEX_URLS,
@@ -157,9 +143,7 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
                 pinned_by=pinned[identity],
                 package=None if distribution is None else distribution.name,
                 version=None if distribution is None else distribution.version,
-                interfaces=tuple(
-                    sorted({item.interface_id for item in getattr(provider, "implementations", ())})
-                ),
+                operations=tuple(sorted(item.name for item in getattr(provider, "operations", ()))),
             )
         )
     return tuple(installed)
@@ -183,7 +167,7 @@ def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPac
             ProviderPackageSummary(
                 name=name,
                 version=document.manifest.distribution.version,
-                interfaces=tuple(sorted(item.interface_id for item in document.interfaces)),
+                operations=tuple(sorted(item.name for item in document.operations)),
             )
         )
     return tuple(sorted(packages, key=lambda item: item.name))
@@ -357,107 +341,50 @@ def _source_files(
     )
 
 
-def _refuse_built_in_interfaces(
-    instance: PlaybillInstance, document: PackageRegistrationDocumentV1, accepted_oid: str
-) -> None:
-    """Refuse a package exporting an interface this instance already has built in.
+def tree_contract_digests(tree: Mapping[str, bytes]) -> Any:
+    """Each accepted Contract version's digest at ``tree``, by name and version."""
 
-    A built-in interface (workspace.file, seeded at genesis) is implemented by
-    core's own Provider; a package registration would have to succeed it and
-    strand that Provider, which the proposal law refuses as an incomplete
-    closure. Say why instead.
-    """
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
 
-    tree = instance.immutable_tree_at(accepted_oid)
-    for exported in document.interfaces:
-        path = provider_interface_path(exported.interface_id)
-        current = tree.get(path)
-        if current is None:
-            continue
-        registration = parse_provider_interface(current, path=path)
-        if registration.lifecycle.state == "live" and is_builtin_workspace_file_registration(
-            registration
-        ):
-            raise ConfigError(
-                f"{exported.interface_id} is built in on this instance; no install is needed"
-            )
+    def digest(ref: Any) -> str | None:
+        path = contract_path(ref.name, ref.version)
+        content = tree.get(path)
+        return (
+            None if content is None else contract_digest(parse_contract(content, path=path)).tagged
+        )
 
-
-def _interface_bindings(
-    tree: Mapping[str, bytes], document: PackageRegistrationDocumentV1, *, named: bool = True
-) -> tuple[tuple[ProviderInterfaceRegistrationAny, bool], ...]:
-    """Each exported interface's contract registration, and whether it is already live.
-
-    A build reuses the exact definition registered at its interface name and
-    version, or adds it when absent. A different definition at that address
-    refuses before a proposal or deployment is created.
-    """
-
-    result: list[tuple[ProviderInterfaceRegistrationAny, bool]] = []
-    registrations = (
-        document.interface_registrations()
-        if named
-        else document.interface_registrations(named=False)
-    )
-    for desired in registrations:
-        path = provider_interface_path(desired.identity.name)
-        current_bytes = tree.get(path)
-        if current_bytes is None:
-            result.append((desired, False))
-            continue
-        current = parse_provider_interface(current_bytes, path=path)
-        if current.lifecycle.state != "live":
-            raise ProposalIntegrityError("install cannot silently restore a retired interface")
-        if (
-            type(current) is not type(desired)
-            or interface_definition_bytes(current).hex()
-            != interface_definition_bytes(desired).hex()
-        ):
-            raise RequestRefusedError(
-                "cruxible.provider_interface.version_conflict",
-                "Install cannot replace an existing interface name and version.",
-                repair=HandEditRepair(
-                    hand_edit=HandEditInstruction(
-                        target="the provider package's interface definition",
-                        required_change=(
-                            "Publish the changed definition under a new interface version."
-                        ),
-                    )
-                ),
-            )
-        result.append((current, True))
-    return tuple(result)
-
-
-def _accepted(
-    registration: ProviderInterfaceRegistrationAny,
-) -> AcceptedProviderInterfaceRegistration:
-    return AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.identity.name),
-        registration=registration,
-        artifact_digest=provider_interface_digest(registration).tagged,
-    )
+    return digest
 
 
 def _refuse_unproven_provider(
     provider: ProviderBuild,
-    interfaces: tuple[ProviderInterfaceRegistrationAny, ...],
+    tree: Mapping[str, bytes],
     sibling_control_domains: frozenset[str],
 ) -> None:
-    """The Provider law, before anything is proposed, against the registrations it binds.
+    """The Provider law, before anything is proposed, against the Contracts it pins.
 
-    A package bound onto a registration it did not build must implement that
-    registration's exact definition and effect class, and a new build joins its
-    name's control domain: a disagreement is refused here, typed, rather than
-    as a blocked proposal.
+    Every operation pin resolves to an accepted Contract version, its refusal
+    codes are ones the runtime can return, and a new build joins its name's
+    control domain: a disagreement is refused here, typed, rather than as a
+    blocked proposal.
     """
 
+    from cruxible_core.providers.provider_runtime_contract import provider_runtime_refusal_codes
+
+    digests = tree_contract_digests(tree)
+    contracts: dict[tuple[str, int], str] = {}
+    for operation in getattr(provider, "operations", ()):
+        for ref in operation.contract_refs():
+            digest = digests(ref)
+            if digest is not None:
+                contracts[(ref.name, ref.version)] = digest
     path = provider_path(provider.identity.name)
     law = evaluate_provider_law(
         provider,
         path=path,
         predecessor=None,
-        interface_registrations={item.identity.qualified: _accepted(item) for item in interfaces},
+        contracts=contracts,
+        refusal_codes=frozenset(provider_runtime_refusal_codes()),
         sibling_control_domains=sibling_control_domains,
     )
     if law.verdict == "accepted":
@@ -476,14 +403,13 @@ def _refuse_unproven_provider(
         )
     raise RequestRefusedError(
         diagnostic.code,
-        f"{provider.provider_name} cannot bind the registrations live here: {diagnostic.message}",
+        f"{provider.provider_name} cannot install here: {diagnostic.message}",
         repair=HandEditRepair(
             hand_edit=HandEditInstruction(
-                target=f"the {provider.provider_name} package manifest",
+                target=f"the {provider.provider_name} package's operations",
                 required_change=(
-                    "Implement the exact interface definition and effect class the live "
-                    "ProviderInterface registration carries "
-                    "(cruxible get ProviderInterface:ID --detail proof shows them)."
+                    "Pin accepted Contract versions and declare only refusal codes the "
+                    "provider runtime returns."
                 ),
             )
         ),
@@ -510,33 +436,22 @@ def _definition_changes(
     provider: Provider,
     accepted_oid: str,
 ) -> tuple[Mapping[str, bytes], tuple[str, ...], ProviderBuild]:
-    """The paths an install adds: the build's own path and any contract
-    registration not live yet. No existing Provider or registration is written,
-    so no live definition owes a successor and the install never strands one."""
+    """The paths an install adds: the build's own path. No existing Provider is
+    written, so no live definition owes a successor and the install never strands
+    one. Every operation Contract is pinned to the version accepted here."""
 
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
-    changed = []
-    light = instance.coordinate_for_oid(accepted_oid).compiler == LIGHT_ARTIFACTS_COMPILER
-    bindings = _interface_bindings(tree, document, named=light)
-    for registration, live in bindings:
-        if live:
-            continue
-        path = provider_interface_path(registration.identity.name)
-        candidate[path] = render_provider_interface(registration)
-        changed.append(path)
-    interfaces = tuple(registration for registration, _live in bindings)
+    changed: list[str] = []
     runtime = provider.runtime_artifact
     assert isinstance(runtime.distribution, ProviderLocalDistributionPin)
     assert runtime.local_env is not None
-    desired = document.provider_definition(
+    desired: ProviderBuild = document.provider_definition(
         distribution=runtime.distribution,
         local_env=runtime.local_env,
         control_domain=provider.control_domain,
-        interfaces=interfaces,
+        operations=document.pinned_operations(tree_contract_digests(tree)),
     )
-    if light:
-        desired = name_provider(desired)
     path = provider_path(desired.identity.name)
     current_bytes = tree.get(path)
     if current_bytes is not None:
@@ -556,29 +471,14 @@ def _definition_changes(
             "upstream_provenance",
             "artifact_format",
             "pins",
-            "interfaces",
         }
-
-        def interfaces_of(value: ProviderAny) -> tuple[str, ...]:
-            from cruxible_client.contracts.dependencies import dependency_pins
-
-            return tuple(
-                sorted(
-                    p.target.qualified
-                    for p in dependency_pins(value)
-                    if p.target.kind == "ProviderInterface"
-                )
-            )
-
-        if current.model_dump(exclude=governed) != desired.model_dump(
-            exclude=governed
-        ) or interfaces_of(current) != interfaces_of(desired):
+        if current.model_dump(exclude=governed) != desired.model_dump(exclude=governed):
             # One wheel and lock name one build on every host; a different
             # environment here for the same build is not a new build.
             raise RequestRefusedError(
                 "cruxible.provider.build_rematerialized",
                 f"build {desired.identity.name} is installed here with another runtime "
-                "(environment or interface bindings); the same wheel and lock name one build",
+                "(environment or operations); the same wheel and lock name one build",
                 repair=HandEditRepair(
                     hand_edit=HandEditInstruction(
                         target=f"the {desired.provider_name} package",
@@ -596,33 +496,14 @@ def _definition_changes(
             "signing_keys": carried.signing_keys,
             "upstream_provenance": carried.upstream_provenance,
         }
-        if light:
-            from cruxible_client.contracts.artifacts import ArtifactNameRef
-            from cruxible_client.contracts.dependencies import dependency_pins
+        from cruxible_client.contracts.artifacts import ArtifactNameRef
+        from cruxible_client.contracts.dependencies import dependency_pins
 
-            metadata["capture_contracts"] = tuple(
-                ArtifactNameRef(target=pin.target)
-                for pin in dependency_pins(carried)
-                if pin.role == "capture-contract"
-            )
-        else:
-            metadata.update(
-                {
-                    "capture_contract_digests": carried.capture_contract_digests,
-                    "pins": tuple(
-                        sorted(
-                            (
-                                *desired.pins,
-                                *(pin for pin in carried.pins if pin.role == "capture-contract"),
-                            ),
-                            key=lambda pin: (
-                                pin.role.encode("utf-8"),
-                                pin.target.qualified.encode("utf-8"),
-                            ),
-                        )
-                    ),
-                }
-            )
+        metadata["capture_contracts"] = tuple(
+            ArtifactNameRef(target=pin.target)
+            for pin in dependency_pins(carried)
+            if pin.role == "capture-contract"
+        )
         desired = desired.model_copy(update=metadata)
         desired = type(desired).model_validate(desired.model_dump(mode="json"))
     with instance.bind_accepted_projection(instance.coordinate_for_oid(accepted_oid)) as projection:
@@ -633,7 +514,7 @@ def _definition_changes(
                 (desired.provider_name,),
             )
         )
-    _refuse_unproven_provider(desired, interfaces, siblings)
+    _refuse_unproven_provider(desired, tree, siblings)
     candidate[path] = render_provider(desired)
     changed.append(path)
     return candidate, tuple(sorted(changed)), desired
@@ -846,7 +727,6 @@ def _preview_installation(
     saved = json.loads(prepared_path.read_bytes())
     document = PackageRegistrationDocumentV1.model_validate(saved["document"])
     provider = _prepared_provider(saved["provider"])
-    _refuse_built_in_interfaces(instance, document, mode.head.git_oid)
     candidate_tree, changed, build = _definition_changes(
         instance, document, provider, mode.head.git_oid
     )
@@ -1002,8 +882,6 @@ def _install_locked(
                 else _index_urls(operator),
             )
         document, provider, deployment = prepared.document, prepared.provider, prepared.deployment
-        if document.governed_definitions:
-            raise ConfigError("provider installation does not install kit definitions")
         verification = verify_provider_installation(provider, deployment)
         deployment = replace(deployment, installation_verification=verification)
         configured = ProviderDeploymentConfigV1.model_validate(
@@ -1034,11 +912,9 @@ def _install_locked(
                 }
             ),
         )
-    # Before the deployment is registered: an interface built into this
-    # instance is never re-registered from a package, and the Provider law holds
-    # against the registrations it binds.
+    # Before the deployment is registered: the Provider law holds against the
+    # Contracts its operations pin.
     base = instance.accepted_coordinate()
-    _refuse_built_in_interfaces(instance, document, base.git_oid)
     candidate_tree, changed, build = _definition_changes(instance, document, provider, base.git_oid)
     operator.register_deployment(configured)
     if rewrite_prepared:
@@ -1102,8 +978,14 @@ def _install_locked(
             )
             registered = activation.status == "accepted"
             activation_blocked = not registered
-    operations = []
-    prepared_interfaces = {item.interface_id for item in provider.implementations}
+    operations: list[ProviderOperationReadiness] = []
+    prepared_entrypoints = {item.entrypoint for item in provider.implementations}
+    served = {
+        item.entrypoint: sorted(
+            op.name for op in document.operations if op.entrypoint == item.entrypoint
+        )
+        for item in document.manifest.implementations
+    }
     for implementation in document.manifest.implementations:
         missing = [
             f"python extra: {extra}"
@@ -1118,7 +1000,7 @@ def _install_locked(
                 continue
             available = False
             if (
-                implementation.interface_id in prepared_interfaces
+                implementation.entrypoint in prepared_entrypoints
                 and operator.process_leases is not None
             ):
                 output = run_package_probe(
@@ -1131,14 +1013,15 @@ def _install_locked(
                 available = output.get("available") is True
             if not available:
                 missing.append(f"runtime resource: {requirement.name}")
-        if implementation.interface_id not in prepared_interfaces and not missing:
+        if implementation.entrypoint not in prepared_entrypoints and not missing:
             missing.append("compatible local Python implementation")
-        operations.append(
+        operations.extend(
             ProviderOperationReadiness(
-                interface_id=implementation.interface_id,
-                installed=implementation.interface_id in prepared_interfaces,
+                operation=name,
+                installed=implementation.entrypoint in prepared_entrypoints,
                 missing_requirements=tuple(missing),
             )
+            for name in served[implementation.entrypoint]
         )
     return ProviderInstallResult(
         installation_id=identifier,

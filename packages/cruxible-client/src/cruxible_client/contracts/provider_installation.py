@@ -86,7 +86,7 @@ class ProviderInstallRequest(_Strict):
 
 
 class ProviderOperationReadiness(_Strict):
-    interface_id: str
+    operation: str
     installed: bool
     missing_requirements: tuple[str, ...] = ()
 
@@ -137,7 +137,7 @@ class ProviderInstallResult(_Strict):
 class ProviderPackageSummary(_Strict):
     name: str
     version: str
-    interfaces: tuple[str, ...]
+    operations: tuple[str, ...]
 
 
 class InstalledProvider(_Strict):
@@ -148,7 +148,8 @@ class InstalledProvider(_Strict):
     #: The distribution it runs, when it runs one (the built-in runs inside core).
     package: str | None = None
     version: str | None = None
-    interfaces: tuple[str, ...]
+    #: The operations it serves, by name.
+    operations: tuple[str, ...]
     #: The build's identity name (``name/<build key>``, or the bare name of a
     #: single-path Provider such as the built-in).
     build: str
@@ -207,18 +208,18 @@ class ProviderBuildResolutionV1(_Strict):
         return value
 
 
-#: Why one definition was not moved to a build: ``contract_changed`` (the build
-#: implements none of its interfaces' exact contracts), ``not_movable`` (its
-#: family cannot be re-pinned automatically, or its Blueprint cannot be
-#: instantiated again), ``keep_build`` (the request kept it on its build).
+#: Why one Line was not moved to a build: ``contract_changed`` (the build serves
+#: no operation with a bound slot's exact signature), ``not_movable`` (its family
+#: cannot be re-bound automatically), ``keep_build`` (the request kept it on its
+#: build).
 ProviderRepinReason = Literal["contract_changed", "not_movable", "keep_build"]
 
 
 class ProviderRepinV1(_Strict):
-    """One live definition moved (or not) from a provider build to another."""
+    """One live Line moved (or not) from a provider build to another."""
 
     tag: Literal["cruxible-provider-repin-v1"] = "cruxible-provider-repin-v1"
-    #: The definition (``Procedure:<name>`` or ``Blueprint:<name>``).
+    #: The Line (``Line:<name>``).
     identity: str
     from_build: str
     to_build: str
@@ -247,13 +248,13 @@ class CarriedLineV1(_Strict):
 
 
 class CarriedMandateV1(_Strict):
-    """A same-name propose successor, with all settle-only fields removed."""
+    """A same-name propose successor pinning its Line's successor; settle fields removed."""
 
     kind: Literal["mandate"] = "mandate"
     identity: str
-    procedure: str
-    old_procedure_digest: str
-    new_procedure_digest: str | None = None
+    line: str
+    old_line_digest: str
+    new_line_digest: str | None = None
     old_artifact_digest: str
     new_artifact_digest: str | None = None
     phase: Literal["planned", "validated"] = "validated"
@@ -267,8 +268,8 @@ AutomationCarryV1 = Annotated[CarriedLineV1 | CarriedMandateV1, Field(discrimina
 
 
 class StoppedAutomationV1(_Strict):
-    """Automation retired with a retired definition; live Procedure successors
-    instead carry Lines disabled and Mandates propose-only."""
+    """Automation retired with a retired definition; live successors instead carry
+    Lines disabled and their Mandates propose-only."""
 
     tag: Literal["cruxible-stopped-automation-v1"] = "cruxible-stopped-automation-v1"
     identity: str

@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
-from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     APPROVAL_POLICY_PATH,
@@ -59,13 +58,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_runnability,
 )
-from cruxible_client.contracts.procedures.blueprints import parse_blueprint
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
     line_requested_rung,
     parse_line_spec,
 )
-from cruxible_client.contracts.provider_interfaces import parse_provider_interface
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
@@ -211,16 +208,6 @@ OWNER_CODECS = (
         ),
     ),
     OwnerCodec(
-        "blueprint",
-        "Blueprint",
-        "blueprints",
-        parse_blueprint,
-        (
-            ("definition_digest", "TEXT NOT NULL"),
-            ("slot_count", "INTEGER NOT NULL CHECK(slot_count>=1)"),
-        ),
-    ),
-    OwnerCodec(
         "line",
         "Line",
         "lines",
@@ -319,33 +306,13 @@ OWNER_CODECS = (
         ),
     ),
     OwnerCodec(
-        "provider-interface",
-        "ProviderInterface",
-        "provider_interfaces",
-        parse_provider_interface,
-        (
-            ("interface_id", "TEXT NOT NULL"),
-            ("interface_digest", "TEXT NOT NULL"),
-            ("effect_class", "TEXT NOT NULL"),
-            # NULL for a single-path (v1/v2) registration.
-            ("contract_key", "TEXT"),
-            ("registration_sequence", "INTEGER NOT NULL"),
-        ),
-    ),
-    OwnerCodec(
-        "source-acquisition-policy",
-        "SourceAcquisitionPolicy",
-        "source_acquisition_policies",
-        parse_acquisition_policy,
-    ),
-    OwnerCodec(
         "procedure-mandate",
         "ProcedureMandate",
         "procedure_mandates",
         parse_procedure_mandate_any,
         (
-            ("procedure_identity", "TEXT NOT NULL"),
-            ("procedure_digest", "TEXT NOT NULL"),
+            ("line_identity", "TEXT NOT NULL"),
+            ("line_digest", "TEXT NOT NULL"),
             ("rung", "INTEGER NOT NULL CHECK(rung IN (2,3))"),
             ("valid_from_us", "INTEGER NOT NULL"),
             ("expires_at_us", "INTEGER NOT NULL"),
@@ -529,12 +496,16 @@ def schema_sql() -> str:
             "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity,target_digest) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
-            """CREATE TABLE procedure_provider_slots (
-            source_identity TEXT NOT NULL REFERENCES procedures(identity),
-            slot_name TEXT NOT NULL, interface_identity TEXT NOT NULL,
-            PRIMARY KEY(source_identity,slot_name)
+            # The signature index: each live build's operations by exact
+            # signature, so fitting a slot is one seek (providers.operation_index).
+            # Maintained at accept: a changed build's rows are replaced.
+            """CREATE TABLE provider_operations (
+            source_identity TEXT NOT NULL REFERENCES providers(identity),
+            operation TEXT NOT NULL, in_digest TEXT NOT NULL, out_digest TEXT NOT NULL,
+            effect TEXT NOT NULL CHECK(effect IN ('pure','external_read','external_mutation')),
+            PRIMARY KEY(source_identity,operation)
         ) STRICT""",
-            "CREATE INDEX procedure_slots_by_interface ON procedure_provider_slots(interface_identity,source_identity,slot_name)",
+            "CREATE INDEX provider_operations_by_signature ON provider_operations(in_digest,out_digest,effect,source_identity,operation)",
             """CREATE TABLE claim_type_names (
             source_identity TEXT NOT NULL REFERENCES claim_types(identity),
             kind TEXT NOT NULL CHECK(kind IN ('predicate','subject_kind')),
@@ -561,8 +532,6 @@ def schema_sql() -> str:
             # kind's Subjects and a scoped read must seek, not scan.
             "CREATE INDEX claims_by_predicate ON claims(predicate,lifecycle,path)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
-            "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
-            "CREATE INDEX provider_interfaces_by_id ON provider_interfaces(interface_id,identity)",
             # The builds of one provider name: newest-build resolution and the
             # build verbs read one name's rows, never every Provider.
             "CREATE INDEX providers_by_name ON providers(provider_name,identity)",
@@ -573,7 +542,7 @@ def schema_sql() -> str:
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX lines_by_procedure ON lines(procedure_identity,identity) WHERE lifecycle='live'",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
-            "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
+            "CREATE INDEX procedure_mandates_by_line ON procedure_mandates(line_identity,line_digest,valid_from_us,identity) WHERE lifecycle='live'",
             """CREATE TABLE promotion_subjects (
             promotion_identity TEXT NOT NULL REFERENCES exhaust_promotions(identity), subject_identity TEXT NOT NULL,
             record_kind TEXT NOT NULL CHECK(record_kind IN ('procedure','line')), result_key TEXT NOT NULL,
@@ -744,8 +713,6 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             definition_format=str(source.definition.graph_format),
             runnable=procedure_runnability(source.definition)[0],
         )
-    if owner.kind == "blueprint":
-        result["slot_count"] = len(source.definition.pin_slots)
     if owner.kind == "provider":
         runtime = getattr(source, "runtime_artifact", None)
         result["distribution_version"] = None if runtime is None else runtime.distribution.version
@@ -758,21 +725,15 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             replay_policy_digest=components.replay_policy_digest,
             provenance_rule_digest=components.provenance_rule_digest,
         )
-    if owner.kind == "provider-interface":
-        from cruxible_client.contracts.provider_interfaces import (
-            interface_definition_digest,
-        )
-
-        result.update(
-            interface_digest=interface_definition_digest(source),
-        )
-        result["registration_sequence"] = 0
-    if owner.kind in ("line", "procedure-mandate"):
+    if owner.kind == "line":
         result.update(
             procedure_identity=source.procedure.target.qualified,
             procedure_digest=getattr(source.procedure, "artifact_digest", None),
         )
     if owner.kind == "procedure-mandate":
+        result.update(
+            line_identity=source.line.target.qualified, line_digest=source.line.artifact_digest
+        )
         # The grant verb is authored; the index keeps its internal ordering value.
         result["rung"] = mandate_rung(source)
     if owner.kind == "line":
@@ -1042,7 +1003,7 @@ def insert_owners(
         source = sources.get(pin.source_identity)
         if (
             source is not None
-            and pin.source_identity.startswith(("Procedure:", "Blueprint:", "Line:"))
+            and pin.source_identity.startswith(("Procedure:", "Line:"))
             and source.lifecycle.state == "live"
             and pin.target_identity.startswith("Provider:")
         ):
@@ -1055,18 +1016,13 @@ def insert_owners(
                 ),
             )
     insert_rows(connection, "provider_pinners", pinners)
-    slots: list[tuple[SQLValue, ...]] = []
+    from cruxible_core.providers.operation_index import operation_index_rows
+
+    operations: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
-        if row.kind != "procedure":
-            continue
-        source = sources[row.identity]
-        if source.lifecycle.state != "live":
-            continue
-        for slot in source.definition.pin_slots:
-            reference = getattr(slot, "interface", None)
-            if reference is not None:
-                slots.append((row.identity, slot.slot_name, reference.target.qualified))
-    insert_rows(connection, "procedure_provider_slots", slots)
+        if row.kind == "provider":
+            operations.extend(operation_index_rows(sources[row.identity]))
+    insert_rows(connection, "provider_operations", operations)
     consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
         if row.kind != "claim":

@@ -1,21 +1,15 @@
-"""Read a provider package's registration metadata, with its bucket data inert.
+"""Read a provider package's registration metadata.
 
-Provider packages built on cruxible-provider-runtime 0.2.x ship a
-``registration.json`` that exports, per interface, the operation definition and
-also a bucket vocabulary, a classifier and conformance fixtures, and a manifest
-that declares input-bucket selectors. The runtime's own reader
-(``wheels.wheel_registration`` -> ``registration.load_registration``) validates
-that bucket data: it parses every measured bucket id and selector against the
-vocabulary and refuses a package whose selectors are not each covered by a
-matching fixture.
+A provider package ships a ``registration.json`` (schema 2) naming its runtime
+manifest (by package-relative path and digest) and declaring its typed
+operations inline: ``{name, in, out, effect, refusals, enumerates?,
+entrypoint}``, Contracts named ``name@N``. The manifest's own bucket claims
+are inert: core classifies no input.
 
-Core classifies no input, so it reads the same metadata here instead: every
-resource reference, digest, interface definition, effect declaration, entry
-point and extra is checked exactly as the runtime checks it, and the bucket
-data is only read -- its bytes verified against their digests, parsed as data,
-and carried into the registration as inert fields. Nothing here parses a
-selector, measures or matches a bucket, or requires a fixture for a selector.
-No package code is imported or executed.
+Every resource reference, digest, entry point and extra is checked here, and
+no package code is imported or executed. A schema-1 registration (one
+ProviderInterface per implementation) refuses: rebuild the package with its
+operations declared.
 """
 
 from __future__ import annotations
@@ -28,23 +22,18 @@ from contextlib import contextmanager
 from importlib.metadata import PathDistribution
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Literal
 from zipfile import ZipFile
 
 import yaml
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.provider_interfaces import (
-    provider_external_interface_definition_digest,
-    provider_vocabulary_document,
-)
+from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_client.contracts.providers import ProviderRuntimeManifest
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
 REGISTRATION_FILE = "registration.json"
-INTERFACE_DOMAIN = "cruxible.interface.stub.v1"
 #: The runtime reader's unpacked-size bound on wheel inspection.
 MAX_UNPACKED_WHEEL_BYTES = 128 * 1024 * 1024
 _SHA256_PREFIX = "sha256:"
@@ -111,32 +100,6 @@ class _ResourceRef(_Strict):
         return data
 
 
-class _ClassifierExport(_Strict):
-    """The package's classifier: carried by identity and source digest, never run."""
-
-    identity: str
-    version: int = Field(ge=1)
-    entrypoint: str
-    source: _ResourceRef
-
-    _entrypoint = field_validator("entrypoint")(_callable_path)
-
-
-class _InterfaceHistory(_Strict):
-    definition: _ResourceRef
-    interface_digest: str
-
-
-class _InterfaceExport(_Strict):
-    interface_id: str
-    interface_digest: str
-    definition: _ResourceRef
-    vocabulary: _ResourceRef
-    classifier: _ClassifierExport
-    fixtures: _ResourceRef
-    predecessors: tuple[_InterfaceHistory, ...] = ()
-
-
 class _RuntimeRequirement(_Strict):
     interface_id: str
     kind: Literal["python_extra", "runtime_resource"]
@@ -156,18 +119,10 @@ class _RuntimeRequirement(_Strict):
 
 
 class _Descriptor(_Strict):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2]
     manifest: _ResourceRef
-    interfaces: tuple[_InterfaceExport, ...] = Field(min_length=1)
+    operations: tuple[ProviderOperation, ...] = Field(min_length=1)
     runtime_requirements: tuple[_RuntimeRequirement, ...] = ()
-
-
-class _Fixture(_Strict):
-    """One conformance fixture row, as data: its bucket id is never parsed."""
-
-    fixture_id: str
-    canonical_input: dict[str, Any]
-    measured_bucket_id: str
 
 
 def _yaml_document(content: bytes, *, label: str) -> object:
@@ -177,131 +132,31 @@ def _yaml_document(content: bytes, *, label: str) -> object:
         raise ValueError(f"{label} is not readable YAML or JSON") from exc
 
 
-def _definition(root: Path, reference: _ResourceRef, *, label: str) -> dict[str, Any]:
-    try:
-        value = json.loads(reference.read(root))
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"{label} is not UTF-8 JSON") from exc
-    if not isinstance(value, dict):
-        raise ValueError(f"{label} must be a JSON object")
-    return value
-
-
-def _interface_digest(definition: dict[str, Any]) -> str:
-    return provider_external_interface_definition_digest(
-        canonical_bytes(definition).hex(), domain=INTERFACE_DOMAIN
-    )
-
-
-def _export(
-    root: Path, item: _InterfaceExport, manifest: ProviderRuntimeManifest
-) -> dict[str, Any]:
-    """One interface export: its contract checked, its bucket data carried inert."""
-
-    identity = item.interface_id
-    definition = _definition(root, item.definition, label="interface definition")
-    if definition.get("interface_id") != identity:
-        raise ValueError("interface identity differs from export")
-    if _interface_digest(definition) != item.interface_digest:
-        raise ValueError("interface digest differs from definition")
-    implementations = [row for row in manifest.implementations if row.interface_id == identity]
-    if len(implementations) != 1:
-        raise ValueError("a package implements each exported interface exactly once")
-    implementation = implementations[0]
-    if implementation.interface_digest != item.interface_digest:
-        raise ValueError("manifest pins a different interface digest")
-    if definition.get("effect_class") not in {"pure", "external_read", "external_mutation"}:
-        raise ValueError("interface must declare its effect class")
-    if implementation.side_effects != (definition["effect_class"] == "external_mutation"):
-        raise ValueError("manifest and interface effects disagree")
-    contracts = definition.get("contracts")
-    if (
-        not isinstance(contracts, dict)
-        or not {"input", "output"}.issubset(contracts)
-        or set(contracts) - {"input", "output", "material"}
-    ):
-        raise ValueError("interface must export shared input/output contracts")
-    if "material" in contracts and (
-        contracts["output"] != "playbill-provider-result-to-external-capture-v1"
-        or not isinstance(contracts["material"], dict)
-    ):
-        raise ValueError("captured material schema requires an acquisition interface")
-    revision = definition.get("version")
-    if type(revision) is not int or revision < 1:
-        raise ValueError("interface version must be a positive integer")
-    seen: set[str] = set()
-    for previous in item.predecessors:
-        old = _definition(root, previous.definition, label="interface predecessor")
-        if (
-            old.get("interface_id") != identity
-            or type(old.get("version")) is not int
-            or not 0 < old["version"] < revision
-            or _interface_digest(old) != previous.interface_digest
-            or previous.interface_digest in seen
-        ):
-            raise ValueError("invalid interface predecessor")
-        seen.add(previous.interface_digest)
-    vocabulary = provider_vocabulary_document(
-        _yaml_document(item.vocabulary.read(root), label="bucket vocabulary")
-    )
-    # The classifier's source is pinned by digest and carried, never imported.
-    item.classifier.source.read(root)
-    rows = json.loads(item.fixtures.read(root))
-    if not isinstance(rows, list):
-        raise ValueError("conformance fixtures must be a JSON list")
-    fixtures = tuple(_Fixture.model_validate(row) for row in rows)
-    if len({row.fixture_id for row in fixtures}) != len(fixtures):
-        raise ValueError("duplicate conformance fixture id")
-    return {
-        "interface_id": identity,
-        "interface_digest": item.interface_digest,
-        "definition": definition,
-        "vocabulary": vocabulary,
-        "classifier_identity": item.classifier.identity,
-        "classifier_version": item.classifier.version,
-        "classifier_code": {
-            "entrypoint": item.classifier.entrypoint,
-            "source_digest": item.classifier.source.digest,
-        },
-        "fixtures": [row.model_dump(mode="json") for row in fixtures],
-    }
-
-
 def read_package_registration(root: Path) -> PackageRegistrationDocumentV1:
     """Read the registration a package directory ships (``registration.json``)."""
 
-    descriptor = _Descriptor.model_validate_json((root / REGISTRATION_FILE).read_bytes())
+    raw = (root / REGISTRATION_FILE).read_bytes()
+    try:
+        version = json.loads(raw).get("schema_version")
+    except (UnicodeDecodeError, ValueError, AttributeError) as exc:
+        raise ValueError("registration.json is not a JSON object") from exc
+    if version != 2:
+        raise ValueError(
+            "registration.json schema 1 exports ProviderInterfaces, which core no longer "
+            "reads; rebuild the package with schema 2 and its typed operations declared"
+        )
+    descriptor = _Descriptor.model_validate_json(raw)
     manifest_document = _yaml_document(descriptor.manifest.read(root), label="provider manifest")
     if not isinstance(manifest_document, dict):
         raise ValueError("provider manifest must be a mapping")
     manifest = ProviderRuntimeManifest.model_validate(manifest_document)
-    exports = {item.interface_id: item for item in descriptor.interfaces}
-    if len(exports) != len(descriptor.interfaces):
-        raise ValueError("duplicate interface exports")
-    if set(exports) != {item.interface_id for item in manifest.implementations}:
-        raise ValueError("registration must export every and only implemented interface")
-    interfaces = [_export(root, exports[identity], manifest) for identity in sorted(exports)]
-    for requirement in descriptor.runtime_requirements:
-        implementation = next(
-            (
-                row
-                for row in manifest.implementations
-                if row.interface_id == requirement.interface_id
-            ),
-            None,
-        )
-        if implementation is None:
-            raise ValueError("runtime requirement names an undeclared interface")
-        if (
-            requirement.kind == "python_extra"
-            and requirement.name not in implementation.requires_extras
-        ):
-            raise ValueError("runtime requirement names an undeclared extra")
     return PackageRegistrationDocumentV1.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "manifest": manifest.model_dump(mode="json"),
-            "interfaces": interfaces,
+            "operations": [
+                item.model_dump(mode="json", by_alias=True) for item in descriptor.operations
+            ],
             "runtime_requirements": [
                 item.model_dump(mode="json") for item in descriptor.runtime_requirements
             ],

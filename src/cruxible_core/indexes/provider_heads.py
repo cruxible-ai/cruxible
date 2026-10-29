@@ -14,14 +14,6 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 
 from cruxible_client.contracts.canonical import file_digest
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceContract,
-    interface_definition_digest,
-    interface_definition_digest_domain,
-    parse_provider_interface,
-    provider_interface_contract_key,
-    provider_interface_digest,
-)
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.indexes.sql_batch import execute_values, insert_rows, select_in
 from cruxible_core.ledger.git import _proven_blob_entries
@@ -81,16 +73,6 @@ def remove_provider_domains(connection: sqlite3.Connection, identities: list[str
 
 def registration_key(content: bytes, path: str) -> str:
     """Stable runtime identity, unaffected by signing/capture metadata successors."""
-    if path.startswith("provider-interfaces/"):
-        registration = parse_provider_interface(content, path=path)
-        if isinstance(registration, ProviderInterfaceContract):
-            return f"v{registration.interface.version}"
-        return provider_interface_contract_key(
-            interface_id=registration.interface_id,
-            interface_digest_domain=interface_definition_digest_domain(registration),
-            interface_digest=interface_definition_digest(registration),
-            effect_class=registration.effect_class,
-        ).value
 
     provider = parse_provider(content, path=path)
     runtime = getattr(provider, "runtime_artifact", None)
@@ -157,7 +139,7 @@ def refresh_provider_heads(
         # Genesis has no change record. Seed its legacy runtime/contract keys
         # before folding recorded occurrences, so metadata cannot re-register it.
         for path in sources:
-            if path.count("/") != 1 or not path.startswith(("providers/", "provider-interfaces/")):
+            if path.count("/") != 1 or not path.startswith("providers/"):
                 continue
             original = historical_source(path, 0)
             if original is not None:
@@ -167,7 +149,7 @@ def refresh_provider_heads(
             continue
         record = parse_change_set_record(content, path=path)
         for member in record.members:
-            if member.artifact_kind not in ("provider", "provider-interface"):
+            if member.artifact_kind != "provider":
                 continue
             name = member.path.partition("/")[2].removesuffix(".json")
             digest = ""
@@ -177,11 +159,7 @@ def refresh_provider_heads(
                 legacy = getattr(member, "artifact_digest", None)
 
                 def artifact_digest(raw: bytes) -> str:
-                    if member.artifact_kind == "provider":
-                        return provider_digest(parse_provider(raw, path=member.path)).tagged
-                    return provider_interface_digest(
-                        parse_provider_interface(raw, path=member.path)
-                    ).tagged
+                    return provider_digest(parse_provider(raw, path=member.path)).tagged
 
                 matches = raw is not None and (
                     artifact_digest(raw) == commitment
@@ -200,13 +178,6 @@ def refresh_provider_heads(
                     )
                 digest = registration_key(raw, member.path)
             register(member.path, digest, record.sequence)
-    interfaces = []
-    for path, content in sources.items():
-        if not path.startswith("provider-interfaces/"):
-            continue
-        name = path.partition("/")[2].removesuffix(".json")
-        key = "" if "/" in name else registration_key(content, path)
-        interfaces.append((path, key))
     provider_paths = [path for path in sources if path.startswith("providers/")]
     by_path = {
         row[0]: row
@@ -219,11 +190,8 @@ def refresh_provider_heads(
     providers = [by_path[path] for path in provider_paths if path in by_path]
     keys = list(
         dict.fromkeys(
-            interfaces
-            + [
-                (path, "" if "/" in identity else registration_key(sources[path], path))
-                for path, _name, identity, _domain in providers
-            ]
+            (path, "" if "/" in identity else registration_key(sources[path], path))
+            for path, _name, identity, _domain in providers
         )
     )
     sequences = {
@@ -250,10 +218,7 @@ def refresh_provider_heads(
     # Only changed owners are updated. Exact (path, runtime-key) seeks above
     # never enumerate a legacy path's retained registrations.
     by_key = {path: key for path, key in keys}
-    for table, paths in (
-        ("provider_interfaces", [path for path, _key in interfaces]),
-        ("providers", [path for path, _name, _identity, _domain in providers]),
-    ):
+    for table, paths in (("providers", [path for path, _name, _identity, _domain in providers]),):
         execute_values(
             connection,
             "WITH changed(path,sequence) AS (VALUES {}) "

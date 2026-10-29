@@ -284,7 +284,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "provider_heads",
             "provider_control_domains",
             "provider_pinners",
-            "procedure_provider_slots",
+            "provider_operations",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -470,8 +470,8 @@ def replace_rows(
         remove_owner_citations(connection, owners)
     execute_in(
         connection,
-        "DELETE FROM procedure_provider_slots WHERE source_identity IN ({})",
-        [identity for _path, identity, kind in replaced if kind == "procedure"],
+        "DELETE FROM provider_operations WHERE source_identity IN ({})",
+        [identity for _path, identity, kind in replaced if kind == "provider"],
     )
     identities = [identity for _path, identity, _kind in replaced]
     for table in ("provider_pinners", "pins", "claim_type_names", "vocabulary_terms"):
