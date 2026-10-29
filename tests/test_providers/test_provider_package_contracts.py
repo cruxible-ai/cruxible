@@ -134,7 +134,6 @@ def test_prepared_environment_can_supply_a_superset_of_operation_extras() -> Non
     # reference (the available-artifact behaviour exercised above).
     old_dict = payload.model_dump(mode="json")
     old_dict["schema_version"] = 1
-    old_dict["manifest"]["schema_version"] = 1
     old_dict["manifest"]["implementations"][0]["requires_extras"] = ["gpu"]
     old_dict["manifest"]["implementations"][0]["declared_endpoints"] = []
     old = ProviderRuntimeArtifactPayloadV1.model_validate(old_dict)
