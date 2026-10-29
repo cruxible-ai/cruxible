@@ -820,7 +820,6 @@ def _evaluate_claim_attestation(
         coordinate=observation,
         tree=tree,
         claim=claim,
-        historical=law_evidence.verified_attestations,
     )
     store = instance.claim_attestation_evidence_store()
     attestation_head = store.head()

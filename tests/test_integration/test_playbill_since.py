@@ -11,7 +11,6 @@ from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.errors import SinceRequestInvalid
@@ -31,12 +30,7 @@ from cruxible_core.service.discovery.since import (
 )
 from tests.core_support._adoption_fixture import _Builder
 from tests.core_support._support import initialize_local
-from tests.test_ledger.test_wire_succession_boundary import (
-    V1,
-    V2,
-    V3,
-    _members,
-)
+from tests.test_ledger.test_wire_succession_boundary import _members
 
 pytest_plugins = ("tests.test_ledger.test_wire_succession_boundary",)
 
@@ -98,7 +92,7 @@ def test_runtime_since_maps_request_validation_to_one_typed_refusal(
     assert isinstance(raised.value.__cause__, ValidationError)
 
 
-def test_mixed_signed_v1_v2_v3_history_preserves_each_member_wire(
+def test_signed_history_reports_each_member_wire(
     crossed_ledger: tuple[object, _Builder],
 ) -> None:
     original, _builder = crossed_ledger
@@ -108,13 +102,10 @@ def test_mixed_signed_v1_v2_v3_history_preserves_each_member_wire(
     result = service_playbill_since(current, request=_request())
     assert result.rows
 
-    assert result.generation == 6
+    assert result.generation == 4
     assert [row.generation for row in result.rows] == sorted(row.generation for row in result.rows)
-    first = next(row for row in result.rows if row.generation == 1)
-    assert first.disposition == "replacement"
-    assert first.artifact_digest is not None
-    assert first.predecessor_artifact_digest is None
-    assert {row.disposition for row in result.rows if row.generation >= 2} <= {
+    assert all(row.artifact_digest is not None for row in result.rows)
+    assert {row.disposition for row in result.rows} <= {
         "create",
         "replace",
         "retire",
@@ -251,9 +242,8 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
 def test_current_v3_history_is_ordered_by_utf8_member_path(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     builder = _Builder(instance, owner)
-    builder.accept(_members(builder, 1, V1), phase="since", wire_version=V1)
-    builder.accept(_members(builder, 2, V2), phase="since", wire_version=V2)
-    builder.accept(_members(builder, 3, V3), phase="since", wire_version=V3)
+    for index in range(1, 4):
+        builder.accept(_members(builder, index), phase="since")
 
     result = service_playbill_since(instance, request=_request())
     keys = [(row.generation, row.member_path.encode("utf-8")) for row in result.rows]
@@ -266,7 +256,7 @@ def test_cursor_pins_head_across_advancement_without_duplicates_or_omissions(
     instance, owner = initialize_local(tmp_path)
     builder = _Builder(instance, owner)
     for index in range(1, 4):
-        builder.accept(_members(builder, index, V3), phase="since", wire_version=V3)
+        builder.accept(_members(builder, index), phase="since")
 
     current = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     first = service_playbill_since(current, request=_request(max_rows=2))
@@ -274,7 +264,7 @@ def test_cursor_pins_head_across_advancement_without_duplicates_or_omissions(
     pinned_paths = {
         row.member_path for row in service_playbill_since(current, request=_request()).rows
     }
-    builder.accept(_members(builder, 4, V3), phase="since", wire_version=V3)
+    builder.accept(_members(builder, 4), phase="since")
     advanced = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
     rows = list(first.rows)
@@ -325,31 +315,6 @@ def test_v2_v3_normalization_preserves_every_disposition_and_null_delete(
     else:
         assert row.artifact_digest == digest
     assert row.predecessor_artifact_digest == digest
-
-
-@pytest.mark.parametrize(
-    "disposition",
-    ["generated-successor", "hand-authored-successor", "invalidation", "replacement"],
-)
-def test_v1_normalization_preserves_disposition_and_never_infers_predecessor(
-    disposition: str,
-) -> None:
-    digest = "sha256:" + "a" * 64
-    member = CandidateMemberEvidence.model_construct(
-        path=f"documents/{disposition}.json",
-        artifact_kind="Document",
-        disposition=disposition,
-        artifact_digest=digest,
-    )
-    row = _normalized_member_row(
-        generation=1,
-        changeset_digest="sha256:" + "b" * 64,
-        candidate_digest="sha256:" + "c" * 64,
-        member=member,
-    )
-    assert row.disposition == disposition
-    assert row.artifact_digest == digest
-    assert row.predecessor_artifact_digest is None
 
 
 def test_non_changeset_accepted_source_is_rejected() -> None:

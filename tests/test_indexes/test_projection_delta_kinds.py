@@ -221,7 +221,7 @@ def test_revisions_timestamps_and_coordinates_read_one_path_index() -> None:
         ("z", "x", "d9"),
     ):
         assert artifacts.projected_revision(
-            records, path=path, input_digest=input_digest, artifact_digest=digest
+            records, path=path, artifact_digest=digest
         ) == scanned_revision(path, input_digest, digest)
         newest = next(
             (

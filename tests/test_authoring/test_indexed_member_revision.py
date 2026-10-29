@@ -31,9 +31,7 @@ def test_indexed_revision_matches_the_records_for_every_member(tmp_path: Path) -
             if member.path == path
         } - {None}
         for digest in (*sorted(digests), novel):
-            expected = projected_revision(
-                touching, path=path, input_digest=digest, artifact_digest=digest
-            )
+            expected = projected_revision(touching, path=path, artifact_digest=digest)
             assert instance.projected_member_revision(path, digest) == expected, (path, digest)
             checked += 1
     assert checked > len(member_paths)

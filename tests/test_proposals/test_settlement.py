@@ -24,7 +24,7 @@ from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     parse_change_set_record,
     prepare_generation,
     render_change_set,
@@ -98,7 +98,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         sequence=1,
     )
 
-    assert isinstance(bundle.record, ChangeSetRecordV3)
+    assert isinstance(bundle.record, ChangeSetRecord)
     assert candidate_digest(bundle.record.candidate).tagged == candidate.candidate_digest
     assert approval.attestation.payload_digest == candidate.candidate_digest
     assert bundle.record.closure_proof.paths == candidate.candidate.scope
@@ -110,7 +110,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     tampered = bundle.record.model_dump(mode="json")
     tampered["law_evidence"][0]["law_digest"] = "sha256:" + "00" * 32
     with pytest.raises(ValidationError, match="structured law evidence"):
-        ChangeSetRecordV3.model_validate(tampered)
+        ChangeSetRecord.model_validate(tampered)
 
 
 def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: Path) -> None:
@@ -157,7 +157,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid
-    assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecordV3)
+    assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecord)
     with reopened.bind_accepted_projection(reopened.accepted_coordinate()) as handle:
         envelope = handle.typed.envelope(exact_claim_type.identity.qualified)
         schemas = {
@@ -237,7 +237,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         sequence=1,
     )
 
-    assert isinstance(bundle.record, ChangeSetRecordV3)
+    assert isinstance(bundle.record, ChangeSetRecord)
     assert bundle.record.law_evidence[0].result["authoring_expansion"] == (
         expansion.evidence.model_dump(mode="json")
     )

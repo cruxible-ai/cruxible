@@ -50,7 +50,7 @@ from cruxible_core.exhaust.consumption import (
     ensure_consumption_epoch,
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
+from cruxible_core.proposals.settlement import ChangeSetRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import change_entry, change_scope
 from cruxible_core.service.discovery.next import NextAccessProfileInvalid
@@ -1265,7 +1265,7 @@ def _accepted_change(
     *,
     proposal_id: str,
     changeset_digest: str,
-) -> tuple[int, ChangeSetRecordAnyVersion, dict[str, bytes], dict[str, bytes]]:
+) -> tuple[int, ChangeSetRecord, dict[str, bytes], dict[str, bytes]]:
     try:
         evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
     except CruxibleError as exc:
@@ -1297,7 +1297,7 @@ def _accepted_change(
 
 
 def _affected_members(
-    record: ChangeSetRecordAnyVersion,
+    record: ChangeSetRecord,
     *,
     parent_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
@@ -1326,13 +1326,9 @@ def _affected_members(
         predecessor = None if before_state is None else before_state.artifact_digest
         candidate = None if after_state is None else after_state.artifact_digest
         if predecessor is None:
-            predecessor = getattr(member, "predecessor_artifact_digest", None)
+            predecessor = member.predecessor_artifact_digest
         if candidate is None:
-            candidate = getattr(
-                member,
-                "candidate_artifact_digest",
-                getattr(member, "artifact_digest", None),
-            )
+            candidate = member.candidate_artifact_digest
         result.append(
             CurationAffectedMemberV1(
                 path=path,

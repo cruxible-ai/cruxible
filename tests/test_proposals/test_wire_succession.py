@@ -1,19 +1,14 @@
-"""The coordinated wire succession: formats, verifiers, and the producers.
+"""The accepted-generation wire formats, their verifiers, and the producer.
 
 `playbill-candidate-v2`, `playbill-sroot-v2`, `playbill-dependency-graph-v3`, and
 `playbill-changeset-v3` are pinned here against their goldens, and every one of
-them is now what a new proposal produces. The versions they succeed survive as
-verifiers only: an accepted generation is re-verified against the object its own
-receipt carries, and nothing reaches those shapes without naming one.
-
-The ledger-scale consequence -- a history spanning the boundary replaying end to
-end -- is `test_wire_succession_boundary.py`.
+them is what a new proposal produces. Genesis alone keeps the flat manifest root
+and `playbill-sroot-v1`; no other receipt or candidate version parses.
 """
 
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -22,10 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.candidates import (
-    PRODUCED_CANDIDATE_VERSION,
     CandidateRecord,
-    CandidateRecordV1,
-    CandidateRecordV2,
     ClosureProof,
     SemanticCandidate,
     SemanticCandidateV1,
@@ -53,16 +45,14 @@ from cruxible_core.claims.closure import (
     ClosureEvaluationV3,
     dependency_edge_root,
     evaluate_dependency_closure,
-    evaluate_dependency_closure_v3,
 )
 from cruxible_core.proposals.proposals import evaluate_proposal_tree
 from cruxible_core.proposals.settlement import (
     SEMANTIC_ROOT_V2_DOMAIN,
     ChangeActorBinding,
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     build_change_set_record,
     change_set_digest,
-    compute_semantic_root,
     compute_semantic_root_v2,
     parse_change_set_record,
     render_change_set,
@@ -115,10 +105,10 @@ def _candidate_v2(**overrides: object) -> SemanticCandidate:
     return SemanticCandidate.model_validate({**values, **overrides})
 
 
-def _record_v3() -> ChangeSetRecordV3:
+def _record_v3() -> ChangeSetRecord:
     golden = json.loads(CHANGESET_GOLDEN.read_bytes())
     record = parse_change_set_record(golden["canonical_bytes"].encode(), path="changesets/x.json")
-    assert isinstance(record, ChangeSetRecordV3)
+    assert isinstance(record, ChangeSetRecord)
     return record
 
 
@@ -274,35 +264,17 @@ def test_sroot_v2_hashes_tagged_spellings_and_v1_hashed_bare_hex() -> None:
     assert b"sha256:" not in v1_preimage
 
 
-def test_sroot_v1_and_v2_differ_on_the_same_underlying_values() -> None:
-    v1 = compute_semantic_root(
-        manifest_root_value=FLAT_ROOT,
-        changeset_digest_value=CHANGESET_DIGEST,
-        approval_digests=APPROVALS,
-        parent_semantic_root=PARENT_ROOT,
-    )
-    assert v1.tagged != _sroot_v2(parent_derivation="playbill-sroot-v1")
-    assert v1.tagged != _sroot_v2()
-
-
-def test_sroot_v2_requires_a_merkle_manifest_root_and_v1_requires_a_flat_one() -> None:
+def test_sroot_v2_requires_a_merkle_manifest_root() -> None:
     with pytest.raises(ValueError):
         _sroot_v2(manifest_root_value=FLAT_ROOT)
-    with pytest.raises(ValueError):
-        compute_semantic_root(
-            manifest_root_value=MERKLE_ROOT,
-            changeset_digest_value=CHANGESET_DIGEST,
-            approval_digests=APPROVALS,
-            parent_semantic_root=PARENT_ROOT,
-        )
 
 
-def test_the_succession_chain_rule_distinguishes_a_v1_parent_from_a_v2_parent() -> None:
-    from_v1 = _sroot_v2(parent_derivation="playbill-sroot-v1")
-    from_v2 = _sroot_v2(parent_derivation="playbill-sroot-v2")
+def test_the_chain_rule_distinguishes_a_genesis_parent_from_a_receipt_parent() -> None:
+    from_genesis = _sroot_v2(parent_derivation="playbill-sroot-v1")
+    from_receipt = _sroot_v2(parent_derivation="playbill-sroot-v2")
     # The same 32-byte parent value, and yet two different children: a chain
-    # cannot be re-narrated across the succession boundary after the fact.
-    assert from_v1 != from_v2
+    # cannot be re-narrated after the fact.
+    assert from_genesis != from_receipt
 
 
 def test_sroot_v2_keeps_the_v1_approval_digest_laws() -> None:
@@ -364,40 +336,25 @@ def test_sroot_v2_vectors_match_golden() -> None:
         )
     assert names == {"succession_boundary_v1_parent", "steady_state_v2_parent", "no_approvals"}
 
-    v1 = compute_semantic_root(
-        manifest_root_value=FLAT_ROOT,
-        changeset_digest_value=CHANGESET_DIGEST,
-        approval_digests=APPROVALS,
-        parent_semantic_root=PARENT_ROOT,
-    )
-    assert v1.tagged == golden["v1_root_over_the_same_hex"]
-    assert v1.tagged not in {vector["semantic_root"] for vector in golden["vectors"]}
-
 
 # --------------------------------------------------------------------------
 # playbill-dependency-graph-v3 in the closure evaluation
 # --------------------------------------------------------------------------
 
 
-def test_closure_v3_reads_the_same_closure_and_only_moves_the_commitment(
-    tmp_path: Path,
-) -> None:
+def test_closure_v3_commits_to_the_candidate_edge_root(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     base_tree, proposed = _document_tree(instance)
     scope = (DOCUMENT_PATH,)
 
-    v2 = evaluate_dependency_closure(parent_tree=base_tree, candidate_tree=proposed, scope=scope)
-    v3 = evaluate_dependency_closure_v3(parent_tree=base_tree, candidate_tree=proposed, scope=scope)
+    v3 = evaluate_dependency_closure(parent_tree=base_tree, candidate_tree=proposed, scope=scope)
     assert isinstance(v3, ClosureEvaluationV3)
     assert v3.tag == "playbill-closure-evaluation-v3"
-    assert (v3.verdict, v3.paths) == (v2.verdict, v2.paths)
-    assert v3.member_dependency_proofs == v2.member_dependency_proofs
-    assert v3.missing_dependents == v2.missing_dependents
-    assert v3.unresolved_pins == v2.unresolved_pins
+    assert (v3.verdict, v3.paths) == ("complete", scope)
     DependencyEdgeRoot.from_tagged(v3.dependency_edge_root)
     with pytest.raises(ValidationError):
         ClosureEvaluationV3.model_validate(
-            {**v3.model_dump(mode="json"), "dependency_edge_root": v2.dependency_graph_digest}
+            {**v3.model_dump(mode="json"), "dependency_edge_root": "sha256:" + "ab" * 32}
         )
 
 
@@ -423,7 +380,7 @@ def test_record_v3_round_trips_and_matches_golden() -> None:
     content = golden["canonical_bytes"].encode()
 
     record = parse_change_set_record(content, path="changesets/cs-1.json")
-    assert isinstance(record, ChangeSetRecordV3)
+    assert isinstance(record, ChangeSetRecord)
     assert render_change_set(record) == content
     assert record.changeset_digest == golden["changeset_digest"]
     assert change_set_digest(record).tagged == golden["recomputed_changeset_digest"]
@@ -437,15 +394,15 @@ def test_record_v3_round_trips_and_matches_golden() -> None:
     assert record.law_evidence[0].tag == "playbill-member-law-evaluation-v2"
 
 
-def test_record_v3_closes_the_same_correspondence_the_v2_record_closes() -> None:
+def test_record_v3_closes_its_candidate_correspondence() -> None:
     record = _record_v3()
     payload = record.model_dump(mode="json")
     with pytest.raises(ValidationError, match="self digest does not reproduce"):
-        ChangeSetRecordV3.model_validate({**payload, "changeset_digest": "sha256:" + "ff" * 32})
+        ChangeSetRecord.model_validate({**payload, "changeset_digest": "sha256:" + "ff" * 32})
     with pytest.raises(ValidationError):
-        ChangeSetRecordV3.model_validate({**payload, "candidate_digest": "sha256:" + "ff" * 32})
+        ChangeSetRecord.model_validate({**payload, "candidate_digest": "sha256:" + "ff" * 32})
     with pytest.raises(ValidationError):
-        ChangeSetRecordV3.model_validate({**payload, "law_digests": {}})
+        ChangeSetRecord.model_validate({**payload, "law_digests": {}})
 
     candidate_record = _candidate_record_v3()
     assert render_candidate_record(candidate_record).endswith(b"\n")
@@ -459,15 +416,12 @@ def test_record_v3_closes_the_same_correspondence_the_v2_record_closes() -> None
                 },
             }
         )
-    # The v2 record still refuses a v2 candidate carrying a v3 closure proof.
-    with pytest.raises(ValidationError):
-        CandidateRecordV2.model_validate(candidate_record.model_dump(mode="json"))
 
 
 def test_a_v3_receipt_is_recognized_by_shared_parsing() -> None:
     content = render_change_set(_record_v3())
     recognized = parse_change_set_record(content, path="changesets/cs-1.json")
-    assert isinstance(recognized, ChangeSetRecordV3)
+    assert isinstance(recognized, ChangeSetRecord)
     assert recognized.tag == "playbill-changeset-v3"
 
 
@@ -496,7 +450,7 @@ def test_a_new_proposal_produces_the_whole_succession_and_nothing_older(
     )
     candidate = evaluation.candidate
     assert isinstance(candidate, CandidateRecord)
-    assert candidate.tag == PRODUCED_CANDIDATE_VERSION
+    assert candidate.tag == "playbill-validated-candidate-v3"
     assert isinstance(candidate.candidate, SemanticCandidate)
     SemanticMerkleRoot.from_tagged(candidate.candidate.candidate_manifest_root)
     assert candidate.closure_proof.tag == "playbill-closure-proof-v3"
@@ -508,7 +462,7 @@ def test_a_new_proposal_produces_the_whole_succession_and_nothing_older(
         approvals=(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
     )
-    assert isinstance(record, ChangeSetRecordV3)
+    assert isinstance(record, ChangeSetRecord)
     content = render_change_set(record)
     assert parse_change_set_record(content, path="changesets/cs-1.json") == record
 
@@ -542,68 +496,6 @@ def test_the_manifest_root_a_new_candidate_signs_is_the_trie_over_its_own_member
     # And it is not the flat root, which no longer parses in that field at all.
     with pytest.raises(ValueError):
         SemanticMerkleRoot.from_tagged(manifest_root(semantic_projection(proposed)).tagged)
-
-
-def test_a_superseded_wire_version_is_reachable_only_by_naming_it(tmp_path: Path) -> None:
-    """The older shapes survive as verifiers, and only replay can ask for one.
-
-    Reproducing a v1 or v2 candidate is how an accepted generation settled before
-    the succession is re-verified against the object its own receipt carries.
-    Nothing reaches those shapes by default: the parameter has one value unless a
-    caller holding an accepted receipt supplies the version that receipt names.
-    """
-
-    instance, _owner = initialize_local(tmp_path)
-    base_tree, proposed = _document_tree(instance)
-    coordinate = instance.accepted_coordinate()
-
-    def evaluate(version: str | None) -> object:
-        extra = {} if version is None else {"wire_version": version}
-        return evaluate_proposal_tree(
-            base_tree=base_tree,
-            current_tree=base_tree,
-            proposed_tree=proposed,
-            current=coordinate,
-            bodies=instance.body_store(),
-            timestamp=TIMESTAMP,
-            rebased=False,
-            actor_id="owner",
-            **cast(Any, extra),
-        ).candidate
-
-    produced = evaluate(None)
-    assert isinstance(produced, CandidateRecord)
-    v2 = evaluate("playbill-validated-candidate-v2")
-    v1 = evaluate("playbill-validated-candidate-v1")
-    assert isinstance(v2, CandidateRecordV2)
-    assert isinstance(v1, CandidateRecordV1)
-
-    # v1 and v2 records embed the same frozen `C_s`, so they sign the same digest
-    # and only the record around it moved. v3 signs a different `C_s` under its
-    # own domain, so no approval raised over one can be replayed onto the other.
-    assert isinstance(v2.candidate, SemanticCandidateV1)
-    assert isinstance(v1.candidate, SemanticCandidateV1)
-    assert v1.candidate_digest == v2.candidate_digest
-    assert produced.candidate_digest != v2.candidate_digest
-    assert v2.closure_proof.tag == "playbill-closure-proof-v2"
-    assert v1.closure_paths == v2.closure_proof.paths == produced.closure_proof.paths
-    # The judgement underneath is one judgement: the same member, the same law.
-    assert v1.members[0].path == v2.members[0].path == produced.members[0].path
-    assert v2.members == produced.members
-    assert v2.law_evidence == produced.law_evidence
-
-
-def test_production_is_single_version_and_says_so_in_one_place() -> None:
-    """One constant names the produced version, and the producers read it.
-
-    A build that produced two versions would have to decide between them
-    somewhere, and that decision is exactly what a succession must not leave
-    lying around. There is one constant, and the evaluator's default is it.
-    """
-
-    assert PRODUCED_CANDIDATE_VERSION == "playbill-validated-candidate-v3"
-    signature = inspect.signature(evaluate_proposal_tree)
-    assert signature.parameters["wire_version"].default == PRODUCED_CANDIDATE_VERSION
 
 
 def test_the_v3_edge_root_reproduces_from_the_receipt_it_travels_in() -> None:

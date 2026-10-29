@@ -19,10 +19,8 @@ from pydantic import (
 from cruxible_client.contracts import SemanticFieldDelta
 from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
-    CandidateRecordAnyVersion,
-    CandidateRecordV1,
+    CandidateRecord,
 )
 from cruxible_client.contracts.compiler_upgrade import (
     COMPILER_UPGRADE_PATH,
@@ -147,12 +145,12 @@ class ProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
     proposal_id: str
-    candidate: CandidateRecordAnyVersion
+    candidate: CandidateRecord
     candidate_digest: str
     parent_semantic_root: str
     settlement_base: AcceptedCoordinate
     base_oid: str
-    complete_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidence, ...]
+    complete_members: tuple[CandidateMemberLawEvidence, ...]
     members: tuple[ReviewedMember, ...]
     governance: dict[str, object]
     provenance: dict[str, object]
@@ -229,7 +227,7 @@ def _readable_diff(
 def _review_document(
     instance: PlaybillInstance,
     *,
-    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
+    member: CandidateMemberLawEvidence,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
     access: BodyAccessContext,
@@ -282,7 +280,7 @@ def _review_document(
 
 
 def _review_members(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     *,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
@@ -304,59 +302,31 @@ def _review_members(
     ) -> tuple[SemanticFieldDelta, ...]:
         return semantic_field_delta(base or {}, candidate_value or {})
 
-    if not isinstance(candidate, CandidateRecordV1):
-        evidence_by_path = {item.path: item for item in candidate.law_evidence}
-        reviewed: list[ReviewedMember] = []
-        for versioned_member in candidate.members:
-            base_artifact = semantic_artifact(base_tree.get(versioned_member.path))
-            candidate_artifact = semantic_artifact(candidate_tree.get(versioned_member.path))
-            reviewed.append(
-                ReviewedMember(
-                    path=versioned_member.path,
-                    artifact_kind=versioned_member.artifact_kind,
-                    disposition=versioned_member.disposition,
-                    closure_role=versioned_member.closure_role,
-                    predecessor_artifact_digest=versioned_member.predecessor_artifact_digest,
-                    candidate_artifact_digest=versioned_member.candidate_artifact_digest,
-                    base_semantic_artifact=base_artifact,
-                    candidate_semantic_artifact=candidate_artifact,
-                    semantic_delta=member_delta(base_artifact, candidate_artifact),
-                    law_identifier=versioned_member.law_identifier,
-                    law_digest=versioned_member.law_digest,
-                    law_evidence=evidence_by_path[versioned_member.path].model_dump(mode="json"),
-                    dependency_proof_refs=tuple(
-                        item.model_dump(mode="json")
-                        for item in versioned_member.dependency_proof_refs
-                    ),
-                )
-            )
-        return tuple(reviewed)
-    legacy_reviewed: list[ReviewedMember] = []
-    for legacy_member in candidate.members:
-        base_artifact = semantic_artifact(base_tree.get(legacy_member.path))
-        candidate_artifact = semantic_artifact(candidate_tree.get(legacy_member.path))
-        legacy_reviewed.append(
+    evidence_by_path = {item.path: item for item in candidate.law_evidence}
+    reviewed: list[ReviewedMember] = []
+    for versioned_member in candidate.members:
+        base_artifact = semantic_artifact(base_tree.get(versioned_member.path))
+        candidate_artifact = semantic_artifact(candidate_tree.get(versioned_member.path))
+        reviewed.append(
             ReviewedMember(
-                path=legacy_member.path,
-                artifact_kind=legacy_member.artifact_kind,
-                disposition=legacy_member.disposition,
-                closure_role="authored",
-                predecessor_artifact_digest=None,
-                candidate_artifact_digest=legacy_member.artifact_digest,
+                path=versioned_member.path,
+                artifact_kind=versioned_member.artifact_kind,
+                disposition=versioned_member.disposition,
+                closure_role=versioned_member.closure_role,
+                predecessor_artifact_digest=versioned_member.predecessor_artifact_digest,
+                candidate_artifact_digest=versioned_member.candidate_artifact_digest,
                 base_semantic_artifact=base_artifact,
                 candidate_semantic_artifact=candidate_artifact,
                 semantic_delta=member_delta(base_artifact, candidate_artifact),
-                law_identifier=legacy_member.law_identifier,
-                law_digest=candidate.law_digests[legacy_member.law_identifier],
-                law_evidence={
-                    "artifact_digest": legacy_member.artifact_digest,
-                    "governance_operation": legacy_member.governance_operation,
-                    "tag": "playbill-singleton-law-evidence-v1",
-                },
-                dependency_proof_refs=(),
+                law_identifier=versioned_member.law_identifier,
+                law_digest=versioned_member.law_digest,
+                law_evidence=evidence_by_path[versioned_member.path].model_dump(mode="json"),
+                dependency_proof_refs=tuple(
+                    item.model_dump(mode="json") for item in versioned_member.dependency_proof_refs
+                ),
             )
         )
-    return tuple(legacy_reviewed)
+    return tuple(reviewed)
 
 
 def _projection_advisory(
@@ -634,7 +604,7 @@ def service_review_playbill_proposal(
 
 
 def _compiler_upgrade_notice(
-    candidate: CandidateRecordAnyVersion, candidate_tree: Mapping[str, bytes]
+    candidate: CandidateRecord, candidate_tree: Mapping[str, bytes]
 ) -> CompilerUpgradeNotice | None:
     """The one-way notice of a compiler upgrade, read from its exact candidate bytes."""
 

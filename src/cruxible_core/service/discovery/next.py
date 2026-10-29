@@ -2747,7 +2747,6 @@ def _claim_threshold_rows(
         coordinate=accepted,
         tree=tree,
         claim=claim,
-        historical=evidence.verified_attestations,
     )
     if time_boundaries is not None:
         for item in current:

@@ -17,12 +17,7 @@ from cruxible_client.contracts.attestations import (
     verify_approval,
     verify_candidate_approvals,
 )
-from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
-    CandidateRecordV1,
-    SemanticCandidateV1,
-    candidate_digest,
-)
+from cruxible_client.contracts.candidates import CandidateRecord, candidate_digest
 from cruxible_client.contracts.errors import ApprovalIntegrityError
 from cruxible_client.contracts.governance import (
     INDEPENDENT_APPROVAL_REQUIREMENTS,
@@ -30,6 +25,7 @@ from cruxible_client.contracts.governance import (
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.proposals.settlement import parse_change_set_record
 
 ROOT = "sha256:" + "11" * 32
 
@@ -48,38 +44,33 @@ def _candidate(
     *,
     parent: str = ROOT,
     approval_requirements: tuple[ApprovalRequirement, ...] = (),
-) -> CandidateRecordV1:
-    semantic = SemanticCandidateV1(
-        parent_semantic_root=parent,
-        candidate_manifest_root="sha256:" + "22" * 32,
-        semantic_diff_digest="sha256:" + "33" * 32,
-        scope=("documents/design.json",),
-        timestamp="2026-08-12T12:00:00.000000Z",
+) -> CandidateRecord:
+    """The golden current candidate, re-parented onto ``parent``."""
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "changeset-v3.json").read_bytes()
     )
-    return CandidateRecordV1(
+    record = parse_change_set_record(
+        golden["canonical_bytes"].encode(), path="changesets/cs-00000000000000000001.json"
+    )
+    semantic = record.candidate.model_copy(update={"parent_semantic_root": parent})
+    return CandidateRecord(
         candidate=semantic,
         candidate_digest=candidate_digest(semantic).tagged,
-        required_tier="graph_write",
+        required_tier=record.required_tier,
         approval_requirements=approval_requirements,
-        activation_policy="snapshot",
-        closure_paths=semantic.scope,
-        members=(
-            CandidateMemberEvidence(
-                path=semantic.scope[0],
-                artifact_kind="document",
-                artifact_digest="sha256:" + "66" * 32,
-                disposition="replacement",
-                law_identifier="playbill.document.v1",
-            ),
-        ),
-        law_digests={"playbill.document.v1": "sha256:" + "44" * 32},
-        compiler_digest="sha256:" + "55" * 32,
+        activation_policy=record.activation_policy,
+        closure_proof=record.closure_proof,
+        members=record.members,
+        law_evidence=record.law_evidence,
+        law_digests=record.law_digests,
+        compiler_digest=record.compiler_digest,
     )
 
 
 def _submission(
     private: Ed25519PrivateKey,
-    candidate: CandidateRecordV1,
+    candidate: CandidateRecord,
     *,
     signer_id: str,
     submitted_by: str = "api-client",

@@ -18,7 +18,7 @@ from cruxible_core.exhaust.promotions import (
     ExhaustReceiptSetManifestV1,
     parse_exhaust_promotion,
 )
-from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
+from cruxible_core.proposals.settlement import ChangeSetRecord
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 
 # These are immutable citation edges, not availability: another store still
@@ -32,7 +32,7 @@ _ACCESS = BodyAccessContext(principal_id="acceptance-durability", can_read_body=
 
 
 def cited_bodies(
-    record: ChangeSetRecordAnyVersion,
+    record: ChangeSetRecord,
     tree: Mapping[str, bytes],
     bodies: ContentAddressedBodyStore,
 ) -> tuple[str, ...]:
@@ -117,7 +117,7 @@ def _governed_erasures(candidates: set[str], bodies: ContentAddressedBodyStore) 
 
 
 def flush_acceptance(
-    record: ChangeSetRecordAnyVersion,
+    record: ChangeSetRecord,
     tree: Mapping[str, bytes],
     bodies: ContentAddressedBodyStore,
 ) -> None:

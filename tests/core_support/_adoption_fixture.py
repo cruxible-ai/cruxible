@@ -44,10 +44,6 @@ from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.candidates import (
-    PRODUCED_CANDIDATE_VERSION,
-    CandidateWireVersion,
-)
 from cruxible_client.contracts.canonical import canonical_bytes, semantic_projection
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
@@ -468,20 +464,13 @@ class _Builder:
         members: dict[str, bytes],
         *,
         phase: str,
-        wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     ) -> None:
-        """Settle one generation, optionally in a superseded wire version.
-
-        `wire_version` exists so a fixture can build the accepted history a
-        pre-succession build would have left behind, which is the only way to
-        test that a ledger spanning the boundary replays end to end. Nothing a
-        real daemon does passes it.
-        """
+        """Settle one generation."""
 
         started = time.monotonic()
         sequence = self.sequence + 1
         # This builder writes ledger history directly, as the builds before Subject
-        # identity wrote it (``wire_version`` reaches back further still): its
+        # identity wrote it: its
         # Subjects are history an older build accepted, not new creations.
         candidate_tree = {**self.tree, **members}
         with history_before_identity():
@@ -494,7 +483,6 @@ class _Builder:
                 timestamp=_timestamp(sequence),
                 rebased=False,
                 actor_id="owner",
-                wire_version=wire_version,
             )
         if evaluation.candidate is None or evaluation.diagnostics:
             raise AssertionError(f"fixture candidate refused: {evaluation.diagnostics}")

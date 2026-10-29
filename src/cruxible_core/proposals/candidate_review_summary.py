@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion, render_candidate_record
+from cruxible_client.contracts.candidates import CandidateRecord, render_candidate_record
 from cruxible_client.contracts.canonical import CandidateDigest
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.proposals.proposal_message import (
@@ -95,11 +95,11 @@ def read_candidate_bytes(directory: Path, digest: str, *, missing_ok: bool = Fal
             os.close(directory_fd)
 
 
-def parse_candidate_evidence(raw: bytes, *, expected_digest: str) -> CandidateRecordAnyVersion:
+def parse_candidate_evidence(raw: bytes, *, expected_digest: str) -> CandidateRecord:
     """Validate canonical candidate bytes and their requested digest identity."""
 
     try:
-        adapter: TypeAdapter[CandidateRecordAnyVersion] = TypeAdapter(CandidateRecordAnyVersion)
+        adapter: TypeAdapter[CandidateRecord] = TypeAdapter(CandidateRecord)
         value = adapter.validate_json(raw)
     except (ValidationError, ValueError) as exc:
         raise ProposalIntegrityError("validated candidate evidence is malformed") from exc
@@ -110,7 +110,7 @@ def parse_candidate_evidence(raw: bytes, *, expected_digest: str) -> CandidateRe
     return value
 
 
-def candidate_review_summary_of(candidate: CandidateRecordAnyVersion) -> CandidateReviewSummary:
+def candidate_review_summary_of(candidate: CandidateRecord) -> CandidateReviewSummary:
     """The review metadata of one validated candidate."""
 
     members: Sequence[CandidateMember] = candidate.members

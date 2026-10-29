@@ -8,8 +8,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.artifacts import parse_artifact_identity
-from cruxible_client.contracts.candidates import CandidateMemberEvidence
-from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalIntegrityError,
@@ -237,12 +235,7 @@ def service_playbill_subject_history(
                 raise ProjectionIntegrityError("Subject history source is unavailable")
             shell = parse_subject(content, path=path)
             digest = subject_digest(shell).tagged
-            source_digest = (
-                file_digest(content).tagged
-                if isinstance(member, CandidateMemberEvidence)
-                else digest
-            )
-            if source_digest != location.artifact_digest:
+            if digest != location.artifact_digest:
                 raise ProjectionIntegrityError("Subject history source binding differs")
             entries.append(
                 PlaybillSubjectHistoryEntry(

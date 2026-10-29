@@ -30,7 +30,7 @@ from cruxible_client.contracts.approval_policy import (
     parse_approval_policy,
 )
 from cruxible_client.contracts.attestations import ApprovalSubmission
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import canonical_bytes, is_candidate_card_path
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
@@ -193,7 +193,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
-    ChangeSetRecordAnyVersion,
+    ChangeSetRecord,
     SemanticRootDerivation,
     VerifiedGenerationBundle,
     prepare_generation,
@@ -2355,7 +2355,7 @@ class PlaybillInstance:
 
     def member_record_history(
         self, paths: Sequence[str]
-    ) -> tuple[tuple[str, ChangeSetRecordAnyVersion], ...]:
+    ) -> tuple[tuple[str, ChangeSetRecord], ...]:
         """The verified records that touched these paths, found through the index."""
 
         recovered = self._recovered
@@ -3134,7 +3134,7 @@ class PlaybillInstance:
         *,
         base: AcceptedProjectionCoordinate,
         candidate_tree: Mapping[str, bytes],
-        candidate: CandidateRecordAnyVersion,
+        candidate: CandidateRecord,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
@@ -3229,7 +3229,7 @@ class PlaybillInstance:
         *,
         base: AcceptedProjectionCoordinate,
         candidate_tree: Mapping[str, bytes],
-        candidate: CandidateRecordAnyVersion,
+        candidate: CandidateRecord,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,

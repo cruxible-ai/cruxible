@@ -120,8 +120,7 @@ from cruxible_core.ledger.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.proposals import EvaluatedTreeState
 from cruxible_core.proposals.settlement import (
-    ChangeSetRecordAnyVersion,
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     parse_change_set_record,
     semantic_root_for_record,
 )
@@ -251,7 +250,7 @@ class CheckpointGeneration:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
-    record: ChangeSetRecordAnyVersion | None
+    record: ChangeSetRecord | None
     compiler: CompilerCoordinate
 
 
@@ -608,7 +607,7 @@ def _prefix_records(
     tree: Mapping[str, bytes],
     *,
     sequence: int,
-) -> tuple[ChangeSetRecordAnyVersion, ...]:
+) -> tuple[ChangeSetRecord, ...]:
     """Read every accepted change-set record of the prefix from one signed tree.
 
     `changesets/` is append-only in accepted history -- replay refuses any
@@ -617,7 +616,7 @@ def _prefix_records(
     settled, under the same daemon signature.
     """
 
-    records: list[ChangeSetRecordAnyVersion] = []
+    records: list[ChangeSetRecord] = []
     for index in range(1, sequence + 1):
         path = f"changesets/cs-{index:020d}.json"
         content = tree.get(path)
@@ -639,7 +638,7 @@ def _prefix_records(
 
 def _prefix_records_at(
     ledger: GitLedger, *, oid: str, sequence: int
-) -> tuple[ChangeSetRecordAnyVersion, ...]:
+) -> tuple[ChangeSetRecord, ...]:
     """`_prefix_records` reading only the coordinate's change-set records."""
 
     names = ledger.tree_child_names(oid, "changesets") if sequence else ()
@@ -675,7 +674,7 @@ def _rederive_prefix(
     *,
     genesis: VerifiedGenesis,
     history: tuple[str, ...],
-    records: tuple[ChangeSetRecordAnyVersion, ...],
+    records: tuple[ChangeSetRecord, ...],
     head_principals: Callable[[str], PrincipalRegistrySnapshot],
     compiler: CompilerCoordinate,
 ) -> tuple[CheckpointGeneration, ...]:
@@ -818,7 +817,7 @@ def verify_checkpoint(
             head_record = records[-1]
             accepted_root = (
                 merkle.root.tagged
-                if isinstance(head_record, ChangeSetRecordV3)
+                if isinstance(head_record, ChangeSetRecord)
                 else manifest_root.tagged
             )
             if accepted_root != head_record.candidate.candidate_manifest_root:
@@ -855,7 +854,7 @@ def verify_checkpoint(
             "checkpoint merkle manifest root does not reproduce from its coordinate tree"
         ) from exc
     accepted_root = (
-        merkle.root.tagged if isinstance(head_record, ChangeSetRecordV3) else manifest_root.tagged
+        merkle.root.tagged if isinstance(head_record, ChangeSetRecord) else manifest_root.tagged
     )
     if accepted_root != head_record.candidate.candidate_manifest_root:
         raise ReplayCheckpointError(

@@ -23,7 +23,7 @@ from cruxible_client.contracts.attestations import (
     approval_statement_bytes,
 )
 from cruxible_client.contracts.candidates import (
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     render_candidate_record,
 )
 from cruxible_client.contracts.canonical import (
@@ -115,7 +115,7 @@ def _exclusive_canonical_write(path: Path, payload: bytes, *, durable: bool = Tr
 class SettledCandidate:
     """An accepted candidate and its approvals, as the change-set record settled them."""
 
-    candidate: CandidateRecordAnyVersion
+    candidate: CandidateRecord
     approvals: tuple[ApprovalSubmission, ...]
 
 
@@ -225,7 +225,7 @@ class ProposalEvidenceStore:
         self._write_record("evaluation", record.proposal_id, path, evaluation_bytes(record))
         return path
 
-    def write_candidate(self, record: CandidateRecordAnyVersion) -> Path:
+    def write_candidate(self, record: CandidateRecord) -> Path:
         path = self.candidates / f"{record.candidate_digest.removeprefix('sha256:')}.json"
         self._write_record(
             "candidate", record.candidate_digest, path, render_candidate_record(record)
@@ -556,7 +556,7 @@ class ProposalEvidenceStore:
             for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
         )
 
-    def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
+    def read_candidate(self, candidate_digest_value: str) -> CandidateRecord:
         """Read one canonical validated candidate by its frozen C_s digest.
 
         A retired accepted candidate is rebuilt from its change-set record.

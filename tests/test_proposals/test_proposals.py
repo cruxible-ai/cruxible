@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from inspect import getsource
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -14,7 +15,7 @@ from cruxible_client.contracts.authoring.models import (
     preflight_certificate_digest,
 )
 from cruxible_client.contracts.candidates import (
-    CandidateRecordV1,
+    CandidateRecord,
     SemanticCandidateV1,
     candidate_digest,
 )
@@ -613,77 +614,39 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
     assert rebased_tree["documents/unrelated.json"] == render_document(unrelated)
 
 
-def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
-    candidate = SemanticCandidateV1(
-        parent_semantic_root="sha256:" + "11" * 32,
-        candidate_manifest_root="sha256:" + "22" * 32,
-        semantic_diff_digest="sha256:" + "33" * 32,
-        scope=(DOCUMENT_PATH,),
-        timestamp=TIMESTAMP,
+def _golden_candidate_values() -> dict[str, object]:
+    from cruxible_core.ledger.recovery import candidate_from_change_set_record
+    from cruxible_core.proposals.settlement import parse_change_set_record
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "changeset-v3.json").read_bytes()
     )
-    values = {
-        "candidate": candidate,
-        "candidate_digest": candidate_digest(candidate).tagged,
-        "required_tier": "governed_write",
-        "approval_requirements": (),
-        "activation_policy": "snapshot",
-        "closure_paths": (DOCUMENT_PATH,),
-        "members": (
-            {
-                "path": DOCUMENT_PATH,
-                "artifact_kind": "document",
-                "artifact_digest": "sha256:" + "66" * 32,
-                "disposition": "replacement",
-                "law_identifier": "playbill.document.v1",
-            },
-        ),
-        "law_digests": {
-            "playbill.document.v1": "sha256:" + "44" * 32,
-        },
-        "compiler_digest": "sha256:" + "55" * 32,
-    }
+    record = parse_change_set_record(
+        golden["canonical_bytes"].encode(), path="changesets/cs-00000000000000000001.json"
+    )
+    return candidate_from_change_set_record(record).model_dump(mode="json")
+
+
+def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
+    values = _golden_candidate_values()
+    CandidateRecord.model_validate(values)
     with pytest.raises(ValidationError, match="does not reproduce"):
-        CandidateRecordV1.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
-    with pytest.raises(ValidationError, match="closure"):
-        CandidateRecordV1.model_validate({**values, "closure_paths": ("documents/other.json",)})
+        CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
+    proof = cast(dict[str, object], values["closure_proof"])
+    with pytest.raises(ValidationError, match="closure paths differ"):
+        CandidateRecord.model_validate(
+            {**values, "closure_proof": {**proof, "paths": ["documents/other.json"]}}
+        )
 
 
 def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
-    candidate = SemanticCandidateV1(
-        parent_semantic_root="sha256:" + "11" * 32,
-        candidate_manifest_root="sha256:" + "22" * 32,
-        semantic_diff_digest="sha256:" + "33" * 32,
-        scope=(DOCUMENT_PATH,),
-        timestamp=TIMESTAMP,
-    )
-    values = {
-        "candidate": candidate,
-        "candidate_digest": candidate_digest(candidate).tagged,
-        "required_tier": "governed_write",
-        "approval_requirements": (),
-        "activation_policy": "snapshot",
-        "closure_paths": (DOCUMENT_PATH,),
-        "members": (
-            {
-                "path": DOCUMENT_PATH,
-                "artifact_kind": "document",
-                "artifact_digest": "sha256:" + "66" * 32,
-                "disposition": "replacement",
-                "law_identifier": "playbill.document.v1",
-            },
-        ),
-        "law_digests": {"playbill.document.v1": "sha256:" + "44" * 32},
-        "compiler_digest": "sha256:" + "55" * 32,
-    }
-    with pytest.raises(ValidationError, match="mapping differ"):
-        CandidateRecordV1.model_validate(
-            {
-                **values,
-                "law_digests": {"playbill.other.v1": "sha256:" + "44" * 32},
-            }
+    values = _golden_candidate_values()
+    with pytest.raises(ValidationError, match="law mapping differ"):
+        CandidateRecord.model_validate(
+            {**values, "law_digests": {"playbill.other.v1": "sha256:" + "44" * 32}}
         )
-    with pytest.raises(ValidationError, match="members must enumerate"):
-        CandidateRecordV1.model_validate({**values, "members": ()})
+    with pytest.raises(ValidationError, match="closure paths differ"):
+        CandidateRecord.model_validate({**values, "members": [], "law_evidence": []})
 
 
 PRE_HOTFIX_RECORDS = (

@@ -23,14 +23,8 @@ from cruxible_core.runtime import instance as instance_module
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.test_ledger.test_activation import TIMESTAMP, _instance, _sign
 
-VERSIONS = (
-    "playbill-validated-candidate-v1",
-    "playbill-validated-candidate-v2",
-    "playbill-validated-candidate-v3",
-)
 
-
-def _input(instance, reviewer, index=1, version=VERSIONS[-1]):
+def _input(instance, reviewer, index=1):
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
     body = instance.store_document_body(f"# Document {index}\n".encode())
@@ -53,7 +47,6 @@ def _input(instance, reviewer, index=1, version=VERSIONS[-1]):
         timestamp=TIMESTAMP,
         rebased=False,
         actor_id="owner",
-        wire_version=version,
     )
     assert result.candidate is not None, result.diagnostics
     return dict(
@@ -77,13 +70,12 @@ def _resign(instance, bundle, tree):
     return replace(bundle, oid=oid, tree=tree)
 
 
-@pytest.mark.parametrize("version", VERSIONS)
-def test_handoff_keeps_frozen_successor_identical_to_restart(tmp_path, version):
+def test_handoff_keeps_frozen_successor_identical_to_restart(tmp_path):
     instance, _owner, reviewer = _instance(tmp_path)
-    result = instance.settle_and_activate(**_input(instance, reviewer, version=version))
+    result = instance.settle_and_activate(**_input(instance, reviewer))
     assert result.status == "accepted"
     before = instance.accepted_history()
-    assert before[-1].record.tag == version.replace("validated-candidate", "changeset")
+    assert before[-1].record.tag == "playbill-changeset-v3"
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_history() == before
     assert reopened.accepted_coordinate() == result.accepted

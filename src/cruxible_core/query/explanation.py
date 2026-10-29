@@ -26,7 +26,7 @@ from cruxible_client.contracts.projection_extensions import (
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
-    from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
+    from cruxible_core.proposals.settlement import ChangeSetRecord
 
 AttestationCoverage = Literal[
     "exact_subject",
@@ -238,7 +238,7 @@ class _SharedExplanation:
 
 
 def _shared_explanation(
-    record: ChangeSetRecordAnyVersion,
+    record: ChangeSetRecord,
     *,
     record_path: str,
     law_identifier: str,
@@ -341,23 +341,18 @@ def _shared_explanation(
 
 
 def _record_for_current_artifact(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
-    input_digest: str,
     artifact_digest: str,
-) -> tuple[str, ChangeSetRecordAnyVersion] | None:
-    def member_matches(member: object) -> bool:
-        candidate_digest = getattr(member, "candidate_artifact_digest", None)
-        if isinstance(candidate_digest, str):
-            return candidate_digest == artifact_digest
-        input_value = getattr(member, "artifact_digest", None)
-        return isinstance(input_value, str) and input_value == input_digest
-
+) -> tuple[str, ChangeSetRecord] | None:
     matching_records = [
         (record_path, record)
         for record_path, record in records
-        if any(member.path == path and member_matches(member) for member in record.members)
+        if any(
+            member.path == path and member.candidate_artifact_digest == artifact_digest
+            for member in record.members
+        )
     ]
     return max(matching_records, key=lambda item: item[1].sequence) if matching_records else None
 
@@ -370,7 +365,7 @@ def accepted_artifact_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     coordinate: ProjectionCoordinateContext,
     accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
     claim_attestations: tuple[VerifiedClaimAttestationV1, ...] | None = None,
@@ -387,7 +382,6 @@ def accepted_artifact_explanation_facts(
     current = _record_for_current_artifact(
         records,
         path=artifact_path,
-        input_digest=input_digest,
         artifact_digest=artifact_digest,
     )
     if current is None:
@@ -521,7 +515,7 @@ def accepted_document_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     coordinate: ProjectionCoordinateContext,
     accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
     carry_values: bool = False,

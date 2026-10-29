@@ -69,7 +69,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.builtin_claim_types import admits_object_subject
 from cruxible_client.contracts.candidates import (
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical_forms import (
@@ -3599,7 +3599,7 @@ def _committed_verdicts(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     plan: _Plan,
-    candidate: CandidateRecordAnyVersion | None,
+    candidate: CandidateRecord | None,
 ) -> dict[str, str]:
     """Each written Claim's verdict at the generation this write was accepted as.
 
@@ -3999,7 +3999,7 @@ def _coordinator(
     instance: PlaybillInstance,
     claim_ids: Sequence[str],
     *,
-    admitted: list[CandidateRecordAnyVersion] | None = None,
+    admitted: list[CandidateRecord] | None = None,
 ) -> AuthoringIntentCoordinator:
     pending: Iterator[str] = iter(tuple(claim_ids))
 
@@ -4102,7 +4102,7 @@ def _service_write(
         return refuse(_refusal(error))
     # The candidate admission evaluated, kept so an accepted write reports the
     # verdicts that evaluation computed instead of re-deriving them.
-    admitted: list[CandidateRecordAnyVersion] = []
+    admitted: list[CandidateRecord] = []
     coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
     timestamp = canonical_candidate_timestamp(utc_now())
     if request.dry_run:
@@ -4403,7 +4403,7 @@ def _accepted(
     changes: tuple[ChangeOutcome, ...],
     subjects_added: tuple[str, ...],
     proposal: WriteProposalRef | None,
-    candidate: CandidateRecordAnyVersion | None = None,
+    candidate: CandidateRecord | None = None,
 ) -> WriteOutcome:
     coordinate = (
         instance.accepted_coordinate()

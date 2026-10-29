@@ -204,7 +204,6 @@ def _fact_row(
         coordinate=coordinate,
         tree=tree,
         claim=claim,
-        historical=evidence.verified_attestations,
         envelopes=attestation_envelopes,
     )
     row = ClaimFactRowV1(

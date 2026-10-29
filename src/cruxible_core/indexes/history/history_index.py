@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
 
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
     MemberLawEvaluation,
 )
@@ -52,7 +51,6 @@ from cruxible_core.indexes.sql_batch import insert_rows
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
-    ChangeSetRecordAnyVersion,
     parse_change_set_record,
 )
 
@@ -222,7 +220,7 @@ class GenerationRecordFacts:
     member_count: int
 
 
-def _record_facts(record: ChangeSetRecordAnyVersion) -> GenerationRecordFacts:
+def _record_facts(record: ChangeSetRecord) -> GenerationRecordFacts:
     return GenerationRecordFacts(
         sequence=record.sequence,
         candidate_digest=record.candidate_digest,
@@ -250,13 +248,13 @@ class VerifiedRecord:
     handed out without a copy.
     """
 
-    record: ChangeSetRecordAnyVersion
+    record: ChangeSetRecord
     members: Mapping[str, tuple[int, ...]]
     law: Mapping[str, tuple[int, ...]]
     scope: frozenset[str]
 
     @classmethod
-    def of(cls, record: ChangeSetRecordAnyVersion) -> VerifiedRecord:
+    def of(cls, record: ChangeSetRecord) -> VerifiedRecord:
         members: dict[str, list[int]] = {}
         for ordinal, member in enumerate(record.members):
             members.setdefault(cast(Any, member).path, []).append(ordinal)
@@ -294,7 +292,7 @@ class RetainedRecordReader:
         facts: OrderedDict[AcceptedGenerationLocation, GenerationRecordFacts] | None = None,
     ) -> None:
         self._load = load_record
-        self._records: dict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] = {}
+        self._records: dict[AcceptedGenerationLocation, ChangeSetRecord] = {}
         self._verified = verified
         self._facts = facts
         self._local_facts: dict[AcceptedGenerationLocation, GenerationRecordFacts] = {}
@@ -305,7 +303,7 @@ class RetainedRecordReader:
         self,
         generation: AcceptedGenerationLocation,
         canonical_cache: BoundedCache[bool] | None,
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         if generation.source_record_path is None:
             raise ProjectionIntegrityError("genesis has no member evidence record")
         raw = self._load(generation.git_oid, generation.source_record_path)
@@ -327,7 +325,7 @@ class RetainedRecordReader:
         self,
         generation: AcceptedGenerationLocation,
         canonical_cache: BoundedCache[bool] | None = None,
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         if generation in self._records:
             return self._records[generation]
         retained = self._indexed.get(generation)
@@ -397,7 +395,7 @@ class RetainedRecordReader:
         generation: AcceptedGenerationLocation,
         ordinal: int,
         canonical_cache: BoundedCache[bool] | None = None,
-    ) -> CandidateMemberEvidence | CandidateMemberLawEvidence:
+    ) -> CandidateMemberLawEvidence:
         """A detached copy of one member, without copying its whole record."""
 
         record = self._in_place(generation, canonical_cache).record
@@ -410,7 +408,7 @@ class RetainedRecordReader:
         generation: AcceptedGenerationLocation,
         paths: frozenset[str],
         canonical_cache: BoundedCache[bool] | None = None,
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         """The verified record restricted to its entries at ``paths``, for the compiler.
 
         ``members``, ``law_evidence``, ``candidate.scope`` and
@@ -434,13 +432,12 @@ class RetainedRecordReader:
         fields["members"] = tuple(
             record.members[position].model_copy(deep=True) for position in member_positions
         )
-        if not isinstance(record, ChangeSetRecord):
-            fields["law_evidence"] = tuple(
-                record.law_evidence[position].model_copy(deep=True)
-                for position in sorted(
-                    position for path in selected for position in indexed.law.get(path, ())
-                )
+        fields["law_evidence"] = tuple(
+            record.law_evidence[position].model_copy(deep=True)
+            for position in sorted(
+                position for path in selected for position in indexed.law.get(path, ())
             )
+        )
         scope = tuple(path for path in selected if path in indexed.scope)
         fields["candidate"] = record.candidate.model_copy(update={"scope": scope})
         fields["closure_proof"] = record.closure_proof.model_copy(update={"paths": scope})
@@ -454,13 +451,11 @@ class RetainedRecordReader:
         generation: AcceptedGenerationLocation,
         path: str,
         canonical_cache: BoundedCache[bool] | None = None,
-    ) -> tuple[MemberLawEvaluation, ...] | None:
-        """Detached copies of one path's member law evidence; None for a v1 record."""
+    ) -> tuple[MemberLawEvaluation, ...]:
+        """Detached copies of one path's member law evidence."""
 
         indexed = self._in_place(generation, canonical_cache)
         record = indexed.record
-        if isinstance(record, ChangeSetRecord):
-            return None
         return tuple(
             record.law_evidence[position].model_copy(deep=True)
             for position in indexed.law.get(path, ())
@@ -895,7 +890,7 @@ class HistoryReader:
 
     def read_generation_record(
         self, sequence: int, load_record: Callable[[str, str], bytes | None] | RetainedRecordReader
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         """Verify one retained generation record against its accepted locator."""
         return self._reader(load_record).read(self.generation(sequence), self._canonical_cache)
 
@@ -909,7 +904,7 @@ class HistoryReader:
         self,
         location: AcceptedMemberLocation,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         """Verify one exact retained record; a locator never substitutes for it."""
         record = self.read_generation_record(location.sequence, load_record)
         if not 0 <= location.member_ordinal < len(record.members):
@@ -921,7 +916,7 @@ class HistoryReader:
         self,
         location: AcceptedMemberLocation,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
-    ) -> CandidateMemberEvidence | CandidateMemberLawEvidence:
+    ) -> CandidateMemberLawEvidence:
         """One exact retained member, verified as ``read_member_record`` verifies it."""
         member = self._reader(load_record).member(
             self.generation(location.sequence), location.member_ordinal, self._canonical_cache
@@ -934,7 +929,7 @@ class HistoryReader:
         location: AcceptedMemberLocation,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
         paths: frozenset[str],
-    ) -> ChangeSetRecordAnyVersion:
+    ) -> ChangeSetRecord:
         """The located member's record restricted to ``paths``, verified like the whole."""
         if location.member_path not in paths:
             raise ProjectionIntegrityError("a member selection must include its located member")
@@ -966,7 +961,7 @@ class HistoryReader:
         evidence = self._reader(load_record).law_evidence(
             self.generation(location.sequence), location.member_path, self._canonical_cache
         )
-        if evidence is None or len(evidence) != 1:
+        if len(evidence) != 1:
             raise ProjectionIntegrityError("accepted Claim law evidence is missing or ambiguous")
         return evidence[0]
 
@@ -1146,13 +1141,13 @@ def _close_working_database(
 
 
 def _record_members(
-    record: ChangeSetRecordAnyVersion,
-) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidence]:
+    record: ChangeSetRecord,
+) -> Sequence[CandidateMemberLawEvidence]:
     return record.members
 
 
-def _law_evidence(record: ChangeSetRecordAnyVersion) -> tuple[MemberLawEvaluation, ...]:
-    return () if isinstance(record, ChangeSetRecord) else record.law_evidence
+def _law_evidence(record: ChangeSetRecord) -> tuple[MemberLawEvaluation, ...]:
+    return record.law_evidence
 
 
 def _verify_member(member: object, location: AcceptedMemberLocation) -> None:

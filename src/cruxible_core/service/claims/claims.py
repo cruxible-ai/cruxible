@@ -545,8 +545,6 @@ def _claim_law_evidence_by_artifact_index(
         for location in history.claim_law_locations():
             history.read_member(location, records)
             law = records.law_evidence(history.generation(location.sequence), location.member_path)
-            if law is None:
-                continue
             if len(law) != 1:
                 raise ProjectionIntegrityError(
                     "accepted Claim law evidence is missing or ambiguous"
@@ -574,8 +572,6 @@ def claim_law_evidence_by_artifact_for_path(
         for location in history.claim_law_locations(path=path):
             history.read_member(location, records)
             law = records.law_evidence(history.generation(location.sequence), location.member_path)
-            if law is None:
-                continue
             if len(law) != 1:
                 raise ProjectionIntegrityError(
                     "accepted Claim law evidence is missing or ambiguous"
@@ -1103,7 +1099,6 @@ def service_explain_playbill_claim(
         coordinate=coordinate,
         tree=claim_tree,
         claim=claim,
-        historical=law.verified_attestations,
     )
     type_path = claim_type_path(claim.statement.predicate)
     attestation_accounts = claim_attestation_accounts(

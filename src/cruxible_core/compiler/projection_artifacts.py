@@ -72,7 +72,7 @@ from cruxible_core.storage.cas import BodyAccessContext, BodyProjectionProtocol
 if TYPE_CHECKING:
     from cruxible_client.contracts.claims import ClaimArtifactAny
     from cruxible_core.indexes.projection import AcceptedCoordinate
-    from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
+    from cruxible_core.proposals.settlement import ChangeSetRecord
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _NAME = r"[a-z][a-z0-9_.-]{0,255}"
@@ -185,7 +185,7 @@ class _IndexedRecords(tuple):  # type: ignore[type-arg]
 
 
 def _members_by_path(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
 ) -> Mapping[str, tuple[tuple[int, Any], ...]]:
     if isinstance(records, _IndexedRecords) and records._by_path is not None:
         return records._by_path
@@ -200,7 +200,7 @@ def _members_by_path(
 
 
 def _accepting_positions(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -217,27 +217,19 @@ def _accepting_positions(
 
 
 def projected_revision(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
-    input_digest: str,
     artifact_digest: str,
 ) -> int:
     history = tuple(member for _position, member in _members_by_path(records).get(path, ()))
-    if any(
-        (
-            getattr(member, "candidate_artifact_digest", None) == artifact_digest
-            if getattr(member, "candidate_artifact_digest", None) is not None
-            else getattr(member, "artifact_digest", None) == input_digest
-        )
-        for member in history
-    ):
+    if any(member.candidate_artifact_digest == artifact_digest for member in history):
         return len(history)
     return len(history) + 1
 
 
 def _accepted_artifact_timestamp(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -253,7 +245,7 @@ def _accepted_artifact_timestamp(
 
 
 def _accepted_artifact_coordinate(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -267,7 +259,7 @@ def _accepted_artifact_coordinate(
 
 
 def _current_member_law_result(
-    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
+    records: tuple[tuple[str, ChangeSetRecord], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -446,8 +438,8 @@ def parse_projection_tree(
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
-    verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
-    selected_member_history: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
+    verified_change_sets: tuple[tuple[str, ChangeSetRecord], ...] | None = None,
+    selected_member_history: tuple[tuple[str, ChangeSetRecord], ...] | None = None,
     carry_members: bool = False,
     by_name: bool = False,
 ) -> ParsedProjectionTree:
@@ -473,7 +465,7 @@ def parse_projection_tree(
     retired_identities: list[str] = []
     semantic_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
-    change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
+    change_sets: list[tuple[str, ChangeSetRecord]] = []
 
     if selected_member_history is not None:
         # Only a bound typed reader supplies sparse history already verified by C.
@@ -540,7 +532,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -561,7 +552,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -591,7 +581,6 @@ def parse_projection_tree(
                         projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -629,7 +618,6 @@ def parse_projection_tree(
                         projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -657,7 +645,6 @@ def parse_projection_tree(
                         projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -697,7 +684,6 @@ def parse_projection_tree(
                         projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=file_digest(content).tagged,
                             artifact_digest=digest,
                         ),
                     )
@@ -888,7 +874,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -985,7 +970,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1088,7 +1072,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1202,7 +1185,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1259,7 +1241,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1480,7 +1461,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1563,7 +1543,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1670,7 +1649,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1780,7 +1758,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )
@@ -1863,7 +1840,6 @@ def parse_projection_tree(
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
-                            input_digest=input_digest,
                             artifact_digest=artifact_digest,
                         ),
                     )

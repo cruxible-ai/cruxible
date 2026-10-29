@@ -1,4 +1,4 @@
-"""Version dispatch retains ordinary-union bytes and refusals; a parse is one sealed record."""
+"""The one change-set receipt parses only from canonical bytes; a parse is one sealed record."""
 
 from __future__ import annotations
 
@@ -6,17 +6,15 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.content_memo import is_sealed
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import SettlementIntegrityError
-from cruxible_core.proposals import settlement
 from cruxible_core.proposals.proposals import evaluate_proposal_tree
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
-    ChangeSetRecordAnyVersion,
     build_change_set_record,
     change_set_path,
     parse_change_set_record,
@@ -26,9 +24,9 @@ from tests.core_support._support import initialize_local
 from tests.test_proposals.test_proposals import DOCUMENT_PATH, TIMESTAMP, _shell
 
 
-@pytest.fixture(scope="module", params=(1, 2, 3))
-def record_bytes(tmp_path_factory: pytest.TempPathFactory, request) -> bytes:
-    root: Path = tmp_path_factory.mktemp(f"changeset-parser-v{request.param}")
+@pytest.fixture(scope="module")
+def record_bytes(tmp_path_factory: pytest.TempPathFactory) -> bytes:
+    root: Path = tmp_path_factory.mktemp("changeset-parser")
     instance, _ = initialize_local(root)
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
@@ -42,7 +40,6 @@ def record_bytes(tmp_path_factory: pytest.TempPathFactory, request) -> bytes:
         timestamp=TIMESTAMP,
         rebased=False,
         actor_id="owner",
-        wire_version=f"playbill-validated-candidate-v{request.param}",
     )
     assert evaluation.candidate is not None and not evaluation.diagnostics
     record = build_change_set_record(
@@ -51,49 +48,14 @@ def record_bytes(tmp_path_factory: pytest.TempPathFactory, request) -> bytes:
         approvals=(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
     )
-    assert record.tag == f"playbill-changeset-v{request.param}"
+    assert record.tag == "playbill-changeset-v3"
     return render_change_set(record)
 
 
-def _ordinary_parse(content: bytes, *, path: str) -> ChangeSetRecordAnyVersion:
-    """The prior parser, kept as an independent outcome/refusal oracle."""
-    adapter: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(ChangeSetRecordAnyVersion)
-    try:
-        record = adapter.validate_json(content)
-    except (ValueError, ValidationError) as exc:
-        raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
-    if render_change_set(record) != content:
-        raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
-    return record
-
-
-def _refusal(parser, content: bytes):
-    with pytest.raises(SettlementIntegrityError) as caught:
-        parser(content, path="changesets/cs-00000000000000000001.json")
-    cause = caught.value.__cause__
-    return (
-        type(caught.value),
-        str(caught.value),
-        type(cause),
-        # repr retains invalid input bytes and normalizes ValueError objects in
-        # validator context without trying to serialize malformed UTF-8 as JSON.
-        repr(cause.errors(include_url=False)) if isinstance(cause, ValidationError) else str(cause),
-    )
-
-
-def test_valid_tag_uses_only_selected_version_and_matches_ordinary_parser(
-    record_bytes: bytes, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    expected = _ordinary_parse(record_bytes, path="record")
-
-    def unexpected(*args, **kwargs):
-        pytest.fail("a valid tagged record must not validate the ordinary union")
-
-    monkeypatch.setattr(settlement._CHANGE_SET_RECORD_ADAPTER, "validate_json", unexpected)
-    actual = parse_change_set_record(record_bytes, path=change_set_path(expected))
-    assert type(actual) is type(expected)
-    assert actual == expected
-    assert render_change_set(actual) == record_bytes
+def test_a_valid_record_round_trips_exactly(record_bytes: bytes) -> None:
+    record = parse_change_set_record(record_bytes, path="record")
+    assert parse_change_set_record(record_bytes, path=change_set_path(record)) == record
+    assert render_change_set(record) == record_bytes
 
 
 @pytest.mark.parametrize(
@@ -103,7 +65,8 @@ def test_valid_tag_uses_only_selected_version_and_matches_ordinary_parser(
         "unknown_tag",
         "null_tag",
         "wrong_tag_type",
-        "other_known_tag",
+        "earlier_v1_tag",
+        "earlier_v2_tag",
         "self_digest",
         "candidate_digest",
         "extra_field",
@@ -115,7 +78,9 @@ def test_valid_tag_uses_only_selected_version_and_matches_ordinary_parser(
         "invalid_utf8",
     ],
 )
-def test_refusals_match_original_union(record_bytes: bytes, mutation: str) -> None:
+def test_every_noncanonical_or_other_version_record_refuses(
+    record_bytes: bytes, mutation: str
+) -> None:
     raw = json.loads(record_bytes)
     if mutation == "missing_tag":
         del raw["tag"]
@@ -125,10 +90,10 @@ def test_refusals_match_original_union(record_bytes: bytes, mutation: str) -> No
         raw["tag"] = None
     elif mutation == "wrong_tag_type":
         raw["tag"] = [raw["tag"]]
-    elif mutation == "other_known_tag":
-        raw["tag"] = (
-            "playbill-changeset-v1" if raw["tag"].endswith("v3") else "playbill-changeset-v3"
-        )
+    elif mutation == "earlier_v1_tag":
+        raw["tag"] = "playbill-changeset-v1"
+    elif mutation == "earlier_v2_tag":
+        raw["tag"] = "playbill-changeset-v2"
     elif mutation == "self_digest":
         raw["changeset_digest"] = "sha256:" + "0" * 64
     elif mutation == "candidate_digest":
@@ -148,7 +113,8 @@ def test_refusals_match_original_union(record_bytes: bytes, mutation: str) -> No
         content = b"[]\n"
     elif mutation == "invalid_utf8":
         content = b'"\xff"'
-    assert _refusal(parse_change_set_record, content) == _refusal(_ordinary_parse, content)
+    with pytest.raises(SettlementIntegrityError, match="generation change-set record is"):
+        parse_change_set_record(content, path="changesets/cs-00000000000000000001.json")
 
 
 def test_a_parse_is_one_sealed_record_shared_by_every_caller(record_bytes: bytes) -> None:

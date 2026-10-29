@@ -10,7 +10,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
@@ -829,7 +829,7 @@ class ProposalAwaitingApproval:
 
 
 def _signature_required_unsigned(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     signers: set[str],
     ordinary_principal_ids: frozenset[str],
 ) -> bool:

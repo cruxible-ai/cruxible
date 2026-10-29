@@ -25,7 +25,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
-    VerifiedClaimAttestationV1,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -79,7 +78,7 @@ from cruxible_core.evidence.claim_reobservations import (
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
+from cruxible_core.proposals.settlement import ChangeSetRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
@@ -103,7 +102,7 @@ class AcceptedHistoryGenerationProtocol(Protocol):
     def oid(self) -> str: ...
 
     @property
-    def record(self) -> ChangeSetRecordAnyVersion | None: ...
+    def record(self) -> ChangeSetRecord | None: ...
 
 
 class ClaimReadSourceProtocol(Protocol):
@@ -636,7 +635,6 @@ def accepted_claim_attestations(
     coordinate: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
     claim: ClaimArtifactAny,
-    historical: tuple[VerifiedClaimAttestationV1, ...] = (),
     envelopes: tuple[ClaimAttestation, ...] | None = None,
 ) -> tuple[ClaimAttestationEvidence, ...]:
     """Read applicable immutable statements without inferring supersession.
@@ -936,8 +934,6 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         history.read_member(location, self._records)
         # The one member's evaluation, read in place: never a copy of the record.
         law = self._records.law_evidence(history.generation(location.sequence), path)
-        if law is None:
-            return None
         raw = law[-1].result.get("claim_evidence") if law else None
         if raw is None:
             raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
@@ -1030,9 +1026,7 @@ def _build_claim_read_history_index(
     for generation in history:
         generation_oids.append(generation.oid)
         record = generation.record
-        # The v1 receipt predates structured member law evidence; every later
-        # receipt version carries it in the same shape.
-        if record is not None and not isinstance(record, ChangeSetRecord):
+        if record is not None:
             for evidence in record.law_evidence:
                 raw = evidence.result.get("claim_evidence")
                 if raw is not None:
@@ -1356,7 +1350,6 @@ def service_evaluate_playbill_claim_verdict(
         coordinate=coordinate,
         tree=tree,
         claim=accepted.claim,
-        historical=evidence.verified_attestations,
         envelopes=(read_context.attestation_envelopes(accepted.claim) if batched else None),
     )
     reading = reobservations_at(

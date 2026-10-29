@@ -8,7 +8,7 @@ from cruxible_client.contracts.authoring_landing import (
     AuthoringLanding,
     AuthoringProposed,
 )
-from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateMemberLawEvidence
+from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalResult
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -191,12 +191,8 @@ def _recompiled_submission(
     return submitted.model_copy(update={"intent": intent, "status": status, "members": members})
 
 
-def _member_digest(member: CandidateMemberEvidence | CandidateMemberLawEvidence) -> str | None:
-    return (
-        member.artifact_digest
-        if isinstance(member, CandidateMemberEvidence)
-        else member.candidate_artifact_digest
-    )
+def _member_digest(member: CandidateMemberLawEvidence) -> str | None:
+    return member.candidate_artifact_digest
 
 
 def _stopped(

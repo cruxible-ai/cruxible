@@ -46,7 +46,7 @@ from typing import Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.actor_types import TransportCapability
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.change_control import ChangeKind, StateCoordinate
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.get_reads import GetCoordinate
@@ -325,7 +325,7 @@ class AdmittedChangeSet:
     """A change set admitted as a proposal, or evaluated as one by a preview."""
 
     previewed: bool
-    candidate: CandidateRecordAnyVersion | None
+    candidate: CandidateRecord | None
     diagnostics: tuple[CompilerDiagnostic, ...]
     proposal_id: str | None
     result: ProposalResult | None

@@ -352,19 +352,9 @@ def _recompile_proposal(
     before = (
         {}
         if source.candidate is None
-        else {
-            member.path: getattr(
-                member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-            )
-            for member in source.candidate.members
-        }
+        else {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     )
-    after = {
-        member.path: getattr(
-            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-        )
-        for member in result.candidate.members
-    }
+    after = {member.path: member.candidate_artifact_digest for member in result.candidate.members}
     identical = source.candidate is not None and before == after
     changed_members, truncated = _changed_members(before, after)
     if not preview:
@@ -429,12 +419,7 @@ def _close_already_live(
     before = (
         {}
         if source.candidate is None
-        else {
-            member.path: getattr(
-                member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-            )
-            for member in source.candidate.members
-        }
+        else {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     )
     changed_members, truncated = _changed_members(before, {})
     if not preview:

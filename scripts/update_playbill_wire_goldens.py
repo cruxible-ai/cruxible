@@ -70,7 +70,7 @@ from cruxible_core.ledger.bootstrap import (
     seeded_procedure_runtime_policy,
 )
 from cruxible_core.proposals.settlement import (
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     change_set_digest,
     parse_change_set_record,
     render_change_set,
@@ -252,7 +252,7 @@ def _update_changeset_golden() -> None:
         "playbill-changeset-v3",
         digest_payload,
     ).tagged
-    record = ChangeSetRecordV3.model_validate(raw)
+    record = ChangeSetRecord.model_validate(raw)
     canonical = render_change_set(record)
     reparsed = parse_change_set_record(canonical, path="changesets/golden.json")
     if reparsed != record:

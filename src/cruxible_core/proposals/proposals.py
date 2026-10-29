@@ -31,20 +31,12 @@ from cruxible_client.contracts.authoring_profiles import (
     verify_claim_type_expansion_evidence,
 )
 from cruxible_client.contracts.candidates import (
-    PRODUCED_CANDIDATE_VERSION,
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
     CandidateRecord,
-    CandidateRecordAnyVersion,
-    CandidateRecordV1,
-    CandidateRecordV2,
-    CandidateWireVersion,
     ClosureProof,
-    ClosureProofV2,
     LawEvaluationCoordinate,
     MemberLawEvaluation,
     SemanticCandidate,
-    SemanticCandidateV1,
     candidate_digest,
     candidate_member_evidence_digest,
     member_law_evidence_digest,
@@ -57,7 +49,6 @@ from cruxible_client.contracts.canonical import (
     file_digest,
     manifest_for_tree,
     manifest_for_tree_carrying,
-    manifest_root_from_members,
     normalize_manifest_paths,
     semantic_diff,
     semantic_diff_from_members,
@@ -134,7 +125,6 @@ from cruxible_client.contracts.governance import (
     INDEPENDENT_APPROVAL_REQUIREMENTS,
     ActivationPolicy,
     ApprovalRequirement,
-    MutationDisposition,
     PermissionTier,
 )
 from cruxible_client.contracts.laws import (
@@ -268,13 +258,11 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.claims.closure import (
     ArtifactDependencyStateV1,
-    ClosureEvaluationV2,
     ClosureEvaluationV3,
     DependencyIndexV1,
     IncompleteClosureItemV1,
     UnresolvedArtifactPinV1,
     build_dependency_index,
-    closure_evaluation_v2,
     closure_evaluation_v3,
     dependency_artifacts,
     judge_dependency_closure,
@@ -493,7 +481,7 @@ class ProposalEvidenceProtocol(Protocol):
 
     def write_evaluation(self, record: ProposalEvaluationRecord) -> object: ...
 
-    def write_candidate(self, record: CandidateRecordAnyVersion) -> object: ...
+    def write_candidate(self, record: CandidateRecord) -> object: ...
 
 
 def validate_proposal_tree(
@@ -660,7 +648,7 @@ class CandidateEvaluation:
     """
 
     tree: Mapping[str, bytes]
-    candidate: CandidateRecordAnyVersion | None
+    candidate: CandidateRecord | None
     diagnostics: tuple[CompilerDiagnostic, ...]
     rebased: bool
     state: "EvaluatedTreeState | None" = None
@@ -668,12 +656,10 @@ class CandidateEvaluation:
 
 
 def claim_type_expansions_from_candidate(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
 ) -> tuple[ClaimTypeExpansionEvidence, ...]:
     """Recover and revalidate authoring-only evidence committed by member law output."""
 
-    if isinstance(candidate, CandidateRecordV1):
-        return ()
     expansions: list[ClaimTypeExpansionEvidence] = []
     for evidence in candidate.law_evidence:
         raw = evidence.result.get("authoring_expansion")
@@ -694,12 +680,10 @@ def claim_type_expansions_from_candidate(
 
 
 def claim_admission_accounts_from_candidate(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
 ) -> tuple[ClaimAdmissionEvaluationAccount, ...]:
     """Recover the daemon-produced admission accounts committed by member evidence."""
 
-    if isinstance(candidate, CandidateRecordV1):
-        return ()
     accounts: dict[tuple[str, str, str], ClaimAdmissionEvaluationAccount] = {}
     committed_query_digests: set[str] = set()
     for evidence in candidate.law_evidence:
@@ -4353,7 +4337,6 @@ def _evaluate_scoped_members(
     parent: EvaluatedTreeState,
     actor_id: str | None,
     rebased: bool,
-    wire_version: CandidateWireVersion,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...],
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
@@ -4465,21 +4448,13 @@ def _evaluate_scoped_members(
             pair_diagnostics,
             rebased,
         )
-    # The v1 candidate predates dependency closure entirely, and re-verifying an
-    # accepted v1 generation may not apply a law its own acceptance never faced:
-    # a Subject that had live dependents outside its change set was acceptable
-    # then, so replaying it must find it acceptable now.
-    facts = (
-        None
-        if wire_version == "playbill-validated-candidate-v1"
-        else judge_dependency_closure(
-            parent=parent.dependencies,
-            candidate=candidate_dependencies,
-            scope=scope,
-            by_name=True,
-        )
+    facts = judge_dependency_closure(
+        parent=parent.dependencies,
+        candidate=candidate_dependencies,
+        scope=scope,
+        by_name=True,
     )
-    if facts is not None and facts.verdict == "refused":
+    if facts.verdict == "refused":
         # Key Claims follow their keyed Subject (maintainer ruling): a succeeded
         # Subject carries them unchanged, so they are not dependents the change
         # must disposition; a Claim retired with its Subject keeps the pin on the
@@ -4520,7 +4495,7 @@ def _evaluate_scoped_members(
                 )
             ),
         )
-    if facts is not None and facts.verdict == "refused":
+    if facts.verdict == "refused":
         return CandidateEvaluation(
             candidate_tree,
             None,
@@ -4960,41 +4935,16 @@ def _evaluate_scoped_members(
         or (accepted and all(item.approval_exempt for item in accepted))
         else _approval_requirements(current_tree)
     )
-    if wire_version == "playbill-validated-candidate-v1":
-        record: CandidateRecordAnyVersion = _candidate_record_v1(
-            accepted,
-            candidate_tree=candidate_tree,
-            current=current,
-            scope=scope,
-            diff_digest=diff_digest,
-            manifest_root_value=manifest_root_from_members(candidate_state.members).tagged,
-            timestamp=timestamp,
-            approval_requirements=approval_requirements,
-        )
-    elif facts is None:  # pragma: no cover - only v1 skips closure
-        raise ProposalIntegrityError("multi-member candidate requires a closure judgement")
-    elif wire_version == "playbill-validated-candidate-v2":
-        record = _candidate_record_v2(
-            accepted,
-            closure=closure_evaluation_v2(facts),
-            current=current,
-            scope=scope,
-            diff_digest=diff_digest,
-            manifest_root_value=manifest_root_from_members(candidate_state.members).tagged,
-            timestamp=timestamp,
-            approval_requirements=approval_requirements,
-        )
-    else:
-        record = _candidate_record_v3(
-            accepted,
-            closure=closure_evaluation_v3(facts),
-            current=current,
-            scope=scope,
-            diff_digest=diff_digest,
-            manifest_root_value=candidate_state.merkle.root.tagged,
-            timestamp=timestamp,
-            approval_requirements=approval_requirements,
-        )
+    record = _candidate_record_v3(
+        accepted,
+        closure=closure_evaluation_v3(facts),
+        current=current,
+        scope=scope,
+        diff_digest=diff_digest,
+        manifest_root_value=candidate_state.merkle.root.tagged,
+        timestamp=timestamp,
+        approval_requirements=approval_requirements,
+    )
     return CandidateEvaluation(
         candidate_tree,
         record,
@@ -5008,16 +4958,11 @@ def _evaluate_scoped_members(
 def _multi_member_evidence(
     accepted: list[_AcceptedMember],
     *,
-    closure: ClosureEvaluationV2 | ClosureEvaluationV3,
+    closure: ClosureEvaluationV3,
     current: AcceptedProjectionCoordinate,
     timestamp: str,
 ) -> tuple[tuple[CandidateMemberLawEvidence, ...], tuple[MemberLawEvaluation, ...]]:
-    """Render what the member laws returned as the member/law evidence pair.
-
-    The evidence shape is the same on both sides of the succession -- only the
-    candidate's manifest root and the closure proof's graph commitment move -- so
-    it is rendered once and both record versions carry the identical bytes.
-    """
+    """Render what the member laws returned as the member/law evidence pair."""
 
     law_evidence: list[MemberLawEvaluation] = []
     members: list[CandidateMemberLawEvidence] = []
@@ -5141,126 +5086,6 @@ def _candidate_record_v3(
     return record
 
 
-def _candidate_record_v2(
-    accepted: list[_AcceptedMember],
-    *,
-    closure: ClosureEvaluationV2,
-    current: AcceptedProjectionCoordinate,
-    scope: tuple[str, ...],
-    diff_digest: SemanticDiffDigest,
-    manifest_root_value: str,
-    timestamp: str,
-    approval_requirements: tuple[ApprovalRequirement, ...],
-) -> CandidateRecordV2:
-    """Reproduce the candidate an accepted v2 generation was judged against.
-
-    Nothing produces one of these for a new proposal. It exists so that replaying
-    a generation settled before the succession re-derives the exact object that
-    generation's receipt carries, rather than a newer object that would have to
-    be compared loosely.
-    """
-
-    semantic_candidate = SemanticCandidateV1(
-        parent_semantic_root=current.semantic_root,
-        candidate_manifest_root=manifest_root_value,
-        semantic_diff_digest=diff_digest.tagged,
-        scope=scope,
-        timestamp=timestamp,
-    )
-    members, law_evidence = _multi_member_evidence(
-        accepted,
-        closure=closure,
-        current=current,
-        timestamp=timestamp,
-    )
-    return CandidateRecordV2(
-        candidate=semantic_candidate,
-        candidate_digest=candidate_digest(semantic_candidate).tagged,
-        required_tier=_aggregate_tier([item.required_tier for item in accepted]),
-        approval_requirements=approval_requirements,
-        activation_policy=_aggregate_activation([item.activation_policy for item in accepted]),
-        closure_proof=ClosureProofV2(
-            paths=scope,
-            dependency_graph_digest=closure.dependency_graph_digest,
-            member_evidence_digest=candidate_member_evidence_digest(members),
-        ),
-        members=members,
-        law_evidence=law_evidence,
-        law_digests=_law_digests(accepted),
-        compiler_digest=current.compiler.rule_digest,
-    )
-
-
-_V1_MEMBER_KINDS: Final = frozenset({"document", "subject", "principal-lifecycle"})
-_V1_GOVERNANCE_DISPOSITIONS: Final[dict[str, MutationDisposition]] = {
-    "register": "replacement",
-    "rotate": "hand-authored-successor",
-    "recover": "hand-authored-successor",
-    "revoke": "invalidation",
-}
-
-
-def _candidate_record_v1(
-    accepted: list[_AcceptedMember],
-    *,
-    candidate_tree: Mapping[str, bytes],
-    current: AcceptedProjectionCoordinate,
-    scope: tuple[str, ...],
-    diff_digest: SemanticDiffDigest,
-    manifest_root_value: str,
-    timestamp: str,
-    approval_requirements: tuple[ApprovalRequirement, ...],
-) -> CandidateRecordV1:
-    """Reproduce the candidate an accepted v1 generation was judged against.
-
-    A v1 candidate is always one member of one of three kinds, records that
-    member by its exact file digest rather than by its artifact digest, and names
-    the transition in the governance vocabulary of the time. Every one of those
-    is a property of the object accepted history holds, so they are reproduced
-    here rather than translated.
-    """
-
-    if len(accepted) != 1 or accepted[0].artifact_kind not in _V1_MEMBER_KINDS:
-        raise ProposalIntegrityError("a v1 candidate carries exactly one governed member")
-    item = accepted[0]
-    content = candidate_tree[item.path]
-    operation = item.result.get("governance_operation")
-    disposition: MutationDisposition
-    if isinstance(operation, str):
-        disposition = _V1_GOVERNANCE_DISPOSITIONS[operation]
-    else:
-        disposition = (
-            "replacement" if item.predecessor_artifact_digest is None else "hand-authored-successor"
-        )
-    semantic_candidate = SemanticCandidateV1(
-        parent_semantic_root=current.semantic_root,
-        candidate_manifest_root=manifest_root_value,
-        semantic_diff_digest=diff_digest.tagged,
-        scope=scope,
-        timestamp=timestamp,
-    )
-    return CandidateRecordV1(
-        candidate=semantic_candidate,
-        candidate_digest=candidate_digest(semantic_candidate).tagged,
-        required_tier=item.required_tier,
-        approval_requirements=approval_requirements,
-        activation_policy=item.activation_policy,
-        closure_paths=scope,
-        members=(
-            CandidateMemberEvidence(
-                path=item.path,
-                artifact_kind=item.artifact_kind,
-                artifact_digest=file_digest(content).tagged,
-                disposition=disposition,
-                law_identifier=item.law_identifier,
-                governance_operation=operation if isinstance(operation, str) else None,
-            ),
-        ),
-        law_digests=_law_digests(accepted),
-        compiler_digest=current.compiler.rule_digest,
-    )
-
-
 @timed_phase("evaluate")
 def evaluate_proposal_tree(
     *,
@@ -5276,7 +5101,6 @@ def evaluate_proposal_tree(
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     parent_state: EvaluatedTreeState | None = None,
-    wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None = None,
     acceptance_laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
@@ -5302,12 +5126,6 @@ def evaluate_proposal_tree(
     between the proposed base and the current head; with a proposal that is a
     fork of the accepted base, the rebase then reads only the changed paths
     (``_ForkRebase``) and yields the same tree and conflicts.
-
-    `wire_version` names the candidate shape to speak the judgement in. A new
-    proposal never passes it: this build produces one version. Re-verifying an
-    accepted generation passes the version that generation's own receipt carries,
-    so the reproduced candidate is comparable to the recorded one object for
-    object rather than approximately.
 
     `parent_state` is the accepted parent's already-derived state -- its member
     manifest, its manifest trie, and its dependency index. A caller that holds
@@ -5456,7 +5274,6 @@ def evaluate_proposal_tree(
             parent=parent,
             actor_id=actor_id,
             rebased=rebased,
-            wire_version=wire_version,
             claim_type_expansions=claim_type_expansions,
             promotion_verifier=promotion_verifier,
             producer_receipt_resolver=producer_receipt_resolver,

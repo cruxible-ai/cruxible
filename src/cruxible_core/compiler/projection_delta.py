@@ -31,9 +31,7 @@ from cruxible_core.indexes.sqlite import (
 )
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.settlement import (
-    ChangeSetRecordAnyVersion,
-    ChangeSetRecordV2,
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     VerifiedGenerationBundle,
 )
 
@@ -76,7 +74,7 @@ T = TypeVar("T")
 
 
 # The verified change-set records that touched each of these paths, at the base.
-MemberHistory = Callable[[Sequence[str]], tuple[tuple[str, ChangeSetRecordAnyVersion], ...]]
+MemberHistory = Callable[[Sequence[str]], tuple[tuple[str, ChangeSetRecord], ...]]
 
 
 @dataclass(frozen=True)
@@ -112,7 +110,7 @@ def populate_successor(
     # registry (projection_tree._case_rigid_tops): the parent passed the same one.
     if base.compiler != assembler.accepted.compiler:
         return None
-    if not isinstance(bundle.record, (ChangeSetRecordV2, ChangeSetRecordV3)):
+    if not isinstance(bundle.record, ChangeSetRecord):
         return None
     if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
         return None

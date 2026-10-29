@@ -8,9 +8,8 @@ from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -116,11 +115,7 @@ def proposal_terminal_payload_digest(
     ).tagged
 
 
-def _candidate_member_digest(
-    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
-) -> str | None:
-    if isinstance(member, CandidateMemberEvidence):
-        return member.artifact_digest
+def _candidate_member_digest(member: CandidateMemberLawEvidence) -> str | None:
     return member.candidate_artifact_digest
 
 
@@ -358,7 +353,7 @@ def _receipt_children(
     unchanged: Mapping[str, UnchangedChildReceipt] | None = None,
 ) -> tuple[
     tuple[TerminalEgressChildReceiptV2 | UnchangedChildReceipt, ...],
-    CandidateRecordAnyVersion,
+    CandidateRecord,
 ]:
 
     candidate = result.candidate

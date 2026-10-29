@@ -190,8 +190,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("CaptureVerdictEvidence", "observed_at"): "ASSERTION TIME",
     ("CaptureVerdictEvidence", "source_effective_until"): "VALIDITY WINDOW",
     ("ChangeSetRecord", "sequence"): "SETTLEMENT ORDER",
-    ("ChangeSetRecordV2", "sequence"): "SETTLEMENT ORDER",
-    ("ChangeSetRecordV3", "sequence"): "SETTLEMENT ORDER",
     ("CheckpointGeneration", "sequence"): "SETTLEMENT ORDER",
     ("_ClaimAdjudicationRuleBase", "max_evidence_age"): "VALIDITY WINDOW",
     ("ClaimAdmissionCandidateContext", "evaluation_time"): "EVALUATION INSTANT",

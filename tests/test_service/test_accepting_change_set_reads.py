@@ -75,7 +75,6 @@ class _Work:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from cruxible_client.contracts.candidates import (
-            CandidateMemberEvidence,
             CandidateMemberLawEvidence,
             MemberLawEvaluation,
         )
@@ -98,7 +97,6 @@ class _Work:
 
         monkeypatch.setattr(history_index.VerifiedRecord, "of", classmethod(counted_index))
         for name, model in (
-            ("members copied", CandidateMemberEvidence),
             ("members copied", CandidateMemberLawEvidence),
             ("law evaluations copied", MemberLawEvaluation),
         ):
@@ -122,20 +120,15 @@ class _Work:
             return deepcopy(value, *args)
 
         monkeypatch.setattr(history_index.copy, "deepcopy", counted_deepcopy)
-        for model in (
-            settlement.ChangeSetRecord,
-            settlement.ChangeSetRecordV2,
-            settlement.ChangeSetRecordV3,
-        ):
-            original = model.model_copy
+        original = settlement.ChangeSetRecord.model_copy
 
-            def counted_copy(self_: Any, *args: Any, _original: Any = original, **kwargs: Any):
-                if kwargs.get("deep") or (len(args) > 1 and args[1]):
-                    self.counts["whole records copied"] += 1
-                    self.counts["members copied with a record"] += len(self_.members)
-                return _original(self_, *args, **kwargs)
+        def counted_copy(self_: Any, *args: Any, _original: Any = original, **kwargs: Any):
+            if kwargs.get("deep") or (len(args) > 1 and args[1]):
+                self.counts["whole records copied"] += 1
+                self.counts["members copied with a record"] += len(self_.members)
+            return _original(self_, *args, **kwargs)
 
-            monkeypatch.setattr(model, "model_copy", counted_copy)
+        monkeypatch.setattr(settlement.ChangeSetRecord, "model_copy", counted_copy)
 
     def take(self) -> dict[str, int]:
         found = dict(self.counts)

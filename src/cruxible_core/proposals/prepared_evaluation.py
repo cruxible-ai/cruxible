@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
@@ -549,7 +549,7 @@ class AdmittedEvaluation:
         self,
         *,
         base: AcceptedProjectionCoordinate,
-        candidate: CandidateRecordAnyVersion,
+        candidate: CandidateRecord,
         candidate_tree: Mapping[str, bytes],
         actor_id: str,
         mandate_digest: str | None,

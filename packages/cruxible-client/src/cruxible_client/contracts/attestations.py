@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.candidates import (
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     SemanticCandidateLike,
     candidate_digest,
 )
@@ -181,7 +181,7 @@ def verify_approval(
 
 
 def verify_candidate_approvals(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     submissions: tuple[ApprovalSubmission, ...],
     *,
     principals: PrincipalRegistrySnapshot,
@@ -241,7 +241,7 @@ def verify_candidate_approvals(
 
 
 def approval_requirements_satisfied(
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     approvals: tuple[VerifiedApproval, ...] | list[VerifiedApproval],
     *,
     principals: PrincipalRegistrySnapshot,

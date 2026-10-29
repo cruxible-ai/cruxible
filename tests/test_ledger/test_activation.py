@@ -16,7 +16,7 @@ from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import SemanticRoot, canonical_bytes
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -49,7 +49,6 @@ from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
     SettlementBinding,
     change_set_digest,
-    compute_semantic_root,
     prepare_generation,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -393,12 +392,8 @@ def test_settlement_semantic_and_generation_preimages_match_golden() -> None:
         c_s_digest="sha256:" + "11" * 32,
         base_oid="aa" * 20,
     )
-    semantic = compute_semantic_root(
-        manifest_root_value="sha256:" + "22" * 32,
-        changeset_digest_value="sha256:" + "33" * 32,
-        approval_digests=("sha256:" + "44" * 32, "sha256:" + "55" * 32),
-        parent_semantic_root="sha256:" + "66" * 32,
-    )
+    # The generation descriptor binds whatever semantic root its receipt derived.
+    semantic = SemanticRoot.from_tagged(fixture["semantic_root"])
     descriptor = GenerationDescriptor(
         semantic_root=semantic.value,
         git_oid="aa" * 20,
@@ -408,7 +403,6 @@ def test_settlement_semantic_and_generation_preimages_match_golden() -> None:
     assert (
         canonical_bytes(binding.model_dump(mode="json")).decode() == fixture["settlement_preimage"]
     )
-    assert semantic.tagged == fixture["semantic_root"]
     assert (
         canonical_bytes(descriptor.model_dump(mode="json")).decode()
         == fixture["generation_descriptor_preimage"]

@@ -19,9 +19,8 @@ from cruxible_client.contracts.attestations import (
     approval_statement_bytes,
 )
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -30,7 +29,7 @@ from cruxible_client.contracts.types import PrincipalRecord
 if TYPE_CHECKING:
     from cruxible_client.authoring.sdk import Cruxible
 
-_CANDIDATE: TypeAdapter[CandidateRecordAnyVersion] = TypeAdapter(CandidateRecordAnyVersion)
+_CANDIDATE: TypeAdapter[CandidateRecord] = TypeAdapter(CandidateRecord)
 
 
 class ApprovalReviewMismatch(SdkError):
@@ -79,15 +78,9 @@ def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
         raise ApprovalReviewMismatch("Review candidate, member roll, or settlement base differs")
     if [member.path for member in review.members] != [member.path for member in candidate.members]:
         raise ApprovalReviewMismatch("Review omits or duplicates candidate members")
-    candidate_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidence, ...] = (
-        candidate.members
-    )
+    candidate_members: tuple[CandidateMemberLawEvidence, ...] = candidate.members
     for rendered, member in zip(review.members, candidate_members, strict=True):
-        expected_digest = (
-            member.artifact_digest
-            if isinstance(member, CandidateMemberEvidence)
-            else member.candidate_artifact_digest
-        )
+        expected_digest = member.candidate_artifact_digest
         if (
             rendered.artifact_kind != member.artifact_kind
             or rendered.disposition != member.disposition

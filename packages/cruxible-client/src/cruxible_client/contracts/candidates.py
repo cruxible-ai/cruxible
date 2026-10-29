@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Final, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -30,7 +30,6 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
     ApprovalRequirement,
-    MutationDisposition,
     PermissionTier,
     governance_identifier,
     validate_approval_requirements,
@@ -121,8 +120,6 @@ class SemanticCandidate(_StrictCandidateModel):
     structure of the commitment it signs can never disagree. A flat root is
     refused here exactly as a merkle root is refused by v1: the validator asks
     for its own root type and nothing else parses.
-
-    Nothing produces a v2 candidate yet. The format and its verifier land first.
     """
 
     tag: Literal["playbill-candidate-v2"] = "playbill-candidate-v2"
@@ -176,108 +173,6 @@ def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
     payload = candidate.model_dump(mode="json")
     domain = str(payload.pop("tag"))
     return typed_digest(CandidateDigest, domain, payload)
-
-
-class CandidateRecordV1(_StrictCandidateModel):
-    """Family-neutral validated candidate and its complete law/closure evidence."""
-
-    tag: Literal["playbill-validated-candidate-v1"] = "playbill-validated-candidate-v1"
-    candidate: SemanticCandidateV1
-    candidate_digest: str
-    required_tier: PermissionTier
-    approval_requirements: tuple[ApprovalRequirement, ...]
-    activation_policy: ActivationPolicy
-    closure_paths: tuple[str, ...]
-    members: tuple["CandidateMemberEvidence", ...]
-    law_digests: dict[str, str]
-    compiler_digest: str
-
-    @field_validator("candidate_digest")
-    @classmethod
-    def _candidate_digest(cls, value: str) -> str:
-        CandidateDigest.from_tagged(value)
-        return value
-
-    @field_validator("approval_requirements")
-    @classmethod
-    def _approval_requirements(
-        cls, value: tuple[ApprovalRequirement, ...]
-    ) -> tuple[ApprovalRequirement, ...]:
-        return validate_approval_requirements(value, label="v1")
-
-    @field_validator("law_digests")
-    @classmethod
-    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
-        if not value:
-            raise ValueError("validated candidates require at least one acceptance law")
-        if list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
-            raise ValueError("acceptance-law mapping must be sorted by identifier")
-        for identifier, digest in value.items():
-            governance_identifier(identifier, label="acceptance-law identifier")
-            AcceptanceLawDigest.from_tagged(digest)
-        return value
-
-    @field_validator("compiler_digest")
-    @classmethod
-    def _compiler_digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _complete_binding(self) -> "CandidateRecordV1":
-        if candidate_digest(self.candidate).tagged != self.candidate_digest:
-            raise ValueError("candidate record digest does not reproduce from its complete C_s")
-        if self.closure_paths != self.candidate.scope:
-            raise ValueError("candidate closure must equal the complete candidate scope")
-        member_paths = tuple(member.path for member in self.members)
-        if member_paths != self.closure_paths:
-            raise ValueError("candidate members must enumerate the complete ordered closure")
-        used_laws = {member.law_identifier for member in self.members}
-        if used_laws != set(self.law_digests):
-            raise ValueError("candidate members and acceptance-law mapping differ")
-        return self
-
-
-class CandidateMemberEvidence(_StrictCandidateModel):
-    """Per-member evidence interpreted by one digest-pinned acceptance law."""
-
-    path: str
-    artifact_kind: str
-    artifact_digest: str
-    disposition: MutationDisposition
-    law_identifier: str
-    governance_operation: str | None = None
-
-    @field_validator("path")
-    @classmethod
-    def _path(cls, value: str) -> str:
-        normalized = tuple(normalize_manifest_paths((value,)))
-        if normalized != (value,):
-            raise ValueError("candidate member path must be canonical")
-        return value
-
-    @field_validator("artifact_kind")
-    @classmethod
-    def _artifact_kind(cls, value: str) -> str:
-        return governance_identifier(value, label="artifact kind")
-
-    @field_validator("artifact_digest")
-    @classmethod
-    def _artifact_digest(cls, value: str) -> str:
-        ArtifactDigest.from_tagged(value)
-        return value
-
-    @field_validator("law_identifier")
-    @classmethod
-    def _law_identifier(cls, value: str) -> str:
-        return governance_identifier(value, label="acceptance-law identifier")
-
-    @field_validator("governance_operation")
-    @classmethod
-    def _governance_operation(cls, value: str | None) -> str | None:
-        if value is not None:
-            return governance_identifier(value, label="governance operation")
-        return value
 
 
 class DependencyProofReference(_StrictCandidateModel):
@@ -546,25 +441,6 @@ def _validated_closure_proof_paths(value: tuple[str, ...]) -> tuple[str, ...]:
     return value
 
 
-class ClosureProofV2(_StrictCandidateModel):
-    tag: Literal["playbill-closure-proof-v2"] = "playbill-closure-proof-v2"
-    strategy: Literal["dependency-closure-v2"] = "dependency-closure-v2"
-    paths: tuple[str, ...]
-    dependency_graph_digest: str
-    member_evidence_digest: str
-
-    @field_validator("paths")
-    @classmethod
-    def _paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _validated_closure_proof_paths(value)
-
-    @field_validator("dependency_graph_digest", "member_evidence_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-
 class ClosureProof(_StrictCandidateModel):
     """The v2 closure proof with an incrementally maintainable edge commitment.
 
@@ -604,9 +480,6 @@ class ClosureProof(_StrictCandidateModel):
         return value
 
 
-ClosureProofLike = ClosureProofV2 | ClosureProof
-
-
 def candidate_member_evidence_digest(
     members: tuple[CandidateMemberLawEvidence, ...],
 ) -> str:
@@ -628,20 +501,15 @@ def candidate_member_evidence_digest(
 
 def _verify_multi_member_binding(
     *,
-    candidate: SemanticCandidateLike,
+    candidate: SemanticCandidate,
     candidate_digest_value: str,
-    closure_proof: ClosureProofLike,
+    closure_proof: ClosureProof,
     members: tuple[CandidateMemberLawEvidence, ...],
     law_evidence: tuple[MemberLawEvaluation, ...],
     law_digests: dict[str, str],
     label: str,
 ) -> None:
-    """Check the closed candidate/member/law correspondence shared by v2 and v3.
-
-    The two record versions differ only in which candidate and closure-proof
-    versions they embed; the correspondence they must both close is one rule, so
-    it is written once and reported under the caller's own version label.
-    """
+    """Check the closed candidate/member/law correspondence of one candidate record."""
 
     if candidate_digest(candidate).tagged != candidate_digest_value:
         raise ValueError(f"{label} candidate digest does not reproduce")
@@ -686,67 +554,11 @@ def _validated_multi_member_law_digests(
     return value
 
 
-class CandidateRecordV2(_StrictCandidateModel):
-    """Validated multi-member candidate without changing the frozen C_s."""
-
-    tag: Literal["playbill-validated-candidate-v2"] = "playbill-validated-candidate-v2"
-    candidate: SemanticCandidateV1
-    candidate_digest: str
-    required_tier: PermissionTier
-    approval_requirements: tuple[ApprovalRequirement, ...]
-    activation_policy: ActivationPolicy
-    closure_proof: ClosureProofV2
-    members: tuple[CandidateMemberLawEvidence, ...]
-    law_evidence: tuple[MemberLawEvaluation, ...]
-    law_digests: dict[str, str]
-    compiler_digest: str
-
-    @field_validator("candidate_digest")
-    @classmethod
-    def _candidate_digest(cls, value: str) -> str:
-        CandidateDigest.from_tagged(value)
-        return value
-
-    @field_validator("approval_requirements")
-    @classmethod
-    def _approval_requirements(
-        cls, value: tuple[ApprovalRequirement, ...]
-    ) -> tuple[ApprovalRequirement, ...]:
-        return _validated_multi_member_approval_requirements(value, label="v2")
-
-    @field_validator("law_digests")
-    @classmethod
-    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
-        return _validated_multi_member_law_digests(value, label="v2")
-
-    @field_validator("compiler_digest")
-    @classmethod
-    def _compiler_digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _complete_binding(self) -> "CandidateRecordV2":
-        _verify_multi_member_binding(
-            candidate=self.candidate,
-            candidate_digest_value=self.candidate_digest,
-            closure_proof=self.closure_proof,
-            members=self.members,
-            law_evidence=self.law_evidence,
-            law_digests=self.law_digests,
-            label="v2",
-        )
-        return self
-
-
 class CandidateRecord(_StrictCandidateModel):
-    """The v2 validated candidate carrying a v2 C_s and a v3 closure proof.
+    """The one validated candidate: a v2 C_s with its v3 closure proof.
 
-    Only the two embedded wire versions move. Member evidence, structured law
-    evidence, tier, approval requirements, and activation policy are the v2
-    shapes unchanged, and the correspondence between them is the same rule.
-
-    Nothing produces one of these: settlement, acceptance, and replay refuse it.
+    Every accepted generation is judged against one of these; settlement and
+    replay know no other candidate shape.
     """
 
     tag: Literal["playbill-validated-candidate-v3"] = "playbill-validated-candidate-v3"
@@ -799,42 +611,13 @@ class CandidateRecord(_StrictCandidateModel):
         return self
 
 
-CandidateRecordAnyVersion = CandidateRecordV1 | CandidateRecordV2 | CandidateRecord
-
-CandidateWireVersion = Literal[
-    "playbill-validated-candidate-v1",
-    "playbill-validated-candidate-v2",
-    "playbill-validated-candidate-v3",
-]
-"""Which validated-candidate shape an evaluation is asked to produce.
-
-Production only ever asks for the newest, and nothing chooses this by preference.
-Re-verifying an accepted generation asks for the shape that generation actually
-settled in, read off its own receipt, because a candidate is only reproduced in
-order to be compared with the one accepted history recorded -- and a comparison
-between two different wire shapes of the same judgement would be a change of
-verification, not a succession of formats.
-"""
-
-PRODUCED_CANDIDATE_VERSION: Final[CandidateWireVersion] = "playbill-validated-candidate-v3"
-"""The one candidate version this build produces for a new proposal."""
-
-
-def render_candidate_record(record: CandidateRecordAnyVersion) -> bytes:
+def render_candidate_record(record: CandidateRecord) -> bytes:
     return model_canonical_bytes(record) + b"\n"
 
 
 __all__ = [
-    "PRODUCED_CANDIDATE_VERSION",
     "CandidateMemberLawEvidence",
-    "CandidateWireVersion",
-    "CandidateRecordV1",
-    "CandidateRecordAnyVersion",
-    "CandidateRecordV2",
     "CandidateRecord",
-    "CandidateMemberEvidence",
-    "ClosureProofLike",
-    "ClosureProofV2",
     "ClosureProof",
     "DependencyProofReference",
     "LawEvaluationCoordinate",

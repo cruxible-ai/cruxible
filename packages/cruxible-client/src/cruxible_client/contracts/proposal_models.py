@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.actor_types import TransportCapability
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import (
-    CandidateRecordAnyVersion,
+    CandidateRecord,
     validate_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import (
@@ -738,7 +738,7 @@ class ProposalEvaluationRecord(_StrictProposalModel):
 class ProposalResult(_StrictProposalModel):
     admission: ProposalAdmissionRecord
     evaluation: ProposalEvaluationRecord
-    candidate: CandidateRecordAnyVersion | None = None
+    candidate: CandidateRecord | None = None
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
     @model_validator(mode="after")
@@ -773,7 +773,7 @@ class ProposalPreview(_StrictProposalModel):
 
     tag: Literal["playbill-proposal-preview-v1"] = "playbill-proposal-preview-v1"
     evaluation: ProposalPreviewEvaluation
-    candidate: CandidateRecordAnyVersion | None = None
+    candidate: CandidateRecord | None = None
 
     @model_validator(mode="after")
     def _preview_shape(self) -> "ProposalPreview":

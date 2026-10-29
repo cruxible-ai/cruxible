@@ -5,52 +5,32 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from cruxible_client.contracts.candidates import (
-    CandidateRecordV1,
-    SemanticCandidateV1,
-    candidate_digest,
-    render_candidate_record,
-)
+from cruxible_client.contracts.candidates import candidate_digest, render_candidate_record
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_core.ledger.recovery import candidate_from_change_set_record
 from cruxible_core.proposals import candidate_review_summary as cache
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposal_message import proposal_commit_message
+from cruxible_core.proposals.settlement import parse_change_set_record
 from tests.core_support._support import initialize_local
 from tests.test_proposals.test_proposal_notes import _submit
 
 
-def _legacy():
-    path = "documents/design.json"
-    candidate = SemanticCandidateV1(
-        parent_semantic_root="sha256:" + "11" * 32,
-        candidate_manifest_root="sha256:" + "22" * 32,
-        semantic_diff_digest="sha256:" + "33" * 32,
-        scope=(path,),
-        timestamp="2026-08-11T12:30:00.000000Z",
+def _golden():
+    """The golden current candidate record, rebuilt from its change-set receipt."""
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "changeset-v3.json").read_bytes()
     )
-    return CandidateRecordV1(
-        candidate=candidate,
-        candidate_digest=candidate_digest(candidate).tagged,
-        required_tier="governed_write",
-        approval_requirements=(),
-        activation_policy="snapshot",
-        closure_paths=(path,),
-        members=(
-            {
-                "path": path,
-                "artifact_kind": "document",
-                "artifact_digest": "sha256:" + "66" * 32,
-                "disposition": "replacement",
-                "law_identifier": "playbill.document.v1",
-            },
-        ),
-        law_digests={"playbill.document.v1": "sha256:" + "44" * 32},
-        compiler_digest="sha256:" + "55" * 32,
+    record = parse_change_set_record(
+        golden["canonical_bytes"].encode(), path="changesets/cs-00000000000000000001.json"
     )
+    return candidate_from_change_set_record(record)
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +42,7 @@ def records(tmp_path_factory):
     # it reads this candidate's summary through the module cache. Let it finish
     # here, or it can land in a later test after that test cleared the cache.
     instance.settled_workspace_advertisement()
-    return (_legacy(), current)
+    return (_golden(), current)
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +59,7 @@ def _write(directory, record):
     return path
 
 
-@pytest.mark.parametrize("version", [0, 1], ids=["legacy", "current"])
+@pytest.mark.parametrize("version", [0, 1], ids=["golden", "submitted"])
 def test_summary_reuses_exact_bytes_and_preserves_all_prose(records, tmp_path, version):
     record = records[version]
     _write(tmp_path, record)
@@ -102,7 +82,7 @@ def test_summary_reuses_exact_bytes_and_preserves_all_prose(records, tmp_path, v
 
 
 def test_hit_still_reads_bytes_and_detects_restored_mtime_corruption(tmp_path):
-    record = _legacy()
+    record = _golden()
     path = _write(tmp_path, record)
     cache.read_candidate_review_summary(tmp_path, record.candidate_digest)
     original = path.read_bytes()
@@ -124,7 +104,7 @@ def test_hit_still_reads_bytes_and_detects_restored_mtime_corruption(tmp_path):
 
 
 def test_valid_changed_metadata_is_revalidated_even_with_same_candidate_digest(tmp_path):
-    record = _legacy()
+    record = _golden()
     path = _write(tmp_path, record)
     cache.read_candidate_review_summary(tmp_path, record.candidate_digest)
     changed = record.model_copy(update={"compiler_digest": "sha256:" + "77" * 32})
@@ -139,7 +119,7 @@ def test_valid_changed_metadata_is_revalidated_even_with_same_candidate_digest(t
 
 def test_canonical_candidate_under_another_digest_filename_refuses(tmp_path):
     evidence = ProposalEvidenceStore(tmp_path)
-    record = _legacy()
+    record = _golden()
     path = _write(evidence.candidates, record)
     evidence.read_candidate_review_summary_if_present(record.candidate_digest)
     candidate = record.candidate.model_copy(update={"timestamp": "2026-08-12T12:30:00.000000Z"})
@@ -158,7 +138,7 @@ def test_canonical_candidate_under_another_digest_filename_refuses(tmp_path):
 
 @pytest.mark.parametrize("failure", ["noncanonical", "truncated", "symlink", "directory"])
 def test_present_invalid_evidence_refuses_instead_of_becoming_absent(tmp_path, failure):
-    record = _legacy()
+    record = _golden()
     path = _write(tmp_path, record)
     cache.read_candidate_review_summary(tmp_path, record.candidate_digest)
     raw = path.read_bytes()
@@ -179,7 +159,7 @@ def test_present_invalid_evidence_refuses_instead_of_becoming_absent(tmp_path, f
 
 
 def test_absence_evicts_prior_proof_and_directory_symlink_is_refused(tmp_path):
-    record = _legacy()
+    record = _golden()
     directory = tmp_path / "candidates"
     path = _write(directory, record)
     cache.read_candidate_review_summary(directory, record.candidate_digest)
@@ -195,7 +175,7 @@ def test_absence_evicts_prior_proof_and_directory_symlink_is_refused(tmp_path):
 
 
 def test_entry_and_byte_limits_evict_and_revalidate_on_next_read(tmp_path, monkeypatch):
-    record = _legacy()
+    record = _golden()
     monkeypatch.setattr(cache, "MAX_ENTRIES", 2)
     directories = [tmp_path / str(index) for index in range(3)]
     for directory in directories:
@@ -218,7 +198,7 @@ def test_entry_and_byte_limits_evict_and_revalidate_on_next_read(tmp_path, monke
 
 
 def test_unchanged_hit_does_not_decode_and_never_reuses_a_different_path(tmp_path, monkeypatch):
-    record = _legacy()
+    record = _golden()
     directory = tmp_path / "first"
     _write(directory, record)
     cache.read_candidate_review_summary(directory, record.candidate_digest)

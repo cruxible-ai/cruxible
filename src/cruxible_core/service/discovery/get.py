@@ -27,8 +27,6 @@ from typing import Any, cast
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
-from cruxible_client.contracts.candidates import CandidateMemberEvidence
-from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
@@ -2111,18 +2109,13 @@ class _ClaimVersions:
         if index not in self._claims:
             location = self.locations[index]
             generation = self._history.generation(location.sequence)
-            member = self._history.read_member(location, self._records)
+            self._history.read_member(location, self._records)
             content = self._instance.blob_at(generation.git_oid, self.path)
             if content is None:
                 raise ProjectionIntegrityError("Claim history source is unavailable")
             claim = parse_claim(content, path=self.path)
             digest = claim_artifact_digest(claim).tagged
-            source_digest = (
-                file_digest(content).tagged
-                if isinstance(member, CandidateMemberEvidence)
-                else digest
-            )
-            if source_digest != location.artifact_digest:
+            if digest != location.artifact_digest:
                 raise ProjectionIntegrityError("Claim history source binding differs")
             self._claims[index] = claim
         return self._claims[index]

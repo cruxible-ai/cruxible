@@ -31,7 +31,6 @@ from cruxible_client.contracts.subjects import (
 from cruxible_core.claims.closure import (
     DependencyIndexV1,
     build_dependency_index,
-    closure_evaluation_v2,
     closure_evaluation_v3,
     judge_dependency_closure,
     update_dependency_index,
@@ -105,7 +104,6 @@ def _assert_same_judgement(
     assert incremental.unresolved_pins == oracle.unresolved_pins
     assert incremental.member_dependency_proofs == oracle.member_dependency_proofs
     assert closure_evaluation_v3(incremental) == closure_evaluation_v3(oracle)
-    assert closure_evaluation_v2(incremental) == closure_evaluation_v2(oracle)
 
 
 def _changed(previous: dict[str, bytes], current: dict[str, bytes]) -> tuple[str, ...]:

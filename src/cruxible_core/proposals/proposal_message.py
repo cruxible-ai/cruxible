@@ -21,11 +21,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
 )
 
-CandidateMember = CandidateMemberEvidence | CandidateMemberLawEvidence
+CandidateMember = CandidateMemberLawEvidence
 """Either candidate member shape; both name a disposition, a kind and a path."""
 
 SUBJECT_LIMIT = 72
@@ -50,17 +49,12 @@ def _kind_tally(members: Sequence[CandidateMember]) -> str:
 
 
 def _qualifier(member: CandidateMember) -> str | None:
-    """Name the one fact each member shape adds beyond disposition and kind.
+    """Name whether the member was authored or derived by closure.
 
-    The two shapes qualify a member differently and neither qualifier is
-    guessable from the other: v1 records the governance operation that
-    separates, say, a principal revocation from a rotation, while v2 records
-    whether the member was authored or derived by closure. `authored` is the
-    unremarkable case and is left off rather than restated on every line.
+    `authored` is the unremarkable case and is left off rather than restated on
+    every line.
     """
 
-    if isinstance(member, CandidateMemberEvidence):
-        return member.governance_operation
     return None if member.closure_role == "authored" else member.closure_role
 
 

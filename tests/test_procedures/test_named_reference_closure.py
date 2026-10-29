@@ -684,7 +684,6 @@ def test_genesis_recovery_reproduces_subject_creation_and_key_claim_evidence(tmp
         rebased=False,
         actor_id="owner",
         replaying_accepted=True,
-        wire_version=candidate.tag,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         historical_law_coordinates={

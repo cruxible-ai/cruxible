@@ -17,9 +17,6 @@ from pydantic import ValidationError
 from cruxible_client.contracts.attestations import verify_candidate_approvals
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
-    CandidateRecordAnyVersion,
-    CandidateRecordV1,
-    CandidateRecordV2,
 )
 from cruxible_client.contracts.canonical import (
     GenerationRoot,
@@ -91,9 +88,7 @@ from cruxible_core.proposals.proposals import (
     evaluate_proposal_tree,
 )
 from cruxible_core.proposals.settlement import (
-    ChangeSetRecordAnyVersion,
-    ChangeSetRecordV2,
-    ChangeSetRecordV3,
+    ChangeSetRecord,
     VerifiedGenerationBundle,
     parse_change_set_record,
     render_generation_descriptor,
@@ -128,9 +123,7 @@ class RecoveredGeneration:
     # generation reads it back from the ledger on demand and re-checks the
     # digest, because the ledger already holds these bytes.
     record_digest: str | None = None
-    retained_record: ChangeSetRecordAnyVersion | None = field(
-        default=None, compare=False, repr=False
-    )
+    retained_record: ChangeSetRecord | None = field(default=None, compare=False, repr=False)
     record_loader: Callable[[str, str], bytes | None] | None = field(
         default=None, compare=False, repr=False
     )
@@ -140,7 +133,7 @@ class RecoveredGeneration:
             object.__setattr__(self, "record_digest", self.retained_record.changeset_digest)
 
     @property
-    def record(self) -> ChangeSetRecordAnyVersion | None:
+    def record(self) -> ChangeSetRecord | None:
         if self.retained_record is not None:
             return self.retained_record
         if self.record_digest is None:
@@ -160,9 +153,7 @@ class RecoveredGeneration:
 # evicts in scan order and every write re-parses all of it.
 _RELEASED_RECORD_CAPACITY = 4096
 _RELEASED_RECORD_BYTES = 64 * 1024 * 1024
-_RELEASED_RECORDS: OrderedDict[tuple[str, str], tuple[ChangeSetRecordAnyVersion, int]] = (
-    OrderedDict()
-)
+_RELEASED_RECORDS: OrderedDict[tuple[str, str], tuple[ChangeSetRecord, int]] = OrderedDict()
 _RELEASED_RECORDS_LOCK = threading.Lock()
 _released_record_bytes = 0
 
@@ -175,7 +166,7 @@ def reset_released_records() -> None:
         _released_record_bytes = 0
 
 
-def _load_released_record(generation: RecoveredGeneration) -> ChangeSetRecordAnyVersion:
+def _load_released_record(generation: RecoveredGeneration) -> ChangeSetRecord:
     assert generation.record_digest is not None
     key = (generation.oid, generation.record_digest)
     global _released_record_bytes
@@ -415,50 +406,18 @@ def _parse_note(content: bytes, *, oid: str) -> GenerationDescriptor:
     return descriptor
 
 
-def candidate_from_change_set_record(
-    record: ChangeSetRecordAnyVersion,
-) -> CandidateRecordAnyVersion:
-    """Recover the validated candidate one accepted receipt settled.
+def candidate_from_change_set_record(record: ChangeSetRecord) -> CandidateRecord:
+    """Recover the validated candidate one accepted receipt settled."""
 
-    The candidate version travels with the receipt version, so a receipt from
-    either side of the succession boundary rebuilds exactly the candidate its own
-    generation was judged against.
-    """
-
-    if isinstance(record, ChangeSetRecordV3):
-        return CandidateRecord(
-            candidate=record.candidate,
-            candidate_digest=record.candidate_digest,
-            required_tier=record.required_tier,
-            approval_requirements=record.approval_requirements,
-            activation_policy=record.activation_policy,
-            closure_proof=record.closure_proof,
-            members=record.members,
-            law_evidence=record.law_evidence,
-            law_digests=record.law_digests,
-            compiler_digest=record.compiler_digest,
-        )
-    if isinstance(record, ChangeSetRecordV2):
-        return CandidateRecordV2(
-            candidate=record.candidate,
-            candidate_digest=record.candidate_digest,
-            required_tier=record.required_tier,
-            approval_requirements=record.approval_requirements,
-            activation_policy=record.activation_policy,
-            closure_proof=record.closure_proof,
-            members=record.members,
-            law_evidence=record.law_evidence,
-            law_digests=record.law_digests,
-            compiler_digest=record.compiler_digest,
-        )
-    return CandidateRecordV1(
+    return CandidateRecord(
         candidate=record.candidate,
         candidate_digest=record.candidate_digest,
         required_tier=record.required_tier,
         approval_requirements=record.approval_requirements,
         activation_policy=record.activation_policy,
-        closure_paths=record.closure_proof.paths,
+        closure_proof=record.closure_proof,
         members=record.members,
+        law_evidence=record.law_evidence,
         law_digests=record.law_digests,
         compiler_digest=record.compiler_digest,
     )
@@ -469,7 +428,7 @@ def prepared_generation_for_handoff(
     *,
     parent: RecoveredGeneration,
     bundle: VerifiedGenerationBundle,
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
 ) -> RecoveredGeneration | None:
     """Detach a just-prepared successor, preserving replay-only checks.
 
@@ -653,7 +612,6 @@ def _verify_successor(
         promotion_verifier=promotion_verifier,
         producer_receipt_resolver=producer_receipt_resolver,
         parent_state=window.state,
-        wire_version=candidate.tag,
         acceptance_laws=laws,
         # A settled generation replays its delegated authority from the parent state.
         delegated_mandate_digest=record.mandate_digest,

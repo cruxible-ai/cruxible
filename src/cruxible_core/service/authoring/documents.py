@@ -18,8 +18,8 @@ from cruxible_client.contracts.attestations import (
     verify_approval,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringLanding
-from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
-from cruxible_client.contracts.canonical import ProposalDigest, file_digest
+from cruxible_client.contracts.candidates import CandidateRecord
+from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
@@ -360,7 +360,7 @@ def service_inspect_playbill_proposal(
 def _candidate_for_proposal(
     instance: PlaybillInstance,
     proposal_id: str,
-) -> tuple[ProposalResult, CandidateRecordAnyVersion]:
+) -> tuple[ProposalResult, CandidateRecord]:
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     assert isinstance(inspection.proposal, ProposalResult)
     # The settlement doors, approval and activation, both resolve their
@@ -543,7 +543,7 @@ def service_submit_playbill_approval(
 
 def _approvals_remaining(
     submissions: tuple[ApprovalSubmission, ...],
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     *,
     creator: str,
     principals: PrincipalRegistrySnapshot,
@@ -590,7 +590,7 @@ def _approvals_remaining(
 
 def _approval_receipt(
     proposal_id: str,
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
     verified: VerifiedApproval,
     *,
     activation: ActivationReceipt | None = None,
@@ -615,7 +615,7 @@ def _reconcile_proposal_notes(
     instance: PlaybillInstance,
     *,
     proposal: ProposalResult,
-    candidate: CandidateRecordAnyVersion,
+    candidate: CandidateRecord,
 ) -> None:
     """Prove Git's copy of this proposal still agrees with the evidence store.
 
@@ -968,17 +968,9 @@ def _land_exact_bytes_for_review(
             reason="evaluation_refused",
             detail="; ".join(item.code for item in successor.evaluation.diagnostics),
         )
-    before = {
-        member.path: getattr(
-            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-        )
-        for member in source.candidate.members
-    }
+    before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
     after = {
-        member.path: getattr(
-            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-        )
-        for member in successor.candidate.members
+        member.path: member.candidate_artifact_digest for member in successor.candidate.members
     }
     changed, truncated = _changed_members(before, after)
     return ProposalRecompiled(
@@ -997,7 +989,7 @@ def _land_exact_bytes_for_review(
 
 def _submitted_for_activation(
     instance: PlaybillInstance, submitted: SubmittedProposal
-) -> tuple[ProposalResult, CandidateRecordAnyVersion, AcceptedProjectionCoordinate] | None:
+) -> tuple[ProposalResult, CandidateRecord, AcceptedProjectionCoordinate] | None:
     """The activation inputs of this request's own submission, without reading them back.
 
     What a read-back would establish is checked on the stored records it can
@@ -1026,7 +1018,7 @@ def _submitted_for_activation(
     return proposal, candidate, submitted.current
 
 
-def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecordAnyVersion) -> None:
+def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecord) -> None:
     """Resume a kit add this acceptance completed, looked up by its own changed paths.
 
     The activation is already committed; the resume is isolated from it.
@@ -1148,12 +1140,7 @@ def service_playbill_document_history(
                 raise ProjectionIntegrityError("Document history source is unavailable")
             shell = parse_document(content, path=path)
             digest = document_digest(shell).tagged
-            source_digest = (
-                file_digest(content).tagged
-                if isinstance(member, CandidateMemberEvidence)
-                else digest
-            )
-            if source_digest != location.artifact_digest:
+            if digest != location.artifact_digest:
                 raise ProjectionIntegrityError("Document history source binding differs")
             entries.append(
                 PlaybillDocumentHistoryEntry(

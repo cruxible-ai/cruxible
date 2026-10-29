@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from cruxible_client import contracts
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -20,8 +19,6 @@ from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
-    ChangeSetRecordV2,
-    ChangeSetRecordV3,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
@@ -139,7 +136,7 @@ def _normalized_rows(
     first = generation if after_path is not None else generation + 1
     for sequence in range(first, head_generation + 1):
         record = history[sequence].record
-        if not isinstance(record, ChangeSetRecord | ChangeSetRecordV2 | ChangeSetRecordV3):
+        if not isinstance(record, ChangeSetRecord):
             raise SinceAcceptedStateInvalid(
                 f"{SinceAcceptedStateInvalid.code}: accepted generation has no ChangeSet"
             )
@@ -170,16 +167,10 @@ def _normalized_member_row(
     generation: int,
     changeset_digest: str,
     candidate_digest: str,
-    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
+    member: CandidateMemberLawEvidence,
 ) -> contracts.SinceRow:
-    artifact_digest: str | None
-    predecessor_artifact_digest: str | None
-    if isinstance(member, CandidateMemberEvidence):
-        artifact_digest = member.artifact_digest
-        predecessor_artifact_digest = None
-    else:
-        artifact_digest = member.candidate_artifact_digest
-        predecessor_artifact_digest = member.predecessor_artifact_digest
+    artifact_digest = member.candidate_artifact_digest
+    predecessor_artifact_digest = member.predecessor_artifact_digest
     return contracts.SinceRow(
         generation=generation,
         changeset_digest=changeset_digest,

@@ -45,7 +45,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_payload_digest,
     reference_expectations_digest,
 )
-from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
@@ -134,7 +134,7 @@ class AuthoringIntentCoordinator:
     #: Told the candidate each submit admitted, as admission evaluated it (after
     #: any rebase onto a moved head), so a caller can report its verdicts
     #: without reading them back at the accepted coordinate.
-    on_admitted: Callable[[CandidateRecordAnyVersion], None] | None = None
+    on_admitted: Callable[[CandidateRecord], None] | None = None
 
     @classmethod
     def for_instance(cls, instance: PlaybillInstance) -> "AuthoringIntentCoordinator":
@@ -752,7 +752,6 @@ class AuthoringIntentCoordinator:
         return projected_revision(
             records,
             path=path,
-            input_digest=artifact_digest,
             artifact_digest=artifact_digest,
         )
 

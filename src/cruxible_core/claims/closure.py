@@ -31,11 +31,9 @@ from cruxible_client.contracts.candidates import DependencyProofReference, depen
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     DependencyEdgeRoot,
-    Sha256Value,
     canonical_bytes,
     canonical_list_digest,
     normalize_manifest_paths,
-    typed_digest,
 )
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
@@ -548,8 +546,8 @@ def verify_dependency_edge_root(
     )
 
 
-def _verify_closure_shape(evaluation: "ClosureEvaluationV2 | ClosureEvaluationV3") -> None:
-    """Check the verdict/evidence/scope agreement both closure versions share."""
+def _verify_closure_shape(evaluation: "ClosureEvaluationV3") -> None:
+    """Check the verdict/evidence/scope agreement of one closure evaluation."""
 
     refused = bool(evaluation.missing_dependents or evaluation.unresolved_pins)
     if (evaluation.verdict == "refused") != refused:
@@ -568,31 +566,8 @@ def _proofs_for(
     raise KeyError(path)
 
 
-class ClosureEvaluationV2(_StrictClosureModel):
-    tag: Literal["playbill-closure-evaluation-v2"] = "playbill-closure-evaluation-v2"
-    verdict: Literal["complete", "refused"]
-    paths: tuple[str, ...]
-    dependency_graph_digest: str
-    member_dependency_proofs: tuple[MemberDependencyProofsV1, ...]
-    missing_dependents: tuple[IncompleteClosureItemV1, ...] = ()
-    unresolved_pins: tuple[UnresolvedArtifactPinV1, ...] = ()
-
-    @model_validator(mode="after")
-    def _shape(self) -> "ClosureEvaluationV2":
-        _verify_closure_shape(self)
-        return self
-
-    def proofs_for(self, path: str) -> tuple[DependencyProofReference, ...]:
-        return _proofs_for(self.member_dependency_proofs, path)
-
-
 class ClosureEvaluationV3(_StrictClosureModel):
-    """The v2 closure evaluation with the incrementally maintainable edge root.
-
-    Verdict, scope, per-member proofs, and both refusal shapes are unchanged:
-    only the graph commitment moves, from a digest over both trees' full edge
-    lists to a merkle root over the candidate tree's edge set.
-    """
+    """One closure judgement, committing to the candidate tree's merkle edge root."""
 
     tag: Literal["playbill-closure-evaluation-v3"] = "playbill-closure-evaluation-v3"
     verdict: Literal["complete", "refused"]
@@ -1282,51 +1257,6 @@ def _closure_facts(
     )
 
 
-def evaluate_dependency_closure(
-    *,
-    parent_tree: Mapping[str, bytes],
-    candidate_tree: Mapping[str, bytes],
-    scope: tuple[str, ...],
-) -> ClosureEvaluationV2:
-    """Evaluate closure and commit to both trees' full edge lists in one digest."""
-
-    return closure_evaluation_v2(
-        _closure_facts(
-            parent_tree=parent_tree,
-            candidate_tree=candidate_tree,
-            scope=scope,
-        )
-    )
-
-
-def closure_evaluation_v2(facts: _ClosureFacts) -> ClosureEvaluationV2:
-    """Speak one judgement as the v2 evaluation, whole-edge-list digest and all.
-
-    The digest covers both trees' complete edge lists, so this version is
-    inherently O(total) to state however cheaply the judgement itself was
-    reached. That is the defect the succession retires; until every accepted
-    receipt is v3, replaying a v1 or v2 generation still has to pay it, and must
-    pay it byte-identically.
-    """
-
-    graph_digest = typed_digest(
-        Sha256Value,
-        "playbill-dependency-graph-v2",
-        {
-            "parent_edges": [item.model_dump(mode="json") for item in facts.parent.edges()],
-            "candidate_edges": [item.model_dump(mode="json") for item in facts.candidate.edges()],
-        },
-    ).tagged
-    return ClosureEvaluationV2(
-        verdict=facts.verdict,
-        paths=facts.scope,
-        dependency_graph_digest=graph_digest,
-        member_dependency_proofs=facts.member_dependency_proofs,
-        missing_dependents=facts.missing_dependents,
-        unresolved_pins=facts.unresolved_pins,
-    )
-
-
 def closure_evaluation_v3(facts: _ClosureFacts) -> ClosureEvaluationV3:
     """Speak one judgement as the v3 evaluation, committing to the edge root.
 
@@ -1345,7 +1275,7 @@ def closure_evaluation_v3(facts: _ClosureFacts) -> ClosureEvaluationV3:
     )
 
 
-def evaluate_dependency_closure_v3(
+def evaluate_dependency_closure(
     *,
     parent_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
@@ -1364,7 +1294,6 @@ def evaluate_dependency_closure_v3(
 
 __all__ = [
     "ArtifactDependencyStateV1",
-    "ClosureEvaluationV2",
     "ClosureEvaluationV3",
     "DEFERRED_PIN_TARGET_KINDS",
     "DEPENDENCY_EDGE_SET_DOMAIN",
@@ -1375,13 +1304,11 @@ __all__ = [
     "UnresolvedArtifactPinV1",
     "build_dependency_edge_tree",
     "build_dependency_index",
-    "closure_evaluation_v2",
     "closure_evaluation_v3",
     "dependency_artifacts",
     "dependency_edge_members",
     "dependency_edge_root",
     "evaluate_dependency_closure",
-    "evaluate_dependency_closure_v3",
     "judge_dependency_closure",
     "parse_dependency_artifact",
     "reverse_pin_closure",

@@ -5,7 +5,6 @@ from types import MappingProxyType
 from typing import Protocol, cast
 
 from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
     CandidateMemberLawEvidence,
     MemberLawEvaluation,
 )
@@ -34,7 +33,7 @@ class CompilerBoundRecord(Protocol):
     def compiler_digest(self) -> str: ...
 
     @property
-    def members(self) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidence]: ...
+    def members(self) -> Sequence[CandidateMemberLawEvidence]: ...
 
 
 def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> InstalledAcceptanceLaw:

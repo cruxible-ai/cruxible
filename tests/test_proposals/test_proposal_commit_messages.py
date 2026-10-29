@@ -8,10 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.candidates import (
-    CandidateMemberEvidence,
-    CandidateMemberLawEvidence,
-)
+from cruxible_client.contracts.candidates import CandidateMemberLawEvidence
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import GitError
 from cruxible_core.proposals.proposal_message import (
@@ -92,21 +89,6 @@ def test_a_derived_member_is_qualified_and_an_authored_one_is_not() -> None:
 
     assert "create card cards/ab/CRD-a.json [generated_successor]" in body
     assert f"create document {DOCUMENT_PATH}" in body
-
-
-def test_a_v1_member_is_qualified_by_its_governance_operation() -> None:
-    member = CandidateMemberEvidence(
-        path="principals/owner.json",
-        artifact_kind="principal-lifecycle",
-        artifact_digest="sha256:" + "44" * 32,
-        disposition="replacement",
-        law_identifier="playbill.principal.v1",
-        governance_operation="revoke",
-    )
-
-    assert proposal_commit_message((member,)) == (
-        "replacement principal-lifecycle principals/owner.json [revoke]\n"
-    )
 
 
 def test_an_oversize_summary_is_truncated_in_the_subject_and_kept_whole_below() -> None:
