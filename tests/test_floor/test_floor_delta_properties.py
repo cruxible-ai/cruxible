@@ -493,7 +493,7 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     )
     # The ontology moved too: a kit came and went, a Mandate settled a field.
     assert b"owner: kit=demo edited\n" in shown and b"owner: kit=demo\n" in shown
-    assert b"- mandate onto-mandate  Procedure:onto-tick" in shown and b"  suspended\n" in shown
+    assert b"- mandate onto-mandate  Line:onto-tick-line" in shown and b"  suspended\n" in shown
     assert b"onto-on-generation(generation_accepted)" in shown
     assert "ontology/kinds/project.note.yaml" in paths
     # Contract cards are named and labelled by the public name the CLI shows.
