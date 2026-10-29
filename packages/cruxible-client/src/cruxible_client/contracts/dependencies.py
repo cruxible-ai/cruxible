@@ -13,6 +13,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
     ArtifactRef,
 )
+from cruxible_client.contracts.shapes import CONTRACT_PIN_ROLE, contract_identity
 
 # These registry/manifest kinds have no governed ledger envelope. A digest
 # names their material; interpreting it as a head-bound name would lose it.
@@ -149,11 +150,28 @@ def dependency_pins(
             for ref in getattr(artifact, "bindings", {}).values()
         )
     if getattr(artifact, "identity", None) is not None:
-        if artifact.identity.kind == "QueryDefinition" and not getattr(artifact, "pins", ()):
-            pins.extend(
-                ArtifactRef(role="claim-type", target=ArtifactIdentity(kind="ClaimType", name=name))
-                for name in artifact.referenced_predicates
-            )
+        if artifact.identity.kind == "QueryDefinition":
+            if not getattr(artifact, "pins", ()):
+                pins.extend(
+                    ArtifactRef(
+                        role="claim-type", target=ArtifactIdentity(kind="ClaimType", name=name)
+                    )
+                    for name in artifact.referenced_predicates
+                )
+            # parameter_contract and row_contract are ContractRef, not
+            # ArtifactRef/ArtifactPin/ArtifactNameRef, so the generic walk
+            # above never finds them; name them explicitly here.
+            for contract_ref in (
+                getattr(artifact, "parameter_contract", None),
+                getattr(artifact, "row_contract", None),
+            ):
+                if contract_ref is not None:
+                    pins.append(
+                        ArtifactRef(
+                            role=CONTRACT_PIN_ROLE,
+                            target=contract_identity(contract_ref.name, contract_ref.version),
+                        )
+                    )
         policy = getattr(artifact, "acquisition_policy", None)
         if isinstance(policy, str):
             pins.append(

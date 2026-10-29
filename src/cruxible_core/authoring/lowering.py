@@ -251,7 +251,13 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.resolution_contracts import resolution_contract_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_client.contracts.shapes import contract_path, contract_path_for_identity
+from cruxible_client.contracts.shapes import (
+    ContractRef,
+    contract_digest,
+    contract_path,
+    contract_path_for_identity,
+    parse_contract,
+)
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
@@ -3223,6 +3229,41 @@ def _procedure_lowered(
     )
 
 
+def _pin_query_contract_ref(
+    ref: ContractRef, *, tree: Mapping[str, bytes], label: str
+) -> ContractRef:
+    """Pin ``ref`` to its accepted digest, the way a nested Contract pin is lowered.
+
+    An author writes ``name@N`` unpinned; lowering resolves it against the
+    candidate tree the same way :func:`render_contract_member` pins a
+    Contract's own nested refs, so the stored QueryDefinition never carries a
+    parameter_contract or row_contract without an exact digest.
+    """
+
+    target_path = contract_path(ref.name, ref.version)
+    content = tree.get(target_path)
+    if content is None:
+        _refuse(
+            "cruxible.query_definition.contract_unresolved",
+            "query_definition",
+            f"The {label} Contract {ref.spelling} is not accepted.",
+            repair_kind="replace_input",
+            repair_description=f"Accept {ref.spelling} first, or in the same change set.",
+        )
+    digest = contract_digest(parse_contract(content, path=target_path)).tagged
+    if ref.digest is not None and ref.digest != digest:
+        _refuse(
+            "cruxible.query_definition.contract_unresolved",
+            "query_definition",
+            f"The {label} Contract {ref.spelling} is accepted at another digest.",
+            repair_kind="replace_input",
+            repair_description=(
+                f"Write {ref.spelling} without a digest; lowering pins the accepted version."
+            ),
+        )
+    return ref.model_copy(update={"digest": digest})
+
+
 def _render_non_procedure_member(
     payload: ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
@@ -3418,6 +3459,12 @@ def _render_non_procedure_member(
                         repair_description="Use the accepted pin or omit it for base resolution.",
                     )
                 pins[key] = pin
+            for attr, label in (("parameter_contract", "parameter"), ("row_contract", "row")):
+                ref = getattr(query, attr)
+                if ref is not None:
+                    query = query.model_copy(
+                        update={attr: _pin_query_contract_ref(ref, tree=tree, label=label)}
+                    )
             if not light:
                 body = query.model_dump(mode="json")
                 body["pins"] = [

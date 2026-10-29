@@ -339,6 +339,41 @@ def test_an_unbounded_parameter_cannot_satisfy_a_refined_row_field() -> None:
     assert "cruxible.query_definition.row_disagrees" in problems
 
 
+def test_a_query_definitions_row_contract_pins_an_exact_digest(tmp_path: Path) -> None:
+    """Lowering pins row_contract/parameter_contract the same way a Contract pins a nested one."""
+
+    from cruxible_client.contracts.query.definitions import (
+        parse_query_definition,
+        query_definition_path,
+    )
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, parse_contract
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    _accept(instance, owner, _row_contract("project.status-row", item_id="string", status="string"))
+    _accept(instance, owner, _status_query("project.status-row@1"))
+    tree = _accepted_tree(instance)
+    row_path = contract_path("project.status-row", 1)
+    expected_digest = contract_digest(parse_contract(tree[row_path], path=row_path)).tagged
+    path = query_definition_path("project.work_items_by_status")
+    stored = parse_query_definition(tree[path], path=path)
+    assert stored.row_contract is not None
+    assert stored.row_contract.digest == expected_digest
+
+
+def test_a_query_definitions_contract_pins_are_dependencies() -> None:
+    """dependency_pins recognizes row_contract/parameter_contract, not only pins{}."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.dependencies import dependency_pins
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    spec = QueryDefinitionSpec.model_validate({**data, "row_contract": "project.status-row@1"})
+    targets = {pin.target for pin in dependency_pins(spec)}
+    assert ArtifactIdentity(kind="Contract", name="project.status-row/v1") in targets
+
+
 def accept_contract_world(tmp_path: Path) -> PlaybillInstance:
     """An instance holding security.epss-row@1 and @2 and security.epss-page@1."""
 
