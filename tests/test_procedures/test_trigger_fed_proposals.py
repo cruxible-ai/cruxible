@@ -61,25 +61,14 @@ PROPOSER = "advisory-proposer"
 def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """The plain Source Procedure produces Captures; a proposing Line consumes them."""
 
-    instance, owner, procedure, root, policy = fixtures._world(tmp_path)
+    instance, owner, _procedure, root, policy = fixtures._world(tmp_path)
     # A second Procedure of the same shape, ending in a proposal terminal.
     monkeypatch.setattr(fixtures, "PROCEDURE_NAME", PROPOSER)
-    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
-
-    bound = _accepted_procedure(
-        instance,
-        coordinate=instance.accepted_coordinate(),
-        name=procedure.identity.name,
-        bind_references=True,
-    )
-    pins = {pin.role: pin for pin in bound.procedure.pins}
     proposer = terminal_procedure(
         fixtures._procedure(
             instance,
             root=root,
             contract=capture_contract(),
-            provider_pin=pins["provider"],
-            interface_pin=pins["provider-interface"],
         )
     )
     monkeypatch.undo()
@@ -87,7 +76,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     selector = NamedCaptureEventSelector(
         capture_contract_identity=contract.identity,
     )
-    served = fixtures._served_line(proposer, policy)
+    served = fixtures._served_line(instance, proposer, policy)
     line = type(served).model_validate(
         {
             **served.model_dump(mode="python"),
@@ -97,7 +86,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         }
     )
     claim_type = _claim_type(capture_contract_digest(contract).tagged)
-    mandate = fixtures._line_mandate(proposer).model_copy(
+    mandate = fixtures._line_mandate(line, proposer).model_copy(
         update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="proposer-mandate")}
     )
     fixtures._accept_more(
