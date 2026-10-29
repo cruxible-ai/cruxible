@@ -23,8 +23,6 @@ from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecision,
     AcquisitionRuleAny,
     InputAcquisitionRule,
-    acquisition_policy_digest,
-    acquisition_rule,
 )
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
@@ -153,7 +151,6 @@ from cruxible_client.contracts.resolution_contracts import InvestigationBinding
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGESTS,
     ExecutedWorkspaceFileSourceRequestV2,
     SourceReadReceipt,
     WorkspaceBindingDigestAuthored,
@@ -221,6 +218,11 @@ from cruxible_core.procedures.input_planes import (
     validate_run_input_vector,
 )
 from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
+from cruxible_core.procedures.ports import (
+    AcquisitionRules,
+    bound_operation,
+    policy_acquisition_rules,
+)
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.procedures.terminal_dependencies import (
     TAINT_ACCEPTED_STATE,
@@ -2680,6 +2682,7 @@ class ProcedureExecutor:
         | None = None,
         capture_contracts: Mapping[str, CaptureContract] | None = None,
         acquisition_policy: SourceAcquisitionPolicy | None = None,
+        acquisition_rules: AcquisitionRules | None = None,
         default_authorizations: tuple[str, ...] = (),
         effective_rung: EffectiveRungV1 | None = None,
         egress_sink: TerminalEgressSinkProtocol | None = None,
@@ -2689,6 +2692,8 @@ class ProcedureExecutor:
         nested_runner: NestedProcedureRunner | None = None,
         parent_context: ParentInvocationContext | None = None,
     ) -> None:
+        if acquisition_policy is not None and acquisition_rules is not None:
+            raise ValueError("pass acquisition rules or the policy they adapt, not both")
         self.journal = journal
         self.bodies = bodies
         self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
@@ -2699,7 +2704,12 @@ class ProcedureExecutor:
         self.provider_runtime_invoker = provider_runtime_invoker
         self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
         self.capture_contracts = dict(capture_contracts or {})
-        self.acquisition_policy = acquisition_policy
+        # Execution reads acquisition only through the port.
+        self.acquisition_rules = (
+            acquisition_rules
+            if acquisition_rules is not None
+            else policy_acquisition_rules(acquisition_policy)
+        )
         self.default_authorizations = default_authorizations
         self.effective_rung = effective_rung
         self.egress_sink = egress_sink
@@ -3109,9 +3119,8 @@ class ProcedureExecutor:
             return
         admission = prepared.admission
         if (
-            self.acquisition_policy is None
-            or acquisition_policy_digest(self.acquisition_policy).tagged
-            != admission.acquisition_policy_digest
+            self.acquisition_rules is None
+            or self.acquisition_rules.digest != admission.acquisition_policy_digest
         ):
             raise ExecutionError(
                 "source_acquisition_plan_mismatch: accepted Source policy is unavailable"
@@ -3152,7 +3161,7 @@ class ProcedureExecutor:
                     or captured_contract.identity != contract_pin.target
                     or capture_contract_digest(captured_contract).tagged
                     != supplied.capture_contract_digest
-                    or self._acquisition_rule(node.as_) is None
+                    or self._acquisition_rule(node) is None
                     or selected is None
                     or selected.disposition != "selected"
                     or selected.selected_capture_digests != (supplied.capture_digest,)
@@ -3987,7 +3996,7 @@ class ProcedureExecutor:
                 "Graph-v4 Source execution requires the landed B2 acquisition carrier.",
                 node_id=node.node_id,
             )
-        rule = self._acquisition_rule(node.as_)
+        rule = self._acquisition_rule(node)
         if rule is None:
             raise _RunRefusal(
                 "source_acquisition_unavailable",
@@ -4024,7 +4033,7 @@ class ProcedureExecutor:
             )
         )
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
-        if occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS:
+        if bound_operation(occurrence).builtin == "workspace.file":
             # The author names the workspace logically, or not at all; the daemon
             # resolves its root and executes -- and journals -- the request with
             # that root's binding digest, before anything is read.
@@ -4288,10 +4297,11 @@ class ProcedureExecutor:
             )
         reserved_store.release()
 
-    def _acquisition_rule(self, input_name: str) -> AcquisitionRuleAny | None:
-        if self.acquisition_policy is None:
+    def _acquisition_rule(self, node: SourceNode) -> AcquisitionRuleAny | None:
+        if self.acquisition_rules is None:
             return None
-        return acquisition_rule(self.acquisition_policy, input_name)
+        # A Source node's one Capture output is named by its alias.
+        return self.acquisition_rules.rule_for(node.node_id, node.as_)
 
     def _bind_acquisition(
         self,

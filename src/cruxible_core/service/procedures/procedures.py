@@ -47,6 +47,7 @@ from cruxible_core.procedures.execution import (
     StateTapReadResultV1,
 )
 from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
+from cruxible_core.procedures.ports import policy_acquisition_rules
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import service_run_playbill_query
@@ -329,7 +330,7 @@ def service_execute_direct_procedure(
             contract_validator=validator,
             provider_runtime_invoker=provider_runtime_invoker,
             provider_runtime_invoker_factory=provider_runtime_invoker_factory,
-            acquisition_policy=acquisition_policy,
+            acquisition_rules=policy_acquisition_rules(acquisition_policy),
             capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
             effective_rung=effective_rung,
