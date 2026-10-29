@@ -493,12 +493,6 @@ def test_sdk_get_answers_every_kind_get_resolves(
     from cruxible_client.authoring.sdk_types import ReferenceKindError
     from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND
 
-    # Known real src gap, not a test-shape issue, left unfixed here: server-side
-    # GET_DETAILS_BY_KIND declares a "contract" ref kind
-    # (cruxible_client.contracts.get_reads:109), but the SDK's RefKind enum
-    # (cruxible_client.authoring.sdk_types) has no CONTRACT member and
-    # cruxible_client.authoring.sdk._GET_REF_KINDS has no "contract" entry, so
-    # pb.get("Contract:...") cannot resolve through the typed SDK.
     assert set(_GET_REF_KINDS) == set(GET_DETAILS_BY_KIND)
     client, instance_id, _key = owned_playbill_http
     pb = _sdk(client, instance_id, tmp_path)
@@ -509,6 +503,9 @@ def test_sdk_get_answers_every_kind_get_resolves(
         "Trigger:floor-refresh": RefKind.TRIGGER,
         "Principal:owner": RefKind.PRINCIPAL,
         "Provider:cruxible-builtin": RefKind.PROVIDER,
+        # workspace.file.result is core-owned and genesis-seeded (B2's
+        # ledger/bootstrap.py seed set), so it is live on every fresh instance.
+        "Contract:workspace.file.result@1": RefKind.CONTRACT,
     }
     for ref, kind in expected.items():
         card = pb.get(ref)

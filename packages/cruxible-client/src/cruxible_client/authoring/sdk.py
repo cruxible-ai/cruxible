@@ -455,6 +455,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
     "provider": RefKind.PROVIDER,
     "subject_kind": RefKind.SUBJECT_KIND,
+    "contract": RefKind.CONTRACT,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {

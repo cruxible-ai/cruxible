@@ -41,6 +41,7 @@ class RefKind(str, Enum):
     PROCEDURE_RUNTIME_POLICY = "procedure_runtime_policy"
     PROVIDER = "provider"
     SUBJECT_KIND = "subject_kind"
+    CONTRACT = "contract"
 
 
 @runtime_checkable
