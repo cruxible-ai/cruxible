@@ -351,3 +351,61 @@ def test_an_undeclared_key_beside_a_refusals_envelope_is_refused():
     with pytest.raises(OperationValueRefused) as excinfo:
         validate_operation_value(bad, outer, resolve=resolve)
     assert "undeclared" in str(excinfo.value)
+
+
+# --- F06a fix round 4: the refusal's Contract reference closes too ----------
+
+
+def test_an_undeclared_key_inside_a_refusals_contract_reference_is_refused():
+    """F06a: Codex's exact reproduction -- a refusal's typed Contract
+    reference (``name``, ``version``, ``digest``) stayed open, so
+    ``undeclared: retained`` beside the correct members passed through."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_refusal_contract_ref",
+            "version": 1,
+            "fields": {"wrapped": {"type": "refusal<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    inner_digest = contract_digest(INNER).tagged
+    good_ref = {"name": "test.inner", "version": 1, "digest": inner_digest}
+    good = {"wrapped": {"code": "some_code", "contract": good_ref, "body": {"value": 1}}}
+    validate_operation_value(good, outer, resolve=resolve)
+    bad_ref = {**good_ref, "undeclared": "retained"}
+    bad = {"wrapped": {"code": "some_code", "contract": bad_ref, "body": {"value": 1}}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)
+
+
+def test_an_undeclared_key_inside_a_nested_refusals_contract_reference_is_refused():
+    """The same closure reached through a wrapping Contract (F06's
+    "nested combinations" test gap)."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_refusal_contract_ref_nested",
+            "version": 1,
+            "fields": {
+                "choices": {
+                    "type": "list<refusal<test.inner@1>>{max_items: 5}",
+                },
+            },
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    inner_digest = contract_digest(INNER).tagged
+    good_ref = {"name": "test.inner", "version": 1, "digest": inner_digest}
+    good = {
+        "choices": [{"code": "some_code", "contract": good_ref, "body": {"value": 1}}],
+    }
+    validate_operation_value(good, outer, resolve=resolve)
+    bad_ref = {**good_ref, "undeclared": "retained"}
+    bad = {
+        "choices": [{"code": "some_code", "contract": bad_ref, "body": {"value": 1}}],
+    }
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)

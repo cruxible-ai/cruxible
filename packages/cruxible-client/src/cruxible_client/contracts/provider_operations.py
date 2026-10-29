@@ -433,6 +433,18 @@ def _close_member(
         # (not field_result-wrapped), exactly like a nested Contract's fields.
         if isinstance(value, Mapping):
             _close_envelope_keys(value, _REFUSAL_ENVELOPE_KEYS, path=path, problems=problems)
+            # F06a: the typed Contract reference (name, version, digest) is
+            # itself a fixed-shape wrapper member, closed the same way --
+            # shapes._check_refusal reads these three keys individually and
+            # never validates the mapping through the strict ContractRef model.
+            contract_ref_value = value.get("contract")
+            if isinstance(contract_ref_value, Mapping):
+                _close_envelope_keys(
+                    contract_ref_value,
+                    _REFUSAL_CONTRACT_REF_KEYS,
+                    path=f"{path}.contract",
+                    problems=problems,
+                )
             target = resolve(field_type.contract)
             refusal_body = value.get("body")
             if target is not None and isinstance(refusal_body, Mapping):
@@ -453,6 +465,8 @@ _FIELD_RESULT_ENVELOPE_KEYS: dict[str | None, frozenset[str]] = {
 _RESULT_RECORD_ARM_KEYS: frozenset[str] = frozenset({"tag", "record"})
 #: refusal<C>'s own wire keys.
 _REFUSAL_ENVELOPE_KEYS: frozenset[str] = frozenset({"code", "contract", "body"})
+#: refusal<C>'s own typed Contract reference's wire keys (F06a).
+_REFUSAL_CONTRACT_REF_KEYS: frozenset[str] = frozenset({"name", "version", "digest"})
 #: record<C>'s own wire keys.
 _RECORD_ENVELOPE_KEYS: frozenset[str] = frozenset({"record", "key", "fields"})
 
