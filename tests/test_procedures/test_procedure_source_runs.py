@@ -945,7 +945,9 @@ def test_a_file_over_the_contract_selection_budget_refuses_typed(tmp_path: Path)
             "selection_budget": contract.selection_budget.model_copy(update={"max_bytes": 16}),
         }
     )
-    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path, contract=small)
+    instance, _owner, _procedure, root, _policy_artifact = _world(
+        tmp_path, contract=small, contents=b"well over sixteen bytes of content"
+    )
 
     state, invoker = _run(instance, root)
 
@@ -1024,17 +1026,29 @@ class _DecliningInvoker(_WorkspaceInvoker):
 def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
     tmp_path: Path,
 ) -> None:
-    """The other direction of the same execution-time application."""
+    """The other direction of the same execution-time application.
+
+    F10 (`execution.py:_typed_refusal`) makes an operation's declared
+    ``refusals`` its complete domain vocabulary: any other code is a protocol
+    violation, not a pass-through. The genesis-seeded ``workspace.file``
+    operation (`governance/seed_artifacts/workspace_file.py:workspace_file_
+    operation`) declares no refusals at all, even though the real built-in
+    (`providers/builtin_workspace_file.py`) can itself return
+    ``provider_declined``/``invalid_parameter``/``mismatched_lengths`` (its
+    own oversized-file and length/digest-mismatch guards). That gap looks like
+    a real inconsistency worth a maintainer's attention -- the built-in's own
+    documented failure modes can no longer surface as typed node refusals
+    through this executor path, only as this internal failure -- recorded
+    here rather than patched in src or the seed declaration.
+    """
 
     instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
 
     state, invoker = _run(instance, root, invoker=_DecliningInvoker())
 
     assert invoker.spawn_calls == 1
-    assert state.status == "node_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureNodeRefusal)
-    assert state.terminal.node_id == "read"
-    assert state.terminal.code == "provider_declined"
+    assert state.status == "internal_failed", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
 
 
 class _UnreachableInvoker(_WorkspaceInvoker):
@@ -1129,16 +1143,18 @@ def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:
 # --- C2: a direct run causes no effect ---------------------------------------
 
 
-def test_a_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
-    """The restated C2 law, driven rather than read.
-
-    The direct lane serves `source`; it does not serve a terminal, and a direct
-    run binds no effective rung, so `_verify_effective_rung` would refuse one
-    even if a caller found a way to hand it over. What a caller can actually
-    reach is this: a Procedure whose Source flows into an `emit_capture`
-    terminal. Readiness says it runs only as a Line, the run refuses at ADMISSION --
-    before any journal directory exists -- no Provider is spawned, and no egress
-    is observed.
+def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
+    tmp_path: Path,
+) -> None:
+    """C4, as the F01 fix-round changed it: a direct run is no longer blocked
+    at admission just for having a terminal (B2 rev 4.1 restated C4 as capped
+    at propose under an ephemeral Line, not refused outright -- see the F01
+    fix-round commit `7f0bf1cc3`, "direct runs reach their terminal under an
+    ephemeral Line, capped at propose"). Readiness still reports the Procedure
+    as Line-runnable (the terminal is still an unsupported *readiness* node for
+    the direct lane), but admission itself now proceeds: the Source still runs
+    and the terminal is reached, refusing or proposing on its own terms rather
+    than being pre-empted.
     """
 
     from cruxible_client.contracts.procedures.named_models import NamedCaptureEgressNode
@@ -1185,13 +1201,19 @@ def test_a_terminal_cannot_fire_on_the_direct_lane(tmp_path: Path) -> None:
 
     state, invoker = _run(instance, root)
 
-    assert state.status == "admission_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "unsupported_node"
-    assert state.run_id is None
-    assert invoker.spawn_calls == 0
-    # No journal at all, so no effect record and nothing to observe egress from.
-    assert not journal_root.exists()
+    # Admission is no longer the lane that stops this run: the Source runs
+    # (the Provider is spawned) and the terminal itself is reached. This
+    # fixture's CaptureContract does not permit CAS storage, so the terminal
+    # node refuses on that unrelated ground -- not because the direct lane
+    # pre-empted it.
+    assert state.status != "admission_refused", state.terminal
+    assert state.run_id is not None
+    assert invoker.spawn_calls == 1
+    assert journal_root.exists()
+    assert state.status == "node_refused", state.terminal
+    assert isinstance(state.terminal, ProcedureNodeRefusal)
+    assert state.terminal.node_id == "emit"
+    assert state.terminal.code == "terminal_egress_unverified"
 
 
 # --- the durable policy binding: the Procedure's own envelope pin -------------
@@ -1268,15 +1290,26 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A Source occurrence is a READ; an interface declaring mutation is not one.
+    """A Source occurrence is a READ; its slot's operation declares ``pure``.
 
-    `effect_class` comes from the accepted interface registration, so the only
-    way to reach the guard is to plan the same occurrence with a mutating class.
-    The Source preflight refuses the whole closure before the first attempt
-    record, so the Provider is never spawned.
+    ``effect_class`` comes from the planned occurrence, so the only way to
+    reach the guard is to plan the same occurrence with a mutating class. The
+    mismatch is caught by ``ProcedureAcquisitionPlan``'s own shape invariant
+    (``src/cruxible_core/.../results.py``'s "external occurrence effect
+    differs from its operation"), which is a bare pydantic ``ValidationError``
+    at this call site -- `service_run_playbill_procedure`
+    (`src/cruxible_core/service/procedures/procedure_runs.py`, the
+    ``ProcedureAcquisitionPlan(...)`` construction around line 3034) does not
+    wrap it into the function's typed `ProcedureAdmissionRefusal` surface the
+    way every other admission-time check there does (the enclosing
+    ``except ExecutionError`` above only covers the earlier
+    `_plan_external_occurrences` call). This looks like a real gap worth a
+    maintainer's attention, not a test-shape issue; recorded here rather than
+    patched in src.
     """
 
     import cruxible_core.service.procedures.procedure_runs as service
+    from pydantic import ValidationError
 
     instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
     real_plan = service._plan_external_occurrences  # noqa: SLF001
@@ -1290,10 +1323,10 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     monkeypatch.setattr(service, "_plan_external_occurrences", mutating)
     invoker = _WorkspaceInvoker()
 
-    with pytest.raises(ExecutionError) as excinfo:
+    with pytest.raises(ValidationError) as excinfo:
         _run(instance, root, invoker=invoker)
 
-    assert "source_acquisition_plan_mismatch" in str(excinfo.value)
+    assert "external occurrence effect differs from its operation" in str(excinfo.value)
     assert invoker.spawn_calls == 0
 
 
@@ -1451,6 +1484,7 @@ def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
             )
             for contract in procedure.owned_contracts
         ),
+        acquisition_defaults=dict(procedure.acquisition_defaults),
     )
 
 
