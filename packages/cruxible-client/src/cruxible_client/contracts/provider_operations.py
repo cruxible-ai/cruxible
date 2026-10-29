@@ -392,7 +392,13 @@ def _close_member(
         # The envelope's own keys close by its tag's arm (F06); only
         # "present" also carries a value to close further, at ``field_type.value``.
         if isinstance(value, Mapping):
-            allowed = _FIELD_RESULT_ENVELOPE_KEYS.get(value.get("tag"))
+            # F06b: the tag is an unchecked discriminator here, before
+            # ``check_value`` ever validates it -- canonical JSON permits a
+            # list or object value, neither hashable, so the lookup key is
+            # checked first and anything else is simply never an arm (no
+            # closure performed; ``check_value`` refuses it as usual).
+            tag = value.get("tag")
+            allowed = _FIELD_RESULT_ENVELOPE_KEYS.get(tag) if isinstance(tag, str) else None
             if allowed is not None:
                 _close_envelope_keys(value, allowed, path=path, problems=problems)
             if value.get("tag") == "present" and "value" in value:

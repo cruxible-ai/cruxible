@@ -409,3 +409,28 @@ def test_an_undeclared_key_inside_a_nested_refusals_contract_reference_is_refuse
     with pytest.raises(OperationValueRefused) as excinfo:
         validate_operation_value(bad, outer, resolve=resolve)
     assert "undeclared" in str(excinfo.value)
+
+
+# --- F06b fix round 4: a malformed tag refuses typed, not a TypeError -------
+
+
+@pytest.mark.parametrize("malformed_tag", [[], {}])
+def test_a_malformed_field_result_tag_refuses_typed_not_a_python_exception(malformed_tag):
+    """F06b: Codex's exact reproduction -- ``{"tag": []}``/``{"tag": {}}``
+    (canonical JSON permits list/object values) crashed the envelope-key
+    lookup with ``TypeError: unhashable type`` instead of refusing typed,
+    exactly as the parent validator (``check_value``) already does for the
+    same malformed value."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_field_result_malformed_tag",
+            "version": 1,
+            "fields": {"wrapped": {"type": "field_result<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    bad = {"wrapped": {"tag": malformed_tag}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "type_mismatch" in str(excinfo.value)
