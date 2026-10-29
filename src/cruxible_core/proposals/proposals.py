@@ -385,6 +385,7 @@ from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.shapes import Contract, ContractRef
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
     from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
 
@@ -2780,6 +2781,21 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
     return frozenset(item.query_definition_digest for item in requirements)
 
 
+def _candidate_contract_resolver(
+    tree: Mapping[str, bytes],
+) -> Callable[[ContractRef], Contract | None]:
+    """Read a pinned Contract version from the candidate tree, which includes this set."""
+
+    from cruxible_client.contracts.shapes import contract_path, parse_contract
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        path = contract_path(ref.name, ref.version)
+        content = tree.get(path)
+        return None if content is None else parse_contract(content, path=path)
+
+    return resolve
+
+
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
     try:
@@ -2804,6 +2820,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
         by_name=context.current.compiler == LIGHT_ARTIFACTS_COMPILER,
+        contracts=_candidate_contract_resolver(context.candidate_tree),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

@@ -6,11 +6,17 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.authoring.examples import query_claims_by_type_example
 from cruxible_client.contracts.authoring.inputs import (
     AuthoringInputError,
     ChangeSetInput,
     ContractInput,
+    QueryDefinitionInput,
     lower_authoring_input,
+)
+from cruxible_client.contracts.query.definitions import (
+    parse_query_definition,
+    query_definition_path,
 )
 from cruxible_client.contracts.shapes import (
     contract_digest,
@@ -28,7 +34,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from tests.core_support._support import initialize_local
-from tests.test_authoring.test_authoring_preflight import TIMESTAMP
+from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_ledger.test_activation import _sign
 
 ACTOR = AuthenticatedActor(actor_id="owner")
@@ -44,7 +50,9 @@ def _contract(version: int = 1, **fields: object) -> ContractInput:
     )
 
 
-def _refusal(instance: PlaybillInstance, value: ContractInput | ChangeSetInput) -> str:
+def _refusal(
+    instance: PlaybillInstance, value: ContractInput | ChangeSetInput | QueryDefinitionInput
+) -> str:
     """The refusal one authoring earns, from lowering or from its preflight frontier."""
 
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -58,7 +66,9 @@ def _refusal(instance: PlaybillInstance, value: ContractInput | ChangeSetInput) 
 
 
 def _accept(
-    instance: PlaybillInstance, owner: object, value: ContractInput | ChangeSetInput
+    instance: PlaybillInstance,
+    owner: object,
+    value: ContractInput | ChangeSetInput | QueryDefinitionInput,
 ) -> None:
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     submitted = coordinator.compile_and_submit(
@@ -161,3 +171,84 @@ def test_an_unresolved_nested_pin_is_refused(tmp_path: Path) -> None:
         fields={"row": "security.epss-row@1"},  # type: ignore[dict-item]
     )
     assert "cruxible.contract.pin_unresolved" in _refusal(instance, page)
+
+
+def _row_contract(name: str, **fields: str) -> ContractInput:
+    return ContractInput(kind="contract", name=name, version=1, fields=fields)  # type: ignore[arg-type]
+
+
+def _status_query(row: str) -> QueryDefinitionInput:
+    example = query_claims_by_type_example()
+    data = example.query_definition.model_dump(mode="json")
+    return QueryDefinitionInput.model_validate(
+        {"kind": "query_definition", "query_definition": {**data, "row_contract": row}}
+    )
+
+
+def test_a_query_whose_projection_produces_its_row_contract_is_accepted(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    _accept(instance, owner, _row_contract("project.status-row", item_id="string", status="string"))
+    _accept(instance, owner, _status_query("project.status-row@1"))
+    tree = _accepted_tree(instance)
+    path = query_definition_path("project.work_items_by_status")
+    stored = parse_query_definition(tree[path], path=path)
+    assert stored.row_contract is not None
+    assert stored.row_contract.spelling == "project.status-row@1"
+
+
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"item_id": "string"}, "cruxible.query_definition.row_disagrees"),
+        ({"item_id": "int", "status": "string"}, "cruxible.query_definition.row_disagrees"),
+    ],
+)
+def test_a_query_whose_row_contract_disagrees_with_its_projection_is_refused(
+    tmp_path: Path, fields: dict[str, str], code: str
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    _accept(instance, owner, _row_contract("project.status-row", **fields))
+    assert code in _refusal(instance, _status_query("project.status-row@1"))
+
+
+def test_a_query_naming_an_unaccepted_row_contract_is_refused(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    assert "cruxible.query_definition.contract_unresolved" in _refusal(
+        instance, _status_query("project.status-row@1")
+    )
+
+
+def test_query_parameters_must_be_the_fields_of_their_contract() -> None:
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    params = validate_contract(
+        {"name": "project.params", "version": 1, "fields": {"status": "enum[ready, done]"}}
+    )
+
+    def query(*declared: dict[str, object]) -> QueryDefinitionSpec:
+        return QueryDefinitionSpec.model_validate(
+            {**data, "parameters": list(declared), "parameter_contract": "project.params@1"}
+        )
+
+    def problems(spec: QueryDefinitionSpec) -> tuple[str, ...]:
+        return tuple(
+            code for code, _message in query_contract_problems(spec, resolve=lambda _ref: params)
+        )
+
+    assert problems(query({"name": "status", "value_type": "string"})) == ()
+    assert problems(query({"name": "status", "value_type": "integer"})) == (
+        "cruxible.query_definition.parameters_disagree",
+    )
+    assert problems(query({"name": "other", "value_type": "string"})) == (
+        "cruxible.query_definition.parameters_disagree",
+    )
+    with pytest.raises(ValueError, match="requires declared parameters"):
+        query()

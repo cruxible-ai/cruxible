@@ -50,6 +50,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryValueType,
 )
 from cruxible_client.contracts.query.values import coerce_query_value
+from cruxible_client.contracts.shapes import parse_contract_ref
 
 
 class _AuthoredModel(BaseModel):
@@ -74,6 +75,14 @@ class QuerySpecInput(_AuthoredModel):
     query: str
     description: str | None = None
     params: dict[str, QueryValueType | Literal["subject"]] = Field(default_factory=dict)
+    params_contract: str | None = Field(
+        default=None,
+        description="The Contract (name@N) the params satisfy; each param is one of its fields.",
+    )
+    row: str | None = Field(
+        default=None,
+        description="The Contract (name@N) every row satisfies; the fields are its fields.",
+    )
     from_: dict[str, str] = Field(
         validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
     )
@@ -635,6 +644,10 @@ class _LowerQuery:
                 )
                 for name, value_type in sorted(self.spec.params.items())
             ),
+            parameter_contract=None
+            if self.spec.params_contract is None
+            else parse_contract_ref(self.spec.params_contract),
+            row_contract=None if self.spec.row is None else parse_contract_ref(self.spec.row),
             orderings=tuple(orderings),
             includes=tuple(includes),
             default_budgets=QueryBudgets(
@@ -798,6 +811,10 @@ def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:
         query=query.identity.name,
         description=query.description,
         params={item.name: item.value_type for item in query.parameters},
+        params_contract=None
+        if query.parameter_contract is None
+        else query.parameter_contract.spelling,
+        row=None if query.row_contract is None else query.row_contract.spelling,
         from_={query.entry.binding: entry_text},
         where=condition(query.where) if query.where else None,
         hops=tuple(hops),

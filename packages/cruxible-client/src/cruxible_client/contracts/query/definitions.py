@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, field_validator, model_validator
@@ -43,19 +43,33 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
+    QueryClaimFieldRef,
     QueryEntry,
+    QueryEvaluationTimeRef,
     QueryFilter,
     QueryInclude,
+    QueryLiteralRef,
     QueryOrdering,
     QueryParameterDeclaration,
+    QueryParameterRef,
     QueryProjection,
     QueryReferenceInventory,
+    QuerySubjectFieldRef,
     QueryTraversalStep,
     require_union_discriminators,
     sorted_unique,
     validate_ordering_keys,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    Contract,
+    ContractField,
+    ContractRef,
+    FieldPresent,
+    check_value,
+    contract_digest,
+    parse_contract_ref,
+)
 
 _QUERY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _DESCRIPTION_MAX = 512
@@ -143,6 +157,12 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     orderings: tuple[QueryOrdering, ...] = ()
     includes: tuple[QueryInclude, ...] = ()
     parameters: tuple[QueryParameterDeclaration, ...] = ()
+    #: The Contract the parameters a caller supplies must satisfy (``name@N``).
+    parameter_contract: ContractRef | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: The Contract every projected row satisfies (``name@N``); checked at acceptance.
+    row_contract: ContractRef | None = Field(default=None, exclude_if=lambda value: value is None)
     evaluation_policy: QueryEvaluationPolicy
     default_budgets: QueryBudgets
     maximum_budgets: QueryBudgets
@@ -169,6 +189,11 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     ) -> tuple[QueryParameterDeclaration, ...]:
         sorted_unique(tuple(item.name for item in value), label="QueryDefinition parameters")
         return value
+
+    @field_validator("parameter_contract", "row_contract", mode="before")
+    @classmethod
+    def _contract_spelling(cls, value: object) -> object:
+        return parse_contract_ref(value) if isinstance(value, str) else value
 
     @field_validator("includes")
     @classmethod
@@ -214,6 +239,8 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 or self.includes
                 or self.parameters
                 or self.pins
+                or self.parameter_contract
+                or self.row_contract
             ):
                 raise ValueError(
                     "Artifact queries only admit definition selectors and result budgets"
@@ -231,6 +258,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
             "cruxible-query-definition-v3",
         } or (self.result_shape == "artifact_definition" or self.dedupe == "artifact"):
             raise ValueError("Claim traversal requires the frozen v1 query grammar")
+        if self.row_contract is not None and self.projection is None:
+            raise ValueError("a row Contract requires a declared projection to produce it")
+        if self.parameter_contract is not None and not self.parameters:
+            raise ValueError("a parameter Contract requires declared parameters")
         self._validate_bindings()
         self._validate_reference_scopes()
         self._validate_shape_rules()
@@ -713,6 +744,135 @@ def _refusal(code: str, message: str, *, path: str) -> QueryDefinitionLawResult:
     )
 
 
+#: Which Contract field kinds each query value type agrees with.
+_VALUE_TYPE_KINDS: Mapping[str, frozenset[str]] = {
+    "string": frozenset({"string", "enum", "enum_of", "key", "subject"}),
+    "integer": frozenset({"int"}),
+    "boolean": frozenset({"bool"}),
+    "decimal": frozenset({"decimal"}),
+    "timestamp": frozenset({"datetime"}),
+    "subject_reference": frozenset({"subject", "key"}),
+}
+
+
+def query_contract_problems(
+    query: QueryDefinition,
+    *,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> tuple[tuple[str, str], ...]:
+    """Where the query disagrees with its parameter and row Contracts, as (code, message).
+
+    Parameters: the declared names are exactly the Contract's fields, a required
+    parameter is a required field, and the value types agree. Rows: the
+    projection's field names are exactly the Contract's fields, and each
+    projected value whose type is fixed by the query (a parameter, a literal, a
+    Subject field, the evaluation time, a Claim's role or verdict) agrees with
+    its field. A Claim value's type is the ClaimType's, judged where Claims are.
+    """
+
+    problems: list[tuple[str, str]] = []
+
+    def contract(ref: ContractRef, label: str) -> Contract | None:
+        found = resolve(ref)
+        if found is None:
+            problems.append(
+                (
+                    "cruxible.query_definition.contract_unresolved",
+                    f"The {label} Contract {ref.spelling} is not accepted.",
+                )
+            )
+            return None
+        if ref.digest is not None and contract_digest(found).tagged != ref.digest:
+            problems.append(
+                (
+                    "cruxible.query_definition.contract_unresolved",
+                    f"The {label} Contract {ref.spelling} is accepted at another digest.",
+                )
+            )
+            return None
+        return found
+
+    declared = {item.name: item for item in query.parameters}
+    if query.parameter_contract is not None:
+        shape = contract(query.parameter_contract, "parameter")
+        if shape is not None:
+            if set(declared) != set(shape.fields):
+                problems.append(
+                    (
+                        "cruxible.query_definition.parameters_disagree",
+                        f"The parameters {sorted(declared)} are not the fields of "
+                        f"{query.parameter_contract.spelling}: {sorted(shape.fields)}.",
+                    )
+                )
+            for name, item in declared.items():
+                field = shape.fields.get(name)
+                if field is None:
+                    continue
+                if item.required == field.optional or (
+                    field.type.kind not in _VALUE_TYPE_KINDS[item.value_type]
+                ):
+                    problems.append(
+                        (
+                            "cruxible.query_definition.parameters_disagree",
+                            f"Parameter {name!r} ({item.value_type}, "
+                            f"{'required' if item.required else 'optional'}) disagrees with "
+                            f"its field {field.spelling}.",
+                        )
+                    )
+    if query.row_contract is not None and query.projection is not None:
+        shape = contract(query.row_contract, "row")
+        if shape is not None:
+            projected = {item.name: item.value for item in query.projection.fields}
+            if set(projected) != set(shape.fields):
+                problems.append(
+                    (
+                        "cruxible.query_definition.row_disagrees",
+                        f"The projection produces {sorted(projected)}, but "
+                        f"{query.row_contract.spelling} declares {sorted(shape.fields)}.",
+                    )
+                )
+            for name, value in projected.items():
+                field = shape.fields.get(name)
+                if field is None:
+                    continue
+                problem = _projected_value_problem(value, field, declared)
+                if problem is not None:
+                    problems.append(
+                        (
+                            "cruxible.query_definition.row_disagrees",
+                            f"Projected field {name!r} {problem}; its Contract field is "
+                            f"{field.spelling}.",
+                        )
+                    )
+    return tuple(problems)
+
+
+def _projected_value_problem(
+    value: object,
+    field: ContractField,
+    declared: Mapping[str, QueryParameterDeclaration],
+) -> str | None:
+    kind = field.type.kind
+    if isinstance(value, QueryParameterRef):
+        parameter = declared.get(value.parameter)
+        if parameter is None:
+            return None
+        allowed = _VALUE_TYPE_KINDS[parameter.value_type]
+        return None if kind in allowed else f"is a {parameter.value_type} parameter"
+    if isinstance(value, QueryLiteralRef):
+        if value.value is None:
+            return None if field.optional else "is a null literal for a required field"
+        checked = check_value(value.value, field.type, at="/literal")
+        return None if isinstance(checked, FieldPresent) else "is a literal outside its type"
+    if isinstance(value, QuerySubjectFieldRef):
+        return None if kind in _VALUE_TYPE_KINDS["string"] else "is a Subject identity string"
+    if isinstance(value, QueryEvaluationTimeRef):
+        return None if kind == "datetime" else "is the evaluation time (a datetime)"
+    if isinstance(value, QueryClaimFieldRef):
+        return None if kind in ("string", "enum") else "is a Claim role or verdict (a string)"
+    return None
+
+
 def evaluate_query_definition_law(
     query: QueryDefinition,
     *,
@@ -720,13 +880,24 @@ def evaluate_query_definition_law(
     predecessor: AcceptedQueryDefinition | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
     by_name: bool = False,
+    contracts: Callable[[ContractRef], Contract | None] | None = None,
 ) -> QueryDefinitionLawResult:
-    """Evaluate exact path, digest-pinned dependencies, and lifecycle."""
+    """Evaluate exact path, digest-pinned dependencies, Contract agreement, and lifecycle."""
 
     try:
         validate_query_definition_path(query, path)
     except QueryDefinitionFormatError as exc:
         return _refusal("cruxible.query_definition.path_mismatch", str(exc), path=path)
+    if contracts is not None:
+        problems = query_contract_problems(query, resolve=contracts)
+        if problems:
+            return _refusal(problems[0][0], " ".join(item[1] for item in problems), path=path)
+    elif query.parameter_contract is not None or query.row_contract is not None:
+        return _refusal(
+            "cruxible.query_definition.contract_unresolved",
+            "A QueryDefinition with Contract pins is judged against its accepted Contracts.",
+            path=path,
+        )
     if accepted_artifacts is not None:
         for pin in query.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
@@ -803,6 +974,7 @@ __all__ = [
     "QueryResultShape",
     "RESULT_CONTRACT_PIN_ROLE",
     "evaluate_query_definition_law",
+    "query_contract_problems",
     "parse_query_definition",
     "query_definition_address",
     "query_definition_digest",

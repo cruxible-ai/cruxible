@@ -816,6 +816,15 @@ def pin_contract_refs(contract: Contract, pin: Callable[[ContractRef], ContractR
     )
 
 
+def parse_contract_ref(spelling: str) -> ContractRef:
+    """``name@N`` as a Contract pin (the digest is added where the pin resolves)."""
+
+    name, at, version = spelling.strip().partition("@")
+    if not at or not version.isdigit():
+        raise ContractFormatError(f"a Contract pin is written name@N, not {spelling!r}")
+    return ContractRef(name=name, version=int(version))
+
+
 def contract_identity(name: str, version: int) -> ArtifactIdentity:
     return ArtifactIdentity(kind="Contract", name=f"{name}/v{version}")
 
@@ -1881,6 +1890,7 @@ __all__ = [
     "evaluate_predicate",
     "map_type_refs",
     "parse_contract",
+    "parse_contract_ref",
     "parse_field_spelling",
     "parse_predicate",
     "parse_type",
