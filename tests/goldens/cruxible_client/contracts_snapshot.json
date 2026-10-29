@@ -4783,6 +4783,24 @@
                 ],
                 "default": null
               },
+              "on_oversized": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
               "on_unavailable": {
                 "default": "refuse",
                 "enum": [
@@ -4791,6 +4809,25 @@
                 ],
                 "title": "On Unavailable",
                 "type": "string"
+              },
+              "permitted_replayability": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "exact",
+                        "attested_only"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permitted Replayability"
               }
             },
             "title": "AcquisitionDefault",
@@ -53512,6 +53549,24 @@
                 ],
                 "default": null
               },
+              "on_oversized": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
               "on_unavailable": {
                 "default": "refuse",
                 "enum": [
@@ -53520,6 +53575,25 @@
                 ],
                 "title": "On Unavailable",
                 "type": "string"
+              },
+              "permitted_replayability": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "exact",
+                        "attested_only"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permitted Replayability"
               }
             },
             "title": "AcquisitionDefault",
@@ -91503,6 +91577,24 @@
                 ],
                 "default": null
               },
+              "on_oversized": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
               "on_unavailable": {
                 "default": "refuse",
                 "enum": [
@@ -91511,6 +91603,25 @@
                 ],
                 "title": "On Unavailable",
                 "type": "string"
+              },
+              "permitted_replayability": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "exact",
+                        "attested_only"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permitted Replayability"
               }
             },
             "title": "AcquisitionDefault",
@@ -101209,6 +101320,24 @@
                 ],
                 "default": null
               },
+              "on_oversized": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "default": "refuse",
+                "enum": [
+                  "refuse",
+                  "omit"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
               "on_unavailable": {
                 "default": "refuse",
                 "enum": [
@@ -101217,6 +101346,25 @@
                 ],
                 "title": "On Unavailable",
                 "type": "string"
+              },
+              "permitted_replayability": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "exact",
+                        "attested_only"
+                      ],
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permitted Replayability"
               }
             },
             "title": "AcquisitionDefault",

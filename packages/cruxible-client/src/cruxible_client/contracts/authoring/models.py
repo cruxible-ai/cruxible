@@ -133,7 +133,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:995da86dc098e33c5dae1b6035ce9c7775cee3339f4a6cafb7644395d7b9cf30"
+    "sha256:827d6fefcdd3ff1d72abbda51e99118d3599ba5c5d2e9a66bdd5d891528ba0f0"
 )
 
 MAX_DIAGNOSTICS = 128
