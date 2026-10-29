@@ -69,6 +69,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     FAILURE_CAUSE_MESSAGE_LIMIT,
+    ProcedureAdmissionRefusal,
     ProcedureNodeRefusal,
     ProcedureOperationalFailure,
     strip_url_userinfo,
@@ -1293,19 +1294,16 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     reach the guard is to plan the same occurrence with a mutating class. The
     mismatch is caught by ``ProcedureAcquisitionPlan``'s own shape invariant
     (``src/cruxible_core/.../results.py``'s "external occurrence effect
-    differs from its operation"), which is a bare pydantic ``ValidationError``
-    at this call site -- `service_run_playbill_procedure`
-    (`src/cruxible_core/service/procedures/procedure_runs.py`, the
-    ``ProcedureAcquisitionPlan(...)`` construction around line 3034) does not
-    wrap it into the function's typed `ProcedureAdmissionRefusal` surface the
-    way every other admission-time check there does (the enclosing
-    ``except ExecutionError`` above only covers the earlier
-    `_plan_external_occurrences` call). This looks like a real gap worth a
-    maintainer's attention, not a test-shape issue; recorded here rather than
-    patched in src.
+    differs from its operation"), a bare pydantic ``ValidationError`` at the
+    ``ProcedureAcquisitionPlan(...)`` construction in
+    `_plan_direct_external_run`
+    (`src/cruxible_core/service/procedures/procedure_runs.py`), which sits
+    after the function's only ``except ExecutionError`` (that earlier guard
+    covers only the `_plan_external_occurrences` call). That construction is
+    now wrapped in its own ``except ValidationError``, surfacing a typed
+    ``artifact_binding_mismatch`` admission refusal instead of letting the
+    bare ``ValidationError`` escape.
     """
-
-    from pydantic import ValidationError
 
     import cruxible_core.service.procedures.procedure_runs as service
 
@@ -1321,10 +1319,14 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     monkeypatch.setattr(service, "_plan_external_occurrences", mutating)
     invoker = _WorkspaceInvoker()
 
-    with pytest.raises(ValidationError) as excinfo:
-        _run(instance, root, invoker=invoker)
+    result, _spawned = _run(instance, root, invoker=invoker)
 
-    assert "external occurrence effect differs from its operation" in str(excinfo.value)
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
+    assert result.terminal.code == "artifact_binding_mismatch"
+    assert "external occurrence effect differs from its operation" in str(
+        result.terminal.details["reason"]  # type: ignore[index]
+    )
     assert invoker.spawn_calls == 0
 
 

@@ -3006,7 +3006,12 @@ def _plan_direct_external_run(
             status=status,
             terminal=terminal,
         )
-    except ExecutionError as exc:
+    except (ExecutionError, ValidationError) as exc:
+        # A bound slot whose operation effect cannot occupy its node (for
+        # example a Source bound to an ``external_mutation`` operation) fails
+        # ``ProviderExternalOccurrencePlan``'s own correspondence validator as
+        # a plain pydantic ValidationError, not an ExecutionError; both are a
+        # binding-closure defect, never a bare exception out of admission.
         return refuse(
             code="artifact_binding_mismatch",
             message="The accepted Provider closure for this Procedure is incomplete.",
@@ -3033,16 +3038,27 @@ def _plan_direct_external_run(
         )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    plan = ProcedureAcquisitionPlan(
-        accepted_coordinate=accepted_coordinate,
-        occurrence_evaluation_time=evaluation_time,
-        acquisition_policy_format=policy_format,
-        acquisition_policy_digest=policy_digest,
-        selection_decision=selection,
-        selection_decision_digest=selection_digest,
-        external_occurrences=external_occurrences,
-        ephemeral_spec_digest=ephemeral_spec_digest,
-    )
+    try:
+        plan = ProcedureAcquisitionPlan(
+            accepted_coordinate=accepted_coordinate,
+            occurrence_evaluation_time=evaluation_time,
+            acquisition_policy_format=policy_format,
+            acquisition_policy_digest=policy_digest,
+            selection_decision=selection,
+            selection_decision_digest=selection_digest,
+            external_occurrences=external_occurrences,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+        )
+    except ValidationError as exc:
+        # A planned occurrence whose effect class cannot occupy its node (a
+        # Source bound to an ``external_mutation`` operation) fails this
+        # construction's nested model_validator -- a binding-closure defect,
+        # never a bare ValidationError out of admission.
+        return refuse(
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Procedure is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
     return plan, rules, capture_contracts, runtime_policy
 
 
@@ -4183,6 +4199,22 @@ def _run_playbill_line(
             status=status,
             terminal=terminal,
         )
+    except (ExecutionError, ValidationError) as exc:
+        # Same binding-closure defect as the direct-run planner: a bound slot
+        # whose operation effect cannot occupy its node fails
+        # ProviderExternalOccurrencePlan's correspondence validator as a bare
+        # pydantic ValidationError; surface it as a typed admission refusal
+        # rather than letting it escape uncaught.
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Line is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
     selection = (
         ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
         if line_rules is None
@@ -4231,18 +4263,33 @@ def _run_playbill_line(
         )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    plan = ProcedureAcquisitionPlan(
-        accepted_coordinate=accepted_coordinate,
-        line_identity=accepted_line.line.identity,
-        line_spec_digest=accepted_line.artifact_digest,
-        occurrence_id=occurrence_id,
-        occurrence_evaluation_time=occurrence_time,
-        acquisition_policy_format=policy_format,
-        acquisition_policy_digest=policy_digest,
-        selection_decision=selection,
-        selection_decision_digest=selection_digest,
-        external_occurrences=external_occurrences,
-    )
+    try:
+        plan = ProcedureAcquisitionPlan(
+            accepted_coordinate=accepted_coordinate,
+            line_identity=accepted_line.line.identity,
+            line_spec_digest=accepted_line.artifact_digest,
+            occurrence_id=occurrence_id,
+            occurrence_evaluation_time=occurrence_time,
+            acquisition_policy_format=policy_format,
+            acquisition_policy_digest=policy_digest,
+            selection_decision=selection,
+            selection_decision_digest=selection_digest,
+            external_occurrences=external_occurrences,
+        )
+    except ValidationError as exc:
+        # Same binding-closure defect as the direct-run planner: a planned
+        # occurrence whose effect class cannot occupy its node fails this
+        # construction's nested model_validator as a bare ValidationError.
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The accepted Provider closure for this Line is incomplete.",
+            details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
+        )
     plan_digest = procedure_acquisition_plan_digest(plan)
     materials = _line_state_materials(
         instance,
