@@ -43,7 +43,6 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
-    PROCEDURE_V2_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
     PROVIDER_BUILD_ACCEPTANCE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
@@ -264,13 +263,6 @@ LAW_COORDINATES: tuple[
         "playbill-procedure-mandate-v1",
         1,
         "sha256:dc874c06567d0405554a80cbc12f2f586765b9c6fcbe03a60634b72a06312ae9",
-    ),
-    (
-        PROCEDURE_V2_ACCEPTANCE_LAW,
-        "playbill.procedure.v2",
-        "playbill-procedure-v2",
-        6,
-        "sha256:bcb271659f2952b6e655b90b38e478a433b4fcd41fd25f4b8a7dc2a0443aefe9",
     ),
     (
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,

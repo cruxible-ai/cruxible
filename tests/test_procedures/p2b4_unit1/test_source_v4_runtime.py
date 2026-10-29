@@ -114,7 +114,7 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
 )
 from tests.core_support._pc_c_support import capture_contract, digest
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
@@ -377,7 +377,7 @@ def _source_fixture(
     )
     source_node = SourceNode(
         node_id="direct",
-        capture_contract=contract_pin,
+        capture_contract=named(contract_pin),
         slot=PROVIDER_SLOT,
         request={"value": "$input.value"},
         as_="source_result",
@@ -388,7 +388,7 @@ def _source_fixture(
             source_node,
             CaptureEgressNode(
                 node_id="capture-output",
-                capture_contract=terminal_pin,
+                capture_contract=named(terminal_pin),
                 input="$steps.source_result",
                 result="$steps.source_result",
             ),
@@ -425,9 +425,9 @@ def _source_fixture(
     # current compiler; name it here so execution and any later real
     # acceptance of the same bytes (test_live_capture_consumers.py) agree on
     # one exact digest throughout.
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
-    procedure = name_procedure(procedure)
+    procedure = revalidated(procedure)
     plain = AcceptedProcedure(
         path=provider_accepted.path,
         procedure=procedure,

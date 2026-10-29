@@ -68,10 +68,10 @@ def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
     name-referenced (format 7) node set.
     """
 
-    from cruxible_client.contracts.procedures.named_models import NamedCallNode
+    from cruxible_client.contracts.procedures.models import CallNode
 
     source, shape = procedure.definition.nodes
-    call_node = NamedCallNode(
+    call_node = CallNode(
         node_id="records",
         slot="read",
         input={},

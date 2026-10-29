@@ -8,15 +8,10 @@ language that source is written in.
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
-from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifact,
-    parse_procedure,
-    procedure_path,
-)
+from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
 from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
 from cruxible_core.ledger.checkpoints import (
     CHECKPOINT_DIRECTORY,
@@ -25,16 +20,6 @@ from cruxible_core.ledger.checkpoints import (
     write_checkpoint,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pre_rename_source_procedure.json"
-
-
-def test_a_procedure_accepted_before_the_rename_still_verifies() -> None:
-    """The artifact bytes were accepted at the pre-rename base (``aea0de813``)."""
-
-    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert "QueryBudgetsV1(" in raw["definition"]["source"]["text"]
-    verify_source_graph(ProcedureArtifact.model_validate(raw))
 
 
 def _accept_source_with_historical_spelling(tmp_path: Path) -> tuple[PlaybillInstance, str]:

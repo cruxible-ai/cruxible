@@ -62,6 +62,7 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
 )
@@ -1187,7 +1188,7 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
 
 def test_automatic_migration_never_rewrites_a_procedure_dependent() -> None:
     accepted = _accepted_procedure()
-    content = render_procedure(accepted.procedure)
+    content = render_procedure(authored_procedure(accepted))
     current = parse_dependency_artifact(accepted.path, content)
     assert current is not None
 

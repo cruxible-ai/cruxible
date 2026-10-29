@@ -39,7 +39,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    CallNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -48,8 +47,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    RepeatBodyNode,
-    RepeatNode,
     StateTapNode,
     TransformNode,
 )
@@ -76,6 +73,7 @@ from cruxible_client.contracts.triggers import (
 from cruxible_core.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.providers.provider_process_leases import (
     PROVIDER_RUNTIME_DIRECTORY_REPAIR,
     ProviderLocalRuntimeRefused,
@@ -114,10 +112,7 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
 from tests.support.lines import line_trigger, trigger_members
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
-from tests.test_integration.test_graph_v4_provider_closure import (
-    _accepted_procedure as _accepted_provider_v4_procedure,
-)
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named, revalidated
 from tests.test_procedures.test_line_specs import _digest as _line_digest
 from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_owned_contracts import (
@@ -175,7 +170,7 @@ def test_line_without_current_exact_mandate_refuses_typed(
         lambda *_args, **_kwargs: accepted,
     )
     monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
-    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: ({}, {}))
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: {})
     monkeypatch.setattr(
         procedure_run_service,
         "evaluate_line_spec_law",
@@ -274,7 +269,7 @@ def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     assert "Restore or succeed" in str(result.terminal.details)
 
 
-def _slotless_procedure(name: str, *, historical: bool = False) -> AcceptedProcedure:
+def _slotless_procedure(name: str) -> AcceptedProcedure:
     """One accepted Procedure with owner-carried contracts and no pin slots.
 
     No state tap, no Provider node and no slot, so a Line binding it closes with
@@ -302,13 +297,13 @@ def _slotless_procedure(name: str, *, historical: bool = False) -> AcceptedProce
     )
     definition = ProcedureDefinition(
         name=name,
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             ProjectNode(
                 node_id="shape",
                 fields={"status": "$input.status"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -332,12 +327,6 @@ def _slotless_procedure(name: str, *, historical: bool = False) -> AcceptedProce
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (contract_in, contract_out),
-                key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (input_contract, output_contract),
@@ -348,10 +337,6 @@ def _slotless_procedure(name: str, *, historical: bool = False) -> AcceptedProce
         ),
         activation_policy="drain",
     )
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    if not historical:
-        procedure = name_procedure(procedure)
     return AcceptedProcedure(
         path=procedure_path(name),
         procedure=procedure,
@@ -378,12 +363,8 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
             "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
-        pins=(procedure_pin,),
     )
-
-    from cruxible_client.contracts.named_references import name_line
-
-    return name_line(line)
+    return line
 
 
 def _accepted_trigger(trigger: Trigger) -> AcceptedTrigger:
@@ -408,7 +389,7 @@ def _accept_line_tree(
     inspection = submit_member_candidate(
         instance,
         members={
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             **trigger_members(*triggers),
         },
@@ -702,11 +683,9 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         timestamp=TIMESTAMP,
     )
     accept_proposal(instance, owner, inspection)
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_core.procedures.reference_binding import authored_procedure
 
-    procedure = name_procedure(
-        _accepted_query_procedure(query_definition_digest(query).tagged).procedure
-    )
+    procedure = authored_procedure(_accepted_query_procedure(query_definition_digest(query).tagged))
     _activate_procedure(
         instance,
         owner,
@@ -732,10 +711,7 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
     old_output_pin = procedure.definition.contract_out
     from cruxible_client.contracts.artifacts import ArtifactNameRef
 
-    if procedure.artifact_format == "playbill-procedure-v2":
-        assert isinstance(old_output_pin, ArtifactPin)
-    else:
-        assert isinstance(old_output_pin, ArtifactNameRef)
+    assert isinstance(old_output_pin, ArtifactNameRef)
     project = procedure.definition.nodes[-1]
     list_output = _contract(
         "query-rows-list",
@@ -763,10 +739,10 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
     )
     definition = procedure.definition.model_copy(
         update={
-            "contract_out": list_output_pin,
+            "contract_out": named(list_output_pin),
             "nodes": (
                 *procedure.definition.nodes[:-1],
-                project.model_copy(update={"contract_out": list_output_pin}),
+                project.model_copy(update={"contract_out": named(list_output_pin)}),
             ),
             "budget": procedure.definition.budget.model_copy(update={"max_items": max_items}),
         }
@@ -775,16 +751,6 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "pins": tuple(
-                sorted(
-                    (list_output_pin if pin == old_output_pin else pin for pin in procedure.pins),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.qualified.encode(),
-                        pin.artifact_digest.encode(),
-                    ),
-                )
-            ),
             "owned_contracts": tuple(
                 sorted(
                     (
@@ -800,11 +766,7 @@ def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-unt
         }
     )
 
-    if procedure.artifact_format == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        return name_procedure(successor)
-    return successor
+    return revalidated(successor)
 
 
 def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Path) -> None:
@@ -1233,8 +1195,8 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         TransformNode(
             node_id="filter",
             transform_kind="filter_items",
-            contract_in=filter_in_pin,
-            contract_out=filter_out_pin,
+            contract_in=named(filter_in_pin),
+            contract_out=named(filter_out_pin),
             spec={
                 "tag": "playbill-transform-filter-items-spec-v1",
                 "items": "$steps.query.result.rows",
@@ -1246,8 +1208,8 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         TransformNode(
             node_id="aggregate",
             transform_kind="aggregate_items",
-            contract_in=aggregate_in_pin,
-            contract_out=aggregate_out_pin,
+            contract_in=named(aggregate_in_pin),
+            contract_out=named(aggregate_out_pin),
             spec={
                 "tag": "playbill-transform-aggregate-items-spec-v1",
                 "items": "$steps.filtered.items",
@@ -1274,22 +1236,11 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             "budget": procedure.definition.budget.model_copy(update={"max_items": 1}),
         }
     )
-    added_pins = (filter_in_pin, filter_out_pin, aggregate_in_pin, aggregate_out_pin)
     added_contracts = (filter_in, filter_out, aggregate_in, aggregate_out)
     pipeline = procedure.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "pins": tuple(
-                sorted(
-                    (*procedure.pins, *added_pins),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.qualified.encode(),
-                        pin.artifact_digest.encode(),
-                    ),
-                )
-            ),
             "owned_contracts": tuple(
                 sorted(
                     (*procedure.owned_contracts, *added_contracts),
@@ -1301,9 +1252,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             ),
         }
     )
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    pipeline = name_procedure(pipeline)
+    pipeline = revalidated(pipeline)
     _activate_procedure(
         instance,
         owner,
@@ -1591,76 +1540,6 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert halted.receipt.terminal == halted.terminal
 
 
-def test_repeat_call_body_refuses_the_direct_lane_before_journal(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """A repeated Call runs only as a Line: the direct lane refuses it typed."""
-
-    instance, _owner, _procedure = _world(tmp_path)
-    accepted = _accepted_provider_v4_procedure()
-    definition = accepted.procedure.definition
-    direct = definition.nodes[0]
-    assert isinstance(direct, CallNode)
-    repeat = RepeatNode(
-        node_id="repeat",
-        max_attempts=2,
-        body=(
-            RepeatBodyNode(
-                node_id="provider",
-                operation="call",
-                provider=direct.provider,
-                interface=direct.interface,
-                interface_digest=direct.interface_digest,
-                implementation_digest=direct.implementation_digest,
-                contract_in=direct.contract_in,
-                contract_out=direct.contract_out,
-                spec=direct.input,
-                as_="provider_result",
-            ),
-        ),
-        until=GuardPredicate(
-            left=PredicateOperand(kind="exists", alias="provider_result"),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=True),
-        ),
-        as_="result",
-    )
-    repeat_definition = definition.model_copy(update={"nodes": (repeat,), "returns": "result"})
-    repeat_procedure = accepted.procedure.model_copy(
-        update={
-            "definition": repeat_definition,
-            "definition_digest": compute_procedure_definition_digest(repeat_definition).tagged,
-        }
-    )
-    repeat_accepted = AcceptedProcedure(
-        path=accepted.path,
-        procedure=repeat_procedure,
-        artifact_digest=procedure_artifact_digest(repeat_procedure).tagged,
-    )
-    monkeypatch.setattr(
-        procedure_run_service,
-        "_accepted_procedure",
-        lambda *_args, **_kwargs: repeat_accepted,
-    )
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-
-    result = service_run_playbill_procedure(
-        instance,
-        name=repeat_procedure.identity.name,
-        request=ProcedureRunRequest(input={}),
-        actor_context=_actor(instance),
-    )
-
-    assert result.status == "admission_refused"
-    assert isinstance(result.terminal, ProcedureAdmissionRefusal)
-    assert result.terminal.code == "unsupported_node"
-    assert result.terminal.details["runnable"] == "line"
-    assert result.terminal.details["unsupported_nodes"] == [
-        {"node_id": "repeat.provider", "kind": "call", "runs_on": "line"}
-    ]
-    assert not journal_root.exists()
-
-
 def _line_mandate(
     accepted,  # type: ignore[no-untyped-def]
     line=None,  # type: ignore[no-untyped-def]
@@ -1711,7 +1590,7 @@ def _admitted_line_service(
         lambda *_args, **_kwargs: accepted,
     )
     monkeypatch.setattr(procedure_run_service, "_assert_line_closure_complete", lambda *_a: None)
-    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: ({}, {}))
+    monkeypatch.setattr(procedure_run_service, "_line_catalogs", lambda *_a: {})
     monkeypatch.setattr(
         procedure_run_service,
         "evaluate_line_spec_law",

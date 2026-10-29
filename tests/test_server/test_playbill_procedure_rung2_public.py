@@ -67,7 +67,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -224,8 +224,8 @@ def _procedure_definition(
     return ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         slots={
             "read": {
                 "in": {
@@ -244,7 +244,7 @@ def _procedure_definition(
         nodes=(
             SourceNode(
                 node_id="read",
-                capture_contract=contract_pin,
+                capture_contract=named(contract_pin),
                 slot="read",
                 request=request.model_dump(mode="json"),
                 as_="advisory",
@@ -253,14 +253,14 @@ def _procedure_definition(
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
                 next="propose",
             ),
             (
                 CaptureEgressNode(
                     node_id="propose",
-                    capture_contract=output_contract_pin,
+                    capture_contract=named(output_contract_pin),
                     input="$steps.result",
                     result="$steps.result",
                 )
@@ -296,10 +296,8 @@ def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> d
     are referenced as candidates in it.
     """
 
-    from cruxible_client.contracts.procedures.names import named_graph
-
     # Current authoring names dependencies; exact invocation bindings remain in receipts.
-    definition = named_graph(definition.model_dump(mode="json", by_alias=True))
+    definition = definition.model_dump(mode="json", by_alias=True)
 
     def rewrite(value: object) -> object:
         if isinstance(value, dict):

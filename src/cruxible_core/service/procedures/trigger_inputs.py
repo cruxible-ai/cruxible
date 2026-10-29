@@ -7,7 +7,6 @@ import json
 from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
-from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
@@ -27,6 +26,7 @@ from cruxible_core.procedures.acquisition import (
 )
 from cruxible_core.procedures.execution import LandedCaptureRunMaterialV1
 from cruxible_core.procedures.input_planes import LandedCaptureRunInputV1
+from cruxible_core.procedures.reference_binding import resolved_pin
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
 from cruxible_core.service.procedures.resolution_contracts import (
@@ -66,8 +66,7 @@ def bind_trigger_capture(
             "trigger_capture_invalid",
             "trigger_capture_input: the Source input has no acquisition rule",
         )
-    assert isinstance(node.capture_contract, ArtifactPin)
-    contract = contracts.get(node.capture_contract.artifact_digest)
+    contract = contracts.get(resolved_pin(procedure, node.capture_contract).artifact_digest)
     if contract is None or contract.identity != selector.capture_contract_identity:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",

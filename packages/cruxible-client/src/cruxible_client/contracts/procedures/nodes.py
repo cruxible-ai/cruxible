@@ -11,7 +11,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 from cruxible_client.contracts.procedures.model_base import (
@@ -20,7 +20,6 @@ from cruxible_client.contracts.procedures.model_base import (
     _canonical_identifier,
     _StrictProcedureModel,
 )
-from cruxible_client.contracts.procedures.slots import LegacyProcedurePinBinding, NameBinding
 from cruxible_client.contracts.query.grammar import QueryBudgets
 
 PredicateScalar = None | bool | int | str
@@ -145,7 +144,7 @@ class StateTapNode(_StrictProcedureModel):
 
     kind: Literal["state_tap"] = "state_tap"
     node_id: str
-    query: LegacyProcedurePinBinding
+    query: ArtifactNameRef
     parameters: object = Field(default_factory=dict)
     as_: str = Field(alias="as")
     next: str | None = None
@@ -169,7 +168,7 @@ class SourceNode(_StrictProcedureModel):
 
     kind: Literal["source"] = "source"
     node_id: str
-    capture_contract: LegacyProcedurePinBinding
+    capture_contract: ArtifactNameRef
     slot: str
     request: object
     as_: str = Field(alias="as")
@@ -186,7 +185,7 @@ class SourceNode(_StrictProcedureModel):
 class ExhaustTapNode(_StrictProcedureModel):
     kind: Literal["exhaust_tap"] = "exhaust_tap"
     node_id: str
-    reducer_or_query: LegacyProcedurePinBinding
+    reducer_or_query: ArtifactNameRef
     journal_identity: str
     as_: str = Field(alias="as")
     next: str | None = None
@@ -203,7 +202,7 @@ class CallNode(_StrictProcedureModel):
     kind: Literal["call"] = "call"
     node_id: str
     slot: str
-    effect_policy: LegacyProcedurePinBinding | None = None
+    effect_policy: ArtifactNameRef | None = None
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
@@ -326,8 +325,8 @@ class TransformNode(_StrictProcedureModel):
     kind: Literal["transform"] = "transform"
     node_id: str
     transform_kind: TransformKind
-    contract_in: LegacyProcedurePinBinding
-    contract_out: LegacyProcedurePinBinding
+    contract_in: ArtifactNameRef
+    contract_out: ArtifactNameRef
     spec: ProcedureTransformSpec
     as_: str = Field(alias="as")
     next: str | None = None
@@ -370,7 +369,7 @@ class ProjectNode(_StrictProcedureModel):
     kind: Literal["project"] = "project"
     node_id: str
     fields: object
-    contract_out: LegacyProcedurePinBinding
+    contract_out: ArtifactNameRef
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -387,13 +386,13 @@ class RepeatBodyNode(_StrictProcedureModel):
     operation: Literal["call", "transform"]
     transform_kind: TransformKind | None = None
     slot: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    contract_in: LegacyProcedurePinBinding | None = Field(
+    contract_in: ArtifactNameRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    contract_out: LegacyProcedurePinBinding | None = Field(
+    contract_out: ArtifactNameRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    effect_policy: LegacyProcedurePinBinding | None = Field(
+    effect_policy: ArtifactNameRef | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
@@ -453,7 +452,7 @@ class RepeatNode(_StrictProcedureModel):
 class CaptureEgressNode(_StrictProcedureModel):
     kind: Literal["emit_capture"] = "emit_capture"
     node_id: str
-    capture_contract: LegacyProcedurePinBinding
+    capture_contract: ArtifactNameRef
     input: object
     result: object
 
@@ -510,7 +509,7 @@ class ProposeChangeSetNode(_StrictProcedureModel):
     kind: Literal["propose_change_set"] = "propose_change_set"
     node_id: str
     candidate_templates: tuple[object, ...] | ProposalItemsFanOut
-    claim_types: tuple[ArtifactPin, ...] = ()
+    claim_types: tuple[ArtifactNameRef, ...] = ()
     result: object
 
     _result = field_validator("result", mode="before")(normalize_canonical)
@@ -605,7 +604,7 @@ class SelectNode(_StrictProcedureModel):
     kind: Literal["select"] = "select"
     node_id: str
     sources: tuple[str, ...]
-    contract_out: LegacyProcedurePinBinding
+    contract_out: ArtifactNameRef
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -632,11 +631,11 @@ class ConstantNode(ProjectNode):
 
 
 class ClaimTapNode(_StrictProcedureModel):
-    """A bounded field read using an exact ClaimType and named Subject."""
+    """A bounded field read of a named ClaimType and Subject."""
 
     kind: Literal["state_claim"] = "state_claim"
     node_id: str
-    claim_type: ArtifactPin
+    claim_type: ArtifactNameRef
     subject_kind: str
     subject_id: object
     cardinality: Literal["one", "all"] = "one"
@@ -654,11 +653,11 @@ class ClaimTapNode(_StrictProcedureModel):
 
 
 class InvokeNode(_StrictProcedureModel):
-    """A call to an exact accepted Procedure under the enclosing run's limits."""
+    """A call to a named accepted Procedure under the enclosing run's limits."""
 
     kind: Literal["invoke"] = "invoke"
     node_id: str
-    procedure: ArtifactPin
+    procedure: ArtifactNameRef
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
@@ -692,106 +691,6 @@ ProcedureNode = Annotated[
 EgressNode: TypeAlias = CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
 
 
-# Graph format 7 (name-referenced) node models: each format-6 node with its
-# pins as names. Re-exported by ``named_models``.
-
-
-class NamedStateTapNode(StateTapNode):
-    query: NameBinding  # type: ignore[assignment]
-
-
-class NamedSourceNode(SourceNode):
-    capture_contract: NameBinding  # type: ignore[assignment]
-
-
-class NamedExhaustTapNode(ExhaustTapNode):
-    reducer_or_query: NameBinding  # type: ignore[assignment]
-
-
-class NamedCallNode(CallNode):
-    effect_policy: NameBinding | None = None  # type: ignore[assignment]
-
-
-class NamedTransformNode(TransformNode):
-    contract_in: NameBinding  # type: ignore[assignment]
-    contract_out: NameBinding  # type: ignore[assignment]
-
-
-class NamedProjectNode(ProjectNode):
-    contract_out: NameBinding  # type: ignore[assignment]
-
-
-class NamedRepeatBodyNode(RepeatBodyNode):
-    contract_in: NameBinding | None = Field(  # type: ignore[assignment]
-        default=None, exclude_if=lambda value: value is None
-    )
-    contract_out: NameBinding | None = Field(  # type: ignore[assignment]
-        default=None, exclude_if=lambda value: value is None
-    )
-    effect_policy: NameBinding | None = Field(  # type: ignore[assignment]
-        default=None, exclude_if=lambda value: value is None
-    )
-
-
-class NamedCaptureEgressNode(CaptureEgressNode):
-    capture_contract: NameBinding  # type: ignore[assignment]
-
-
-class NamedProposeChangeSetNode(ProposeChangeSetNode):
-    claim_types: tuple[ArtifactNameRef, ...] = ()  # type: ignore[assignment]
-
-
-class NamedClaimTapNode(ClaimTapNode):
-    claim_type: ArtifactNameRef  # type: ignore[assignment]
-
-
-class NamedInvokeNode(InvokeNode):
-    procedure: ArtifactNameRef  # type: ignore[assignment]
-
-
-class NamedSelectNode(SelectNode):
-    contract_out: NameBinding  # type: ignore[assignment]
-
-
-class NamedReturnNode(ReturnNode):
-    contract_out: NameBinding  # type: ignore[assignment]
-
-
-class NamedConstantNode(ConstantNode):
-    contract_out: NameBinding  # type: ignore[assignment]
-
-
-class NamedSettleChangeSetNode(NamedProposeChangeSetNode, SettleChangeSetNode):
-    kind: Literal["settle_change_set"] = "settle_change_set"
-
-
-class NamedRepeatNode(RepeatNode):
-    body: tuple[NamedRepeatBodyNode, ...]
-
-
-NamedProcedureNode = Annotated[
-    NamedInvokeNode
-    | NamedClaimTapNode
-    | NamedStateTapNode
-    | NamedSourceNode
-    | NamedExhaustTapNode
-    | NamedCallNode
-    | NamedTransformNode
-    | GuardNode
-    | NamedProjectNode
-    | NamedRepeatNode
-    | NamedCaptureEgressNode
-    | InboxEgressNode
-    | NamedProposeChangeSetNode
-    | NamedSettleChangeSetNode
-    | HaltNode
-    | NamedSelectNode
-    | NamedReturnNode
-    | NamedConstantNode,
-    Field(discriminator="kind"),
-]
-
-
 __all__ = [
     "AUTHORITY_RUNG",
     "AuthorityVerb",
@@ -808,23 +707,6 @@ __all__ = [
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
-    "NamedCallNode",
-    "NamedCaptureEgressNode",
-    "NamedClaimTapNode",
-    "NamedConstantNode",
-    "NamedExhaustTapNode",
-    "NamedInvokeNode",
-    "NamedProcedureNode",
-    "NamedProjectNode",
-    "NamedProposeChangeSetNode",
-    "NamedRepeatBodyNode",
-    "NamedRepeatNode",
-    "NamedReturnNode",
-    "NamedSelectNode",
-    "NamedSettleChangeSetNode",
-    "NamedSourceNode",
-    "NamedStateTapNode",
-    "NamedTransformNode",
     "PredicateOperand",
     "PredicateScalar",
     "ProcedureNode",

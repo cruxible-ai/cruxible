@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal, NoReturn, cast
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.contract_schema import (
@@ -58,7 +58,7 @@ QUERY_BUDGETS_SOURCE_NAMES = frozenset({"QueryBudgets", "QueryBudgetsV1"})
 
 
 def source_syntax(program: ProcedureSourceProgram) -> str:
-    return getattr(program, "syntax_rules", program.rules)
+    return program.syntax_rules
 
 
 @dataclass(frozen=True)
@@ -309,19 +309,11 @@ class _Compiler:
             )
         )
 
-    def reference(
-        self, *, role: str, target: ArtifactIdentity, artifact_digest: str | None
-    ) -> ArtifactPin | ArtifactNameRef:
-        if getattr(self.program, "rules") == "cruxible.procedure-source.v3":
-            return ArtifactNameRef(target=target)
-        assert artifact_digest is not None
-        return ArtifactPin(role=role, target=target, artifact_digest=artifact_digest)
+    def reference(self, target: ArtifactIdentity) -> ArtifactNameRef:
+        return ArtifactNameRef(target=target)
 
     def contract(self, source: SourceContract) -> dict[str, Any]:
-        from cruxible_client.contracts.procedures.artifacts import (
-            ProcedureOwnedContract,
-            procedure_owned_contract_digest,
-        )
+        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 
         RecordConstructor(source.schema_)
         previous = self.contracts.get(source.name)
@@ -331,11 +323,7 @@ class _Compiler:
         owned = ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=source.name), schema=source.schema_
         )
-        return self.reference(
-            role="contract-out",
-            target=owned.identity,
-            artifact_digest=procedure_owned_contract_digest(owned).tagged,
-        ).model_dump(mode="json")
+        return self.reference(owned.identity).model_dump(mode="json")
 
     def anonymous(self, schema: ContractSchema) -> dict[str, Any]:
         name = "source." + sha256(canonical_bytes(schema.model_dump(mode="json"))).hexdigest()[:24]
@@ -752,11 +740,7 @@ class _Compiler:
             if value.type != binding.input:
                 self.fail(node, "Use the child's typed input constructor", "contract_mismatch")
             self.required_child_rung = max(self.required_child_rung, binding.required_terminal_rung)
-            child = self.reference(
-                role="procedure",
-                target=ArtifactIdentity(kind="Procedure", name=binding.name),
-                artifact_digest=binding.version,
-            )
+            child = self.reference(ArtifactIdentity(kind="Procedure", name=binding.name))
             emitted = self.append(
                 "invoke",
                 node,
@@ -834,11 +818,9 @@ class _Compiler:
                     "late_state_selector",
                 )
             query_pin = self.reference(
-                role="query",
-                target=ArtifactIdentity(
+                ArtifactIdentity(
                     kind="QueryDefinition", name=binding.name.removeprefix("QueryDefinition:")
-                ),
-                artifact_digest=binding.version,
+                )
             )
             emitted = self.append(
                 "state_tap",
@@ -905,11 +887,7 @@ class _Compiler:
         # One Claim view schema for authored and AST reads; reference() retains
         # the selected syntax's named or historical exact binding grammar.
         schema = claim_view_schema(shape)
-        pin = self.reference(
-            role="claim-type",
-            target=ArtifactIdentity(kind="ClaimType", name=shape.predicate),
-            artifact_digest=selected.type.version,
-        )
+        pin = self.reference(ArtifactIdentity(kind="ClaimType", name=shape.predicate))
         emitted = self.append(
             "state_claim",
             node,
@@ -1179,11 +1157,9 @@ class _Compiler:
             stmt,
             candidate_templates=templates,
             claim_types=[
-                self.reference(
-                    role="claim-type",
-                    target=ArtifactIdentity(kind="ClaimType", name=name),
-                    artifact_digest=self.program.claim_types[name].version,
-                ).model_dump(mode="json")
+                self.reference(ArtifactIdentity(kind="ClaimType", name=name)).model_dump(
+                    mode="json"
+                )
                 for name in sorted({t["predicate"] for t in templates})
             ],
             result=self.wire(result, call),
@@ -1194,27 +1170,11 @@ class _Compiler:
         if not value.literal or not isinstance(value.wire, str):
             self.fail(node, "Capture contract must be an accepted name", "binding_required")
         name = value.wire.removeprefix("CaptureContract:")
-        version = (
-            None
-            if getattr(self.program, "rules") == "cruxible.procedure-source.v3"
-            else self.program.capture_contracts.get(name)
-        )
-        if (
-            getattr(self.program, "rules") == "cruxible.procedure-source.v3"
-            and name not in self.program.capture_contracts
-        ):
+        if name not in self.program.capture_contracts:
             self.fail(node, f"CaptureContract {name!r} was not resolved", "binding_required")
-        if version is None and getattr(self.program, "rules") != "cruxible.procedure-source.v3":
-            self.fail(
-                node,
-                f"CaptureContract {name!r} was not resolved at the authoring base",
-                "binding_required",
-            )
-        return self.reference(
-            role="capture-contract",
-            target=ArtifactIdentity(kind="CaptureContract", name=name),
-            artifact_digest=version,
-        ).model_dump(mode="json")
+        return self.reference(ArtifactIdentity(kind="CaptureContract", name=name)).model_dump(
+            mode="json"
+        )
 
     def capture_terminal(self, call: ast.Call, stmt: ast.Return) -> None:
         kwargs = {k.arg: k.value for k in call.keywords}
@@ -1673,7 +1633,6 @@ def _compile_source(
             "child_capability",
         )
     root_in = compiler.contract(input)
-    root_in["role"] = "contract-in"
     definition_data = dict(
         name=name,
         description=description,
@@ -1707,19 +1666,7 @@ def _compile_source(
             }
         ),
     )
-    definition: ProcedureDefinition
-    if getattr(program, "rules") == "cruxible.procedure-source.v3":
-        # Convert model values before selecting the strict graph grammar.
-        from pydantic_core import to_jsonable_python
-
-        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-        from cruxible_client.contracts.procedures.names import named_graph
-
-        definition = NamedProcedureDefinition.model_validate(
-            named_graph(to_jsonable_python(definition_data))
-        )
-    else:
-        definition = ProcedureDefinition.model_validate(definition_data)
+    definition = ProcedureDefinition.model_validate(definition_data)
     return CompiledSource(
         definition,
         tuple(compiler.contracts[k] for k in sorted(compiler.contracts)),
@@ -1772,10 +1719,7 @@ def compile_source(
 def verify_source_graph(procedure: Any) -> None:
     """Prove retained source/graph association without running authored Python."""
     from cruxible_client.contracts.errors import ProjectionFormatError
-    from cruxible_client.contracts.procedures.artifacts import (
-        ProcedureArtifact,
-        procedure_owned_contract_digest,
-    )
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 
     definition = procedure.definition
     if not isinstance(definition, ProcedureDefinition) or definition.source is None:
@@ -1783,17 +1727,11 @@ def verify_source_graph(procedure: Any) -> None:
     if not isinstance(procedure, ProcedureArtifact):
         raise ProjectionFormatError("Source Procedures must carry their declared Contracts")
 
-    def root(pin: Any) -> SourceContract:
-        if isinstance(pin, ArtifactPin | ArtifactNameRef):
-            for contract in procedure.owned_contracts:
-                if contract.identity == pin.target and (
-                    isinstance(pin, ArtifactNameRef)
-                    or procedure_owned_contract_digest(contract).tagged == pin.artifact_digest
-                ):
-                    return SourceContract(
-                        name=contract.identity.name, schema=contract.contract_schema
-                    )
-        raise ProjectionFormatError("Source root Contract is not an exact owned Contract")
+    def root(reference: ArtifactNameRef) -> SourceContract:
+        for contract in procedure.owned_contracts:
+            if contract.identity == reference.target:
+                return SourceContract(name=contract.identity.name, schema=contract.contract_schema)
+        raise ProjectionFormatError("Source root Contract is not an owned Contract")
 
     try:
         compiled = compile_source(
@@ -1818,11 +1756,8 @@ def verify_source_graph(procedure: Any) -> None:
     expected_contracts = {contract.name: contract for contract in compiled.contracts}
     expected_definition = compiled.definition.model_copy(update={"nodes": tuple(expected_nodes)})
     expected_contract_tuple = tuple(expected_contracts[name] for name in sorted(expected_contracts))
-    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        graph_matches = compact_procedure(expected_definition) == compact_procedure(definition)
-    else:
-        graph_matches = expected_definition == definition
+    graph_matches = compact_procedure(expected_definition) == compact_procedure(definition)
     if not graph_matches or expected_contract_tuple != contracts:
         raise ProjectionFormatError("Retained Procedure source and compiled graph disagree")

@@ -467,11 +467,7 @@ def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
     node = {
         "kind": "exhaust_tap",
         "node_id": "exhaust",
-        "reducer_or_query": {
-            "role": "query",
-            "target": {"kind": "QueryDefinition", "name": "journal-query"},
-            "artifact_digest": "sha256:" + "a" * 64,
-        },
+        "reducer_or_query": {"target": {"kind": "QueryDefinition", "name": "journal-query"}},
         "journal_identity": "retained-journal",
         "as": "rows",
     }

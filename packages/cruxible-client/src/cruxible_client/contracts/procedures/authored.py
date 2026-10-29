@@ -41,21 +41,14 @@ from cruxible_client.contracts.procedures.measurements import ProcedureMeasureme
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
+    ProcedureNode,
     ProcedureTransformSpec,
+    RepeatBodyNode,
     TransformKind,
     derived_terminal_capability,
 )
-from cruxible_client.contracts.procedures.named_models import (
-    NamedProcedureNode as ProcedureNode,
-)
-from cruxible_client.contracts.procedures.named_models import (
-    NamedRepeatBodyNode as RepeatBodyNode,
-)
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
-from cruxible_client.contracts.procedures.source_program import (
-    NamedProcedureSourceProgram,
-    ProcedureSourceProgram,
-)
+from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")]
 StepId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")]
@@ -296,7 +289,7 @@ class ProcedureSpec(_Model):
     output: dict[str, FieldType] | None = None
     contracts: dict[str, ContractSchema] = Field(default_factory=dict)
     halt_order: tuple[NodeId, ...] = ()
-    source: NamedProcedureSourceProgram | ProcedureSourceProgram | None = Field(
+    source: ProcedureSourceProgram | None = Field(
         default=None,
         json_schema_extra={"readOnly": True},
         description="Retained AST provenance; revise it through source authoring.",
@@ -395,11 +388,8 @@ def _fields(value: Mapping[str, FieldType]) -> dict[str, PropertySchema]:
     }
 
 
-def _ref(kind: str, name: str, role: str, *, named: bool = True) -> dict[str, Any]:
-    bare = name.removeprefix(kind + ":")
-    if named:
-        return {"target": {"kind": kind, "name": bare}}
-    return {"kind": "accepted", "role": role, "target": kind + ":" + bare}
+def _ref(kind: str, name: str) -> dict[str, Any]:
+    return {"target": {"kind": kind, "name": name.removeprefix(kind + ":")}}
 
 
 def _duration(text: str) -> dict[str, Any]:
@@ -429,9 +419,7 @@ def _unknown(path: str, value: str, choices: Any) -> None:
     )
 
 
-def lower_procedure_spec(
-    spec: ProcedureSpec, *, resolve: Resolver | None = None, named: bool = True
-) -> Any:
+def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None) -> Any:
     """Produce the existing ProcedureInput, leaving accepted-name pinning to prepare.
 
     Without vocabulary, unresolved call output schemas are deferred to prepare.
@@ -440,7 +428,7 @@ def lower_procedure_spec(
     from cruxible_client.contracts.authoring.inputs import CarriedContractInput, ProcedureInput
 
     def ref(kind: str, name: str, role: str) -> dict[str, Any]:
-        return _ref(kind, name, role, named=named)
+        return _ref(kind, name)
 
     contracts = dict(spec.contracts)
     schemas: dict[str, dict[str, PropertySchema] | None] = {}
@@ -466,11 +454,7 @@ def lower_procedure_spec(
                 "Conflicting contract fields",
             )
         contracts[name] = schema
-        return (
-            ref("Contract", name, role)
-            if named
-            else {"kind": "carried_contract", "name": name, "role": role}
-        )
+        return ref("Contract", name, role)
 
     root_in = contract(
         spec.input_contract or spec.procedure + "-input", _fields(spec.input), "contract-in"
@@ -795,7 +779,7 @@ def lower_procedure_spec(
         nodes.append(node)
     returns = (
         None
-        if spec.source is not None and spec.source.rules == "cruxible.procedure-source.v2"
+        if spec.source is not None and spec.source.syntax_rules == "cruxible.procedure-source.v2"
         else spec.returns or previous
     )
     if isinstance(returns, (ReturnFrom, ReturnFields)):
@@ -865,7 +849,7 @@ def lower_procedure_spec(
         order = {id_: i for i, id_ in enumerate(spec.halt_order)}
         generated.sort(key=lambda node: order.get(node["node_id"], len(order)))
     definition: dict[str, Any] = dict(
-        graph_format=7 if named else 6,
+        graph_format=7,
         name=spec.procedure,
         description=spec.description,
         contract_in=root_in,

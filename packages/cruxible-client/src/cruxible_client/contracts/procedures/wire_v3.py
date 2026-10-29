@@ -1,4 +1,4 @@
-"""Compact v3 wire codec. Historical v2 rendering/digest rules are untouched.
+"""The compact wire codec of the one Procedure envelope.
 
 Only declared model fields are compacted. JSON templates and schema JSON values
 are opaque data: nulls, defaults, ids and tags inside them retain their meaning.

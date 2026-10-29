@@ -12,13 +12,14 @@ from cruxible_client.contracts.procedures.line_specs import render_line_spec
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.procedures.reference_binding import authored_procedure
 from tests.test_procedures.test_line_specs import _accepted_procedure, _line
 
 
 def test_projects_procedure_graph_line_and_exact_source_mappings() -> None:
     accepted, _query_pin, _interfaces = _accepted_procedure()
     line, _accepted, _line_interfaces = _line()
-    procedure_content = render_procedure(accepted.procedure)
+    procedure_content = render_procedure(authored_procedure(accepted))
     line_content = render_line_spec(line)
 
     projection = parse_projection_tree(

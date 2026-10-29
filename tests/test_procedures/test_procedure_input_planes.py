@@ -22,6 +22,7 @@ from cruxible_core.procedures.input_planes import (
     validate_node_input_plane,
     validate_run_input_vector,
 )
+from tests.support.procedures import named
 
 
 def _digest(label: str) -> str:
@@ -82,20 +83,20 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
 
     state_node = StateTapNode(
         node_id="state",
-        query=_pin("query", "QueryDefinition", "claims"),
+        query=named(_pin("query", "QueryDefinition", "claims")),
         parameters={},
         as_="claims",
     )
     source_node = SourceNode(
         node_id="source",
-        capture_contract=_pin("capture-contract", "CaptureContract", "world"),
+        capture_contract=named(_pin("capture-contract", "CaptureContract", "world")),
         slot="fetch",
         request={},
         as_="capture",
     )
     exhaust_node = ExhaustTapNode(
         node_id="exhaust",
-        reducer_or_query=_pin("reducer", "Reducer", "reduce-exhaust"),
+        reducer_or_query=named(_pin("reducer", "Reducer", "reduce-exhaust")),
         journal_identity="procedure-exhaust",
         as_="receipts",
     )

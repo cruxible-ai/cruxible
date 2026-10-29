@@ -197,10 +197,6 @@ class LineSpec(_StrictLineModel):
         return tuple(sorted(found, key=_pin_key))
 
 
-#: The one Line model; the name survives for callers written against format 7.
-NamedLineSpec = LineSpec
-
-
 class EphemeralLineSpec(_StrictLineModel):
     """What a direct run instantiates, recorded with the run by digest.
 
@@ -405,7 +401,7 @@ def evaluate_line_spec_law(
             f"({', '.join(exhaust_taps)}); a Line over it could never run.",
             path=path,
         )
-    trigger_problem = validate_trigger_input(line, procedure, by_name=True)
+    trigger_problem = validate_trigger_input(line, procedure)
     if trigger_problem is not None:
         return _refusal("cruxible.line.trigger_input_mismatch", trigger_problem, path=path)
     from cruxible_client.contracts.procedures.contracts import (
@@ -567,7 +563,6 @@ def line_binding_problem(
 __all__ = [
     "AUTHORITY_RUNG",
     "EphemeralLineSpec",
-    "NamedLineSpec",
     "bound_operation_of",
     "ephemeral_line_spec_digest",
     "line_binding_problem",

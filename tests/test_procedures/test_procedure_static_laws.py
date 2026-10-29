@@ -36,6 +36,7 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNode,
     TransformNode,
 )
+from tests.support.procedures import named
 
 
 def _digest(label: str) -> str:
@@ -72,9 +73,9 @@ def _definition(
 ) -> ProcedureDefinition:
     return ProcedureDefinition(
         name="static-laws",
-        contract_in=_pin("contract-in", "Contract", "definition-input"),
-        contract_out=_pin("contract-out", "Contract", "definition-output"),
-        parameter_contract=parameter_contract,
+        contract_in=named(_pin("contract-in", "Contract", "definition-input")),
+        contract_out=named(_pin("contract-out", "Contract", "definition-output")),
+        parameter_contract=named(parameter_contract),
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
         slots=slots or {},
@@ -102,35 +103,37 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
         (
             StateTapNode(
                 node_id="state",
-                query=_pin("query", "QueryDefinition", "accepted-state"),
+                query=named(_pin("query", "QueryDefinition", "accepted-state")),
                 parameters={},
                 as_="state_rows",
             ),
             SourceNode(
                 node_id="source",
-                capture_contract=_pin("capture-contract", "CaptureContract", "source-capture"),
+                capture_contract=named(
+                    _pin("capture-contract", "CaptureContract", "source-capture")
+                ),
                 slot="fetch",
                 request={"state": "$steps.state_rows"},
                 as_="source_rows",
             ),
             ExhaustTapNode(
                 node_id="exhaust",
-                reducer_or_query=_pin("reducer", "Reducer", "journal-reducer"),
+                reducer_or_query=named(_pin("reducer", "Reducer", "journal-reducer")),
                 journal_identity="run-exhaust",
                 as_="exhaust_rows",
             ),
             CallNode(
                 node_id="provider",
                 slot="worker",
-                effect_policy=_pin("effect-policy", "EffectPolicy", "provider-effects"),
+                effect_policy=named(_pin("effect-policy", "EffectPolicy", "provider-effects")),
                 input={"source": "$steps.source_rows"},
                 as_="provider_rows",
             ),
             TransformNode(
                 node_id="transform",
                 transform_kind="shape_items",
-                contract_in=contract_in,
-                contract_out=contract_out,
+                contract_in=named(contract_in),
+                contract_out=named(contract_out),
                 spec={
                     "tag": "playbill-transform-shape-items-spec-v1",
                     "items": "$steps.provider_rows",
@@ -142,7 +145,7 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ProjectNode(
                 node_id="project",
                 fields={"rows": "$steps.transformed_rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="projected_rows",
             ),
             RepeatNode(
@@ -153,8 +156,8 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                         node_id="body-transform",
                         operation="transform",
                         transform_kind="adapter",
-                        contract_in=contract_in,
-                        contract_out=contract_out,
+                        contract_in=named(contract_in),
+                        contract_out=named(contract_out),
                         spec={
                             "tag": "playbill-transform-adapter-spec-v1",
                             "value": {"rows": "$steps.projected_rows"},
@@ -165,7 +168,9 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                         node_id="body-provider",
                         operation="call",
                         slot="worker",
-                        effect_policy=_pin("effect-policy", "EffectPolicy", "repeat-effects"),
+                        effect_policy=named(
+                            _pin("effect-policy", "EffectPolicy", "repeat-effects")
+                        ),
                         spec={"rows": "$steps.body_rows"},
                         as_="body_result",
                     ),
@@ -175,7 +180,9 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ),
             CaptureEgressNode(
                 node_id="capture",
-                capture_contract=_pin("capture-contract", "CaptureContract", "result-capture"),
+                capture_contract=named(
+                    _pin("capture-contract", "CaptureContract", "result-capture")
+                ),
                 input={"rows": "$steps.repeated_rows"},
                 result="$steps.repeated_rows",
             ),
@@ -214,11 +221,11 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("nodes", 7, "capture_contract"),
     ),
 )
-def test_semantic_pin_expectations_cover_every_exact_field(
+def test_semantic_reference_expectations_cover_every_dependency_field(
     path: tuple[object, ...],
 ) -> None:
     payload = _kitchen_sink_definition().model_dump(mode="json", by_alias=True)
-    wrong = _pin("wrong", "WrongArtifact", "wrong").model_dump(mode="json")
+    wrong = named(_pin("wrong", "WrongArtifact", "wrong")).model_dump(mode="json")
     _replace_path(payload, path, wrong)
 
     with pytest.raises(ValidationError, match="requires role="):
@@ -242,7 +249,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
         (
             StateTapNode(
                 node_id="state",
-                query=_pin("query", "QueryDefinition", "state"),
+                query=named(_pin("query", "QueryDefinition", "state")),
                 as_="rows",
             ),
             GuardNode(
@@ -256,14 +263,14 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
             ProjectNode(
                 node_id="hot",
                 fields={"hot": True},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="hot_rows",
                 next="join",
             ),
             ProjectNode(
                 node_id="join",
                 fields={"status": "joined"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -287,7 +294,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
             (
                 StateTapNode(
                     node_id="state",
-                    query=_pin("query", "QueryDefinition", "state"),
+                    query=named(_pin("query", "QueryDefinition", "state")),
                     as_="rows",
                 ),
                 GuardNode(
@@ -301,7 +308,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                 ProjectNode(
                     node_id="hot",
                     fields={"hot": True},
-                    contract_out=contract_out,
+                    contract_out=named(contract_out),
                     as_="hot_rows",
                     next="join",
                 ),
@@ -315,7 +322,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                 ProjectNode(
                     node_id="result",
                     fields={"status": "joined"},
-                    contract_out=contract_out,
+                    contract_out=named(contract_out),
                     as_="result",
                 ),
             ),
@@ -328,7 +335,7 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
         (
             StateTapNode(
                 node_id="read",
-                query=_pin("query", "QueryDefinition", "halt-input"),
+                query=named(_pin("query", "QueryDefinition", "halt-input")),
                 as_="rows",
             ),
             HaltNode(node_id="stop", reason="No work remains."),
@@ -347,7 +354,7 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "guard-layout-result")
     read = StateTapNode(
         node_id="read",
-        query=_pin("query", "QueryDefinition", "guard-layout-input"),
+        query=named(_pin("query", "QueryDefinition", "guard-layout-input")),
         as_="rows",
         next="gate",
     )
@@ -362,7 +369,7 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
-        contract_out=contract_out,
+        contract_out=named(contract_out),
         as_="result",
     )
     stop = HaltNode(node_id="stop", reason="No rows are available.")
@@ -390,7 +397,7 @@ def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bo
     result = ProjectNode(
         node_id="result",
         fields={"ok": True},
-        contract_out=_pin("contract-out", "Contract", "terminal-guard-result"),
+        contract_out=named(_pin("contract-out", "Contract", "terminal-guard-result")),
         as_="result",
     )
     gate = GuardNode(
@@ -437,7 +444,7 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
             ProjectNode(
                 node_id="result",
                 fields={"ok": True},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -457,7 +464,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
             (
                 StateTapNode(
                     node_id="read",
-                    query=_pin("query", "QueryDefinition", "guard-tail-input"),
+                    query=named(_pin("query", "QueryDefinition", "guard-tail-input")),
                     as_="rows",
                     next="gate",
                 ),
@@ -472,8 +479,8 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                 TransformNode(
                     node_id="result",
                     transform_kind="aggregate_items",
-                    contract_in=_pin("contract-in", "Contract", "guard-tail-items"),
-                    contract_out=contract_out,
+                    contract_in=named(_pin("contract-in", "Contract", "guard-tail-items")),
+                    contract_out=named(contract_out),
                     spec={
                         "tag": "playbill-transform-aggregate-items-spec-v1",
                         "items": "$steps.rows",
@@ -483,7 +490,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                 ProjectNode(
                     node_id="tail",
                     fields={"extra": True},
-                    contract_out=contract_out,
+                    contract_out=named(contract_out),
                     as_="extra",
                 ),
                 HaltNode(node_id="stop", reason="No rows are available."),
@@ -576,7 +583,7 @@ def test_terminal_kinds_cannot_exceed_the_declared_capability(
         ProjectNode(
             node_id="project",
             fields={"ready": True},
-            contract_out=_pin("contract-out", "Contract", "result"),
+            contract_out=named(_pin("contract-out", "Contract", "result")),
             as_="result",
         ),
         terminal,
@@ -602,14 +609,14 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
             CallNode(
                 node_id="provider",
                 slot="external",
-                effect_policy=_pin("effect-policy", "EffectPolicy", "external-effects"),
+                effect_policy=named(_pin("effect-policy", "EffectPolicy", "external-effects")),
                 input={},
                 as_="provider_result",
             ),
             ProjectNode(
                 node_id="project",
                 fields={"result": "$steps.provider_result"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -640,7 +647,7 @@ def test_all_terminal_runtime_templates_receive_structured_reference_checks(
                 ProjectNode(
                     node_id="project",
                     fields={"ready": True},
-                    contract_out=_pin("contract-out", "Contract", "result"),
+                    contract_out=named(_pin("contract-out", "Contract", "result")),
                     as_="result",
                 ),
                 terminal,

@@ -13,11 +13,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.models import ConstantNode as NamedConstantNode
 from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
     ReturnNode,
 )
-from cruxible_client.contracts.procedures.named_models import NamedConstantNode
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 from tests.core_support._support import initialize_local

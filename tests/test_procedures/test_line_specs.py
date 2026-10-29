@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -33,7 +32,7 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNode,
     StateTapNode,
 )
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import accepted_procedure, named
 
 
 def _digest(label: str) -> str:
@@ -49,23 +48,23 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
 
 
 def _definition(query: ArtifactPin) -> ProcedureDefinition:
-    contract_in = _pin("contract-in", "Contract", "empty-input")
-    contract_out = _pin("contract-out", "Contract", "claim-rows")
+    contract_in = named(_pin("contract-in", "Contract", "empty-input"))
+    contract_out = named(_pin("contract-out", "Contract", "claim-rows"))
     return ProcedureDefinition(
         name="triage",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=query,
+                query=named(query),
                 parameters={},
                 as_="rows",
             ),
             ProjectNode(
                 node_id="shape",
                 fields={"rows": "$steps.rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -87,16 +86,12 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
     )
 
 
-def _accepted_procedure(
-    artifact_format: Literal[
-        "playbill-procedure-v2", "cruxible-procedure-v3"
-    ] = "cruxible-procedure-v3",
-) -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, str]]:
-    """The exact Procedure: its state tap pins the query it reads."""
+def _accepted_procedure() -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, str]]:
+    """The exact Procedure: its state tap reads the query, bound at this pin."""
 
     query_pin = _pin("query", "QueryDefinition", "claims-by-status")
     accepted = accepted_procedure(
-        _definition(query_pin), activation_policy="drain", artifact_format=artifact_format
+        _definition(query_pin), activation_policy="drain", extra_pins=(query_pin,)
     )
     return accepted, query_pin, {"query": _digest("query-interface")}
 
@@ -106,11 +101,8 @@ def _line(
     epoch: int = 1,
     predecessor_digest: str | None = None,
     requested_rung: int = 2,
-    artifact_format: Literal[
-        "playbill-procedure-v2", "cruxible-procedure-v3"
-    ] = "cruxible-procedure-v3",
 ) -> tuple[LineSpec, AcceptedProcedure, Mapping[str, str]]:
-    accepted, _query_pin, interfaces = _accepted_procedure(artifact_format)
+    accepted, _query_pin, interfaces = _accepted_procedure()
     procedure_pin = _pin(
         "procedure",
         "Procedure",
@@ -135,15 +127,10 @@ def _line(
     return line, accepted, interfaces
 
 
-@pytest.mark.parametrize("artifact_format", ["playbill-procedure-v2", "cruxible-procedure-v3"])
-def test_line_spec_round_trip_and_digest_golden(artifact_format) -> None:
-    line, accepted, _interfaces = _line(artifact_format=artifact_format)
+def test_line_spec_round_trip_and_digest_golden() -> None:
+    line, accepted, _interfaces = _line()
 
-    expected = (
-        "sha256:6af1fb2210e08969405f8a2185c6da0dcfec6b6cd852d43448ed61703c79330d"
-        if artifact_format == "playbill-procedure-v2"
-        else "sha256:54c26633d304e9853f51302f314bd8cfee2297caa04a978c7749fd7f19f8e034"
-    )
+    expected = "sha256:54c26633d304e9853f51302f314bd8cfee2297caa04a978c7749fd7f19f8e034"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

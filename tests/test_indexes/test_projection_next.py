@@ -95,7 +95,7 @@ from tests.core_support._published_world import (
 )
 from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -112,13 +112,13 @@ def _accepted_procedure() -> AcceptedProcedure:
     contract_out = pin("contract-out", "Contract", "procedure-output")
     definition = ProcedureDefinition(
         name="catalog-procedure",
-        contract_in=pin("contract-in", "Contract", "procedure-input"),
-        contract_out=contract_out,
+        contract_in=named(pin("contract-in", "Contract", "procedure-input")),
+        contract_out=named(contract_out),
         nodes=(
             ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),

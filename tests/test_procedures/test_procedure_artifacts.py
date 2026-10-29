@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactPin,
+    ArtifactNameRef,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import CanonicalDuration
@@ -19,7 +19,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
-    procedure_owned_contract_digest,
     procedure_path,
     procedure_runnability,
     render_procedure,
@@ -42,27 +41,23 @@ from cruxible_client.contracts.procedures.models import (
     ProposeChangeSetNode,
     StateTapNode,
 )
-from tests.support.procedures import owned_contract, owned_pin, procedure_artifact
+from tests.support.procedures import named, procedure_artifact
 
 
 def _digest(label: str) -> str:
     return typed_digest(ArtifactDigest, "playbill-test-v1", {"label": label}).tagged
 
 
-def _pin(role: str, kind: str, name: str) -> ArtifactPin:
-    if kind == "Contract":
-        # Contracts ride in the envelope: pin the exact owned Contract digest.
-        return owned_pin(role, owned_contract(name))
-    return ArtifactPin(
-        role=role,
-        target=ArtifactIdentity(kind=kind, name=name),
-        artifact_digest=_digest(name),
-    )
+def _pin(role: str, kind: str, name: str) -> ArtifactNameRef:
+    """The graph reference a field names; Contracts ride in the envelope."""
+
+    del role
+    return ArtifactNameRef(target=ArtifactIdentity(kind=kind, name=name))
 
 
 def _definition(
     *,
-    query: ArtifactPin | None = None,
+    query: ArtifactNameRef | None = None,
     nodes: tuple[object, ...] | None = None,
     terminal_capability: int = 1,
 ) -> ProcedureDefinition:
@@ -70,19 +65,19 @@ def _definition(
     contract_out = _pin("contract-out", "Contract", "claim-rows")
     query = query or _pin("query", "QueryDefinition", "claims-by-status")
     default_nodes = (
-        StateTapNode(node_id="read", query=query, parameters={}, as_="rows"),
+        StateTapNode(node_id="read", query=named(query), parameters={}, as_="rows"),
         ProjectNode(
             node_id="shape",
             fields={"rows": "$steps.rows"},
-            contract_out=contract_out,
+            contract_out=named(contract_out),
             as_="result",
         ),
     )
     return ProcedureDefinition(
         name="triage",
         description="Read accepted claims and shape a bounded result.",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
         returns="result",
         budget=ProcedureBudget(
@@ -103,16 +98,14 @@ def _definition(
 
 
 def _artifact(definition: ProcedureDefinition) -> ProcedureArtifact:
-    return procedure_artifact(
-        definition, activation_policy="drain", artifact_format="playbill-procedure-v2"
-    )
+    return procedure_artifact(definition, activation_policy="drain")
 
 
 def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "claim-rows")
     read = StateTapNode(
         node_id="read",
-        query=_pin("query", "QueryDefinition", "claims-by-status"),
+        query=named(_pin("query", "QueryDefinition", "claims-by-status")),
         parameters={},
         as_="rows",
         next="gate",
@@ -132,7 +125,7 @@ def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinition:
     result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
-        contract_out=contract_out,
+        contract_out=named(contract_out),
         as_="result",
     )
     stop = HaltNode(node_id="stop", reason="No rows are available.")
@@ -144,14 +137,14 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     definition = _definition()
     procedure = _artifact(definition)
 
-    assert definition.graph_format == 6
+    assert definition.graph_format == 7
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:9137cc26b9aa3967da2dd004ca4c82bb5dda2cfbc15883f5f753776a9162d9a3"
+        "sha256:87e3602861388e1ea1780c54c2a43255cbd0233b9cbb2dda2bc290735fb6444d"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (
-        "sha256:98667c3be43ddf10c9416fa2abb0c80721d68f9e9c8de0eac74f55b685582da5"
+        "sha256:acb3c1cff183a4824487c65f3bf6dee35389b9c10ecec062d21e4ba983f099d9"
     )
 
     content = render_procedure(procedure)
@@ -183,39 +176,6 @@ def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
     assert result.verdict == "refused"
     assert result.diagnostics[0].code == "cruxible.proposal.non_singleton_scope"
     assert result.diagnostics[0].message == ("The proposal changes no registered semantic member.")
-
-
-def test_envelope_pin_only_successor_is_a_semantic_change() -> None:
-    predecessor_procedure = _artifact(_definition())
-    predecessor = AcceptedProcedure(
-        path=procedure_path("triage"),
-        procedure=predecessor_procedure,
-        artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
-    )
-    added_pin = _pin("source", "Source", "governed-input")
-    successor = predecessor_procedure.model_copy(
-        update={
-            "pins": tuple(
-                sorted(
-                    (*predecessor_procedure.pins, added_pin),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.qualified.encode(),
-                        pin.artifact_digest.encode(),
-                    ),
-                )
-            ),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest),
-        }
-    )
-
-    result = evaluate_procedure_law(
-        successor,
-        path=predecessor.path,
-        predecessor=predecessor,
-    )
-
-    assert result.verdict == "accepted"
 
 
 @pytest.mark.parametrize("change", ("activation", "retirement", "definition"))
@@ -252,122 +212,29 @@ def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
     )
 
 
-def test_procedure_v2_closes_owned_contracts() -> None:
-    contracts = tuple(
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name=name),
-            schema=ContractSchema(fields={}),
-        )
-        for name in ("claim-rows", "empty-input")
-    )
-    by_name = {contract.identity.name: contract for contract in contracts}
-    contract_in = ArtifactPin(
-        role="contract-in",
-        target=by_name["empty-input"].identity,
-        artifact_digest=procedure_owned_contract_digest(by_name["empty-input"]).tagged,
-    )
-    contract_out = ArtifactPin(
-        role="contract-out",
-        target=by_name["claim-rows"].identity,
-        artifact_digest=procedure_owned_contract_digest(by_name["claim-rows"]).tagged,
-    )
-    exact_query = _pin("query", "QueryDefinition", "claims-by-status")
-    definition = _definition(query=exact_query).model_copy(
-        update={
-            "contract_in": contract_in,
-            "contract_out": contract_out,
-            "nodes": (
-                StateTapNode(node_id="read", query=exact_query, parameters={}, as_="rows"),
-                ProjectNode(
-                    node_id="shape",
-                    fields={},
-                    contract_out=contract_out,
-                    as_="result",
-                ),
-            ),
-        }
-    )
-    closed_definition = definition
-    owned = tuple(
-        sorted(
-            contracts,
-            key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-        )
-    )
-    procedure = closed = ProcedureArtifact(
-        identity=ArtifactIdentity(kind="Procedure", name="triage"),
-        definition=closed_definition,
-        definition_digest=compute_procedure_definition_digest(closed_definition).tagged,
-        pins=tuple(
-            sorted(
-                (contract_in, contract_out, exact_query),
-                key=lambda pin: (
-                    pin.role.encode(),
-                    pin.target.qualified.encode(),
-                    pin.artifact_digest.encode(),
-                ),
-            )
-        ),
-        owned_contracts=owned,
-        activation_policy="drain",
-    )
+def test_procedure_closes_owned_contracts_by_name() -> None:
+    procedure = _artifact(_definition())
     assert parse_procedure(render_procedure(procedure), path=procedure_path("triage")) == procedure
-    assert procedure_runnability(closed_definition) == ("direct", ())
+    assert procedure_runnability(procedure.definition) == ("direct", ())
     assert (
-        evaluate_procedure_law(
-            closed,
-            path=procedure_path("triage"),
-            predecessor=None,
-        ).verdict
+        evaluate_procedure_law(procedure, path=procedure_path("triage"), predecessor=None).verdict
         == "accepted"
     )
-
-    wrong = contract_out.model_copy(update={"artifact_digest": _digest("forged")})
-    wrong_definition = definition.model_copy(
-        update={
-            "contract_out": wrong,
-            "nodes": (
-                definition.nodes[0],
-                ProjectNode(
-                    node_id="shape",
-                    fields={},
-                    contract_out=wrong,
-                    as_="result",
-                ),
-            ),
-        }
+    payload = procedure.model_dump(mode="json", by_alias=True)
+    extra = ProcedureOwnedContract(
+        identity=ArtifactIdentity(kind="Contract", name="unreferenced"),
+        schema=ContractSchema(fields={}),
     )
-    with pytest.raises(ValidationError, match="does not resolve"):
-        ProcedureArtifact(
-            **{
-                **procedure.model_dump(mode="python", exclude={"artifact_format"}),
-                "definition": wrong_definition,
-                "definition_digest": compute_procedure_definition_digest(wrong_definition).tagged,
-                "pins": tuple(
-                    sorted(
-                        (contract_in, exact_query, wrong),
-                        key=lambda pin: (
-                            pin.role.encode(),
-                            pin.target.qualified.encode(),
-                            pin.artifact_digest.encode(),
-                        ),
-                    )
-                ),
-            }
-        )
-
-
-def test_procedure_rejects_exact_node_pin_missing_from_envelope() -> None:
-    definition = _definition()
-    with pytest.raises(ValidationError, match="exact pins absent"):
-        ProcedureArtifact(
-            identity=ArtifactIdentity(kind="Procedure", name="triage"),
-            definition=definition,
-            definition_digest=compute_procedure_definition_digest(definition).tagged,
-            pins=(),
-            owned_contracts=_artifact(definition).owned_contracts,
-            activation_policy="drain",
-        )
+    payload["owned_contracts"] = sorted(
+        [*payload["owned_contracts"], extra.model_dump(mode="json", by_alias=True)],
+        key=canonical_bytes,
+    )
+    with pytest.raises(ValidationError, match="every owned Contract"):
+        ProcedureArtifact.model_validate(payload)
+    payload = procedure.model_dump(mode="json", by_alias=True)
+    payload["owned_contracts"] = payload["owned_contracts"][:1]
+    with pytest.raises(ValidationError, match="every owned Contract"):
+        ProcedureArtifact.model_validate(payload)
 
 
 def test_graph_refuses_backward_edge() -> None:
@@ -378,13 +245,13 @@ def test_graph_refuses_backward_edge() -> None:
                 ProjectNode(
                     node_id="first",
                     fields={},
-                    contract_out=contract_out,
+                    contract_out=named(contract_out),
                     as_="intermediate",
                 ),
                 ProjectNode(
                     node_id="second",
                     fields={},
-                    contract_out=contract_out,
+                    contract_out=named(contract_out),
                     as_="result",
                     next="first",
                 ),
@@ -404,7 +271,7 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
             ProjectNode(
                 node_id="shape",
                 fields={"status": "ready"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
             terminal,
@@ -440,7 +307,7 @@ def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
         nodes=(
             ExhaustTapNode(
                 node_id="exhaust",
-                reducer_or_query=_pin("query", "QueryDefinition", "journal-query"),
+                reducer_or_query=named(_pin("query", "QueryDefinition", "journal-query")),
                 journal_identity="retained-journal",
                 as_="rows",
             ),
@@ -461,55 +328,37 @@ def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
     assert node.kind == "exhaust_tap" and node.runs_on == "nowhere"
 
 
-def test_named_procedure_has_no_cross_reference_digests() -> None:
-    from cruxible_client.contracts.procedures.artifacts import (
-        NamedProcedureArtifact,
-    )
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    historical = _artifact(_definition())
-    original = render_procedure(historical)
-    named = name_procedure(historical)
-    payload = named.model_dump(mode="json", by_alias=True)
+def test_procedure_has_no_cross_reference_digests() -> None:
+    procedure = _artifact(_definition())
+    payload = procedure.model_dump(mode="json", by_alias=True)
     assert payload["artifact_format"] == "cruxible-procedure-v3"
     assert payload["definition"]["graph_format"] == 7
     assert "pins" not in payload
     assert "artifact_digest" not in str(payload["definition"])
     assert "role" not in str(payload["definition"])
-    assert NamedProcedureArtifact.model_validate_json(render_procedure(named)) == named
-    assert parse_procedure(render_procedure(named), path=procedure_path("triage")) == named
-    assert render_procedure(historical) == original
-    assert name_procedure(named) == named
-    assert parse_procedure(original, path=procedure_path("triage")) == historical
+    assert ProcedureArtifact.model_validate_json(render_procedure(procedure)) == procedure
+    assert parse_procedure(render_procedure(procedure), path=procedure_path("triage")) == procedure
 
 
-def test_named_procedure_refuses_legacy_reference_fields() -> None:
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    payload = name_procedure(_artifact(_definition())).model_dump(mode="json", by_alias=True)
+def test_procedure_refuses_pin_reference_fields() -> None:
+    payload = _artifact(_definition()).model_dump(mode="json", by_alias=True)
     payload["pins"] = []
     with pytest.raises(ValidationError, match="Extra inputs"):
-        NamedProcedureArtifact.model_validate(payload)
+        ProcedureArtifact.model_validate(payload)
     payload.pop("pins")
     payload["definition"]["nodes"][0]["query"]["role"] = "query"
     with pytest.raises(ValidationError, match="Extra inputs"):
-        NamedProcedureArtifact.model_validate(payload)
+        ProcedureArtifact.model_validate(payload)
 
 
-def test_named_procedure_checks_owned_contract_names() -> None:
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    payload = name_procedure(_artifact(_definition())).model_dump(mode="json", by_alias=True)
+def test_procedure_checks_owned_contract_names() -> None:
+    payload = _artifact(_definition()).model_dump(mode="json", by_alias=True)
     payload["owned_contracts"] = []
     with pytest.raises(ValidationError, match="every owned Contract"):
-        NamedProcedureArtifact.model_validate(payload)
+        ProcedureArtifact.model_validate(payload)
 
 
-def test_named_graph_preserves_reference_shaped_payloads() -> None:
-    from cruxible_client.contracts.procedures.names import name_procedure
-
+def test_graph_keeps_reference_shaped_payloads_as_data() -> None:
     payload = {
         "interface_digest": _digest("literal-interface"),
         "implementation_digest": _digest("literal-implementation"),
@@ -525,15 +374,14 @@ def test_named_graph_preserves_reference_shaped_payloads() -> None:
         for node in base.definition.nodes
     )
     literal_definition = base.definition.model_copy(update={"nodes": nodes, "annotations": payload})
-    historical = ProcedureArtifact.model_validate(
+    procedure = ProcedureArtifact.model_validate(
         {
             **base.model_dump(mode="json", by_alias=True),
             "definition": literal_definition,
             "definition_digest": compute_procedure_definition_digest(literal_definition).tagged,
         }
     )
-    named = name_procedure(historical)
-    assert named.definition.annotations == payload
-    assert named.definition.nodes[0].parameters == payload
-    assert named.definition.nodes[1].fields == payload
-    assert historical.definition.annotations == payload
+    restored = parse_procedure(render_procedure(procedure), path=procedure_path("triage"))
+    assert restored.definition.annotations == payload
+    assert restored.definition.nodes[0].parameters == payload
+    assert restored.definition.nodes[1].fields == payload

@@ -145,7 +145,14 @@ from cruxible_core.storage.material_reservations import (
 )
 from tests.core_support._support import initialize_local
 from tests.support.operation_world import contract_files
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    RUN_WALL_CLOCK,
+    accepted_artifact,
+    accepted_procedure,
+    bind_fixture,
+    named,
+)
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
 
@@ -246,12 +253,12 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     )
     definition = ProcedureDefinition(
         name="state-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=query,
+                query=named(query),
                 parameters={"status": "accepted"},
                 as_="rows",
                 next="gate",
@@ -267,7 +274,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
             ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.rows.result.rows", "status": "ok"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -282,19 +289,21 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
 def _exhaust_procedure() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
+    # A registry Reducer has no ledger owner to resolve a name against; the
+    # exhaust tap reads through a named Query.
     reducer = ArtifactPin(
-        role="reducer",
-        target=ArtifactIdentity(kind="Reducer", name="upstream"),
+        role="query",
+        target=ArtifactIdentity(kind="QueryDefinition", name="upstream"),
         artifact_digest=_digest("upstream-reducer"),
     )
     definition = ProcedureDefinition(
         name="exhaust-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             ExhaustTapNode(
                 node_id="read-prior",
-                reducer_or_query=reducer,
+                reducer_or_query=named(reducer),
                 journal_identity="upstream-journal",
                 as_="prior_rows",
                 next="project",
@@ -302,7 +311,7 @@ def _exhaust_procedure() -> AcceptedProcedure:
             ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.prior_rows.rows", "status": "ok"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -335,18 +344,10 @@ def _owned_accepted(
     contracts: tuple[ProcedureOwnedContract, ...],
     pins: tuple[ArtifactPin, ...],
 ) -> AcceptedProcedure:
-    unique_pins = {(pin.role, pin.target.qualified, pin.artifact_digest): pin for pin in pins}
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            unique_pins[key]
-            for key in sorted(
-                unique_pins,
-                key=lambda item: tuple(member.encode("utf-8") for member in item),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 contracts,
@@ -355,11 +356,7 @@ def _owned_accepted(
         ),
         activation_policy="abort",
     )
-    return AcceptedProcedure(
-        path=procedure_path(definition.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    return bind_fixture(accepted_artifact(procedure), extra_pins=pins)
 
 
 def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
@@ -387,7 +384,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
     query = _pin("query", "QueryDefinition", f"accepted-items-{boundary}")
     read = StateTapNode(
         node_id="read",
-        query=query,
+        query=named(query),
         parameters={},
         as_="rows",
         next="shape",
@@ -396,8 +393,8 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
     shape = TransformNode(
         node_id="shape",
         transform_kind="shape_items",
-        contract_in=rows_in,
-        contract_out=rows_out,
+        contract_in=named(rows_in),
+        contract_out=named(rows_out),
         spec=_transform_spec(
             "shape_items",
             {"items": "$steps.rows.result.rows", "fields": {"id": "$item.fields.0.value"}},
@@ -409,8 +406,8 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         compute = TransformNode(
             node_id="compute",
             transform_kind="adapter",
-            contract_in=typed_in,
-            contract_out=opaque_out,
+            contract_in=named(typed_in),
+            contract_out=named(opaque_out),
             spec={
                 "tag": "playbill-transform-adapter-spec-v1",
                 "value": {"items": "$steps.shaped.items"},
@@ -424,7 +421,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         compute = ProjectNode(
             node_id="compute",
             fields={"items": "$steps.shaped.items"},
-            contract_out=typed_out if boundary == "contract-out" else opaque_out,
+            contract_out=named(typed_out if boundary == "contract-out" else opaque_out),
             as_="result",
         )
         return_pin = typed_out
@@ -434,8 +431,8 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         pins = (entry_pin, compute.contract_out, return_pin, rows_in, rows_out, query)
     definition = ProcedureDefinition(
         name=f"owned-{boundary}",
-        contract_in=entry_pin,
-        contract_out=return_pin,
+        contract_in=named(entry_pin),
+        contract_out=named(return_pin),
         nodes=(read, shape, compute),
         returns="result",
         budget=_budget(items=1),
@@ -461,14 +458,14 @@ def _transform_procedure(kind: str, spec: object) -> AcceptedProcedure:
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinition(
         name=f"{kind.replace('_', '-')}-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             TransformNode(
                 node_id="transform",
                 transform_kind=kind,  # type: ignore[arg-type]
-                contract_in=contract_in,
-                contract_out=contract_out,
+                contract_in=named(contract_in),
+                contract_out=named(contract_out),
                 spec=_transform_spec(kind, spec),
                 as_="result",
             ),
@@ -486,8 +483,8 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinition(
         name="repeat-transform-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             RepeatNode(
                 node_id="repeat",
@@ -497,8 +494,8 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
                         node_id="shape-body",
                         operation="transform",
                         transform_kind="shape_items",
-                        contract_in=contract_in,
-                        contract_out=contract_out,
+                        contract_in=named(contract_in),
+                        contract_out=named(contract_out),
                         spec={
                             "tag": "playbill-transform-shape-items-spec-v1",
                             "items": [{"id": "a"}, {"id": "b"}],
@@ -585,8 +582,8 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
     )
     definition = ProcedureDefinition(
         name=f"repeat-{boundary}-budget",
-        contract_in=entry_pin,
-        contract_out=return_pin,
+        contract_in=named(entry_pin),
+        contract_out=named(return_pin),
         nodes=(
             RepeatNode(
                 node_id="repeat",
@@ -596,8 +593,8 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
                         node_id="shape-body",
                         operation="transform",
                         transform_kind=transform_kind,
-                        contract_in=body_input,
-                        contract_out=body_output,
+                        contract_in=named(body_input),
+                        contract_out=named(body_output),
                         spec=spec,
                         as_="shaped",
                     ),
@@ -635,6 +632,9 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
 
 
 def _typed_transform_node(**values: object) -> TransformNode:
+    for field in ("contract_in", "contract_out"):
+        if isinstance(values.get(field), ArtifactPin):
+            values[field] = named(values[field])  # type: ignore[arg-type]
     return TransformNode.model_validate(values)
 
 
@@ -678,8 +678,8 @@ def _guarded_filter_procedure(
     result_pin = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
         name=f"guarded-filter-{operator}{'-explicit-next' if result_next else ''}",
-        contract_in=entry_pin,
-        contract_out=result_pin,
+        contract_in=named(entry_pin),
+        contract_out=named(result_pin),
         nodes=(
             _typed_transform_node(
                 node_id="filter",
@@ -750,8 +750,8 @@ def _guarded_scalar_procedure(
     count_out = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
         name="guarded-scalar-" + alias + "-" + "-".join(path),
-        contract_in=entry_pin,
-        contract_out=count_out,
+        contract_in=named(entry_pin),
+        contract_out=named(count_out),
         nodes=(
             _typed_transform_node(
                 node_id="summarize",
@@ -1213,10 +1213,17 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = procedure_path(spec.procedure)
     accepted_procedure_artifact = parse_procedure(tree[path], path=path)
-    accepted = AcceptedProcedure(
-        path=path,
-        procedure=accepted_procedure_artifact,
-        artifact_digest=procedure_artifact_digest(accepted_procedure_artifact).tagged,
+    from tests.support.operation_world import operation_build
+    from tests.support.procedures import bind_to_build
+
+    accepted = bind_to_build(
+        AcceptedProcedure(
+            path=path,
+            procedure=accepted_procedure_artifact,
+            artifact_digest=procedure_artifact_digest(accepted_procedure_artifact).tagged,
+        ),
+        operation_build(),
+        "compute",
     )
 
     fixture = _fixture(tmp_path)
@@ -1689,15 +1696,15 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
     capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
     source = SourceNode(
         node_id="source",
-        capture_contract=capture_contract,
+        capture_contract=named(capture_contract),
         slot="fetch",
         request={},
         as_="capture",
     )
     source_definition = ProcedureDefinition(
         name="source-landed-capture",
-        contract_in=_pin("contract-in", "Contract", "provider-input"),
-        contract_out=_pin("contract-out", "Contract", "provider-output"),
+        contract_in=named(_pin("contract-in", "Contract", "provider-input")),
+        contract_out=named(_pin("contract-out", "Contract", "provider-output")),
         slots={"fetch": {"in": "test.value@1", "out": "test.value@1", "effect": "external_read"}},
         nodes=(source,),
         returns="capture",
@@ -1705,7 +1712,7 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
-    source_accepted = _accepted(source_definition)
+    source_accepted = _accepted(source_definition, pins=(capture_contract,))
     fixture = _fixture(tmp_path)
     landed = LandedCaptureRunInputV1(
         input_name="capture",
@@ -3081,12 +3088,12 @@ def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> Non
     query = _pin("query", "QueryDefinition", "json-accepted-items")
     definition = ProcedureDefinition(
         name="json-escape-hatch",
-        contract_in=entry_pin,
-        contract_out=output_pin,
+        contract_in=named(entry_pin),
+        contract_out=named(output_pin),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=query,
+                query=named(query),
                 parameters={},
                 as_="rows",
                 next="project",
@@ -3094,7 +3101,7 @@ def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> Non
             ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.rows.result.rows", "status": "ok"},
-                contract_out=output_pin,
+                contract_out=named(output_pin),
                 as_="result",
             ),
         ),
@@ -3300,7 +3307,7 @@ def test_repeat_above_legacy_ceiling_uses_admitted_policy(tmp_path):
             "hard_caps": definition.hard_caps.model_copy(update={"max_repeat_attempts": 30}),
         }
     )
-    accepted = _accepted(definition, pins=original.procedure.pins)
+    accepted = _accepted(definition, pins=original.procedure.pins)  # the original's bound pins
     policy = ProcedureRuntimePolicy(
         provider_output_bytes_cap=1024, result_bytes_cap=10000, repeat_attempts_cap=30
     )

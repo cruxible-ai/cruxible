@@ -1,9 +1,6 @@
 """Read-only Procedure source preview through the same resolver used by prepare."""
 
-from cruxible_client.contracts.artifacts import ArtifactNameRef
-from cruxible_client.contracts.procedures.models import iter_pin_bindings
-from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-from cruxible_client.contracts.procedures.names import named_graph
+from cruxible_client.contracts.procedures.models import iter_references
 from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreview,
@@ -26,13 +23,8 @@ def service_preview_procedure_source(
             compiled = resolve_indexed_source(request.source, rows)
         definition = compiled.definition
         contracts = compiled.contracts
-        definition = NamedProcedureDefinition.model_validate(
-            named_graph(definition.model_dump(mode="json", by_alias=True))
-        )
         required = {
-            ref.target.name
-            for ref in iter_pin_bindings(definition)
-            if isinstance(ref, ArtifactNameRef) and ref.target.kind == "Contract"
+            ref.target.name for ref in iter_references(definition) if ref.target.kind == "Contract"
         }
         contracts = tuple(contract for contract in contracts if contract.name in required)
         return ProcedureSourcePreview(

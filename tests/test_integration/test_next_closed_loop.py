@@ -70,6 +70,7 @@ from cruxible_core.coverage.contracts import (
 )
 from cruxible_core.coverage.indexes import WorkingOccurrence
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.authoring.documents import (
@@ -1641,7 +1642,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
 
     instance, owner = initialize_local(root)
-    procedure = _procedure(named=True)
+    procedure = _procedure()
     lapsing = _mandate(procedure=procedure).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=UTC)}
     )
@@ -1650,7 +1651,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            procedure.path: render_procedure(procedure.procedure),
+            procedure.path: render_procedure(authored_procedure(procedure)),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },
         timestamp="2026-08-24T17:00:00.000000Z",

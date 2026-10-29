@@ -39,11 +39,12 @@ from cruxible_client.contracts.procedures.models import CanonicalDuration, Proce
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.procedures import named
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_procedures.test_procedure_artifacts import _artifact as _frozen_artifact
-from tests.test_procedures.test_procedure_artifacts import _definition
+from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
 _D0 = "sha256:" + "0" * 64
 
@@ -58,12 +59,6 @@ def _caps(*, calls: int = 0) -> ProcedureHardCaps:
     )
 
 
-def _artifact(definition):
-    from cruxible_client.contracts.procedures.names import name_procedure
-
-    return name_procedure(_frozen_artifact(definition))
-
-
 def _closed_definition(*, terminal_capability=3):
     from cruxible_client.contracts.procedures.models import ProjectNode
 
@@ -74,15 +69,15 @@ def _closed_definition(*, terminal_capability=3):
             ProjectNode(
                 node_id="shape",
                 fields={"rows": []},
-                contract_out=template.contract_out,
+                contract_out=named(template.contract_out),
                 as_="result",
             ),
         ),
     )
 
 
-def _procedure(*, named=False) -> AcceptedProcedure:
-    artifact = (_artifact if named else _frozen_artifact)(_closed_definition())
+def _procedure() -> AcceptedProcedure:
+    artifact = _artifact(_closed_definition())
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 
     return AcceptedProcedure(
@@ -302,12 +297,12 @@ def test_line_and_mandate_successors_are_one_changeset_relation(tmp_path) -> Non
     instance, _owner = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
-    procedure = _procedure(named=True)
+    procedure = _procedure()
     first_line = _line(procedure=procedure)
     first_mandate = _mandate(line=first_line, grants="propose")
     first_tree = {
         **base_tree,
-        procedure.path: render_procedure(procedure.procedure),
+        procedure.path: render_procedure(authored_procedure(procedure)),
         line_spec_path(first_line.identity.name): render_line_spec(first_line),
         procedure_mandate_path("triage"): render_procedure_mandate(first_mandate),
     }

@@ -26,6 +26,7 @@ from cruxible_core.procedures.execution import (
 )
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
     _Authority,
@@ -46,12 +47,12 @@ def _terminal_procedure():
     query = _pin("query", "QueryDefinition", "terminal-items")
     definition = ProcedureDefinition(
         name="terminal-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=query,
+                query=named(query),
                 parameters={},
                 as_="rows",
                 next="inbox",

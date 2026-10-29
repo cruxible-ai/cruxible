@@ -466,7 +466,6 @@ def procedure_example() -> ProcedureInput:
     return ProcedureInput(
         kind="procedure",
         definition={
-            "graph_format": 6,
             "name": "replace-me",
             "description": "Run all six deterministic compute kernels over typed collections.",
             "contract_in": carried("empty-input", "contract-in"),

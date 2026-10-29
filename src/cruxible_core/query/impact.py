@@ -4,8 +4,8 @@ When a later backing successor supports or contradicts a statement, the
 question an agent has to answer is not "what did we believe" but "what is
 standing on the thing that moved". This module walks the accepted dependency
 edges outward from one Claim -- downstream Claims through their backing inputs,
-and Procedures, QueryDefinitions, and LineSpecs through their pins -- and
-renders each dependent twice over:
+and QueryDefinitions through their pins -- and renders each dependent twice
+over:
 
 * the **exact artifact it used**, taken from that dependent's own recorded
   backing digest or pin. That coordinate is immutable. Nothing here rewrites,
@@ -39,8 +39,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
@@ -51,7 +49,7 @@ from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 
 DEPENDENCY_IMPACT_RECEIPT_DIGEST_DOMAIN = "playbill-dependency-impact-v1"
 
-DEPENDENT_KINDS: tuple[str, ...] = ("Claim", "LineSpec", "Procedure", "QueryDefinition")
+DEPENDENT_KINDS: tuple[str, ...] = ("Claim", "QueryDefinition")
 
 SOURCE_SUPERSEDED = "cruxible.impact.source_superseded"
 SOURCE_CONTRADICTED = "cruxible.impact.source_contradicted"
@@ -154,7 +152,7 @@ class DependentImpactV1(_StrictImpactModel):
     tag: Literal["playbill-dependency-impact-dependent-v1"] = (
         "playbill-dependency-impact-dependent-v1"
     )
-    kind: Literal["Claim", "LineSpec", "Procedure", "QueryDefinition"]
+    kind: Literal["Claim", "QueryDefinition"]
     address: SemanticAddress
     identity: str
     artifact_digest: str
@@ -430,8 +428,6 @@ def _pinned_dependents(
     source: DependencyImpactSourceV1,
     *,
     definitions: Iterable[AcceptedQueryDefinition],
-    procedures: Iterable[AcceptedProcedure],
-    line_specs: Iterable[AcceptedLineSpec],
 ) -> list[DependentImpactV1]:
     identity = _claim_identity(source)
     dependents: list[DependentImpactV1] = []
@@ -446,28 +442,6 @@ def _pinned_dependents(
             )
             for item in definitions
             if item.query.lifecycle.state == "live"
-        ),
-        *(
-            (
-                "Procedure",
-                item.procedure.identity.qualified,
-                SemanticAddress.procedure_unit(item.path),
-                item.procedure.pins,
-                item.artifact_digest,
-            )
-            for item in procedures
-            if item.procedure.lifecycle.state == "live"
-        ),
-        *(
-            (
-                "LineSpec",
-                item.line.identity.qualified,
-                SemanticAddress.line(item.path),
-                item.line.pins,
-                item.artifact_digest,
-            )
-            for item in line_specs
-            if item.line.lifecycle.state == "live"
         ),
     )
     for kind, qualified, address, pins, artifact_digest in holders:
@@ -525,8 +499,6 @@ def build_dependency_impact(
     *,
     facts: ClaimQueryFactsV1,
     definitions: Iterable[AcceptedQueryDefinition] = (),
-    procedures: Iterable[AcceptedProcedure] = (),
-    line_specs: Iterable[AcceptedLineSpec] = (),
     source_lineages: Mapping[str, Sequence[str]] | None = None,
     include_retired_sources: bool = False,
 ) -> DependencyImpactV1:
@@ -548,8 +520,6 @@ def build_dependency_impact(
         source_lineages=source_lineages or {},
     )
     definitions = tuple(definitions)
-    procedures = tuple(procedures)
-    line_specs = tuple(line_specs)
 
     found: list[DependentImpactV1] = []
     for source in sources:
@@ -565,8 +535,6 @@ def build_dependency_impact(
             _pinned_dependents(
                 source,
                 definitions=definitions,
-                procedures=procedures,
-                line_specs=line_specs,
             )
         )
     ordered = tuple(sorted(found, key=_dependent_order))

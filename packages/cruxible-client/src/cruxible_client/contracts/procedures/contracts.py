@@ -1,4 +1,4 @@
-"""Runtime validation for Contract schemas carried by Procedure-v2 envelopes."""
+"""Runtime validation for Contract schemas carried by Procedure envelopes."""
 
 from __future__ import annotations
 
@@ -277,7 +277,7 @@ def validate_contract_schema_with_budget(
 
 
 class OwnedProcedureContractValidator:
-    """Resolve Contract pins only from one accepted Procedure-v2 owner."""
+    """Resolve Contract pins only from one accepted Procedure owner."""
 
     def __init__(self, accepted: AcceptedProcedure) -> None:
         self._contracts = {
@@ -287,20 +287,16 @@ class OwnedProcedureContractValidator:
         self._by_name = {
             contract.identity: contract for contract in accepted.procedure.owned_contracts
         }
-        self._structured = int(accepted.procedure.definition.graph_format) >= 6
 
     def _validate_structured(self, owned: ProcedureOwnedContract, value: CanonicalValue) -> None:
-        if self._structured:
-            from cruxible_client.contracts.records import validate_record_constraints
+        from cruxible_client.contracts.records import validate_record_constraints
 
-            assert isinstance(value, dict)
-            validate_record_constraints(owned.contract_schema, value)
+        assert isinstance(value, dict)
+        validate_record_constraints(owned.contract_schema, value)
 
     def _normalization_contract(
         self, owned: ProcedureOwnedContract, payload: object
     ) -> ProcedureOwnedContract:
-        if not self._structured:
-            return owned
         from cruxible_client.contracts.records import record_normalization_schema
 
         return owned.model_copy(

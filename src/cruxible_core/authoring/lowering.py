@@ -209,9 +209,7 @@ from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     ProcedureDefinition,
     SourceNode,
-    iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.names import name_procedure
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     CaptureEventWindow,
@@ -2377,15 +2375,7 @@ def _resolve_authoring_references(
                     repair_kind="replace_with_pin_slot",
                     repair_description="Use an explicit Procedure pin-slot reference.",
                 )
-            if target_identity in candidate_identities:
-                # Both maps derive from the same staged non-Procedure members.
-                resolved = (candidates or {})[target_identity]
-            _path, digest = resolved
-            return ArtifactPin(
-                role=reference.role,
-                target=reference.target,
-                artifact_digest=digest,
-            ).model_dump(mode="json")
+            return ArtifactNameRef(target=reference.target).model_dump(mode="json")
         if value.get("tag") == "playbill-authoring-candidate-reference-v1":
             try:
                 candidate_reference = AuthoringCandidateReference.model_validate(value)
@@ -2414,15 +2404,10 @@ def _resolve_authoring_references(
                     repair_kind="add_or_replace_member",
                     repair_description="Add the referenced artifact or use an accepted reference.",
                 )
-            resolved = (candidates or {}).get(candidate_reference.target.qualified)
-            if resolved is None:  # pragma: no cover - staged-tree invariant
+            if candidate_reference.target.qualified not in (candidates or {}):
+                # pragma: no cover - staged-tree invariant
                 raise ValueError("candidate member was not present in its staged tree")
-            _path, digest = resolved
-            return ArtifactPin(
-                role=candidate_reference.role,
-                target=candidate_reference.target,
-                artifact_digest=digest,
-            ).model_dump(mode="json")
+            return ArtifactNameRef(target=candidate_reference.target).model_dump(mode="json")
         if value.get("kind") == "carried_contract" and set(value) == {
             "kind",
             "name",
@@ -2439,11 +2424,7 @@ def _resolve_authoring_references(
                     repair_kind="replace_reference",
                     repair_description="Declare the Contract once and reference its exact name.",
                 )
-            return ArtifactPin(
-                role=role,
-                target=contract.identity,
-                artifact_digest=procedure_owned_contract_digest(contract).tagged,
-            ).model_dump(mode="json")
+            return ArtifactNameRef(target=contract.identity).model_dump(mode="json")
         if set(value) == {"role", "target", "artifact_digest"}:
             _refuse(
                 "cruxible.authoring.caller_artifact_digest_forbidden",
@@ -2721,12 +2702,6 @@ def _lower_procedure(
                 acquisition_defaults=payload.acquisition_defaults,
                 retire=payload.retire,
             )
-            from cruxible_client.contracts.procedures.names import named_graph
-
-            # The compiler's transient graph may retain a native Query.
-            # Select graph 7 before validating a serialized graph-6 model,
-            # whose frozen source bindings cannot contain v3 Queries.
-            payload = payload.model_copy(update={"definition": named_graph(payload.definition)})
             _refuse_unserved_procedure(payload.definition)
             return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
         except (SourceCompileError, ValueError) as exc:
@@ -2777,85 +2752,43 @@ def _lower_procedure(
                         envelope.path,
                         envelope.artifact_digest,
                     )
-    owned_contracts = (
-        {contract.identity.name: contract for contract in payload.owned_contracts}
-        if isinstance(payload, ProcedureAuthoringPayload)
-        else None
+    resolved_definition = _resolve_authoring_references(
+        payload.definition,
+        accepted=accepted,
+        candidates=candidate_artifacts,
+        candidate_identities=candidate_identities,
+        owned_contracts={contract.identity.name: contract for contract in payload.owned_contracts},
     )
-    resolved_definition = (
-        payload.definition
-        if source_authoring
-        else _resolve_authoring_references(
-            payload.definition,
-            accepted=accepted,
-            candidates=candidate_artifacts,
-            candidate_identities=candidate_identities,
-            owned_contracts=owned_contracts,
+    assert isinstance(resolved_definition, dict)
+    resolved_definition["graph_format"] = 7
+    referenced_contracts = {
+        reference["target"]["name"]
+        for reference in _named_references(resolved_definition)
+        if reference["target"]["kind"] == "Contract"
+    }
+    unreferenced_contracts = tuple(
+        sorted(
+            (
+                contract.identity.qualified
+                for contract in payload.owned_contracts
+                if contract.identity.name not in referenced_contracts
+            ),
+            key=lambda item: item.encode("utf-8"),
         )
     )
-    resolved_definition = _pin_slot_contracts(resolved_definition, base_tree)
-    definition: ProcedureDefinition
-    try:
-        definition = ProcedureDefinition.model_validate(resolved_definition)
-    except (ProcedureGraphFormatError, ValidationError) as exc:
-        message = (
-            str(exc)
-            if isinstance(exc, ProcedureGraphFormatError)
-            else " | ".join(_validation_error_lines(exc, root="definition"))
-        )
+    if unreferenced_contracts:
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
-            "definition",
-            "The lowered Procedure definition is invalid: " + message,
-            repair_kind="replace_definition",
-            repair_description="Repair the indicated definition field.",
-        )
-    identity = ArtifactIdentity(kind="Procedure", name=definition.name)
-    path = procedure_path(definition.name)
-    predecessor: ProcedureArtifact | None = None
-    if path in base_tree:
-        predecessor = parse_procedure(base_tree[path], path=path)
-    declared_pins = {
-        binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
-    }
-    pins = tuple(
-        sorted(
-            declared_pins,
-            key=lambda item: (
-                item.role.encode("utf-8"),
-                item.target.qualified.encode("utf-8"),
-                item.artifact_digest.encode("ascii"),
+            "owned_contracts",
+            "The Procedure declares owned Contracts that its graph does not reference: "
+            + ", ".join(unreferenced_contracts),
+            repair_kind="replace_contracts_or_definition",
+            repair_description=(
+                "Remove each unused owned Contract or reference it from the Procedure graph."
             ),
         )
-    )
-    if isinstance(payload, ProcedureAuthoringPayload):
-        referenced_contract_digests = {
-            pin.artifact_digest for pin in pins if pin.target.kind == "Contract"
-        }
-        unreferenced_contracts = tuple(
-            sorted(
-                (
-                    contract.identity.qualified
-                    for contract in payload.owned_contracts
-                    if procedure_owned_contract_digest(contract).tagged
-                    not in referenced_contract_digests
-                ),
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
-        if unreferenced_contracts:
-            _refuse(
-                "cruxible.authoring.procedure_definition_invalid",
-                "owned_contracts",
-                "The Procedure declares owned Contracts that its graph does not reference: "
-                + ", ".join(unreferenced_contracts),
-                repair_kind="replace_contracts_or_definition",
-                repair_description=(
-                    "Remove each unused owned Contract or reference it from the Procedure graph."
-                ),
-            )
-
-    if isinstance(payload, ProcedureAuthoringPayload) and definition.budget.max_items is not None:
+    budget = resolved_definition.get("budget")
+    if isinstance(budget, dict) and budget.get("max_items") is not None:
 
         def carries_list(contract: ProcedureOwnedContract) -> bool:
             pending = list(contract.contract_schema.fields.values())
@@ -2867,52 +2800,40 @@ def _lower_procedure(
                     pending.extend(field.item_fields.values())
             return False
 
-        if not any(
-            procedure_owned_contract_digest(contract).tagged in referenced_contract_digests
-            and carries_list(contract)
-            for contract in payload.owned_contracts
-        ):
+        if not any(carries_list(contract) for contract in payload.owned_contracts):
             _refuse(
                 "cruxible.authoring.procedure_definition_invalid",
                 "definition.budget.max_items",
                 "The lowered Procedure definition declares max_items but none of "
-                "its pinned Contracts declares a list field.",
+                "its referenced Contracts declares a list field.",
                 repair_kind="replace_definition",
                 repair_description=(
-                    "Declare a list field on a pinned Contract or remove budget.max_items."
+                    "Declare a list field on a referenced Contract or remove budget.max_items."
                 ),
             )
-    lifecycle = ArtifactLifecycle(
-        state="retired" if payload.retire else "live",
-        predecessor_digest=(None if predecessor is None else _envelope_digest(predecessor)),
+    return _lower_named_procedure(
+        instance,
+        payload.model_copy(update={"definition": resolved_definition}),
+        base=base,
+        base_tree=base_tree,
     )
-    try:
-        format_arguments: dict[str, Any] = {"artifact_format": "playbill-procedure-v2"}
-        procedure = ProcedureArtifact(
-            **format_arguments,
-            identity=identity,
-            definition=definition,
-            definition_digest=compute_procedure_definition_digest(definition).tagged,
-            pins=pins,
-            owned_contracts=payload.owned_contracts,
-            activation_policy=payload.activation_policy,
-            acquisition_defaults=payload.acquisition_defaults,
-            lifecycle=lifecycle,
-        )
-    except ValidationError as exc:
-        _refuse(
-            "cruxible.authoring.procedure_definition_invalid",
-            "procedure",
-            "The lowered Procedure artifact is invalid: "
-            + " | ".join(_validation_error_lines(exc, root="procedure")),
-            repair_kind="replace_definition_or_contracts",
-            repair_description=(
-                "Repair the Procedure definition or its owned Contract declarations."
-            ),
-        )
-    return _procedure_lowered(
-        instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
-    )
+
+
+def _named_references(value: object) -> list[dict[str, Any]]:
+    """Every ``{"target": ...}`` reference a resolved authoring graph names."""
+
+    found: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        if set(value) == {"target"} and isinstance(value["target"], dict):
+            found.append(value)
+        else:
+            for key, member in value.items():
+                if key != "source":
+                    found.extend(_named_references(member))
+    elif isinstance(value, list):
+        for member in value:
+            found.extend(_named_references(member))
+    return found
 
 
 def _lower_named_procedure(
@@ -2922,17 +2843,28 @@ def _lower_named_procedure(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    """Validate the authored named tree directly, without an exact-pin graph."""
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-
+    """Validate the authored named tree into its one governed envelope."""
     try:
-        definition = NamedProcedureDefinition.model_validate(
+        definition = ProcedureDefinition.model_validate(
             _pin_slot_contracts(payload.definition, base_tree)
         )
-        path = procedure_path(definition.name)
-        predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
-        procedure = NamedProcedureArtifact.model_validate(
+    except (ValueError, KeyError, ProcedureGraphFormatError) as exc:
+        message = (
+            " | ".join(_validation_error_lines(exc, root="definition"))
+            if isinstance(exc, ValidationError)
+            else str(exc)
+        )
+        _refuse(
+            "cruxible.authoring.procedure_definition_invalid",
+            "definition",
+            "The lowered Procedure definition is invalid: " + message,
+            repair_kind="replace_definition",
+            repair_description="Repair the indicated definition field.",
+        )
+    path = procedure_path(definition.name)
+    predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
+    try:
+        procedure = ProcedureArtifact.model_validate(
             dict(
                 identity=ArtifactIdentity(kind="Procedure", name=definition.name),
                 definition=definition,
@@ -2948,13 +2880,16 @@ def _lower_named_procedure(
                 ),
             )
         )
-    except (ValueError, KeyError, ProcedureGraphFormatError) as exc:
+    except ValidationError as exc:
         _refuse(
             "cruxible.authoring.procedure_definition_invalid",
-            "definition",
-            str(exc),
-            repair_kind="replace_definition",
-            repair_description="Repair the named Procedure definition.",
+            "procedure",
+            "The lowered Procedure artifact is invalid: "
+            + " | ".join(_validation_error_lines(exc, root="procedure")),
+            repair_kind="replace_definition_or_contracts",
+            repair_description=(
+                "Repair the Procedure definition or its owned Contract declarations."
+            ),
         )
     return _procedure_lowered(
         instance,
@@ -3035,10 +2970,6 @@ def _procedure_lowered(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
-    if int(procedure.definition.graph_format) != 7:
-        named = name_procedure(procedure)
-        assert isinstance(named, ProcedureArtifact)
-        procedure = named
     candidate_tree = fork_tree(base_tree)
     if predecessor is not None and _same_revision_content(procedure, predecessor):
         procedure = predecessor

@@ -1974,7 +1974,6 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
         lookup=source_lookup,
         claim_types=(source_lookup(identity) for identity in type_ids),
         subject_kinds=subject_kinds,
-        by_name=True,
     )
 
 
@@ -2076,7 +2075,6 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             context,
             (ref for slot in procedure.definition.slots.values() for ref in (slot.in_, slot.out)),
         ),
-        by_name=True,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -4748,11 +4746,11 @@ def _evaluate_scoped_members(
         content = pretty_canonical_bytes(payload)
         if state.artifact_tag == "cruxible-procedure-v3":
             from cruxible_client.contracts.procedures.artifacts import (
-                NamedProcedureArtifact,
+                ProcedureArtifact,
                 render_procedure,
             )
 
-            content = render_procedure(NamedProcedureArtifact.model_validate(payload))
+            content = render_procedure(ProcedureArtifact.model_validate(payload))
         elif state.artifact_tag == "cruxible-query-definition-v3":
             from cruxible_client.contracts.query.definitions import (
                 NamedQueryDefinition,

@@ -52,6 +52,7 @@ from cruxible_core.exhaust.line_track_records import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.egress import EFFECTIVE_RUNG_TERMS
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from cruxible_core.service.procedures.procedures import (
@@ -60,7 +61,7 @@ from cruxible_core.service.procedures.procedures import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
 
@@ -80,16 +81,18 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
     )
 
 
-def _artifacts(*, named=False) -> tuple[AcceptedProcedure, AcceptedLineSpec]:
+def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     contract_in = _pin("contract-in", "Contract", "run-input")
     contract_out = _pin("contract-out", "Contract", "run-output")
     query = _pin("query", "QueryDefinition", "open-orders")
     definition = ProcedureDefinition(
         name="orders-triage",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
-            StateTapNode(node_id="read", query=query, parameters={}, as_="rows", next="emit"),
+            StateTapNode(
+                node_id="read", query=named(query), parameters={}, as_="rows", next="emit"
+            ),
             InboxEgressNode(node_id="emit", input={"items": "$steps.rows.items"}),
         ),
         returns="rows",
@@ -111,7 +114,6 @@ def _artifacts(*, named=False) -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     accepted_procedure = carried_procedure(
         definition,
         activation_policy="drain",
-        artifact_format="cruxible-procedure-v3" if named else "playbill-procedure-v2",
     )
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
@@ -130,10 +132,6 @@ def _artifacts(*, named=False) -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         },
         epsilon={"$decimal": "0.1"},
     )
-    if named:
-        from cruxible_client.contracts.named_references import name_line
-
-        line = name_line(line)
     return accepted_procedure, AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
         line=line,
@@ -274,13 +272,13 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
     from tests.support.queries import subject_query_members
 
     instance, owner = initialize_local(tmp_path)
-    procedure, line = _artifacts(named=True)
+    procedure, line = _artifacts()
     _accept_tree(
         instance,
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            procedure.path: render_procedure(procedure.procedure),
+            procedure.path: render_procedure(authored_procedure(procedure)),
             **subject_query_members("open-orders"),
             line.path: render_line_spec(line.line),
         },

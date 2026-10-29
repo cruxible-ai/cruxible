@@ -76,6 +76,7 @@ from cruxible_core.compiler import assembler
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.indexes import sqlite as projection_sqlite
 from cruxible_core.ledger.git import GitLedger
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import reset_permissions
@@ -165,7 +166,7 @@ def _propose_line(
         expires_at=_worlds._FAR_FUTURE,  # noqa: SLF001
     )
     return {
-        procedure.path: render_procedure(procedure.procedure),
+        procedure.path: render_procedure(authored_procedure(procedure)),
         line_spec_path(line.identity.name): render_line_spec(line),
         procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
     }

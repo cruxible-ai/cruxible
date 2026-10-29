@@ -31,9 +31,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifact,
     parse_procedure,
-    render_procedure,
 )
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
@@ -425,14 +423,6 @@ def settle_changes(
         settled.refused.append(str(error))
         return settled
     final = {**writes, **changed, **carried}
-    if by_name:
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        for path, content in tuple(final.items()):
-            if path.startswith("procedures/"):
-                named = name_procedure(parse_procedure(content, path=path))
-                assert isinstance(named, ProcedureArtifact)
-                final[path] = render_procedure(named)
     replacements: dict[str, str] = {}
     for path, content in final.items():
         before = tree.get(path)

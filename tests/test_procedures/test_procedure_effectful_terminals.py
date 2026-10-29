@@ -40,11 +40,13 @@ from cruxible_core.procedures.execution import (
     ProcedureRunAdmissionV1,
     prepare_direct_procedure_run,
 )
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.procedures.terminal_services import (
     ProposalTerminalAdapter,
 )
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
+from tests.support.procedures import bind_fixture
 from tests.test_procedures.test_procedure_execution import (
     _actor,
     _coordinate,
@@ -131,7 +133,7 @@ def _admission(
     root = tmp_path / "admission"
     root.mkdir()
     fixture = _fixture(root)
-    accepted = _procedure()
+    accepted = bind_fixture(_procedure())
     return prepare_direct_procedure_run(
         accepted,
         instance_id="instance-a",
@@ -184,7 +186,7 @@ def _line_run_admission(
     root = tmp_path / "admission"
     root.mkdir(exist_ok=True)
     fixture = _fixture(root)
-    accepted = _procedure()
+    accepted = bind_fixture(_procedure())
     return _line_admission(
         accepted,
         fixture,
@@ -416,7 +418,7 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
     instance, owner = initialize_local(tmp_path)
     # The mandate the adapter is handed must be one accepted state carries: the
     # door re-establishes it against the head tree before any ref moves.
-    accepted = _procedure(named=True)
+    accepted = _procedure()
     line = _line(procedure=accepted)
     accepted_line = _accepted_line(line)
     (tmp_path / "shape").mkdir()
@@ -435,7 +437,7 @@ def test_proposal_adapter_rechecks_authority_before_submission(tmp_path, retire_
         core_assigned(
             instance,
             {
-                accepted.path: render_procedure(accepted.procedure),
+                accepted.path: render_procedure(authored_procedure(accepted)),
                 line_spec_path(line.identity.name): render_line_spec(line),
                 procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
                 # A first work item declares the kind the terminal creates wi-2 of.
@@ -546,7 +548,7 @@ def test_egress_refuses_mandate_expired_between_admission_and_egress(tmp_path) -
 
 def test_egress_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> None:
     fixture = _fixture(tmp_path)
-    honest_admission = _line_admission(_procedure(), fixture, admitted_at=NOW)
+    honest_admission = _line_admission(bind_fixture(_procedure()), fixture, admitted_at=NOW)
     rewound_admission = type(honest_admission).model_validate(
         {
             **honest_admission.model_dump(mode="python"),

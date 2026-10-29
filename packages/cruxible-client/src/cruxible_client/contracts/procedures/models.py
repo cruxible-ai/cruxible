@@ -1,7 +1,8 @@
-"""The Procedure graph grammar (graph format 6).
+"""The Procedure graph grammar (graph format 7).
 
-This packaged contract module owns the live Cruxible Procedure graph profile.
-Its dependencies are exact Cruxible pins and typed slot signatures a Line
+This packaged contract module owns the one Cruxible Procedure graph. Its
+dependencies are field-typed names resolved at an accepted coordinate (an
+execution plan records the exact pins) and typed slot signatures a Line
 binds; nothing here performs a mutable config or registry lookup.
 """
 
@@ -11,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
@@ -79,8 +80,6 @@ from cruxible_client.contracts.procedures.nodes import (
     required_authority,
 )
 from cruxible_client.contracts.procedures.slots import (
-    LegacyProcedurePinBinding,
-    ProcedurePinBinding,
     ProcedureSlot,
     validate_procedure_slots,
 )
@@ -124,19 +123,21 @@ class ProcedureHardCaps(_StrictProcedureModel):
 
 
 class ProcedureDefinition(_StrictProcedureModel):
-    """The one Procedure graph format (6): explicit value joins and typed return paths.
+    """The one Procedure graph: explicit value joins and typed return paths.
 
+    Every dependency field names a governed identity; an execution plan
+    resolves each to its exact pin at the run's accepted coordinate.
     ``slots`` declares each provider-calling node's signature ``{in, out,
     effect}`` by name. The Procedure never names a provider; a Line binds every
     slot to one exact build and operation when it is accepted.
     """
 
-    graph_format: Literal[6] = 6
+    graph_format: Literal[7] = 7
     name: str
     description: str | None = None
-    contract_in: LegacyProcedurePinBinding
-    contract_out: LegacyProcedurePinBinding
-    parameter_contract: LegacyProcedurePinBinding | None = None
+    contract_in: ArtifactNameRef
+    contract_out: ArtifactNameRef
+    parameter_contract: ArtifactNameRef | None = None
     nodes: tuple[ProcedureNode, ...]
     returns: str | None = None
     slots: dict[str, ProcedureSlot] = Field(
@@ -303,29 +304,54 @@ class ProcedureDefinition(_StrictProcedureModel):
         return tuple(found)
 
 
-def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
-    """Return every exact pin or slot reference nested in a Procedure model."""
+#: The pin role each dependency field resolves under.
+REFERENCE_ROLES = {
+    "contract_in": "contract-in",
+    "contract_out": "contract-out",
+    "parameter_contract": "parameter-contract",
+    "query": "query",
+    "reducer_or_query": "query",
+    "capture_contract": "capture-contract",
+    "claim_type": "claim-type",
+    "claim_types": "claim-type",
+    "procedure": "procedure",
+    "effect_policy": "effect-policy",
+}
 
-    found: list[ProcedurePinBinding] = []
 
-    def visit(item: object) -> None:
-        if isinstance(item, ArtifactPin | ArtifactNameRef):
-            found.append(item)
+def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ...]:
+    """Every dependency reference nested in a Procedure model, with its field's role.
+
+    Retained source is provenance, not a graph field, and is not traversed.
+    """
+
+    found: list[tuple[str, ArtifactNameRef]] = []
+
+    def visit(item: object, field: str) -> None:
+        if isinstance(item, ArtifactNameRef):
+            found.append((REFERENCE_ROLES[field], item))
             return
         if isinstance(item, BaseModel):
             for field_name in item.__class__.model_fields:
-                visit(getattr(item, field_name))
+                if field_name != "source":
+                    visit(getattr(item, field_name), field_name)
             return
         if isinstance(item, tuple | list):
             for member in item:
-                visit(member)
+                visit(member, field)
             return
         if isinstance(item, dict):
             for member in item.values():
-                visit(member)
+                visit(member, field)
 
-    visit(value)
+    visit(value, "")
     return tuple(found)
+
+
+def iter_references(value: object) -> tuple[ArtifactNameRef, ...]:
+    """Every dependency reference nested in a Procedure model."""
+
+    return tuple(reference for _role, reference in iter_role_references(value))
 
 
 __all__ = [
@@ -344,7 +370,6 @@ __all__ = [
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
-    "LegacyProcedurePinBinding",
     "PredicateOperand",
     "PredicateScalar",
     "ProcedureBudget",
@@ -352,7 +377,6 @@ __all__ = [
     "ProcedureHardCaps",
     "ProcedureMeasurementDeclaration",
     "ProcedureNode",
-    "ProcedurePinBinding",
     "ProcedureSlot",
     "ProcedureTransformSpec",
     "ProjectNode",
@@ -378,6 +402,8 @@ __all__ = [
     "TransformShapeItemsSpec",
     "authority_for_rung",
     "derived_terminal_capability",
-    "iter_pin_bindings",
+    "REFERENCE_ROLES",
+    "iter_references",
+    "iter_role_references",
     "required_authority",
 ]

@@ -110,6 +110,7 @@ from cruxible_client.contracts.triggers import (
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -120,6 +121,7 @@ from tests.core_support._knowledge_loop_support import work_item_query
 from tests.core_support._write_support import CLAIM_TYPES, KIND, SELF_SOURCE, report_evidence
 from tests.core_support._write_support import seed_write_vocabulary as _seed_vocabulary
 from tests.support.lines import line_trigger, successor, trigger_members
+from tests.support.procedures import named
 
 OPERATOR = "operator"
 STATUSES = ("ready", "blocked", "done")
@@ -292,13 +294,13 @@ def _procedure(
     output_contract, contract_out, _ = _contract(f"{name}-output")
     definition = ProcedureDefinition(
         name=name,
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             ProjectNode(
                 node_id="shape",
                 fields={"status": "$input.status"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
                 **({} if terminal is None else {"next": terminal.node_id}),
             ),
@@ -324,12 +326,6 @@ def _procedure(
         identity=ArtifactIdentity(kind="Procedure", name=name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (contract_in, contract_out),
-                key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (input_contract, output_contract),
@@ -340,13 +336,23 @@ def _procedure(
         ),
         activation_policy="drain",
     )
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
-    procedure = name_procedure(procedure)
+    procedure = revalidated(procedure)
     return AcceptedProcedure(
         path=procedure_path(name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+
+def _line_pin(line: LineSpec) -> ArtifactPin:
+    """A Mandate pins one exact Line (ruling C3)."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+
+    return ArtifactPin(
+        role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
     )
 
 
@@ -373,12 +379,9 @@ def _line(name: str, accepted: AcceptedProcedure, *, authority: str) -> LineSpec
             "max_wall_clock_microseconds": 600_000_000,
         },
         epsilon={"$decimal": "0.1"},
-        pins=(pin,),
     )
 
-    from cruxible_client.contracts.named_references import name_line
-
-    return name_line(line)
+    return line
 
 
 def _item(subject: str, value: str) -> dict[str, object]:
@@ -486,7 +489,7 @@ def definitions(world: World) -> dict[str, bytes]:
     tick_line = _line(f"{TICK}-line", tick, authority="observe")
     propose_mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{PROPOSE}-mandate"),
-        procedure=_pin(propose),
+        line=_line_pin(propose_line),
         grants="propose",
         resource_ceiling=propose.procedure.definition.hard_caps,
         namespace=("claims",),
@@ -495,7 +498,7 @@ def definitions(world: World) -> dict[str, bytes]:
     )
     settle_mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{SETTLE}-mandate"),
-        procedure=_pin(settle),
+        line=_line_pin(settle_line),
         grants="settle",
         resource_ceiling=settle.procedure.definition.hard_caps,
         namespace=("claims",),
@@ -519,7 +522,7 @@ def definitions(world: World) -> dict[str, bytes]:
         query_definition_path(query.identity.name): render_query_definition(query),
         query_definition_path(condition.identity.name): render_query_definition(condition),
         **{
-            accepted.path: render_procedure(accepted.procedure)
+            accepted.path: render_procedure(authored_procedure(accepted))
             for accepted in (propose, settle, tick)
         },
         **{

@@ -490,7 +490,7 @@ def _world(tmp_path):
     )
     status = claim_type.predicate
     from cruxible_client.contracts.named_references import name_query
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
     query = name_query(_query()).model_copy(
         update={
@@ -512,7 +512,7 @@ def _world(tmp_path):
             "parameters": (QueryParameterDeclaration(name="asset_id", value_type="string"),),
         }
     )
-    procedure = name_procedure(
+    procedure = revalidated(
         _artifact(
             _definition(
                 terminal_capability=3,

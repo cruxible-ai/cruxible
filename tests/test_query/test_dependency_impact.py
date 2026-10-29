@@ -38,17 +38,6 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     render_claim,
 )
-from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
-    ProcedureArtifact,
-    procedure_artifact_digest,
-)
-from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpec,
-    LineSpec,
-    line_spec_digest,
-    line_spec_path,
-)
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -78,7 +67,6 @@ from tests.test_claims.test_claim_query_engine import (
     rule_for,
     subject,
 )
-from tests.test_procedures.test_line_specs import _accepted_procedure, _line
 from tests.test_query.test_query_definitions import (
     STATUS_PREDICATE,
     accepted_query,
@@ -202,55 +190,6 @@ def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinition:
     )
 
 
-def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedure:
-    accepted, _, _ = _accepted_procedure(artifact_format="playbill-procedure-v2")
-    payload = accepted.procedure.model_dump(mode="json")
-    payload["pins"] = [
-        pin.model_dump(mode="json")
-        for pin in sorted(
-            (*accepted.procedure.pins, _claim_pin(row)),
-            key=lambda item: (
-                item.role.encode("utf-8"),
-                item.target.qualified.encode("utf-8"),
-            ),
-        )
-    ]
-    procedure = ProcedureArtifact.model_validate(payload)
-    return AcceptedProcedure(
-        path=accepted.path,
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
-
-
-def _pinning_line(procedure: AcceptedProcedure, row: ClaimFactRowV1) -> AcceptedLineSpec:
-    line, _, _ = _line()
-    procedure_pin = ArtifactPin(
-        role="procedure",
-        target=procedure.procedure.identity,
-        artifact_digest=procedure.artifact_digest,
-    )
-    pins = tuple(
-        sorted(
-            (
-                *(pin for pin in line.pins if pin.role != "procedure"),
-                procedure_pin,
-                _claim_pin(row),
-            ),
-            key=lambda item: (item.role.encode("utf-8"), item.target.qualified.encode("utf-8")),
-        )
-    )
-    payload = line.model_dump(mode="json")
-    payload["procedure"] = procedure_pin.model_dump(mode="json")
-    payload["pins"] = [item.model_dump(mode="json") for item in pins]
-    pinned = LineSpec.model_validate(payload)
-    return AcceptedLineSpec(
-        path=line_spec_path(pinned.identity.name),
-        line=pinned,
-        artifact_digest=line_spec_digest(pinned).tagged,
-    )
-
-
 def _facts(claims: tuple[ClaimFactRowV1, ...], *, generation: str = "22") -> ClaimQueryFactsV1:
     subjects = tuple(
         sorted(
@@ -276,13 +215,10 @@ def _request(facts: ClaimQueryFactsV1, **overrides: object) -> DependencyImpactR
 
 
 def _impact(facts: ClaimQueryFactsV1, source: ClaimFactRowV1, **overrides: object):
-    procedure = _pinning_procedure(source)
     return build_dependency_impact(
         _request(facts, **overrides),
         facts=facts,
         definitions=(_pinning_query(source),),
-        procedures=(procedure,),
-        line_specs=(_pinning_line(procedure, source),),
     )
 
 
@@ -309,12 +245,8 @@ def test_the_walk_reaches_every_dependent_family_through_its_own_edge_kind() -> 
     facts = _facts((v1, _derived(), _claim(UNRELATED_INDEX, item="wi-3", value="unrelated")))
     result = _impact(facts, v1)
 
-    assert [item.kind for item in result.dependents] == [
-        "Claim",
-        "LineSpec",
-        "Procedure",
-        "QueryDefinition",
-    ]
+    # A Procedure or Line names its dependencies and pins no Claim.
+    assert [item.kind for item in result.dependents] == ["Claim", "QueryDefinition"]
     claim_dependent = result.dependents[0]
     assert claim_dependent.address.artifact_path == DERIVED_PATH
     assert claim_dependent.dependency_kind == "backing_input"
@@ -740,13 +672,13 @@ def test_the_same_inputs_yield_a_byte_identical_impact_and_write_nothing() -> No
 def test_a_clipped_impact_states_what_it_dropped() -> None:
     v1 = _source_v1()
     facts = _facts((v1, _derived()))
-    result = _impact(facts, v1, budget=DependencyImpactBudgetV1(max_dependents=2))
+    result = _impact(facts, v1, budget=DependencyImpactBudgetV1(max_dependents=1))
 
-    assert len(result.dependents) == 2
-    assert result.candidate_dependent_count == 4
-    assert result.coverage.truncated_facets == ("Procedure", "QueryDefinition")
+    assert len(result.dependents) == 1
+    assert result.candidate_dependent_count == 2
+    assert result.coverage.truncated_facets == ("QueryDefinition",)
     assert result.coverage.reason_codes == ("dependent_budget_exceeded",)
-    assert result.coverage.available_facets == ("Claim", "LineSpec")
+    assert result.coverage.available_facets == ("Claim",)
 
 
 def test_a_byte_clipped_impact_states_that_too() -> None:

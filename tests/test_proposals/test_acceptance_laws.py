@@ -14,8 +14,8 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_LAW_V3,
     CLAIM_TYPE_LAW_V4,
     DOCUMENT_LAW,
+    LIGHT_PROCEDURE_LAW,
     LINE_V6_ACCEPTANCE_LAW,
-    PROCEDURE_LAW_V2,
     PROCEDURE_RUNTIME_POLICY_LAW,
     PROVIDER_LAW_V2,
     _artifact_law_coordinate,
@@ -59,18 +59,12 @@ def test_unknown_or_substituted_acceptance_law_refuses() -> None:
         )
 
 
-def test_procedure_law_is_the_one_v2_envelope_coordinate() -> None:
+def test_procedure_law_is_the_one_named_envelope_coordinate() -> None:
     assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2").coordinate
-        == PROCEDURE_LAW_V2
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-procedure-v3") is LIGHT_PROCEDURE_LAW
     )
-    assert (
-        ACCEPTANCE_LAWS.require_historical(
-            identifier=PROCEDURE_LAW_V2.identifier,
-            digest=PROCEDURE_LAW_V2.digest,
-        ).coordinate
-        == PROCEDURE_LAW_V2
-    )
+    with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2")
 
 
 def test_p2_b1_provider_and_line_successor_laws_are_current() -> None:

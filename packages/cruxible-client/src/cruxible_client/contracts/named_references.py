@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.procedures.line_specs import LineSpec, NamedLineSpec
 from cruxible_client.contracts.providers import (
     NamedProviderBuild,
     NamedProviderIdentity,
@@ -58,12 +57,6 @@ def name_signing_provider(provider: ProviderV1) -> NamedProviderIdentity:
             "capture_contracts": _capture_names(provider),
         }
     )
-
-
-def name_line(line: LineSpec) -> NamedLineSpec:
-    """A Line already pins exactly what it runs: there is one format, unchanged here."""
-
-    return line
 
 
 def name_trigger(trigger: Trigger) -> NamedTrigger:

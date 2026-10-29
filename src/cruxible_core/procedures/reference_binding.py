@@ -1,7 +1,8 @@
 """Request-owned execution plans, resolved at one immutable accepted coordinate.
 
-These are execution data, never governed artifacts. Authored bytes and their
-identity remain separate from the exact pins recorded by run admission.
+These are execution data, never governed artifacts. A plan keeps the authored
+graph unchanged and records, beside it, the exact pin every named dependency
+resolves to at the admission's coordinate.
 """
 
 from __future__ import annotations
@@ -9,10 +10,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.dependencies import EXACT_REGISTRY_TARGET_KINDS, dependency_pins
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactNameRef,
+    ArtifactPin,
+)
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
@@ -27,7 +32,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     RepeatNode,
     SourceNode,
-    iter_pin_bindings,
+    iter_role_references,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.provider_operations import (
@@ -41,33 +46,15 @@ from cruxible_client.contracts.providers import ProviderV2
 from cruxible_client.contracts.shapes import Contract
 
 ReferenceLookup = Callable[[ArtifactIdentity], tuple[Any, str] | None]
-_FIELDS = {
-    "contract_in": "contract-in",
-    "contract_out": "contract-out",
-    "parameter_contract": "parameter-contract",
-    "query": "query",
-    "reducer_or_query": "query",
-    "capture_contract": "capture-contract",
-    "claim_type": "claim-type",
-    "claim_types": "claim-type",
-    "procedure": "procedure",
-    "effect_policy": "effect-policy",
-}
-_NODE_FIELDS = {
-    "state_tap": ("query",),
-    "source": ("capture_contract",),
-    "call": ("effect_policy",),
-    "exhaust_tap": ("reducer_or_query",),
-    "transform": ("contract_in", "contract_out"),
-    "project": ("contract_out",),
-    "select": ("contract_out",),
-    "return": ("contract_out",),
-    "constant": ("contract_out",),
-    "emit_capture": ("capture_contract",),
-    "state_claim": ("claim_type",),
-    "invoke": ("procedure",),
-    "propose_change_set": ("claim_types",),
-    "settle_change_set": ("claim_types",),
+
+#: The pin role a resolved dependency carries where no graph field names it.
+_KIND_ROLES = {
+    "CaptureContract": "capture-contract",
+    "ClaimType": "claim-type",
+    "Contract": "contract",
+    "EffectPolicy": "effect-policy",
+    "Procedure": "procedure",
+    "QueryDefinition": "query",
 }
 
 
@@ -91,16 +78,16 @@ class ResolvedSlotBinding(BaseModel):
         return self.build.artifact_digest
 
 
-class ExecutionDefinition(ProcedureDefinition):
-    _authored: ProcedureDefinition = PrivateAttr()
-
-
 class ProcedureExecutionPlan(BaseModel):
+    """The authored graph with every named dependency resolved to an exact pin."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     identity: ArtifactIdentity
-    definition: ExecutionDefinition
+    definition: ProcedureDefinition
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
+    #: Each named dependency's exact digest at the coordinate, by qualified identity.
+    resolved: dict[str, str]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     acquisition_defaults: dict[str, AcquisitionDefault]
@@ -110,6 +97,18 @@ class ProcedureExecutionPlan(BaseModel):
 
     def binding_for(self, slot: str) -> ResolvedSlotBinding | None:
         return next((item for item in self.slot_bindings if item.slot == slot), None)
+
+    def pin(self, reference: ArtifactNameRef, *, role: str | None = None) -> ArtifactPin:
+        """The exact pin ``reference`` resolved to at the admission coordinate."""
+
+        digest = self.resolved.get(reference.target.qualified)
+        if digest is None:
+            raise ExecutionError(f"{reference.target.qualified} was not resolved at admission")
+        return ArtifactPin(
+            role=role or _KIND_ROLES.get(reference.target.kind, "dependency"),
+            target=reference.target,
+            artifact_digest=digest,
+        )
 
 
 class BoundAcceptedProcedure(AcceptedProcedure):
@@ -132,6 +131,24 @@ class BoundAcceptedProcedure(AcceptedProcedure):
 
 def authored_procedure(accepted: AcceptedProcedure) -> ProcedureArtifact:
     return accepted.authored if isinstance(accepted, BoundAcceptedProcedure) else accepted.procedure
+
+
+def execution_plan(accepted: AcceptedProcedure) -> ProcedureExecutionPlan:
+    """The bound plan an admission runs; an unbound Procedure has no exact pins."""
+
+    if not isinstance(accepted, BoundAcceptedProcedure):
+        raise ExecutionError(
+            f"Procedure {accepted.procedure.identity.qualified} was not bound at admission"
+        )
+    return accepted.procedure
+
+
+def resolved_pin(
+    accepted: AcceptedProcedure, reference: ArtifactNameRef, *, role: str | None = None
+) -> ArtifactPin:
+    """The exact pin one graph reference resolved to in ``accepted``'s plan."""
+
+    return execution_plan(accepted).pin(reference, role=role)
 
 
 def validate_slot_names(bindings: Iterable[str], declared: Iterable[str]) -> None:
@@ -198,14 +215,10 @@ def bind_procedure_references(
     Source-only slot may be left unbound (a replay of a slot only supplied
     Sources used); a slot any Call node also uses still fails closed, since a
     Call is always invoked and never has supplied material standing in for
-    its binding. Payloads, schemas and retained source snapshots are not
-    traversed.
+    its binding. The authored graph is kept as is; payloads, schemas and
+    retained source snapshots are not traversed.
     """
     authored = authored_procedure(accepted)
-    if frozen_pins is not None and {
-        pin for pin in frozen_pins if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS
-    } != {pin for pin in authored.pins if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS}:
-        raise ExecutionError("Recorded registry pins differ from the authored exact pins")
     resolved = {
         c.identity.qualified: (c, procedure_owned_contract_digest(c).tagged)
         for c in authored.owned_contracts
@@ -225,42 +238,13 @@ def bind_procedure_references(
     slot_declarations: dict[str, ProcedureSlot] = dict(authored.definition.slots)
     validate_slot_names(bindings or {}, slot_declarations)
     source_only_slots = _source_only_slot_names(authored.definition)
-    data = authored.definition.model_dump(mode="json", by_alias=True)
-    data.pop("source", None)
-
-    def reference(value: Any, field: str) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, list):
-            return [reference(item, field) for item in value]
-        identity = ArtifactIdentity.model_validate(value["target"])
-        if identity.kind in EXACT_REGISTRY_TARGET_KINDS:
-            if "artifact_digest" not in value:
-                raise ExecutionError(
-                    f"Registry dependency {identity.qualified!r} requires an exact pin"
-                )
-            # No ledger owner exists for this kind. Its owning registry law
-            # checks the digest; admission and replay retain the same bytes.
-            return ArtifactPin.model_validate(value).model_dump(mode="json")
+    references: dict[str, str] = {}
+    pins: set[ArtifactPin] = set()
+    for role, reference in iter_role_references(authored.definition):
+        identity = reference.target
         _, digest = resolve(identity)
-        return ArtifactPin(role=_FIELDS[field], target=identity, artifact_digest=digest).model_dump(
-            mode="json"
-        )
-
-    for field in ("contract_in", "contract_out", "parameter_contract"):
-        if field in data:
-            data[field] = reference(data[field], field)
-    for node in data["nodes"]:
-        for field in _NODE_FIELDS.get(node["kind"], ()):
-            if field in node:
-                node[field] = reference(node[field], field)
-        for body in node.get("body", ()):
-            for field in ("contract_in", "contract_out", "effect_policy"):
-                if field in body:
-                    body[field] = reference(body[field], field)
-    data.update(graph_format=6)
-    definition = ExecutionDefinition.model_validate(data)
-    definition._authored = authored.definition
+        references[identity.qualified] = digest
+        pins.add(ArtifactPin(role=role, target=identity, artifact_digest=digest))
     slot_bindings: list[ResolvedSlotBinding] = []
     for name, slot in slot_declarations.items():
         binding = (bindings or {}).get(name)
@@ -317,32 +301,21 @@ def bind_procedure_references(
                 contracts=closure,
             )
         )
-    pins = {p for p in iter_pin_bindings(definition) if isinstance(p, ArtifactPin)}
-    for pin in dependency_pins(authored) if frozen_pins is None else frozen_pins:
-        if pin.target.kind in EXACT_REGISTRY_TARGET_KINDS:
-            if not isinstance(pin, ArtifactPin):
-                raise ExecutionError(
-                    f"Registry dependency {pin.target.qualified!r} requires an exact pin"
-                )
-            pins.add(pin)
-            continue
-        if frozen_pins is not None and pin.target.kind == "Provider" and pin.role == "provider":
-            # A replay keeps every build the admission bound, including one only
-            # a supplied Source would have used.
-            assert isinstance(pin, ArtifactPin)
-            pins.add(pin)
-            continue
-        if pin.target.kind != "Contract":
-            _, digest = resolve(pin.target)
-            pins.add(ArtifactPin(role=pin.role, target=pin.target, artifact_digest=digest))
+    if frozen_pins is not None:
+        # A replay keeps every build the admission bound, including one only a
+        # supplied Source would have used.
+        pins.update(
+            pin for pin in frozen_pins if pin.target.kind == "Provider" and pin.role == "provider"
+        )
     pins.update(item.build for item in slot_bindings)
     if frozen_pins is not None and pins != set(frozen_pins):
         raise ExecutionError("Recorded admission pins do not reproduce the execution plan")
     plan = ProcedureExecutionPlan(
         identity=authored.identity,
-        definition=definition,
+        definition=authored.definition,
         definition_digest=authored.definition_digest,
         pins=tuple(sorted(pins, key=lambda p: (p.role, p.target.qualified, p.artifact_digest))),
+        resolved=references,
         owned_contracts=authored.owned_contracts,
         activation_policy=authored.activation_policy,
         acquisition_defaults=dict(authored.acquisition_defaults),

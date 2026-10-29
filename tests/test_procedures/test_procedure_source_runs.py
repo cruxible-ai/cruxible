@@ -117,7 +117,7 @@ from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
 SEED_STAMP = "2026-09-12T11:00:00.000000Z"
@@ -300,8 +300,8 @@ def _procedure(  # noqa: PLR0913
     definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         slots={
             "read": {
                 "in": {
@@ -320,7 +320,7 @@ def _procedure(  # noqa: PLR0913
         nodes=(
             SourceNode(
                 node_id="read",
-                capture_contract=capture_pin,
+                capture_contract=named(capture_pin),
                 slot="read",
                 request=request.model_dump(mode="json"),
                 as_=SOURCE_ALIAS,
@@ -329,7 +329,7 @@ def _procedure(  # noqa: PLR0913
             ProjectNode(
                 node_id="shape",
                 fields={"severity": f"$steps.{SOURCE_ALIAS}.content.text"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -355,16 +355,6 @@ def _procedure(  # noqa: PLR0913
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (contract_in, contract_out, capture_pin),
-                key=lambda pin: (
-                    pin.role.encode("utf-8"),
-                    pin.target.qualified.encode("utf-8"),
-                    pin.artifact_digest.encode("ascii"),
-                ),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (input_contract, output_contract),
@@ -375,9 +365,9 @@ def _procedure(  # noqa: PLR0913
         acquisition_defaults=acquisition_defaults or {},
     )
 
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
-    return name_procedure(procedure)
+    return revalidated(procedure)
 
 
 def _policy(
@@ -655,11 +645,6 @@ def _served_line(
         },
         epsilon={"$decimal": "0.1"},
     )
-
-    if procedure.artifact_format == "cruxible-procedure-v3":
-        from cruxible_client.contracts.named_references import name_line
-
-        return name_line(line)
     return line
 
 
@@ -1153,7 +1138,7 @@ def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
     than being pre-empted.
     """
 
-    from cruxible_client.contracts.procedures.named_models import NamedCaptureEgressNode
+    from cruxible_client.contracts.procedures.models import CaptureEgressNode
 
     instance, owner, procedure, root, _policy_artifact = _world(tmp_path, accept_procedure=False)
     source = procedure.definition.nodes[0]
@@ -1162,7 +1147,7 @@ def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
         update={
             "nodes": (
                 source.model_copy(update={"next": "emit"}),
-                NamedCaptureEgressNode(
+                CaptureEgressNode(
                     node_id="emit",
                     capture_contract=source.capture_contract,
                     input=f"$steps.{SOURCE_ALIAS}",

@@ -8,7 +8,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.claim_types import render_claim_type
 from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.procedures.artifacts import render_procedure
-from cruxible_client.contracts.procedures.names import name_procedure
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     render_query_definition,
@@ -174,17 +173,14 @@ def test_existing_signing_provider_is_rechecked_without_creation_gates(tmp_path,
     assert any(d.code == "cruxible.provider.single_path_closed" for d in creation.diagnostics)
 
 
-def authored_procedure(name="reader", query="definitions", *, named=True):
+def authored_procedure(name="reader", query="definitions"):
     """Explicit authored fields; only compiler-owned digests are computed."""
     from cruxible_client.contracts.procedures.artifacts import (
-        NamedProcedureArtifact,
         ProcedureArtifact,
         ProcedureOwnedContract,
-        procedure_owned_contract_digest,
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
-    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 
     contract = ProcedureOwnedContract.model_validate(
         {
@@ -193,26 +189,20 @@ def authored_procedure(name="reader", query="definitions", *, named=True):
         }
     )
 
-    def reference(kind, target, role):
-        value = {"target": {"kind": kind, "name": target}}
-        if not named:
-            assert kind == "Contract"
-            value.update(
-                role=role, artifact_digest=procedure_owned_contract_digest(contract).tagged
-            )
-        return value
+    def reference(kind, target):
+        return {"target": {"kind": kind, "name": target}}
 
     raw = {
-        "graph_format": 7 if named else 6,
+        "graph_format": 7,
         "name": name,
-        "contract_in": reference("Contract", "io", "contract-in"),
-        "contract_out": reference("Contract", "io", "contract-out"),
+        "contract_in": reference("Contract", "io"),
+        "contract_out": reference("Contract", "io"),
         "nodes": [
             {
                 "kind": "state_tap",
                 "node_id": "read",
                 "as": "result",
-                "query": reference("QueryDefinition", query, "query"),
+                "query": reference("QueryDefinition", query),
                 "parameters": {},
             }
         ]
@@ -223,7 +213,7 @@ def authored_procedure(name="reader", query="definitions", *, named=True):
                 "node_id": "result",
                 "as": "result",
                 "fields": {},
-                "contract_out": reference("Contract", "io", "contract-out"),
+                "contract_out": reference("Contract", "io"),
             }
         ],
         "returns": "result",
@@ -242,17 +232,16 @@ def authored_procedure(name="reader", query="definitions", *, named=True):
         },
         "terminal_capability": 1,
     }
-    definition = (NamedProcedureDefinition if named else ProcedureDefinition).model_validate(raw)
-    payload = {
-        "identity": {"kind": "Procedure", "name": name},
-        "definition": definition,
-        "definition_digest": compute_procedure_definition_digest(definition).tagged,
-        "owned_contracts": (contract,),
-        "activation_policy": "snapshot",
-    }
-    if not named:
-        payload["pins"] = (raw["contract_in"], raw["contract_out"])
-    return (NamedProcedureArtifact if named else ProcedureArtifact).model_validate(payload)
+    definition = ProcedureDefinition.model_validate(raw)
+    return ProcedureArtifact.model_validate(
+        {
+            "identity": {"kind": "Procedure", "name": name},
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "owned_contracts": (contract,),
+            "activation_policy": "snapshot",
+        }
+    )
 
 
 def test_genesis_recovery_reproduces_all_named_law_evidence_bytes(tmp_path):
@@ -390,7 +379,7 @@ def world():
             identity=ArtifactIdentity(kind="QueryDefinition", name="claims-by-status")
         )
     )
-    procedure = name_procedure(_artifact(_definition()))
+    procedure = _artifact(_definition())
     return (
         query,
         procedure,
@@ -551,30 +540,22 @@ def test_legacy_dependency_edges_keep_exact_versions_before_compiler_36():
     ]
 
 
-def test_old_procedure_reference_stays_exact_only_in_the_frozen_index():
-    from cruxible_client.contracts.artifacts import ArtifactPin
-
-    _, _, tree = world()
-    old = _artifact(_definition())
-    tree[PPATH] = render_procedure(old)
-    # The query exists at this identity, but differs from the old authored pin.
-    assert all(p.artifact_digest != query_definition_digest(world()[0]).tagged for p in old.pins)
-    frozen = build_dependency_index(tree, by_name=False)
-    current = build_dependency_index(tree, by_name=True)
-    assert all(isinstance(p, ArtifactPin) for p in frozen.states[PPATH].pins)
-    assert not frozen.edges_by_target.get(QPATH)
-    assert [e.source_path for e in current.edges_by_target[QPATH]] == [PPATH]
-
-
-def test_procedure_revision_rechecks_unchanged_line_parameters(tmp_path):
-    from cruxible_client.contracts.named_references import name_line
+def test_procedure_revision_requires_a_disposition_for_its_exact_line(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.test_procedures.test_line_specs import _line
 
     _, procedure, updates = world()
-    line = name_line(_line(requested_rung=1)[0]).model_copy(update={"parameters": {}})
+    line = _line(requested_rung=1)[0]
+    line = line.model_copy(
+        update={
+            "procedure": line.procedure.model_copy(
+                update={"artifact_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+            "parameters": {},
+        }
+    )
     path = line_spec_path(line.identity.name)
     instance, _ = initialize_local(tmp_path)
     accept_tree(instance, {**updates, path: render_line_spec(line)}, name="named-line-world")
@@ -610,10 +591,11 @@ def test_procedure_revision_rechecks_unchanged_line_parameters(tmp_path):
         rebased=False,
         actor_id="owner",
     )
+    # A Line pins its exact Procedure version (rulings C2/C3): revising the
+    # Procedure never re-checks the Line in place; it requires a disposition.
     assert result.candidate is None
     assert any(
-        d.code == "cruxible.line.parameters_invalid"
-        and "Broken referrer Line:triage-hourly" in d.message
+        d.code == "cruxible.change_set.incomplete_closure" and path in d.message
         for d in result.diagnostics
     ), result.diagnostics
     assert parent[path] == render_line_spec(line)

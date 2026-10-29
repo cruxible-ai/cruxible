@@ -53,7 +53,7 @@ from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.test_server.test_playbill_procedure_rung2_public import _authored, _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -563,8 +563,8 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
     return ProcedureDefinition(
         name=PROCEDURE,
         description="Read an uploaded advisory and return its severity.",
-        contract_in=pin("contract-in", input_contract),
-        contract_out=pin("contract-out", output_contract),
+        contract_in=named(pin("contract-in", input_contract)),
+        contract_out=named(pin("contract-out", output_contract)),
         slots={
             "read": {
                 "in": {
@@ -583,7 +583,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
         nodes=(
             SourceNode(
                 node_id="read",
-                capture_contract=contract_pin,
+                capture_contract=named(contract_pin),
                 slot="read",
                 request=request,
                 as_="advisory",
@@ -592,7 +592,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
-                contract_out=pin("contract-out", output_contract),
+                contract_out=named(pin("contract-out", output_contract)),
                 as_="result",
             ),
         ),

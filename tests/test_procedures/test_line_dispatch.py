@@ -21,6 +21,7 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.procedures.line_dispatch import (
     service_dispatch_line,
     service_enable_line,
@@ -1141,7 +1142,7 @@ def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path,
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
     from cruxible_client.contracts.cas_contracts import BodyAccessContext
     from cruxible_client.contracts.procedures.artifacts import render_procedure
-    from cruxible_client.contracts.procedures.line_specs import NamedLineSpec, render_line_spec
+    from cruxible_client.contracts.procedures.line_specs import LineSpec, render_line_spec
     from cruxible_client.contracts.providers import provider_path, render_provider
     from cruxible_core.exhaust.payloads import read_payload
     from tests.core_support._identity_support import accept_tree
@@ -1151,7 +1152,7 @@ def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path,
 
     _, procedure, provider, interface = slotted()
     instance, _ = initialize_local(tmp_path)
-    line = NamedLineSpec(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name="test.slotted"),
         occurrence_epoch=1,
         procedure=ArtifactNameRef(target=procedure.procedure.identity),
@@ -1166,7 +1167,7 @@ def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path,
         epsilon={"$decimal": "0.1"},
     )
     members = {
-        procedure.path: render_procedure(procedure.procedure),
+        procedure.path: render_procedure(authored_procedure(procedure)),
         interface.path: render_provider_interface(interface.registration),
         "lines/test.slotted.json": render_line_spec(line),
         **trigger_members(

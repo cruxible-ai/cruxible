@@ -76,7 +76,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.support.operation_world import VALUE, operation, operation_build
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import accepted_procedure, named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _Contracts,
@@ -194,6 +194,8 @@ def _bind(accepted: AcceptedProcedure, provider: AcceptedProvider) -> AcceptedPr
             return provider.provider, provider.artifact_digest
         if identity.kind == "Contract":
             return object(), _p2b1_digest(identity.name)
+        if identity.kind == "EffectPolicy":
+            return object(), _digest("effect-policy")
         return None
 
     return bind_procedure_references(
@@ -238,7 +240,7 @@ def _accepted_one_provider(
     node = CallNode(
         node_id="direct",
         slot=SLOT,
-        effect_policy=effect_policy,
+        effect_policy=named(effect_policy),
         input={"value": 3},
         as_="direct_result",
     )
@@ -253,7 +255,7 @@ def _accepted_one_provider(
                     node_id=node.node_id,
                     operation="call",
                     slot=SLOT,
-                    effect_policy=effect_policy,
+                    effect_policy=named(effect_policy),
                     spec={"value": 3},
                     as_=node.as_,
                 ),
@@ -268,8 +270,8 @@ def _accepted_one_provider(
         returns = graph_node.as_
     definition = ProcedureDefinition(
         name="provider-call",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(graph_node,),
         returns=returns,
         slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
@@ -288,7 +290,7 @@ def _accepted_one_provider(
         ),
         terminal_capability=1,
     )
-    return _bind(accepted_procedure(definition, activation_policy="drain"), provider)
+    return _bind(accepted_procedure(definition, activation_policy="drain", bound=False), provider)
 
 
 def _prepared_acquisition_run(

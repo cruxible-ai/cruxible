@@ -16,7 +16,7 @@ from typing import Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -60,7 +60,7 @@ from cruxible_client.contracts.procedures.acquisition_rules import (
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifactAny,
+    ProcedureArtifact,
     ProcedureNodeSupport,
     ProcedureRunnable,
     procedure_path,
@@ -274,7 +274,11 @@ from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
-from cruxible_core.procedures.reference_binding import authored_procedure, bind_procedure_references
+from cruxible_core.procedures.reference_binding import (
+    authored_procedure,
+    bind_procedure_references,
+    resolved_pin,
+)
 from cruxible_core.procedures.terminal_dependencies import (
     AcquisitionInputOutcomeV1,
     TerminalItemDependencyManifestV1,
@@ -578,7 +582,7 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     #: The Procedure's artifact digest, named as every other kind's proof names it.
     artifact_digest: str
     definition_digest: str
-    artifact: ProcedureArtifactAny
+    artifact: ProcedureArtifact
     runnable: ProcedureRunnable
     unsupported_nodes: tuple[ProcedureNodeSupport, ...]
     next_operation: ProcedureNextOperationV1
@@ -1190,14 +1194,6 @@ def _assert_line_closure_complete(
                 )
 
 
-def _exact_pin(value: ArtifactPin | ArtifactNameRef) -> ArtifactPin:
-    """An execution plan resolves every dependency before execution."""
-
-    if isinstance(value, ArtifactPin):
-        return value
-    raise ExecutionError(f"accepted Procedure reference {value.target.qualified} is unresolved")
-
-
 @dataclass(frozen=True)
 class _UnavailableLineAdmission:
     """Authenticated admission identity whose binding cannot currently be read."""
@@ -1599,7 +1595,7 @@ def _plan_external_occurrences(
             "budget_translation": translation,
         }
         if isinstance(node, SourceNode):
-            capture_pin = _exact_pin(node.capture_contract)
+            capture_pin = resolved_pin(accepted_procedure, node.capture_contract)
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,

@@ -229,7 +229,7 @@ def _validate_node_references(
 
 
 def procedure_guard_halt_targets(definition: ProcedureDefinition) -> frozenset[str]:
-    """Halts excluded from ordinary implicit fallthrough by graph format 6."""
+    """Halts excluded from ordinary implicit fallthrough in the compact wire."""
     kinds = {node.node_id: node.kind for node in definition.nodes}
     return frozenset(
         target
@@ -399,15 +399,11 @@ def procedure_edge_target(definition: ProcedureDefinition, node_id: str, label: 
     return _procedure_edge_targets(definition).get((node_id, label))
 
 
-def _node_local_payload(node: ProcedureNode, *, named: bool = False) -> dict[str, object]:
-    if named:
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        payload = compact_procedure(node)
-        payload.pop("id")
-    else:
-        payload = node.model_dump(mode="json", by_alias=True)
-        payload.pop("node_id")
+    payload = compact_procedure(node)
+    payload.pop("id")
     payload.pop("next", None)
     payload.pop("on_true", None)
     payload.pop("on_false", None)
@@ -427,15 +423,14 @@ def _procedure_node_digests(
     definition: ProcedureDefinition,
 ) -> tuple[tuple[str, ProcedureNodeDigests], ...]:
     graph = analyze_procedure(definition)
-    named = int(definition.graph_format) == 7
     nodes = {node.node_id: node for node in definition.nodes}
     result: dict[str, ProcedureNodeDigests] = {}
     for node_id in reversed(graph.node_ids):
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-local-v7" if named else "playbill-procedure-node-local-v6",
-            _node_local_payload(node, named=named),
+            "cruxible-procedure-node-local-v7",
+            _node_local_payload(node),
         ).tagged
         successor_digests = {
             label: (target if target == "$abort" else result[target].subtree_digest)
@@ -443,7 +438,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-subtree-v7" if named else "playbill-procedure-node-subtree-v6",
+            "cruxible-procedure-node-subtree-v7",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -457,18 +452,14 @@ def _procedure_node_digests(
 
 @sealed_memo
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
-    node_digests = dict(_procedure_node_digests(definition))
-    named = int(definition.graph_format) == 7
-    if named:
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        payload = compact_procedure(definition)
-    else:
-        payload = definition.model_dump(mode="json", by_alias=True)
+    node_digests = dict(_procedure_node_digests(definition))
+    payload = compact_procedure(definition)
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-definition-v7" if named else "playbill-procedure-definition-v6",
+        "cruxible-procedure-definition-v7",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

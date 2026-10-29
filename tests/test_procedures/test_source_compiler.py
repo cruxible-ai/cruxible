@@ -6,6 +6,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -22,6 +23,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceContract,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
+from tests.support.procedures import bind_fixture
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _budget,
@@ -53,6 +55,7 @@ OUTPUT = SourceContract(
 def compile(text, *, output=OUTPUT, bindings=None):
     return compile_source(
         ProcedureSourceProgram(
+            syntax_rules="cruxible.procedure-source.v1",
             text=textwrap.dedent(text),
             filename="example.py",
             first_line=40,
@@ -77,19 +80,10 @@ def accepted(compiled):
         for c in compiled.contracts
     )
     # Compile tests use only owner-carried contracts.
-    from cruxible_client.contracts.procedures.models import iter_pin_bindings
-
-    pins = tuple(
-        sorted(
-            set(iter_pin_bindings(definition)),
-            key=lambda p: (p.role.encode(), p.target.qualified.encode()),
-        )
-    )
     artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="example"),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=pins,
         owned_contracts=tuple(
             sorted(owned, key=lambda c: canonical_bytes(c.model_dump(mode="json")))
         ),
@@ -103,7 +97,7 @@ def accepted(compiled):
 
 
 def execute(tmp_path, compiled, **inputs):
-    artifact = accepted(compiled)
+    artifact = bind_fixture(accepted(compiled))
     fixture = _fixture(tmp_path)
     executor = ProcedureExecutor(
         journal=fixture.journal,
@@ -229,7 +223,7 @@ def test_graph_six_checks_nested_runtime_values(tmp_path):
         budget=_budget(),
         hard_caps=_hard_caps(),
     )
-    artifact = accepted(compiled)
+    artifact = bind_fixture(accepted(compiled))
     validator = OwnedProcedureContractValidator(artifact)
     with pytest.raises(ProcedureContractValidationError, match="JSON schema"):
         validator.validate_contract(
@@ -279,7 +273,6 @@ def test_unsupported_or_invalid_source_refuses_at_location(body, code):
 
 def test_query_binds_request_parameters_and_types_the_result():
     from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
-    from cruxible_client.contracts.query.definitions import query_definition_digest
     from tests.test_query.test_query_definitions import active_work_query
 
     definition = active_work_query()
@@ -296,18 +289,17 @@ def test_query_binds_request_parameters_and_types_the_result():
         bindings={
             "work": SourceQueryBinding(
                 name=definition.identity.name,
-                version=query_definition_digest(definition).tagged,
-                definition=definition,
+                definition=name_query(definition),
             )
         },
     )
     assert compiled.definition.nodes[0].kind == "state_tap"
     assert compiled.definition.nodes[0].parameters == {"status": "ready"}
 
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+    from tests.support.procedures import revalidated
 
-    named = name_procedure(accepted(compiled).procedure)
+    named = revalidated(accepted(compiled).procedure)
     verify_source_graph(named)
     binding = named.definition.source.bindings["work"].model_dump(mode="json")
     assert "version" not in binding
@@ -372,7 +364,7 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
         function="example",
         contracts={"Output": OUTPUT},
         bindings={"fetch": provider},
-        capture_contracts={"http": "sha256:" + "5" * 64, "registered": "sha256:" + "6" * 64},
+        capture_contracts=("http", "registered"),
     )
     result = compile_source(
         program,
@@ -385,10 +377,10 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
     assert result.definition.nodes[0].as_ == "observation"
     assert result.definition.nodes[-1].result == {"value": "$steps.observation.retrieved.final_url"}
 
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+    from tests.support.procedures import revalidated
 
-    named = name_procedure(accepted(result).procedure)
+    named = revalidated(accepted(result).procedure)
     verify_source_graph(named)
     binding = named.definition.source.bindings["fetch"].model_dump(mode="json")
     assert set(binding) == {"kind", "provider", "interface", "effect_class", "operation"}
@@ -435,7 +427,6 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
         subject_kinds=("security.asset",),
         claim_types={
             "security.asset.internet_facing": SourceClaimType(
-                version="sha256:" + "1" * 64,
                 structure=ClaimTypeStructure(
                     predicate="security.asset.internet_facing",
                     allowed_subject_kinds=("security.asset",),
@@ -457,7 +448,7 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
     )
     assert compiled.definition.nodes[0].kind == "state_claim"
     assert compiled.definition.nodes[0].subject_id == "app"
-    artifact = accepted(compiled)
+    artifact = bind_fixture(accepted(compiled))
     fixture = _fixture(tmp_path)
     calls = []
 
@@ -515,14 +506,12 @@ def test_required_nullable_source_output_executes_without_weakening_old_contract
 
 def test_query_defaults_and_explicit_budget_use_existing_contracts():
     from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
-    from cruxible_client.contracts.query.definitions import query_definition_digest
     from tests.test_query.test_query_definitions import active_work_query
 
     definition = active_work_query()
     binding = SourceQueryBinding(
         name=definition.identity.name,
-        version=query_definition_digest(definition).tagged,
-        definition=definition,
+        definition=name_query(definition),
     )
     program = """
         def example(request, bindings):
@@ -564,6 +553,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
         ),
     )
     source = ProcedureSourceProgram(
+        syntax_rules="cruxible.procedure-source.v1",
         text="def example(request):\n    " + body + "\n",
         filename="checks.py",
         first_line=90,
@@ -578,7 +568,9 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
 
     verify_source_graph(accepted(historical).procedure)
     with pytest.raises(SourceCompileError) as error:
-        compile_source(source.model_copy(update={"rules": "cruxible.procedure-source.v2"}), **args)
+        compile_source(
+            source.model_copy(update={"syntax_rules": "cruxible.procedure-source.v2"}), **args
+        )
     assert error.value.diagnostic.code == "cruxible.source." + code
     assert error.value.diagnostic.span.filename == "checks.py"
     assert error.value.diagnostic.span.line >= 91
@@ -590,7 +582,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
 
 def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp_path):
     source = ProcedureSourceProgram(
-        rules="cruxible.procedure-source.v2",
+        syntax_rules="cruxible.procedure-source.v2",
         text="""def example(request):
     if request.choice:
         label = "yes"
@@ -614,15 +606,15 @@ def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp
 
 
 def test_named_retained_source_reproduces_without_digest_selections():
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
+    from tests.support.procedures import revalidated
 
     compiled = compile("""
         def example(request):
             return Output.value(value='named')
     """)
     historical = accepted(compiled).procedure
-    named = name_procedure(historical)
+    named = revalidated(historical)
     verify_source_graph(historical)
     verify_source_graph(named)
     source = named.definition.source.model_dump(mode="json")
@@ -634,15 +626,15 @@ def test_named_retained_source_reproduces_without_digest_selections():
 
 
 def test_named_retained_source_matches_compact_candidate_graph():
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.authoring.procedure_source import verify_source_bindings
+    from tests.support.procedures import revalidated
 
     compiled = compile("""
         def example(request):
             return Output.value(value='named')
     """)
-    original = name_procedure(accepted(compiled).procedure)
-    verify_source_bindings(original, lookup=lambda identity: None, claim_types=(), by_name=True)
+    original = revalidated(accepted(compiled).procedure)
+    verify_source_bindings(original, lookup=lambda identity: None, claim_types=())
     assert original.definition.graph_format == 7
 
 
@@ -650,8 +642,8 @@ def test_named_claim_reads_keep_the_shared_claim_view_schema():
     from cruxible_client.contracts.artifacts import ArtifactNameRef
     from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
     from cruxible_client.contracts.procedures.source_program import (
-        NamedProcedureSourceProgram,
-        NamedSourceClaimType,
+        ProcedureSourceProgram,
+        SourceClaimType,
     )
     from cruxible_client.contracts.procedures.source_views import claim_view_schema
 
@@ -663,7 +655,7 @@ def test_named_claim_reads_keep_the_shared_claim_view_schema():
         cardinality="one",
         permitted_roles=("observation",),
     )
-    program = NamedProcedureSourceProgram(
+    program = ProcedureSourceProgram(
         text=textwrap.dedent("""
         def example(request, world):
             exposed = world.security.asset['app'].internet_facing.one()
@@ -675,7 +667,7 @@ def test_named_claim_reads_keep_the_shared_claim_view_schema():
         function="example",
         contracts={"Output": OUTPUT},
         subject_kinds=("security.asset",),
-        claim_types={shape.predicate: NamedSourceClaimType(structure=shape)},
+        claim_types={shape.predicate: SourceClaimType(structure=shape)},
     )
     compiled = compile_source(
         program,

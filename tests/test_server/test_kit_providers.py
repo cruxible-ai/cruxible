@@ -951,11 +951,11 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     # therefore just this same open-slot definition under another name.
     raw = procedure.definition.model_dump(mode="json", by_alias=True)
     raw["name"] = "acme.files-skeleton"
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
-    definition = NamedProcedureDefinition.model_validate(raw)
-    blueprint = NamedProcedureArtifact(
+    definition = ProcedureDefinition.model_validate(raw)
+    blueprint = ProcedureArtifact(
         identity={"kind": "Procedure", "name": "acme.files-skeleton"},  # type: ignore[arg-type]
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,

@@ -303,7 +303,6 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
             bindings={
                 "child": SourceProcedureBinding(
                     name=child.procedure.identity.name,
-                    version=child.artifact_digest,
                     input=operation().input,
                     output=operation().output,
                 )

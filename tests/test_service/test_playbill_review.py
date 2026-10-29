@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.authoring.documents import (
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
@@ -282,7 +283,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     assert (
         _projection_advisory(
             members=(member("generated_successor"),),
-            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
             settlement_base=settlement,
             workspace_observation=default_policy,
         )
@@ -291,7 +292,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     observation = default_policy.model_copy(update={"presentation_policy": CLAIM_PROJECTION_POLICY})
     advisory = _projection_advisory(
         members=(member("generated_successor"),),
-        candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+        candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
         settlement_base=settlement,
         workspace_observation=observation.model_dump(mode="json"),
     )
@@ -303,7 +304,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     assert (
         _projection_advisory(
             members=(member("invalidation"),),
-            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
             settlement_base=settlement,
             workspace_observation=observation,
         )
@@ -328,7 +329,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     assert (
         _projection_advisory(
             members=(member("authored"),),
-            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            candidate_tree={procedure.path: render_procedure(authored_procedure(procedure))},
             settlement_base=settlement,
             workspace_observation=projected,
         )

@@ -52,6 +52,7 @@ from cruxible_client.contracts.triggers import (
     trigger_path,
 )
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.core_support._support import initialize_local
 from tests.support.lines import (
@@ -313,7 +314,7 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
             capture_contract_path(TRIGGER_CONTRACT.identity.name): (
                 render_capture_contract(TRIGGER_CONTRACT)
             ),
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
         }

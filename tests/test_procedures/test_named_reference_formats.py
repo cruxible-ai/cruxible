@@ -66,7 +66,6 @@ def test_named_capture_components_keep_their_interpretation_without_stored_pins(
 def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_graph(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
     from cruxible_client.contracts.procedures.models import ConstantNode
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureRunRequest,
         service_run_playbill_procedure,
@@ -86,7 +85,7 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
             )
         }
     )
-    artifact = name_procedure(_artifact(definition))
+    artifact = _artifact(definition)
     instance, _ = initialize_local(tmp_path)
     path = procedure_path(artifact.identity.name)
     original = render_procedure(artifact)
@@ -108,7 +107,7 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
     from cruxible_client.contracts.captures import foreign_source_capture_contract
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
-    from cruxible_client.contracts.named_references import name_line, name_trigger
+    from cruxible_client.contracts.named_references import name_trigger
     from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_path,
@@ -125,12 +124,6 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
         trigger_path,
         trigger_schedule_pins,
     )
-    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
-    from tests.core_support._identity_support import accept_tree
-    from tests.core_support._support import initialize_local
-    from tests.test_procedures.test_line_specs import _line
-    from tests.test_procedures.test_line_triggers import capture
-    from tests.test_procedures.test_named_reference_closure import world
 
     # A Line pins an exact accepted Procedure version (C2): use the same
     # AcceptedProcedure _line() itself pinned (already built in the named,
@@ -139,10 +132,18 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     # pins query "claims-by-status" by name, which in turn pins two
     # ClaimTypes; world() (test_named_reference_closure.py) already builds
     # that whole accepted-tree slice.
+    from cruxible_core.procedures.reference_binding import authored_procedure
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._support import initialize_local
+    from tests.test_procedures.test_line_specs import _line
+    from tests.test_procedures.test_line_triggers import capture
+    from tests.test_procedures.test_named_reference_closure import world
+
     line_spec, accepted, _interfaces = _line(requested_rung=1)
-    procedure = accepted.procedure
+    procedure = authored_procedure(accepted)
     _query, _world_procedure, world_members = world()
-    line = name_line(line_spec)
+    line = line_spec
     contract = foreign_source_capture_contract("named.feed")
     schedule = CaptureLandingSchedule(
         event=CaptureEventSelector(
@@ -237,7 +238,6 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
 @pytest.mark.parametrize(
     "path,old,new",
     [
-        ("procedures/check.json", "playbill-procedure-v2", "cruxible-procedure-v3"),
         (
             "query-definitions/check.json",
             "playbill-query-definition-v2",
@@ -287,18 +287,40 @@ def test_new_artifacts_take_the_named_format_and_recorded_old_bytes_still_replay
     assert _installed(current, old) == law
 
 
+@pytest.mark.parametrize(
+    "path,old,new",
+    [("procedures/check.json", "playbill-procedure-v2", "cruxible-procedure-v3")],
+)
+def test_a_collapsed_kind_has_one_format_and_no_other_law(path, old, new):
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import FormatError, ProposalIntegrityError
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
+    from cruxible_core.compiler.compiler import CURRENT_COMPILER
+    from cruxible_core.proposals.proposals import _installed
+
+    current = SimpleNamespace(
+        path=path,
+        current=SimpleNamespace(compiler=CURRENT_COMPILER),
+        acceptance_laws=ACCEPTANCE_LAWS,
+        historical_law_coordinate=None,
+        rechecking=False,
+    )
+    assert _installed(current, new).artifact_tag == new
+    with pytest.raises(FormatError, match=f"require {new}"):
+        _installed(current, old)
+    with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag=old)
+
+
 def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
     from cruxible_client.authoring.procedures import procedure_record_constructor
-    from cruxible_client.contracts.procedures.names import name_procedure
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    original = _artifact(_definition())
-    named = name_procedure(original)
+    procedure = _artifact(_definition())
     for direction in ("input", "output"):
-        old = procedure_record_constructor(original, direction)
-        current = procedure_record_constructor(named, direction)
-        assert type(current) is type(old)
-        assert current() == old()
+        constructor = procedure_record_constructor(procedure, direction)
+        assert constructor() == constructor()
 
 
 def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface():
@@ -374,7 +396,7 @@ def test_each_v3_tag_has_one_named_law_object():
 def test_authored_procedure_lowers_directly_to_the_named_graph():
     from cruxible_client.contracts.authoring.inputs import lower_authoring_input
     from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
-    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
     authored = ProcedureSpec(
         procedure="test.native",
@@ -383,7 +405,7 @@ def test_authored_procedure_lowers_directly_to_the_named_graph():
         steps=({"project": "result", "fields": {"value": "$input.value"}},),
     )
     lowered = lower_procedure_spec(authored)
-    definition = NamedProcedureDefinition.model_validate(lowered.definition)
+    definition = ProcedureDefinition.model_validate(lowered.definition)
     assert definition.graph_format == 7
     assert definition.contract_in.target.name == "test.native-input"
     payload = lower_authoring_input(lowered)
@@ -394,10 +416,9 @@ def test_authored_procedure_lowers_directly_to_the_named_graph():
 
 def test_named_v3_wire_omits_pin_tags_defaults_and_duplicate_node_ids():
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, render_procedure
-    from cruxible_client.contracts.procedures.names import name_procedure
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    original = name_procedure(_artifact(_definition()))
+    original = _artifact(_definition())
     wire = json.loads(render_procedure(original))
     node = wire["definition"]["nodes"][0]
     assert node["id"] == original.definition.nodes[0].node_id
@@ -470,17 +491,17 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
 
 def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
     from cruxible_client.contracts.named_references import name_query
-    from cruxible_client.contracts.procedures.source_program import NamedSourceQueryBinding
+    from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
     from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
     from cruxible_client.contracts.query.definitions import render_query_definition
     from tests.test_query.test_query_definitions import active_work_query
 
     query = name_query(active_work_query())
-    binding = NamedSourceQueryBinding(name=query.identity.name, definition=query)
+    binding = SourceQueryBinding(name=query.identity.name, definition=query)
     wire = compact_procedure(binding)
     assert wire["definition"] == json.loads(render_query_definition(query))
     assert "result_cardinality" not in wire["definition"]
-    assert NamedSourceQueryBinding.model_validate(wire) == binding
+    assert SourceQueryBinding.model_validate(wire) == binding
 
 
 @pytest.mark.parametrize(
@@ -576,7 +597,6 @@ def test_frozen_v1_erasure_authorization_keeps_its_exact_rule_pin():
 def test_named_line_admission_checks_exact_coordinate_bindings(tmp_path):
     from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.errors import ExecutionError
-    from cruxible_client.contracts.named_references import name_line
     from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
     from cruxible_core.procedures.execution import verify_line_admission_spec
     from tests.test_procedures.test_procedure_execution import (
@@ -589,7 +609,7 @@ def test_named_line_admission_checks_exact_coordinate_bindings(tmp_path):
     procedure = _state_procedure()
     admission = _line_admission(procedure, _fixture(tmp_path))
     old = _accepted_line_for_admission(admission, procedure)
-    line = name_line(old.line)
+    line = old.line
     named = AcceptedLineSpec(
         path=old.path, line=line, artifact_digest=line_spec_digest(line).tagged
     )
@@ -636,11 +656,10 @@ def test_named_trigger_noop_keeps_accepted_bytes():
 def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carriers():
     from cruxible_client.contracts import ProcedureReadiness
     from cruxible_client.contracts.authoring.models import CaptureContractAuthoringPayload
-    from cruxible_client.contracts.procedures.names import name_procedure
     from tests.core_support._light_capture_support import record_contract
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    artifact = name_procedure(_artifact(_definition()))
+    artifact = _artifact(_definition())
     # The SDK receives expanded typed artifacts from readiness, rather than stored compact bytes.
     from tests.test_procedures.test_procedure_execution import _coordinate
 
@@ -664,16 +683,12 @@ def test_native_artifacts_round_trip_through_sdk_readiness_and_authoring_carrier
     )
 
 
-@pytest.mark.parametrize("named", [False, True])
-def test_noop_reference_move_keeps_the_owner_wire_form(named):
+def test_noop_reference_move_keeps_the_owner_wire_form():
     from cruxible_client.contracts.procedures.artifacts import render_procedure
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.claims.artifact_references import move_references
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
     procedure = _artifact(_definition())
-    if named:
-        procedure = name_procedure(procedure)
     payload = json.loads(render_procedure(procedure))
     assert move_references("procedures/triage.json", payload, {}) == payload
 

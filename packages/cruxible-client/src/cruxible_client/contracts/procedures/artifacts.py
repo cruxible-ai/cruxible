@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Annotated, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -19,7 +18,6 @@ from pydantic import (
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactNameRef,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
@@ -46,9 +44,8 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     RepeatNode,
     SourceNode,
-    iter_pin_bindings,
+    iter_references,
 )
-from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -61,14 +58,6 @@ class ProcedureFormatError(FormatError):
 
 class _StrictProcedureArtifactModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
-
-
-def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
-    return (
-        pin.role.encode("utf-8"),
-        pin.target.qualified.encode("utf-8"),
-        pin.artifact_digest.encode("ascii"),
-    )
 
 
 class ProcedureOwnedContract(_StrictProcedureArtifactModel):
@@ -122,31 +111,47 @@ def _owned_contract_key(contract: ProcedureOwnedContract) -> bytes:
     return canonical_bytes(contract.model_dump(mode="json", by_alias=True))
 
 
-class _GraphEnvelope(_StrictProcedureArtifactModel):
-    """A Procedure's envelope: one graph and the Contracts it carries."""
+class ProcedureArtifact(_StrictProcedureArtifactModel):
+    """The one Procedure envelope: one named graph and the Contracts it carries.
 
+    Every dependency the graph names resolves at the accepted coordinate; the
+    envelope itself pins nothing. ``acquisition_defaults`` holds the
+    Procedure's acquisition rule per Source alias (``max_age``,
+    ``on_unavailable``); a Line's ``acquisition`` overrides them field by field.
+    """
+
+    artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"
     identity: ArtifactIdentity
     definition: ProcedureDefinition
     definition_digest: str
-    pins: tuple[ArtifactPin, ...]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    #: The envelope carries no exact pins; its dependencies are named.
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()
+
+    _defaults = field_validator("acquisition_defaults")(validate_acquisition_keys)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _stored(cls, value: object) -> object:
+        if isinstance(value, dict):
+            definition = value.get("definition")
+            if isinstance(definition, dict) and any(
+                isinstance(node, dict) and "id" in node for node in definition.get("nodes", ())
+            ):
+                from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
+
+                return expand_procedure(value)
+        return value
 
     @field_validator("definition_digest")
     @classmethod
     def _definition_digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
-        return value
-
-    @field_validator("pins", check_fields=False)
-    @classmethod
-    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        if value != tuple(sorted(value, key=_pin_key)):
-            raise ValueError("Procedure pins must be canonically sorted")
-        keys = tuple((pin.role, pin.target.qualified) for pin in value)
-        if len(set(keys)) != len(keys):
-            raise ValueError("Procedure pins must be unique by role and target")
         return value
 
     @field_validator("owned_contracts")
@@ -165,174 +170,48 @@ class _GraphEnvelope(_StrictProcedureArtifactModel):
             raise ValueError("owned Contracts must be unique by digest")
         return value
 
-    def _check_envelope(self, kind: str) -> None:
-        if getattr(self, "artifact_format", None) != "cruxible-procedure-v3":
-            # The frozen v2/v1 validators refused literal-null operands. The
-            # newly usable arm belongs to v3; old receipts keep that boundary.
-            for node in self.definition.nodes:
-                if node.kind == "guard" and (
-                    getattr(node, "refusal_code", None) is None
-                    or getattr(node, "message", None) is None
-                ):
-                    raise ValueError(
-                        "omitted guard diagnostics require Procedure v3; upgrade the compiler"
-                    )
-                if node.kind == "halt" and getattr(node, "message", None) is not None:
-                    raise ValueError("halt messages require Procedure v3; upgrade the compiler")
-                pending = [
-                    predicate
-                    for predicate in (
-                        getattr(node, "predicate", None),
-                        getattr(node, "until", None),
-                    )
-                    if predicate is not None
-                ]
-                while pending:
-                    predicate = pending.pop()
-                    if any(
-                        operand is not None and operand.kind == "literal" and operand.value is None
-                        for operand in (predicate.left, predicate.right)
-                    ):
-                        raise ValueError(
-                            "literal null operands require Procedure v3; upgrade the compiler"
-                        )
-                    pending.extend(
-                        predicate.all_of
-                        or predicate.any_of
-                        or ((predicate.not_of,) if predicate.not_of else ())
-                    )
-
-        if self.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(self.identity.name):
-            raise ValueError(f"{kind} identity must be path-addressable")
-        if self.definition.name != self.identity.name:
-            raise ValueError(f"{kind} definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest(self.definition).tagged
-        if self.definition_digest != expected:
-            raise ValueError(f"{kind} definition_digest does not reproduce its graph format")
-        declared_exact = {
-            (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
-        }
-        referenced_bindings = tuple(
-            binding
-            for binding in iter_pin_bindings(self.definition)
-            if isinstance(binding, ArtifactPin)
-        )
-        referenced_exact = {
-            (binding.role, binding.target.qualified, binding.artifact_digest)
-            for binding in referenced_bindings
-        }
-        if not referenced_exact.issubset(declared_exact):
-            raise ValueError(f"{kind} definition contains exact pins absent from its envelope")
-
-        contracts = {
-            contract.identity.qualified: procedure_owned_contract_digest(contract).tagged
-            for contract in self.owned_contracts
-        }
-        referenced_contracts = tuple(
-            binding for binding in referenced_bindings if binding.target.kind == "Contract"
-        )
-        for binding in referenced_contracts:
-            if contracts.get(binding.target.qualified) != binding.artifact_digest:
-                raise ValueError("exact Contract binding does not resolve to its owned Contract")
-        referenced_contract_keys = {
-            (binding.target.qualified, binding.artifact_digest) for binding in referenced_contracts
-        }
-        if referenced_contract_keys != set(contracts.items()):
-            raise ValueError(f"every owned Contract must be referenced exactly by the {kind}")
-        declared_contract_keys = {
-            (pin.target.qualified, pin.artifact_digest)
-            for pin in self.pins
-            if pin.target.kind == "Contract"
-        }
-        if declared_contract_keys != referenced_contract_keys:
-            raise ValueError(f"{kind} envelope contains an unreferenced Contract pin")
-
-
-class ProcedureArtifact(_GraphEnvelope):
-    """Procedure envelope whose Contract closure rides with its owner.
-
-    ``acquisition_defaults`` holds the Procedure's acquisition rule per Source
-    alias (``max_age``, ``on_unavailable``); a Line's ``acquisition`` overrides
-    them field by field.
-    """
-
-    artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
-        default_factory=dict, exclude_if=lambda value: not value
-    )
-
-    _defaults = field_validator("acquisition_defaults")(validate_acquisition_keys)
-
     @model_validator(mode="after")
     def _correspondence(self) -> "ProcedureArtifact":
-        self._check_envelope("Procedure")
+        if self.identity.kind != "Procedure" or not _PROCEDURE_NAME_RE.fullmatch(
+            self.identity.name
+        ):
+            raise ValueError("Procedure identity must be path-addressable")
+        if self.definition.name != self.identity.name:
+            raise ValueError("Procedure definition name must match its identity")
+        if self.definition_digest != compute_procedure_definition_digest(self.definition).tagged:
+            raise ValueError("Procedure definition digest does not reproduce")
+        contracts = {contract.identity for contract in self.owned_contracts}
+        referenced = {
+            reference.target
+            for reference in iter_references(self.definition)
+            if reference.target.kind == "Contract"
+        }
+        if referenced != contracts:
+            raise ValueError(
+                "every owned Contract must be referenced by name exactly within its owner"
+            )
         aliases = {node.as_ for node in self.definition.nodes if isinstance(node, SourceNode)}
         unknown = sorted(set(self.acquisition_defaults) - aliases)
         if unknown:
             raise ValueError(f"acquisition_defaults name no Source alias: {unknown}")
-        if getattr(self, "artifact_format") == "cruxible-procedure-v3":
-            guard_halts = procedure_guard_halt_targets(self.definition)
-            nodes = []
-            for index, node in enumerate(self.definition.nodes):
-                following = (
-                    self.definition.nodes[index + 1].node_id
-                    if index + 1 < len(self.definition.nodes)
-                    else None
-                )
-                updates: dict[str, None] = {}
-                for edge in ("next", "on_true"):
-                    if following is not None and getattr(node, edge, None) == following:
-                        if edge != "next" or following not in guard_halts:
-                            updates[edge] = None
-                nodes.append(node.model_copy(update=updates) if updates else node)
-            object.__setattr__(
-                self, "definition", self.definition.model_copy(update={"nodes": tuple(nodes)})
+        guard_halts = procedure_guard_halt_targets(self.definition)
+        nodes = []
+        for index, node in enumerate(self.definition.nodes):
+            following = (
+                self.definition.nodes[index + 1].node_id
+                if index + 1 < len(self.definition.nodes)
+                else None
             )
+            updates: dict[str, None] = {}
+            for edge in ("next", "on_true"):
+                if following is not None and getattr(node, edge, None) == following:
+                    if edge != "next" or following not in guard_halts:
+                        updates[edge] = None
+            nodes.append(node.model_copy(update=updates) if updates else node)
+        object.__setattr__(
+            self, "definition", self.definition.model_copy(update={"nodes": tuple(nodes)})
+        )
         return self
-
-
-def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
-    if envelope.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(envelope.identity.name):
-        raise ValueError(f"{kind} identity must be path-addressable")
-    if envelope.definition.name != envelope.identity.name:
-        raise ValueError(f"{kind} definition name must match its identity")
-    if (
-        envelope.definition_digest
-        != compute_procedure_definition_digest(envelope.definition).tagged
-    ):
-        raise ValueError(f"{kind} definition digest does not reproduce")
-    contracts = {contract.identity for contract in envelope.owned_contracts}
-    referenced = {
-        binding.target
-        for binding in iter_pin_bindings(envelope.definition)
-        if isinstance(binding, ArtifactNameRef) and binding.target.kind == "Contract"
-    }
-    if referenced != contracts:
-        raise ValueError("every owned Contract must be referenced by name exactly within its owner")
-
-
-class NamedProcedureArtifact(ProcedureArtifact):
-    """Revision-36 writer: dependencies resolve at the accepted coordinate."""
-
-    artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"  # type: ignore[assignment]
-    definition: NamedProcedureDefinition
-    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _stored_v3(cls, value: object) -> object:
-        if isinstance(value, dict) and value.get("artifact_format") == "cruxible-procedure-v3":
-            definition = value.get("definition")
-            if isinstance(definition, dict) and any(
-                isinstance(node, dict) and "id" in node for node in definition.get("nodes", ())
-            ):
-                from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
-
-                return expand_procedure(value)
-        return value
-
-    def _check_envelope(self, kind: str) -> None:
-        _check_named_envelope(self, kind)
 
 
 #: How an accepted Procedure can run: on its own (``procedure run``), only as a
@@ -398,12 +277,6 @@ def procedure_runnability(
     return ("line" if rows else "direct"), tuple(rows)
 
 
-ProcedureArtifactAny = Annotated[
-    ProcedureArtifact | NamedProcedureArtifact, Field(discriminator="artifact_format")
-]
-_PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifactAny] = TypeAdapter(ProcedureArtifactAny)
-
-
 def procedure_path(name: str) -> str:
     if not _PROCEDURE_NAME_RE.fullmatch(name):
         raise ProcedureFormatError("Procedure identity is not path-addressable")
@@ -411,11 +284,9 @@ def procedure_path(name: str) -> str:
 
 
 def render_procedure(procedure: ProcedureArtifact) -> bytes:
-    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        return pretty_canonical_bytes(compact_procedure(procedure))
-    return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
+    return pretty_canonical_bytes(compact_procedure(procedure))
 
 
 _PROCEDURE_PARSES: ParseMemo[ProcedureArtifact] = ParseMemo(
@@ -440,12 +311,7 @@ def _parse_procedure(
     path: str,
 ) -> ProcedureArtifact:
     try:
-        document = json.loads(content)
-        if document.get("artifact_format") == "cruxible-procedure-v3":
-            from cruxible_client.contracts.procedures.wire_v3 import expand_procedure
-
-            document = expand_procedure(document)
-        procedure = _PROCEDURE_ADAPTER.validate_python(document)
+        procedure = ProcedureArtifact.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureFormatError("Procedure failed strict versioned validation") from exc
     if procedure_path(procedure.identity.name) != path:
@@ -457,20 +323,14 @@ def _parse_procedure(
 
 @sealed_memo
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
-    if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        return typed_digest(ArtifactDigest, "cruxible-procedure-v3", compact_procedure(procedure))
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        procedure.model_dump(mode="json", by_alias=True),
-    )
+    return typed_digest(ArtifactDigest, "cruxible-procedure-v3", compact_procedure(procedure))
 
 
 class AcceptedProcedure(_StrictProcedureArtifactModel):
     path: str
-    procedure: ProcedureArtifactAny
+    procedure: ProcedureArtifact
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -510,7 +370,6 @@ def evaluate_procedure_law(
     path: str,
     predecessor: AcceptedProcedure | None,
     contracts: Mapping[tuple[str, int], str] | None = None,
-    by_name: bool = False,
 ) -> ProcedureLawResult:
     """Evaluate stable identity, predecessor, and slot signatures.
 
@@ -519,7 +378,6 @@ def evaluate_procedure_law(
     never names a provider: a Line binds its slots.
     """
 
-    del by_name
     if path != procedure_path(procedure.identity.name):
         return _refusal(
             "cruxible.procedure.path_mismatch",
@@ -549,7 +407,6 @@ def evaluate_procedure_law(
         if (
             procedure.definition_digest == predecessor.procedure.definition_digest
             and procedure.activation_policy == predecessor.procedure.activation_policy
-            and procedure.pins == predecessor.procedure.pins
             and procedure.owned_contracts == predecessor.procedure.owned_contracts
             and procedure.acquisition_defaults == predecessor.procedure.acquisition_defaults
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state

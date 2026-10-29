@@ -26,6 +26,7 @@ from cruxible_client.contracts.procedures.models import (
     SelectNode,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
+from tests.support.procedures import bind_fixture, named
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
     _budget,
@@ -41,7 +42,7 @@ from tests.test_procedures.test_procedure_execution import (
 def definition(*, early=False):
     ci = _owned_contract("choice-input", {"choice": PropertySchema(type="bool")})
     co = _owned_contract("choice-output", {"value": PropertySchema(type="int")})
-    pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
+    pi, po = named(_owned_pin("contract-in", ci)), named(_owned_pin("contract-out", co))
     branch = GuardNode(
         node_id="choose",
         predicate=GuardPredicate(
@@ -74,13 +75,15 @@ def definition(*, early=False):
     ]
     if not early:
         nodes += [
-            SelectNode(node_id="join", sources=("yes", "no"), contract_out=po, as_="joined"),
-            ReturnNode(node_id="return", fields="$steps.joined", contract_out=po, as_="result"),
+            SelectNode(node_id="join", sources=("yes", "no"), contract_out=named(po), as_="joined"),
+            ReturnNode(
+                node_id="return", fields="$steps.joined", contract_out=named(po), as_="result"
+            ),
         ]
     graph = ProcedureDefinition(
         name="choice",
-        contract_in=pi,
-        contract_out=po,
+        contract_in=named(pi),
+        contract_out=named(po),
         nodes=tuple(nodes),
         returns="yes" if early else "result",
         budget=_budget(),
@@ -91,16 +94,17 @@ def definition(*, early=False):
         identity=ArtifactIdentity(kind="Procedure", name="choice"),
         definition=graph,
         definition_digest=compute_procedure_definition_digest(graph).tagged,
-        pins=(pi, po),
         owned_contracts=tuple(
             sorted((ci, co), key=lambda c: canonical_bytes(c.model_dump(mode="json")))
         ),
         activation_policy="snapshot",
     )
-    return AcceptedProcedure(
-        path=procedure_path("choice"),
-        procedure=artifact,
-        artifact_digest=procedure_artifact_digest(artifact).tagged,
+    return bind_fixture(
+        AcceptedProcedure(
+            path=procedure_path("choice"),
+            procedure=artifact,
+            artifact_digest=procedure_artifact_digest(artifact).tagged,
+        )
     )
 
 
@@ -144,6 +148,6 @@ def test_unsafe_joins_fail_before_execution(mutation, message):
     elif mutation == "unknown":
         graph["nodes"][3]["sources"] = ["yes", "typo"]
     else:
-        graph["nodes"][1]["contract_out"]["artifact_digest"] = "sha256:" + "0" * 64
+        graph["nodes"][1]["contract_out"]["target"]["name"] = "other-output"
     with pytest.raises((ValueError, ProcedureGraphFormatError), match=message):
         ProcedureDefinition.model_validate(graph)

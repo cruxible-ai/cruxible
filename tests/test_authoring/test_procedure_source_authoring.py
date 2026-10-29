@@ -432,9 +432,9 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
         path = procedure_path(request.name)
         procedure = parse_procedure(lowered.proposed_tree[path], path=path)
         source = procedure.definition.source
-        assert source.claim_types[claim_type.predicate].version is None
+        assert "version" not in type(source.claim_types[claim_type.predicate]).model_fields
         assert source.claim_types[claim_type.predicate].structure.predicate == claim_type.predicate
-        assert source.bindings["items"].version is None
+        assert "version" not in type(source.bindings["items"]).model_fields
         assert source.bindings["items"].definition.identity == query.identity
         assert query_definition_digest(
             source.bindings["items"].definition

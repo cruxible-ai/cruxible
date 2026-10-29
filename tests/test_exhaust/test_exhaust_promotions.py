@@ -223,7 +223,9 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     from tests.support.queries import subject_query_members
 
     instance, owner = initialize_local(tmp_path)
-    base_procedure = _accepted(named=True).procedure.model_copy(update={})
+    from cruxible_core.procedures.reference_binding import authored_procedure
+
+    base_procedure = authored_procedure(_accepted())
     accepted_procedure = AcceptedProcedure(
         path="procedures/measured-procedure.json",
         procedure=base_procedure,

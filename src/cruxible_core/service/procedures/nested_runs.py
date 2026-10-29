@@ -50,6 +50,7 @@ from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSin
 from cruxible_core.procedures.reference_binding import (
     recorded_slot_bindings,
     replay_procedure_references,
+    resolved_pin,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.material_reservations import (
@@ -171,9 +172,9 @@ def retained_delegation(
         ),
         None,
     )
-    if not isinstance(node, InvokeNode) or calls[0].get("procedure") != node.procedure.model_dump(
-        mode="json"
-    ):
+    if not isinstance(node, InvokeNode) or calls[0].get("procedure") != resolved_pin(
+        accepted, node.procedure
+    ).model_dump(mode="json"):
         raise ProcedureRunRecoveryRequired("Nested recovery has no matching accepted Invoke node")
     remaining = ProcedureBudget.model_validate(calls[0].get("remaining_budget"))
     if constrained_budget(parent.budget, remaining, parent.hard_caps) != remaining:
@@ -264,7 +265,7 @@ class ServedNestedProcedureRunner:
                         "pin_binding_mismatch", "Recursive Procedure invocation is unsupported."
                     )
                 child_prefix = prefix + node.node_id + "."
-                child = self._accepted(node.procedure, prefix=child_prefix)
+                child = self._accepted(resolved_pin(parent, node.procedure), prefix=child_prefix)
                 definition = child.procedure.definition
                 supported = set(DIRECT_NODE_KINDS)
                 if admission.invocation_origin == "line":
@@ -339,7 +340,9 @@ class ServedNestedProcedureRunner:
                 "pin_binding_mismatch", "Nested runner names another accepted state."
             )
         child_prefix = self._child_prefix(context.node)
-        accepted = self._accepted(context.node.procedure, prefix=child_prefix)
+        accepted = self._accepted(
+            resolved_pin(context.accepted, context.node.procedure), prefix=child_prefix
+        )
         caps = constrained_caps(accepted.procedure.definition.hard_caps, parent.hard_caps)
         budget = constrained_budget(accepted.procedure.definition.budget, context.remaining, caps)
         planned = _prepare_direct_external_run(

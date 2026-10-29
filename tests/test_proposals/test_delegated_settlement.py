@@ -109,10 +109,10 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
     _seed_claim_surface(instance, owner)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     status_type = ClaimType.model_validate_json(tree[claim_type_path(STATUS)])
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
     query = _condition_query(only_subject=only_subject)
-    procedure = name_procedure(
+    procedure = revalidated(
         _artifact(
             _definition(
                 terminal_capability=3,

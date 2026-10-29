@@ -216,7 +216,7 @@ from cruxible_client.contracts.predictions import (
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactAny as _ProcedureArtifact,
+    ProcedureArtifact as _ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureNodeSupport,

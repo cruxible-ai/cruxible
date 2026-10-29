@@ -33,6 +33,7 @@ from cruxible_core.procedures.execution import (
     procedure_semantic_replay_key_digest,
     procedure_semantic_run_id,
 )
+from cruxible_core.procedures.reference_binding import resolved_pin
 
 
 def _minimum(*values: int | None) -> int | None:
@@ -213,7 +214,8 @@ class ParentInvocationContext:
             or not isinstance(self.accepted.procedure.definition, ProcedureDefinition)
             or self.node not in self.accepted.procedure.definition.nodes
             or self.node.procedure.target != accepted.procedure.identity
-            or self.node.procedure.artifact_digest != accepted.artifact_digest
+            or resolved_pin(self.accepted, self.node.procedure).artifact_digest
+            != accepted.artifact_digest
             or child.accepted_coordinate != self.admission.accepted_coordinate
             or child.actor_context != self.admission.actor_context
             or child.invocation_origin != self.admission.invocation_origin

@@ -50,6 +50,7 @@ from cruxible_core.exhaust import (
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
@@ -66,7 +67,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -138,17 +139,17 @@ def _measurement(
     )
 
 
-def _accepted(*, named=False) -> AcceptedProcedure:
+def _accepted() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinition(
         name="measured-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=_pin("query", "QueryDefinition", "state"),
+                query=named(_pin("query", "QueryDefinition", "state")),
                 as_="rows",
             ),
             GuardNode(
@@ -166,21 +167,21 @@ def _accepted(*, named=False) -> AcceptedProcedure:
             ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -210,7 +211,6 @@ def _accepted(*, named=False) -> AcceptedProcedure:
     return accepted_procedure(
         definition,
         activation_policy="snapshot",
-        artifact_format="cruxible-procedure-v3" if named else "playbill-procedure-v2",
     )
 
 
@@ -467,8 +467,8 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     from tests.support.queries import subject_query_members
 
     instance, owner = initialize_local(tmp_path)
-    accepted = _accepted(named=True)
-    procedure = accepted.procedure.model_copy(update={})
+    accepted = _accepted()
+    procedure = authored_procedure(accepted)
     procedure_path_value = procedure_path(procedure.identity.name)
     first_tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),

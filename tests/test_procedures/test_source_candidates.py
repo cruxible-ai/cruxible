@@ -34,7 +34,6 @@ def source_program(value="'high'"):
         subject_kinds=("security.advisory",),
         claim_types={
             "security.advisory.severity": SourceClaimType(
-                version="sha256:" + "1" * 64,
                 structure=ClaimTypeStructure(
                     predicate="security.advisory.severity",
                     allowed_subject_kinds=("security.advisory",),

@@ -100,7 +100,8 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNode,
     TransformNode,
     authority_for_rung,
-    iter_pin_bindings,
+    iter_references,
+    iter_role_references,
 )
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
@@ -226,6 +227,11 @@ from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
+)
+from cruxible_core.procedures.reference_binding import (
+    ProcedureExecutionPlan,
+    execution_plan,
+    resolved_pin,
 )
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.procedures.terminal_dependencies import (
@@ -2123,20 +2129,12 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(binding: ArtifactPin | ArtifactNameRef, *, label: str) -> ArtifactPin:
-    """An execution plan resolves every dependency before execution."""
-
-    if isinstance(binding, ArtifactNameRef):
-        raise ExecutionError(f"{label} has not been resolved at admission")
-    return binding
-
-
 def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
+    plan = execution_plan(accepted)
     result: list[ProcedureNodePinSetV1] = []
-    for node in accepted.procedure.definition.nodes:
-        bindings = iter_pin_bindings(node)
+    for node in plan.definition.nodes:
         pins = tuple(
-            _exact_pin(item, label=f"Procedure node {node.node_id!r}") for item in bindings
+            plan.pin(reference, role=role) for role, reference in iter_role_references(node)
         )
         result.append(
             ProcedureNodePinSetV1(
@@ -2154,12 +2152,6 @@ def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, 
             )
         )
     return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
-
-
-def resolve_procedure_pin(binding: ArtifactPin, *, label: str) -> ArtifactPin:
-    """Public seam for resolving one node binding to its exact pin."""
-
-    return _exact_pin(binding, label=label)
 
 
 def procedure_node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
@@ -2243,7 +2235,7 @@ def bind_accepted_state_materials(
         if not isinstance(node, StateTapNode | ClaimTapNode):
             continue
         binding = node.claim_type if isinstance(node, ClaimTapNode) else node.query
-        query = resolve_procedure_pin(binding, label=f"state read {node.node_id!r}")
+        query = resolved_pin(accepted, binding)
         parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
             if isinstance(node, ClaimTapNode):
@@ -2722,6 +2714,10 @@ class ProcedureExecutor:
         self.acquisition_rules = acquisition_rules
         # Each slot's exact build and operation, from the execution plan.
         self.slot_bindings: dict[str, Any] = {}
+        # The execution plan this executor runs, and each named dependency's
+        # exact digest from it.
+        self.plan: ProcedureExecutionPlan | None = None
+        self.references: dict[str, str] = {}
         self.default_authorizations = default_authorizations
         self.effective_rung = effective_rung
         self.egress_sink = egress_sink
@@ -2740,15 +2736,20 @@ class ProcedureExecutor:
         # the same members deterministically -- nothing extra needs retaining.
         self.enum_resolver = enum_resolver
 
-    def _pin(
-        self,
-        binding: ArtifactPin,
-        *,
-        label: str,
-    ) -> ArtifactPin:
-        """Resolve one node binding to its exact accepted pin."""
+    def _use_plan(self, accepted: AcceptedProcedure) -> ProcedureExecutionPlan:
+        """Run against ``accepted``'s execution plan: its references resolve through it."""
 
-        return _exact_pin(binding, label=label)
+        plan = execution_plan(accepted)
+        self.plan = plan
+        self.references = dict(plan.resolved)
+        return plan
+
+    def _pin(self, binding: ArtifactNameRef, *, label: str) -> ArtifactPin:
+        """The exact pin one node reference resolved to at admission."""
+
+        if self.plan is None or binding.target.qualified not in self.plan.resolved:
+            raise ExecutionError(f"{label} was not resolved at admission")
+        return self.plan.pin(binding)
 
     def execute(
         self,
@@ -2756,10 +2757,9 @@ class ProcedureExecutor:
         accepted: AcceptedProcedure,
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
+        plan = self._use_plan(accepted)
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
-        self.slot_bindings = {
-            item.slot: item for item in getattr(accepted.procedure, "slot_bindings", ())
-        }
+        self.slot_bindings = {item.slot: item for item in plan.slot_bindings}
         try:
             existing_records = self.journal.select_records(
                 admission.journal_stream,
@@ -3489,6 +3489,7 @@ class ProcedureExecutor:
         accepted: AcceptedProcedure,
     ) -> None:
         """Refuse every cross-plane relabel before the first node can observe a value."""
+        self._use_plan(accepted)
 
         nodes = {
             node.as_: node
@@ -3734,7 +3735,9 @@ class ProcedureExecutor:
                             input_payload=state.input_payload,
                             outputs=state.outputs,
                         )
-                        state.return_tokens = _base_tokens(node, state, node.result)
+                        state.return_tokens = _base_tokens(
+                            node, state, node.result, self.references
+                        )
                         if state.terminal_capture is not None:
                             state.return_tokens |= frozenset(
                                 {produced_capture_token(state.terminal_capture)}
@@ -3807,7 +3810,9 @@ class ProcedureExecutor:
         if isinstance(node, StateTapNode | ClaimTapNode):
             if node.as_ not in state.outputs:
                 raise ExecutionError("admitted state_tap material is absent")
-            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            self._extend_alias(
+                state, node.as_, _node_policy_tokens(node, self.references) | state.control
+            )
             return None
         if isinstance(node, SourceNode):
             self._run_source(node, admission=admission, state=state, records=records)
@@ -3819,7 +3824,9 @@ class ProcedureExecutor:
                     "No run lane serves exhaust_tap yet; a Line binding cannot enable it.",
                     node_id=node.node_id,
                 )
-            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            self._extend_alias(
+                state, node.as_, _node_policy_tokens(node, self.references) | state.control
+            )
             return None
         if isinstance(node, HaltNode):
             return None
@@ -3871,7 +3878,7 @@ class ProcedureExecutor:
                 node,
                 state=state,
                 lineage=lineage,
-                base=_base_tokens(node, state, declared_spec),
+                base=_base_tokens(node, state, declared_spec, self.references),
             )
             return None
         if isinstance(node, ProjectNode | SelectNode):
@@ -3911,7 +3918,7 @@ class ProcedureExecutor:
             state.provenance[node.as_] = _projected_provenance(
                 provenance_fields,
                 state=state,
-                base=_base_tokens(node, state, provenance_fields),
+                base=_base_tokens(node, state, provenance_fields, self.references),
                 value=state.outputs[node.as_],
             )
             return None
@@ -3931,7 +3938,7 @@ class ProcedureExecutor:
                 ) from exc
             state.control = (
                 state.control
-                | _node_policy_tokens(node)
+                | _node_policy_tokens(node, self.references)
                 | state.alias_tokens(frozenset(node.predicate.step_aliases()))
             )
             self._append_event(
@@ -4024,7 +4031,9 @@ class ProcedureExecutor:
         """Run Source through B2's admitted common Provider occurrence."""
 
         if node.as_ in state.outputs:
-            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            self._extend_alias(
+                state, node.as_, _node_policy_tokens(node, self.references) | state.control
+            )
             return
         if not isinstance(admission, ProcedureRunAdmissionV5):
             raise _RunRefusal(
@@ -4456,7 +4465,7 @@ class ProcedureExecutor:
         canonical bytes when the caller holds them, so the run's Capture budget
         is charged without encoding the material again.
         """
-        base = _node_policy_tokens(node) | state.control
+        base = _node_policy_tokens(node, self.references) | state.control
         if admission.acquisition_policy_digest is not None:
             base = base | {policy_token(admission.acquisition_policy_digest)}
         if decision.disposition == "refused":
@@ -4650,7 +4659,9 @@ class ProcedureExecutor:
             {
                 "node_id": node.node_id,
                 "verdict": "started",
-                "procedure": node.procedure.model_dump(mode="json"),
+                "procedure": self._pin(node.procedure, label=f"invoke {node.node_id!r}").model_dump(
+                    mode="json"
+                ),
                 "input_digest": run_value_digest("nested-input", value),
                 "remaining_budget": remaining.model_dump(mode="json"),
             },
@@ -4684,7 +4695,8 @@ class ProcedureExecutor:
             raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
             admitted.procedure_identity != node.procedure.target
-            or admitted.procedure_artifact_digest != node.procedure.artifact_digest
+            or admitted.procedure_artifact_digest
+            != self._pin(node.procedure, label=f"invoke {node.node_id!r}").artifact_digest
             or admitted.run_id != result.run_id
             or admitted.admission_binding_digest != result.receipt.admission_binding_digest
             or admitted.journal_stream != result.receipt.stream
@@ -4726,7 +4738,7 @@ class ProcedureExecutor:
         for key, facts in retained_facts.items():
             state.facts[key] = DependencyEvidenceFactsV1.model_validate(facts)
         tokens = (
-            _base_tokens(node, state, node.input)
+            _base_tokens(node, state, node.input, self.references)
             | returned_tokens
             | frozenset({receipt_token(digest)})
         )
@@ -5219,7 +5231,7 @@ class ProcedureExecutor:
         """
 
         declared = _terminal_item_templates(node)
-        base = _node_policy_tokens(node) | state.control
+        base = _node_policy_tokens(node, self.references) | state.control
         if isinstance(node, ProposeChangeSetNode) and isinstance(
             node.candidate_templates, ProposalItemsFanOut
         ):
@@ -5461,7 +5473,7 @@ class ProcedureExecutor:
         node_id: str,
         slot: str | None,
         repeat_node_id: str | None,
-        effect_policy: ArtifactPin | None,
+        effect_policy: ArtifactNameRef | None,
         payload: CanonicalValue,
         contract_out: ArtifactPin | None,
         admission: ProcedureRunAdmissionV1,
@@ -5892,7 +5904,9 @@ class ProcedureExecutor:
             records=records,
         )
         state.outputs[node.as_] = output
-        state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_base_tokens(node, state, node.input, self.references)
+        )
 
     def _run_repeat(
         self,
@@ -5963,7 +5977,9 @@ class ProcedureExecutor:
                     token for provenance in local_provenance.values() for token in provenance.whole
                 )
                 state.provenance[node.as_] = AliasProvenanceV1(
-                    whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
+                    whole=_base_tokens(
+                        node, state, tuple(body.spec for body in node.body), self.references
+                    )
                     | repeated_tokens
                 )
                 return
@@ -6048,7 +6064,7 @@ class ProcedureExecutor:
                 body,
                 state=local_state,
                 lineage=lineage,
-                base=_base_tokens(body, local_state, declared_spec),
+                base=_base_tokens(body, local_state, declared_spec, self.references),
             )
             return
         if body.operation == "call":
@@ -6073,7 +6089,7 @@ class ProcedureExecutor:
                 control=state.control,
             )
             local_provenance[body.as_] = AliasProvenanceV1(
-                whole=_base_tokens(body, local_state, body.spec)
+                whole=_base_tokens(body, local_state, body.spec, self.references)
             )
             return
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
@@ -6337,13 +6353,11 @@ _STEP_PREFIX = "$steps."
 _ITEM_SLOTS: tuple[str, ...] = ("items", "left_items", "right_items")
 
 
-def _node_policy_tokens(node: object) -> frozenset[DependencyToken]:
-    """Return the exact laws and policies one node's own pins commit it to."""
+def _node_policy_tokens(node: object, resolved: Mapping[str, str]) -> frozenset[DependencyToken]:
+    """Return the exact laws and policies one node's resolved pins commit it to."""
 
     return frozenset(
-        policy_token(binding.artifact_digest)
-        for binding in iter_pin_bindings(node)
-        if isinstance(binding, ArtifactPin)
+        policy_token(resolved[reference.target.qualified]) for reference in iter_references(node)
     )
 
 
@@ -6408,9 +6422,10 @@ def _base_tokens(
     node: object,
     state: _RunState,
     template: object,
+    resolved: Mapping[str, str],
 ) -> frozenset[DependencyToken]:
     return (
-        _node_policy_tokens(node)
+        _node_policy_tokens(node, resolved)
         | state.control
         | state.alias_tokens(_referenced_aliases(template))
     )
@@ -7558,7 +7573,6 @@ __all__ = [
     "prepare_direct_procedure_run",
     "procedure_admission_digest",
     "procedure_pin_set_digest",
-    "resolve_procedure_pin",
     "procedure_run_receipt_digest",
     "run_value_digest",
 ]

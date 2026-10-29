@@ -32,6 +32,7 @@ from cruxible_client.contracts.providers import provider_digest, provider_path, 
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.indexes.sqlite import bind_projection
 from cruxible_core.indexes.typed_state import TypedStateReader
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.evidence.evidence import accepted_claim_providers
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunNotAccepted,
@@ -201,7 +202,7 @@ def test_mandates_select_exact_line_lifecycle_and_half_open_time(tmp_path, monke
         ),
     ]
     tree = {
-        accepted.path: render_procedure(accepted.procedure),
+        accepted.path: render_procedure(authored_procedure(accepted)),
         line_spec_path(line.identity.name): render_line_spec(line),
         line_spec_path(other_line.identity.name): render_line_spec(other_line),
         **{
@@ -236,7 +237,7 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
         for i in range(unrelated)
     ]
     tree = {
-        procedure.path: render_procedure(procedure.procedure),
+        procedure.path: render_procedure(authored_procedure(procedure)),
         **{
             line_spec_path(item.identity.name): render_line_spec(item)
             for item in [selected, *others]
@@ -280,7 +281,7 @@ def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
         update={"identity": ArtifactIdentity(kind="Line", name="selected-2")}
     ).model_copy(update={"procedure": pin, "pins": (pin,)})
     tree = {
-        procedure.path: render_procedure(procedure.procedure),
+        procedure.path: render_procedure(authored_procedure(procedure)),
         line_spec_path(selected.identity.name): render_line_spec(selected),
     }
     instance, coordinate, _reads = _published_sources(tmp_path, tree, monkeypatch)

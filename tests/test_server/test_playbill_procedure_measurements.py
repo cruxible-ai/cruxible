@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.readings import (
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -38,7 +39,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     _accept_members(
         instance,
         reviewer_key_path,
-        {accepted.path: render_procedure(accepted.procedure)},
+        {accepted.path: render_procedure(authored_procedure(accepted))},
         timestamp="2026-09-03T09:00:00.000000Z",
     )
     name = accepted.procedure.identity.name

@@ -17,7 +17,6 @@ from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
     InvokeNode,
     ProcedureDefinition,
-    ProcedurePinBinding,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatNode,
@@ -78,7 +77,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
     """Validate every semantic pin field in one graph."""
 
     def check(
-        binding: ProcedurePinBinding | None,
+        binding: ArtifactNameRef | None,
         expectation: PinExpectation,
         location: str,
     ) -> None:

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
-from hashlib import sha256
 from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, Field, JsonValue, field_validator
@@ -55,14 +54,13 @@ from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     GuardPredicate,
     ProcedureBudget,
+    ProcedureDefinition,
     ProcedureHardCaps,
     ProcedureNode,
     ProcedureTransformSpec,
     TransformKind,
     derived_terminal_capability,
 )
-from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-from cruxible_client.contracts.procedures.names import named_graph
 from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimRetirementItem,
     ProcedureClaimStatement,
@@ -367,20 +365,15 @@ def _template(value: object, previous: str | None) -> Any:
     return value
 
 
-def _symbolic_pins(value: Any) -> Any:
-    # These pins are exclusively for local shape validation. They never escape
-    # preview or enter the submitted payload, retained state, or a receipt.
+def _named(value: Any) -> Any:
+    """The authoring references as graph names, for local shape validation only."""
     if isinstance(value, dict):
         if value.get("kind") in {"accepted", "carried_contract"}:
             target = value.get("target", "Contract:" + value.get("name", ""))
-            return ArtifactPin(
-                role=value["role"],
-                target=parse_artifact_identity(target),
-                artifact_digest="sha256:" + sha256(target.encode()).hexdigest(),
-            ).model_dump(mode="json")
-        return {k: _symbolic_pins(v) for k, v in value.items()}
+            return {"target": parse_artifact_identity(target).model_dump(mode="json")}
+        return {k: _named(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_symbolic_pins(v) for v in value]
+        return [_named(v) for v in value]
     return value
 
 
@@ -517,7 +510,6 @@ class Sequence:
                 "The returned output schema differs from the Procedure output contract.",
             )
         definition: dict[str, Any] = dict(
-            graph_format=6,
             name=self.name,
             description=self.description,
             contract_in=root_in,
@@ -535,9 +527,7 @@ class Sequence:
             }
         edges: dict[str, dict[str, str]] = {}
         try:
-            checked = NamedProcedureDefinition.model_validate(
-                named_graph(_symbolic_pins(definition))
-            )
+            checked = ProcedureDefinition.model_validate(_named(definition))
             edges = analyze_procedure(checked).edges
         except (ValueError, ProcedureGraphFormatError) as exc:
             error(None, "graph_invalid", str(exc))
@@ -603,10 +593,7 @@ def _authored_input(input_: ProcedureInput) -> ProcedureInput:
     from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
     from cruxible_client.contracts.procedures.decompile import decompile_procedure
 
-    # Preview-only symbolic pins never enter the recognized authored steps.
-    definition = NamedProcedureDefinition.model_validate(
-        named_graph(_symbolic_pins(input_.definition))
-    )
+    definition = ProcedureDefinition.model_validate(_named(input_.definition))
     owner = ProcedureArtifact.model_construct(
         definition=definition,
         owned_contracts=tuple(

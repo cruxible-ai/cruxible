@@ -6,11 +6,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
 from cruxible_client.contracts.procedures.artifacts import (
-    NamedProcedureArtifact as ProcedureArtifact,
-)
-from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
     parse_procedure,
     procedure_artifact_digest,
     render_procedure,
@@ -22,18 +21,14 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
-from cruxible_client.contracts.procedures.models import iter_pin_bindings
-from cruxible_client.contracts.procedures.named_models import (
-    NamedProcedureDefinition as ProcedureDefinition,
-)
+from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_references
+from tests.support.procedures import named
 
 
 def _artifact(definition):
     from tests.support.procedures import procedure_artifact
 
-    return procedure_artifact(
-        definition, activation_policy="drain", artifact_format="cruxible-procedure-v3"
-    )
+    return procedure_artifact(definition, activation_policy="drain")
 
 
 def spec(**changes):
@@ -227,7 +222,7 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
         }
     )
     assert render_procedure(actual) == render_procedure(expected)
-    used = {pin for pin in iter_pin_bindings(definition)}
+    used = set(iter_references(definition))
     actual = actual.model_copy(
         update={
             "pins": tuple(p for p in actual.pins if p in used),
@@ -241,26 +236,6 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
     assert render_procedure(parsed) == rendered
     assert ProcedureArtifact.model_validate(json.loads(rendered)) == parsed
     assert procedure_artifact_digest(parsed) == procedure_artifact_digest(actual)
-
-
-def test_historical_v2_bytes_and_digest_do_not_change():
-    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
-
-    historical = json.loads(
-        (Path(__file__).parents[1] / "fixtures/procedures/security-p1-v2.json").read_text()
-    )
-    for filename, document in historical.items():
-        original = ProcedureArtifact.model_validate(document)
-        from cruxible_client.contracts.canonical import (
-            ArtifactDigest,
-            pretty_canonical_bytes,
-            typed_digest,
-        )
-
-        assert render_procedure(original) == pretty_canonical_bytes(document)
-        assert procedure_artifact_digest(original) == typed_digest(
-            ArtifactDigest, "playbill-envelope-v1", document
-        )
 
 
 def _inventory_import_worked_example():
@@ -566,7 +541,9 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
         else GuardPredicate(**{"all_of" if predicate_shape == "single_all" else "any_of": (leaf,)})
     )
     if node_kind == "repeat":
-        original = _repeat_transform_procedure().procedure
+        from cruxible_core.procedures.reference_binding import authored_procedure
+
+        original = authored_procedure(_repeat_transform_procedure())
         repeat = original.definition.nodes[0].model_copy(update={"until": predicate})
         definition = original.definition.model_copy(update={"nodes": (repeat,)})
     else:
@@ -585,11 +562,6 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
             }
         )
         original = _artifact(definition)
-    from cruxible_client.contracts.procedures.names import named_graph
-
-    definition = ProcedureDefinition.model_validate(
-        named_graph(definition.model_dump(mode="json", by_alias=True))
-    )
     original = original.model_copy(update={"definition": definition})
     authored = decompile_procedure(original)
     explicit = next(step.explicit for step in authored.steps if hasattr(step, "explicit"))
@@ -598,28 +570,7 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
         assert any(getattr(step, "halt", None) == "no" for step in authored.steps)
 
     lowered = lower_procedure_spec(authored)
-    contracts = {pin.target.name: pin for pin in original.pins if pin.target.kind == "Contract"}
-
-    def rebind(value):
-        if isinstance(value, dict):
-            if value.get("kind") == "carried_contract":
-                return (
-                    contracts[value["name"]]
-                    .model_copy(update={"role": value["role"]})
-                    .model_dump(mode="json")
-                )
-            if value.get("kind") == "accepted":
-                return next(
-                    pin.model_dump(mode="json")
-                    for pin in original.pins
-                    if pin.role == value["role"] and pin.target.qualified == value["target"]
-                )
-            return {key: rebind(member) for key, member in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [rebind(member) for member in value]
-        return value
-
-    actual = ProcedureDefinition.model_validate(rebind(lowered.definition))
+    actual = ProcedureDefinition.model_validate(lowered.definition)
     assert compute_procedure_definition_digest(actual) == compute_procedure_definition_digest(
         definition
     )
@@ -745,13 +696,11 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
 
     instance, owner = initialize_local(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    from cruxible_client.contracts.procedures.names import name_procedure
-
     capture = foreign_source_capture_contract("security.inventory").model_copy(
         update={"identity": ArtifactIdentity(kind="CaptureContract", name="security.inventory")}
     )
     tree[capture_contract_path(capture.identity.name)] = render_capture_contract(capture)
-    procedure = name_procedure(_slotless_procedure("stored.proc").procedure)
+    procedure = _slotless_procedure("stored.proc").procedure
     tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
 
@@ -766,36 +715,6 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
     assert refusal.code == "cruxible.authoring.artifact_reference_unresolved"
     assert refusal.offending_element == "$.steps[0]." + field
     assert candidate in refusal.message
-
-
-@pytest.mark.parametrize("population", [10, 100])
-def test_authored_lowering_requests_only_the_named_interface(population):
-    class Vocabulary(dict):
-        def __iter__(self):
-            raise AssertionError("authoring must not scan vocabulary")
-
-        def values(self):
-            raise AssertionError("authoring must not scan vocabulary")
-
-        def items(self):
-            raise AssertionError("authoring must not scan vocabulary")
-
-    vocabulary = Vocabulary({f"unrelated.{i}": {} for i in range(population)})
-    vocabulary["test@1"] = {"count": PropertySchema(type="integer")}
-    requested = []
-
-    def resolve(kind, step):
-        requested.append((kind, step.interface))
-        return {"bindings": {}, "input": {}, "output": vocabulary[step.interface]}
-
-    authored = spec(
-        input={},
-        returns="read",
-        steps=[{"call": "read", "interface": "test@1", "provider": "test", "input": {}}],
-    )
-    lowered = lower_procedure_spec(authored, resolve=resolve)
-    assert requested == [("binding", "test@1")]
-    assert lowered.definition["returns"] == "read"
 
 
 def test_template_prefixes_are_step_names_and_explicit_input_alias_survives():
@@ -887,8 +806,8 @@ def test_v3_retains_the_transform_spec_union_discriminator():
     transform = TransformNode(
         node_id="result",
         transform_kind="adapter",
-        contract_in=definition.contract_in,
-        contract_out=definition.contract_out,
+        contract_in=named(definition.contract_in),
+        contract_out=named(definition.contract_out),
         spec=TransformAdapterSpec(value={}),
         **{"as": "result"},
     )
@@ -903,7 +822,7 @@ def test_v3_retains_the_transform_spec_union_discriminator():
     )
 
 
-def test_literal_null_is_new_in_v3_and_old_writes_keep_the_frozen_refusal():
+def test_literal_null_operands_round_trip():
     from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
     from tests.support.procedures import procedure_artifact
     from tests.test_procedures.test_procedure_artifacts import _layout_definition
@@ -922,19 +841,17 @@ def test_literal_null_is_new_in_v3_and_old_writes_keep_the_frozen_refusal():
             )
         }
     )
-    current = procedure_artifact(definition, artifact_format="cruxible-procedure-v3")
+    current = procedure_artifact(definition)
     assert (
         parse_procedure(
             render_procedure(current), path="procedures/" + current.identity.name + ".json"
         )
         == current
     )
-    with pytest.raises(ValidationError, match="literal null operands require Procedure v3"):
-        procedure_artifact(definition, artifact_format="playbill-procedure-v2")
 
 
 @pytest.mark.parametrize("change", ["guard_diagnostics", "halt_message"])
-def test_old_envelopes_keep_their_frozen_guard_and_halt_grammar(change):
+def test_omitted_guard_diagnostics_and_halt_messages_round_trip(change):
     from tests.support.procedures import procedure_artifact
     from tests.test_procedures.test_procedure_artifacts import _layout_definition
 
@@ -951,15 +868,13 @@ def test_old_envelopes_keep_their_frozen_guard_and_halt_grammar(change):
             )
         }
     )
-    current = procedure_artifact(definition, artifact_format="cruxible-procedure-v3")
+    current = procedure_artifact(definition)
     assert (
         parse_procedure(
             render_procedure(current), path="procedures/" + current.identity.name + ".json"
         )
         == current
     )
-    with pytest.raises(ValidationError, match="require Procedure v3"):
-        procedure_artifact(definition, artifact_format="playbill-procedure-v2")
 
 
 def test_parameter_operands_and_reserved_looking_step_ids_have_distinct_scopes():
@@ -1019,7 +934,10 @@ def test_measurement_node_coordinates_are_not_graph_node_ids():
         subject_grain="node",
         node_id=read.node_id,
         measurement=AcceptedQueryProcedureMeasurement(
-            query=read.query, expect=ProcedureMeasurementExpectation(min_count=0)
+            query=ArtifactPin(
+                role="query", target=read.query.target, artifact_digest="sha256:" + "1" * 64
+            ),
+            expect=ProcedureMeasurementExpectation(min_count=0),
         ),
         check_after=CanonicalDuration(microseconds=1),
         expires_after=CanonicalDuration(microseconds=2),
@@ -1090,29 +1008,3 @@ def test_slots_cannot_stand_in_non_provider_positions():
                 ],
             }
         )
-
-
-def test_slot_interface_readback_preserves_every_part_of_its_name():
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-
-    authored = spec(
-        slots={"compute": "vendor/version/v1"},
-        output={"value": "integer"},
-        steps=[
-            {"call": "result", "interface": "vendor/version/v1", "provider": "compute", "input": {}}
-        ],
-    )
-    payload = lower_authoring_input(lower_procedure_spec(authored))
-    definition = ProcedureDefinition.model_validate(payload.definition)
-    artifact = ProcedureArtifact(
-        identity={"kind": "Procedure", "name": definition.name},
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=payload.owned_contracts,
-        activation_policy="snapshot",
-    )
-    restored = decompile_procedure(artifact)
-    assert restored.slots == {"compute": "vendor/version@1"}
-    assert (
-        ProcedureDefinition.model_validate(lower_procedure_spec(restored).definition) == definition
-    )

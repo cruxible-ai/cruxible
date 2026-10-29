@@ -10,7 +10,6 @@ from tests.test_procedures.test_source_compiler import INPUT, OUTPUT, compile
 def binding(**changes):
     return SourceProcedureBinding(
         name="child",
-        version="sha256:" + "a" * 64,
         input=INPUT.schema_,
         output=OUTPUT.schema_,
         **changes,

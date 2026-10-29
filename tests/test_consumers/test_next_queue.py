@@ -32,6 +32,7 @@ from cruxible_core.consumers.next import facts, rows
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
@@ -1193,7 +1194,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         service_activate_playbill_proposal(
             instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
         )
-    procedure = _procedure(named=True)
+    procedure = _procedure()
     line = _line(procedure=procedure)
     lapsing = _mandate(procedure=procedure, line=line).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=EVALUATION_TIME.tzinfo)}
@@ -1203,7 +1204,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            procedure.path: render_procedure(procedure.procedure),
+            procedure.path: render_procedure(authored_procedure(procedure)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },

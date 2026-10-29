@@ -33,6 +33,7 @@ from cruxible_client.contracts.repairs import (
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.procedures.execution import procedure_line_partition
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -50,11 +51,9 @@ def _served_line(
     name: str,
     *,
     accepted: AcceptedProcedure,
-    historical: bool = False,
 ) -> LineSpec:
     """A propose Line over ``accepted`` (no slots to bind, no acquisition overrides)."""
 
-    del historical
     return LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
@@ -180,7 +179,7 @@ def test_an_unknown_procedure_names_the_nearest_accepted_ones_and_the_repair(
     _accept_members(
         instance,
         reviewer_key_path,
-        {accepted.path: render_procedure(accepted.procedure)},
+        {accepted.path: render_procedure(authored_procedure(accepted))},
         timestamp="2026-09-03T09:00:00.000000Z",
     )
 
@@ -365,7 +364,7 @@ def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -400,7 +399,7 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -449,7 +448,7 @@ def test_accepted_line_successors_run_against_their_retained_predecessor(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },

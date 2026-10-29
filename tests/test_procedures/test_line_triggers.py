@@ -53,29 +53,17 @@ SELECTOR = CaptureEventSelector(
 TRIGGER = "trigger-test-trigger"
 
 
-def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historical=False):
+def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
     """An accepted Line and the Trigger aimed at it on `schedule`.
 
     `triggers` replaces the one default Trigger with several (or none).
     """
 
     instance, owner, contract = contract_world(tmp_path)
-    accepted = _slotless_procedure("trigger-method", historical=historical)
+    accepted = _slotless_procedure("trigger-method")
     procedure = accepted.procedure
     profile = TRIGGER_CONTRACT
-    if historical:
-        from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-
-        profile = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-        data = schedule.model_dump(mode="json")
-        if data["kind"] == "capture_landing":
-            data["event"]["capture_contract_digest"] = capture_contract_digest(profile).tagged
-        if data["kind"] == "window_close" and data["window"]["kind"] == "capture_event":
-            data["window"]["event"]["capture_contract_digest"] = capture_contract_digest(
-                profile
-            ).tagged
-        schedule = type(schedule).model_validate(data)
-    line = _served_line("trigger-test", accepted=accepted, historical=historical)
+    line = _served_line("trigger-test", accepted=accepted)
     mandate = _line_mandate(accepted, line)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(profile.identity.name)] = render_capture_contract(profile)
@@ -91,7 +79,6 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historica
                             TRIGGER,
                             line=line.identity.name,
                             schedule=schedule,
-                            named=not historical,
                         ),
                     )
                     if triggers is None

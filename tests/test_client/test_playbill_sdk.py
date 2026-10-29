@@ -59,6 +59,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
 from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
+from tests.support.procedures import named
 from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
@@ -453,10 +454,12 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     artifact = _owned_accepted(
         ProcedureDefinition(
             name="daily-summary",
-            contract_in=pi,
-            contract_out=po,
+            contract_in=named(pi),
+            contract_out=named(po),
             nodes=(
-                ProjectNode(node_id="result", fields={"ok": True}, contract_out=po, as_="result"),
+                ProjectNode(
+                    node_id="result", fields={"ok": True}, contract_out=named(po), as_="result"
+                ),
             ),
             returns="result",
             budget=_budget(),

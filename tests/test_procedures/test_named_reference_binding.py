@@ -12,7 +12,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.names import name_procedure
 from cruxible_core.procedures.reference_binding import (
     bind_procedure_references,
     replay_procedure_references,
@@ -20,23 +19,18 @@ from cruxible_core.procedures.reference_binding import (
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition, _digest
 
 
-def authored_policy_call(*, named=False):
-    """Literal Call input through slot ``act``; expected pins are not derived from a conversion."""
-    from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.procedures.artifacts import (
-        NamedProcedureArtifact,
-        ProcedureArtifact,
-    )
+def authored_policy_call():
+    """Literal Call input through slot ``act``, naming its effect policy."""
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
-    from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
     from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
     from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
     from cruxible_client.contracts.shapes import contract_digest
     from tests.support.operation_world import VALUE, operation, operation_build
     from tests.test_procedures.test_named_reference_closure import authored_procedure
 
-    base = authored_procedure(name="effectful", query=None, named=named)
+    base = authored_procedure(name="effectful", query=None)
     build = operation_build(
         operations=(operation("act", effect="external_mutation"),), side_effects=True
     )
@@ -45,20 +39,6 @@ def authored_policy_call(*, named=False):
         provider=build,
         artifact_digest=provider_digest(build).tagged,
     )
-    effect = ArtifactPin.model_validate(
-        {
-            "role": "effect-policy",
-            "target": {"kind": "EffectPolicy", "name": "test.policy"},
-            "artifact_digest": "sha256:" + "e" * 64,
-        }
-    )
-
-    def reference(target, role, digest):
-        value = {"target": target.model_dump()}
-        if not named:
-            value.update(role=role, artifact_digest=digest)
-        return value
-
     value = {"name": "test.value", "version": 1, "digest": contract_digest(VALUE).tagged}
     node = {
         "kind": "call",
@@ -66,128 +46,24 @@ def authored_policy_call(*, named=False):
         "as": "result",
         "input": {"value": 1},
         "slot": "act",
-        "effect_policy": reference(effect.target, "effect-policy", effect.artifact_digest),
+        "effect_policy": {"target": {"kind": "EffectPolicy", "name": "test.policy"}},
     }
     raw = base.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"] = [node]
     raw["slots"] = {"act": {"in": value, "out": value, "effect": "external_mutation"}}
     raw["budget"]["max_provider_calls"] = raw["hard_caps"]["max_provider_calls"] = 1
-    definition = (NamedProcedureDefinition if named else ProcedureDefinition).model_validate(raw)
-    payload = {
-        **base.model_dump(),
-        "definition": definition,
-        "definition_digest": compute_procedure_definition_digest(definition).tagged,
-    }
-    if not named:
-        payload["pins"] = sorted(
-            [*base.pins, effect],
-            key=lambda p: (p.role, p.target.qualified),
-        )
-    artifact = (NamedProcedureArtifact if named else ProcedureArtifact).model_validate(payload)
+    definition = ProcedureDefinition.model_validate(raw)
+    artifact = ProcedureArtifact.model_validate(
+        {
+            **base.model_dump(),
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
     binding = LineBinding(
         build=binding_pin(build.identity, provider.artifact_digest), operation="act"
     )
-    return artifact, provider, binding, effect
-
-
-def test_call_effect_policy_pin_survives_binding_and_exact_replay_without_an_owner_lookup():
-    from cruxible_client.contracts.provider_operations import closure_lookup
-    from tests.support.operation_world import VALUE
-
-    artifact, provider, binding, effect = authored_policy_call()
-    original = render_procedure(artifact)
-    accepted = AcceptedProcedure(
-        path=procedure_path(artifact.identity.name),
-        procedure=artifact,
-        artifact_digest=procedure_artifact_digest(artifact).tagged,
-    )
-    material = {provider.provider.identity: (provider.provider, provider.artifact_digest)}
-    bindings = {"act": binding}
-    reads = []
-
-    def lookup(identity):
-        reads.append(identity)
-        assert identity.kind != "EffectPolicy", "Registry material has no ledger owner"
-        return material.get(identity)
-
-    bound = bind_procedure_references(
-        accepted, lookup=lookup, bindings=bindings, contracts=closure_lookup((VALUE,))
-    )
-    assert set(reads) == set(material)
-    assert bound.procedure.definition.nodes[0].effect_policy == effect
-    assert effect in bound.procedure.pins
-    assert render_procedure(bound.authored) == original
-    reads.clear()
-
-    def exact(identity, digest):
-        result = lookup(identity)
-        assert result[1] == digest
-        return result
-
-    replayed = replay_procedure_references(
-        accepted, pins=bound.procedure.pins, lookup_exact=exact, bindings=bindings
-    )
-    assert replayed.procedure.definition.nodes[0].effect_policy == effect
-    assert replayed.procedure.pins == bound.procedure.pins
-    assert set(reads) == set(material)
-    assert render_procedure(replayed.authored) == original
-    with pytest.raises(ExecutionError, match="registry pins differ"):
-        replay_procedure_references(
-            accepted,
-            pins=tuple(
-                p.model_copy(update={"artifact_digest": "sha256:" + "f" * 64}) if p == effect else p
-                for p in bound.procedure.pins
-            ),
-            lookup_exact=exact,
-            bindings=bindings,
-        )
-
-
-@pytest.mark.parametrize(
-    "kind",
-    [
-        "EnvironmentManifest",
-        "ExhaustReducer",
-        "LandingFilter",
-        "Policy",
-        "ReceiptSetManifest",
-        "Reducer",
-    ],
-)
-def test_deferred_registry_envelope_pins_are_not_reinterpreted_as_names(kind):
-    from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
-    from tests.test_procedures.test_named_reference_closure import authored_procedure
-
-    artifact = authored_procedure(query=None, named=False)
-    extra = ArtifactPin.model_validate(
-        {
-            "role": "registry",
-            "target": {"kind": kind, "name": "test.material"},
-            "artifact_digest": "sha256:" + "d" * 64,
-        }
-    )
-    artifact = ProcedureArtifact.model_validate(
-        {
-            **artifact.model_dump(),
-            "pins": [*(p.model_dump() for p in artifact.pins), extra.model_dump()],
-        }
-    )
-    accepted = AcceptedProcedure(
-        path=procedure_path(artifact.identity.name),
-        procedure=artifact,
-        artifact_digest=procedure_artifact_digest(artifact).tagged,
-    )
-
-    def no_lookup(*args):
-        raise AssertionError("Owned contracts and exact registry pins require no ledger lookup")
-
-    bound = bind_procedure_references(accepted, lookup=no_lookup)
-    assert extra in bound.procedure.pins
-    replayed = replay_procedure_references(
-        accepted, pins=bound.procedure.pins, lookup_exact=no_lookup, bindings={}
-    )
-    assert replayed.procedure.pins == bound.procedure.pins
+    return artifact, provider, binding
 
 
 def test_name_only_effect_policy_is_refused_by_admission_law(tmp_path):
@@ -196,7 +72,7 @@ def test_name_only_effect_policy_is_refused_by_admission_law(tmp_path):
     from tests.core_support._support import initialize_local
     from tests.support.operation_world import contract_files
 
-    artifact, provider, _binding, _ = authored_policy_call(named=True)
+    artifact, provider, _binding = authored_policy_call()
     instance, _ = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     parent = {
@@ -224,12 +100,9 @@ def test_name_only_effect_policy_is_refused_by_admission_law(tmp_path):
     )
 
 
-@pytest.mark.parametrize("named", [False, True])
 @pytest.mark.parametrize("unrelated_count", [10, 100])
-def test_admission_resolves_each_name_once_without_population_reads(named, unrelated_count):
+def test_admission_resolves_each_name_once_without_population_reads(unrelated_count):
     authored = _artifact(_definition())
-    if named:
-        authored = name_procedure(authored)
     original = render_procedure(authored)
     digest = procedure_artifact_digest(authored).tagged
     accepted = AcceptedProcedure(
@@ -251,14 +124,16 @@ def test_admission_resolves_each_name_once_without_population_reads(named, unrel
     assert reads == ["QueryDefinition:claims-by-status"]
     assert bound.artifact_digest == digest
     assert bound.procedure.definition_digest == authored.definition_digest
-    assert bound.procedure.definition.nodes[0].query.artifact_digest == selected_digest
+    assert bound.procedure.definition == authored.definition
+    query = bound.procedure.definition.nodes[0].query
+    assert bound.procedure.pin(query).artifact_digest == selected_digest
     assert render_procedure(bound.authored) == original
     assert render_procedure(authored) == original
     assert all(pin.artifact_digest != _digest("claims-by-status") for pin in bound.procedure.pins)
 
 
 def test_admission_refuses_a_retired_named_dependency():
-    authored = name_procedure(_artifact(_definition()))
+    authored = _artifact(_definition())
     accepted = AcceptedProcedure(
         path=procedure_path(authored.identity.name),
         procedure=authored,
@@ -275,7 +150,7 @@ def test_admission_refuses_a_retired_named_dependency():
 
 
 def test_replay_uses_recorded_versions_and_refuses_substituted_material():
-    authored = name_procedure(_artifact(_definition()))
+    authored = _artifact(_definition())
     accepted = AcceptedProcedure(
         path=procedure_path(authored.identity.name),
         procedure=authored,
@@ -298,6 +173,7 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
     assert reads == [("QueryDefinition:claims-by-status", recorded)]
     assert replayed.procedure.pins == admitted.procedure.pins
     assert replayed.procedure.definition == admitted.procedure.definition
+    assert replayed.procedure.resolved == admitted.procedure.resolved
     assert render_procedure(replayed.authored) == render_procedure(authored)
     with pytest.raises(ExecutionError, match="material is unavailable"):
         replay_procedure_references(
@@ -326,10 +202,9 @@ def test_v3_artifact_and_admission_graph_digests_reproduce_from_compact_named_wi
         compute_procedure_definition_digest,
         compute_procedure_node_digests,
     )
-    from cruxible_client.contracts.procedures.names import name_procedure
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    original = name_procedure(_artifact(_definition()))
+    original = _artifact(_definition())
     wire = render_procedure(original)
     restored = parse_procedure(wire, path="procedures/" + original.identity.name + ".json")
     assert procedure_artifact_digest(original) == typed_digest(

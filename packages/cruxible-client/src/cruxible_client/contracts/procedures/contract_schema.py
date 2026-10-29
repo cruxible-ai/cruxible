@@ -1,4 +1,4 @@
-"""Owned schema for Contracts carried by Procedure-v2 owners.
+"""Owned schema for Contracts carried by Procedure owners.
 
 This is intentionally the narrow, byte-compatible Contract subset, not an
 import of the legacy config schema. Owner-carried Contracts are accepted
@@ -98,7 +98,7 @@ class PropertySchema(BaseModel):
 
 
 class ContractSchema(BaseModel):
-    """Typed input or output schema carried inside one Procedure-v2 envelope."""
+    """Typed input or output schema carried inside one Procedure envelope."""
 
     model_config = ConfigDict(frozen=True, json_schema_mode_override="validation")
 

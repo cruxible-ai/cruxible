@@ -67,7 +67,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import client_material
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, bind_fixture, named
 from tests.test_ledger.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -226,12 +226,12 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
     )
     definition = ProcedureDefinition(
         name="query-work-items",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=query,
+                query=named(query),
                 parameters={},
                 as_="query",
                 next="project",
@@ -239,7 +239,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
             ProjectNode(
                 node_id="project",
                 fields={"rows": "$steps.query.result.rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -263,16 +263,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (contract_in, contract_out, query),
-                key=lambda pin: (
-                    pin.role.encode(),
-                    pin.target.qualified.encode(),
-                    pin.artifact_digest.encode(),
-                ),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (input_contract, output_contract),
@@ -283,10 +273,13 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         ),
         activation_policy="abort",
     )
-    return AcceptedProcedure(
-        path=procedure_path(definition.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    return bind_fixture(
+        AcceptedProcedure(
+            path=procedure_path(definition.name),
+            procedure=procedure,
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+        extra_pins=(query,),
     )
 
 

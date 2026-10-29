@@ -1326,4 +1326,4 @@ def test_scale_factories_author_named_procedures_and_lines():
     line = _worlds._line("scale-native", procedure, authority="observe")
     assert procedure.procedure.artifact_format == "cruxible-procedure-v3"
     assert procedure.procedure.definition.graph_format == 7
-    assert line.artifact_format == "cruxible-line-v7"
+    assert line.artifact_format == "cruxible-line-v8"

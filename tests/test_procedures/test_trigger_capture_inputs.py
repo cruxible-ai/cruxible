@@ -4,7 +4,6 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import (
@@ -78,35 +77,12 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         "trigger_input": SOURCE_ALIAS,
         "trigger_event": selector,
     }
-    from cruxible_client.contracts.procedures.line_specs import NamedLineSpec
     from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
 
-    if isinstance(original, NamedLineSpec):
-        values["trigger_event"] = NamedCaptureEventSelector(
-            capture_contract_identity=contract.identity, logical_sources=sources
-        )
-        line = NamedLineSpec.model_validate(values)
-    else:
-        line = LineSpec.model_validate(
-            {
-                **original.model_dump(mode="python"),
-                "trigger_input": SOURCE_ALIAS,
-                "trigger_event": selector,
-                "pins": tuple(
-                    sorted(
-                        (
-                            *original.pins,
-                            ArtifactPin(
-                                role="trigger-capture-contract",
-                                target=selector.capture_contract_identity,
-                                artifact_digest=selector.capture_contract_digest,
-                            ),
-                        ),
-                        key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-                    )
-                ),
-            }
-        )
+    values["trigger_event"] = NamedCaptureEventSelector(
+        capture_contract_identity=contract.identity, logical_sources=sources
+    )
+    line = LineSpec.model_validate(values)
     if line_budget is not None:
         line = line.model_copy(
             update={"budgets": {**line.budgets, "max_capture_bytes": line_budget}}

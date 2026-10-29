@@ -217,13 +217,13 @@ def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
 
 
 def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
-    if path.startswith("procedures/") and payload.get("artifact_format") == "cruxible-procedure-v3":
+    if path.startswith("procedures/"):
         from cruxible_client.contracts.procedures.artifacts import (
-            NamedProcedureArtifact,
+            ProcedureArtifact,
             render_procedure,
         )
 
-        content = render_procedure(NamedProcedureArtifact.model_validate(payload))
+        content = render_procedure(ProcedureArtifact.model_validate(payload))
     elif (
         path.startswith("query-definitions/")
         and payload.get("artifact_format") == "cruxible-query-definition-v3"
@@ -831,19 +831,8 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
     )
     if not by_name:
         return content
-    from cruxible_client.contracts.named_references import name_line, name_query, name_trigger
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.named_references import name_query, name_trigger
 
-    if path.startswith("procedures/"):
-        from cruxible_client.contracts.procedures.artifacts import (
-            ProcedureArtifact,
-            parse_procedure,
-            render_procedure,
-        )
-
-        procedure = name_procedure(parse_procedure(content, path=path))
-        assert isinstance(procedure, ProcedureArtifact)
-        return render_procedure(procedure)
     if path.startswith("query-definitions/"):
         from cruxible_client.contracts.query.definitions import (
             parse_query_definition,
@@ -851,13 +840,6 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
         )
 
         return render_query_definition(name_query(parse_query_definition(content, path=path)))
-    if path.startswith("lines/"):
-        from cruxible_client.contracts.procedures.line_specs import (
-            parse_line_spec,
-            render_line_spec,
-        )
-
-        return render_line_spec(name_line(parse_line_spec(content, path=path)))
     if path.startswith("triggers/"):
         from cruxible_client.contracts.triggers import parse_trigger, render_trigger
 

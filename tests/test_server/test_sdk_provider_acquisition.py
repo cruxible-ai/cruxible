@@ -58,6 +58,7 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._light_capture_support import http_contract
+from tests.support.procedures import named
 from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -265,8 +266,8 @@ def _fetch_procedure(
     definition = ProcedureDefinition(
         name="sdk-fetch-triage",
         description="Fetch one external record and shape its severity.",
-        contract_in=run_input_pin,
-        contract_out=run_output_pin,
+        contract_in=named(run_input_pin),
+        contract_out=named(run_output_pin),
         slots={
             "fetch": {
                 "in": f"{_FETCH_INPUT.name}@{_FETCH_INPUT.version}",
@@ -277,7 +278,7 @@ def _fetch_procedure(
         nodes=(
             SourceNode(
                 node_id="fetch",
-                capture_contract=capture_pin,
+                capture_contract=named(capture_pin),
                 slot="fetch",
                 request=request,
                 as_=_ALIAS,
@@ -286,7 +287,7 @@ def _fetch_procedure(
             ProjectNode(
                 node_id="shape",
                 fields={"severity": f"$steps.{_ALIAS}.derived.text"},
-                contract_out=run_output_pin,
+                contract_out=named(run_output_pin),
                 as_="result",
             ),
         ),
@@ -310,16 +311,6 @@ def _fetch_procedure(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (run_input_pin, run_output_pin, capture_pin),
-                key=lambda pin: (
-                    pin.role.encode("utf-8"),
-                    pin.target.qualified.encode("utf-8"),
-                    pin.artifact_digest.encode("ascii"),
-                ),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (run_input, run_output),
@@ -329,9 +320,9 @@ def _fetch_procedure(
         activation_policy="drain",
         acquisition_defaults={_ALIAS: policy},
     )
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
-    return name_procedure(procedure)
+    return revalidated(procedure)
 
 
 class AcquisitionInvoker(source._WorkspaceInvoker):

@@ -30,7 +30,6 @@ CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
 PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
-PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
 QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
@@ -257,11 +256,6 @@ PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-procedure-mandate-v1",
     semantic_revision=1,
 )
-PROCEDURE_LAW_V2 = _artifact_law_coordinate(
-    PROCEDURE_LAW_V2_IDENTIFIER,
-    "playbill-procedure-v2",
-    semantic_revision=6,
-)
 # Revision 5 refuses moving a query that live ClaimTypes corroborate
 # through by exact digest unless those ClaimTypes move with it.
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
@@ -452,11 +446,6 @@ PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure-mandate",
     artifact_tag="playbill-procedure-mandate-v1",
 )
-PROCEDURE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=PROCEDURE_LAW_V2,
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v2",
-)
 QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=QUERY_DEFINITION_LAW,
     artifact_kind="query-definition",
@@ -607,7 +596,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
-        PROCEDURE_V2_ACCEPTANCE_LAW,
         LINE_V6_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
         SUBJECT_KIND_ACCEPTANCE_LAW,

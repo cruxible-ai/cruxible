@@ -53,9 +53,7 @@ SELECTOR = CaptureEventSelector(
 def tree():
     # "triage" has no source/call node, so its Line closes with no slot
     # binding and no acquisition override (B2: `_served_line` carries none).
-    line = _served_line(
-        "triage", accepted=_slotless_procedure("triage", historical=True), historical=True
-    )
+    line = _served_line("triage", accepted=_slotless_procedure("triage"))
     return {
         PATH: render_capture_contract(CONTRACT),
         line_spec_path("triage"): render_line_spec(line),

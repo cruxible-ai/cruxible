@@ -1407,12 +1407,7 @@ def service_measure_playbill_procedure(
                 measured_procedure_artifact_digest=accepted.artifact_digest,
             )
 
-        from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-
-        if (
-            isinstance(accepted.procedure, NamedProcedureArtifact)
-            and grain.state.receipt is not None
-        ):
+        if grain.state.receipt is not None:
             reading_procedure = _replay_measured_run(
                 instance, accepted=accepted, grain=grain, observation=observation
             )

@@ -120,7 +120,7 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
@@ -953,8 +953,8 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
     operation = accepted_provider.provider.operations[0]
     definition = ProcedureDefinition(
         name="served-provider-triage",
-        contract_in=run_input_pin,
-        contract_out=provider_output_pin,
+        contract_in=named(run_input_pin),
+        contract_out=named(provider_output_pin),
         nodes=(
             CallNode(
                 node_id="ask",
@@ -986,12 +986,6 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (run_input_pin, provider_output_pin),
-                key=lambda item: (item.role, item.target.qualified, item.artifact_digest),
-            )
-        ),
         owned_contracts=tuple(
             sorted(
                 (run_input, provider_output),
@@ -1130,15 +1124,15 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     # existed; dropping the cache is that daemon restarting, not a double.
     get_playbill_manager().clear()
 
-    from cruxible_client.contracts.named_references import name_line, name_provider
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from cruxible_client.contracts.named_references import name_provider
+    from tests.support.procedures import revalidated
 
     provider = name_provider(accepted_provider.provider)
     accepted_provider = accepted_provider.model_copy(
         update={"provider": provider, "artifact_digest": provider_digest(provider).tagged}
     )
     accepted = _provider_line_procedure(accepted_provider)
-    procedure = name_procedure(accepted.procedure)
+    procedure = revalidated(accepted.procedure)
     accepted = accepted.model_copy(
         update={
             "procedure": procedure,
@@ -1174,7 +1168,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         },
         epsilon={"$decimal": "0"},
     )
-    line = name_line(line)
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-provider-mandate"),
         line=ArtifactPin(
@@ -1191,7 +1184,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         instance,
         reviewer_key_path,
         {
-            accepted.path: render_procedure(accepted.procedure),
+            accepted.path: render_procedure(authored_procedure(accepted)),
             accepted_provider.path: render_provider(accepted_provider.provider),
             contract_path(_OPERATION_INPUT.name, _OPERATION_INPUT.version): render_contract(
                 _OPERATION_INPUT

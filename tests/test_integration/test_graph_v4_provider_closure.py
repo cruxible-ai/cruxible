@@ -35,7 +35,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.core_support._support import initialize_local
 from tests.support.operation_world import VALUE, contract_files
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
 
 
 def _value_ref() -> dict[str, object]:
@@ -48,8 +48,8 @@ def _definition() -> ProcedureDefinition:
     return ProcedureDefinition.model_validate(
         {
             "name": "provider-v4",
-            "contract_in": contract_in,
-            "contract_out": contract_out,
+            "contract_in": named(contract_in),
+            "contract_out": named(contract_out),
             "slots": {"compute": {"in": _value_ref(), "out": _value_ref(), "effect": "pure"}},
             "nodes": (
                 CallNode(
@@ -81,7 +81,7 @@ def _definition() -> ProcedureDefinition:
 def _accepted_procedure() -> AcceptedProcedure:
     """One accepted Procedure whose single Call names slot ``compute``."""
 
-    return accepted_procedure(_definition(), activation_policy="drain")
+    return accepted_procedure(_definition(), activation_policy="drain", bound=False)
 
 
 def _line() -> LineSpec:
@@ -137,14 +137,13 @@ def test_procedure_law_checks_slot_contracts_against_accepted_versions() -> None
 
 
 def test_real_proposal_path_closes_contracts_build_procedure_and_line(tmp_path) -> None:
-    from cruxible_client.contracts.named_references import name_line
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-    from cruxible_client.contracts.procedures.names import name_procedure
+    from tests.support.procedures import revalidated
 
     instance, _owner = initialize_local(tmp_path)
     provider = accepted_provider()
     procedure = _accepted_procedure()
-    named = name_procedure(procedure.procedure)
+    named = revalidated(procedure.procedure)
     line = _line()
     line = line.model_copy(
         update={
@@ -157,7 +156,7 @@ def test_real_proposal_path_closes_contracts_build_procedure_and_line(tmp_path) 
     tree.update(contract_files())
     tree[provider.path] = render_provider(provider.provider)
     tree[procedure.path] = render_procedure(named)
-    tree[line_spec_path(line.identity.name)] = render_line_spec(name_line(line))
+    tree[line_spec_path(line.identity.name)] = render_line_spec(line)
 
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),

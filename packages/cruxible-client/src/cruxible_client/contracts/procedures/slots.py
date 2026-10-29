@@ -1,4 +1,4 @@
-"""Procedure slots and pin bindings.
+"""Procedure slots.
 
 A Procedure never names a provider. Each provider-calling node names a slot,
 and the Procedure declares every slot's signature ``{in, out, effect}``
@@ -13,15 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.provider_operations import ProcedureSlot, validate_slot_name
-
-#: A format-6 (exact) dependency reference.
-LegacyProcedurePinBinding = ArtifactPin
-#: Any dependency reference a Procedure field may hold.
-ProcedurePinBinding = ArtifactPin | ArtifactNameRef
-#: A format-7 (name-referenced) dependency reference.
-NameBinding = ArtifactNameRef
 
 #: The most slots one Procedure may declare.
 MAX_PROCEDURE_SLOTS = 256
@@ -39,9 +31,6 @@ def validate_procedure_slots(value: Mapping[str, ProcedureSlot]) -> dict[str, Pr
 
 __all__ = [
     "MAX_PROCEDURE_SLOTS",
-    "LegacyProcedurePinBinding",
-    "NameBinding",
-    "ProcedurePinBinding",
     "ProcedureSlot",
     "validate_procedure_slots",
 ]

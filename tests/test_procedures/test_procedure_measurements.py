@@ -43,7 +43,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
-from tests.support.procedures import owned_contract, owned_pin, procedure_artifact
+from tests.support.procedures import named, owned_contract, owned_pin, procedure_artifact
 
 
 def _digest(label: str) -> str:
@@ -128,12 +128,12 @@ def _definition(
     contract_out = _pin("contract-out", "Contract", "result")
     return ProcedureDefinition(
         name="measured-procedure",
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
             StateTapNode(
                 node_id="read",
-                query=_pin("query", "QueryDefinition", "accepted-state"),
+                query=named(_pin("query", "QueryDefinition", "accepted-state")),
                 as_="rows",
             ),
             GuardNode(
@@ -147,21 +147,21 @@ def _definition(
             ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="hot_rows",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="cold_rows",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"status": "complete"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -184,16 +184,8 @@ def _definition(
     )
 
 
-def _artifact(definition: ProcedureDefinition, *, include_all_pins: bool) -> ProcedureArtifact:
-    procedure = procedure_artifact(definition, activation_policy="snapshot")
-    if include_all_pins:
-        return procedure
-    return ProcedureArtifact(
-        **{
-            **procedure.model_dump(mode="python", exclude={"artifact_format"}),
-            "pins": tuple(pin for pin in procedure.pins if pin.target.name != "outcome-query"),
-        }
-    )
+def _artifact(definition: ProcedureDefinition) -> ProcedureArtifact:
+    return procedure_artifact(definition, activation_policy="snapshot")
 
 
 def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> None:
@@ -207,19 +199,17 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:2769d12c4b50a4c966328173c8ebf90b54ac1613c938ff3d3ec10f192ea5c138"
+        "sha256:dc71275c3f2438c62feb91d311f2a7ff3850c901863a034c32753be60c0ce643"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}
     assert payload["measurements"][0]["tag"] == ("playbill-procedure-measurement-declaration-v1")
 
 
-def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> None:
+def test_measurement_query_is_an_exact_pin_not_a_line_slot() -> None:
     definition = _definition((_declaration(),))
 
-    with pytest.raises(ValidationError, match="exact pins absent"):
-        _artifact(definition, include_all_pins=False)
-    assert procedure_runnability(_artifact(definition, include_all_pins=True).definition) == (
+    assert procedure_runnability(_artifact(definition).definition) == (
         "direct",
         (),
     )
@@ -240,7 +230,7 @@ def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> 
 
 def test_measurements_are_projected_from_the_typed_field_not_annotations() -> None:
     definition = _definition((_declaration(),))
-    procedure = _artifact(definition, include_all_pins=True)
+    procedure = _artifact(definition)
     path = "procedures/measured-procedure.json"
     projection = parse_projection_tree(
         {path: render_procedure(procedure)},

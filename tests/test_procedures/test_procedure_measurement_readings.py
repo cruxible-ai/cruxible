@@ -69,7 +69,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProjectNode,
     StateTapNode,
-    iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasureRequest,
@@ -120,7 +119,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
 from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure, _contract
 
@@ -236,9 +235,8 @@ def _measurements(
 def _procedure(
     query_digest: str,
     declarations: tuple[ProcedureMeasurementDeclaration, ...],
-    *,
-    named: bool = True,
 ) -> ProcedureArtifact:
+    """The measured Procedure; its state tap names the query ``query_digest`` admits."""
     input_contract = _contract("empty-input", {})
     output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
     contract_in = ArtifactPin(
@@ -258,10 +256,12 @@ def _procedure(
     )
     definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
-        contract_in=contract_in,
-        contract_out=contract_out,
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
         nodes=(
-            StateTapNode(node_id="read", query=query, parameters={}, as_="query", next="gate"),
+            StateTapNode(
+                node_id="read", query=named(query), parameters={}, as_="query", next="gate"
+            ),
             GuardNode(
                 node_id="gate",
                 predicate=GuardPredicate(
@@ -277,21 +277,21 @@ def _procedure(
             ProjectNode(
                 node_id="hot",
                 fields={"rows": "$steps.query.result.rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="hot_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="cold",
                 fields={"rows": "$steps.query.result.rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="cold_result",
                 next="finish",
             ),
             ProjectNode(
                 node_id="finish",
                 fields={"rows": "$steps.query.result.rows"},
-                contract_out=contract_out,
+                contract_out=named(contract_out),
                 as_="result",
             ),
         ),
@@ -312,25 +312,10 @@ def _procedure(
         ),
         terminal_capability=1,
     )
-    pins = tuple(
-        sorted(
-            {
-                binding
-                for binding in iter_pin_bindings(definition)
-                if isinstance(binding, ArtifactPin)
-            },
-            key=lambda pin: (
-                pin.role.encode(),
-                pin.target.qualified.encode(),
-                pin.artifact_digest.encode(),
-            ),
-        )
-    )
-    artifact = ProcedureArtifact(
+    return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=pins,
         owned_contracts=tuple(
             sorted(
                 (input_contract, output_contract),
@@ -341,12 +326,6 @@ def _procedure(
         ),
         activation_policy="abort",
     )
-
-    if named:
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        return name_procedure(artifact)
-    return artifact
 
 
 OTHER_QUERY_NAME = "project.other_items"
@@ -426,13 +405,7 @@ def _world_on(
             statement_digest=statement_digest,
             query_options=query_options,
         )
-    from cruxible_core.compiler.compiler import CURRENT_COMPILER
-
-    procedure = _procedure(
-        accepted_query_digest,
-        declarations,
-        named=instance.accepted_coordinate().compiler == CURRENT_COMPILER,
-    )
+    procedure = _procedure(accepted_query_digest, declarations)
     _activate_procedure(instance, owner, procedure, sequence=4, timestamp=ACCEPT_STAMP)
     return instance, owner, procedure
 
@@ -1379,9 +1352,6 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         },
         epsilon={"$decimal": "0.1"},
     )
-    from cruxible_client.contracts.named_references import name_line
-
-    line = name_line(line)
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="measured-line-mandate"),
         line=ArtifactPin(

@@ -7,21 +7,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar
 
-from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.captures import CaptureContract as LightCaptureContract
-from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     NamedCaptureContract,
-    capture_contract_digest,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
-from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
-from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifact,
-    procedure_artifact_digest,
-    procedure_owned_contract_digest,
-)
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.graph import analyze_procedure
 from cruxible_client.contracts.procedures.models import (
@@ -50,7 +44,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceQuerySelection,
     SourceSlotSelection,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
+from cruxible_client.contracts.query.definitions import NamedQueryDefinition
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -212,27 +206,16 @@ def resolve_source(
                 }
             )
         elif isinstance(selected, SourceQuerySelection):
-            query = require("QueryDefinition", selected.name, QueryDefinition)
-            bindings[name] = SourceQueryBinding(
-                name=query.identity.name,
-                version=query_definition_digest(query).tagged,
-                definition=query,
-            )
+            query = require("QueryDefinition", selected.name, NamedQueryDefinition)
+            bindings[name] = SourceQueryBinding(name=query.identity.name, definition=query)
         else:
             child = require("Procedure", selected.name, ProcedureArtifact)
 
-            def contract(
-                pin: ArtifactPin | ArtifactNameRef,
-            ) -> ContractSchema:
-                if isinstance(pin, ArtifactPin | ArtifactNameRef):
-                    for contract in child.owned_contracts:
-                        if contract.identity == pin.target and (
-                            isinstance(pin, ArtifactNameRef)
-                            or procedure_owned_contract_digest(contract).tagged
-                            == pin.artifact_digest
-                        ):
-                            return contract.contract_schema
-                fail(f"{selected.name} has no exact owned input/output Contract")
+            def contract(reference: ArtifactNameRef) -> ContractSchema:
+                for contract in child.owned_contracts:
+                    if contract.identity == reference.target:
+                        return contract.contract_schema
+                fail(f"{selected.name} has no owned input/output Contract")
 
             capture_terminal, required_rung = child_shape(
                 child, (request.name.removeprefix("Procedure:"),)
@@ -241,11 +224,10 @@ def resolve_source(
                 capture_terminal=capture_terminal,
                 required_terminal_rung=required_rung,
                 name=child.identity.name,
-                version=procedure_artifact_digest(child).tagged,
                 input=contract(child.definition.contract_in),
                 output=contract(child.definition.contract_out),
             )
-    captures = {}
+    captures: set[str] = set()
     try:
         syntax = ast.parse(request.text)
     except SyntaxError:
@@ -258,12 +240,12 @@ def resolve_source(
             and isinstance(node.value.value, str)
         ):
             name = node.value.value.removeprefix("CaptureContract:")
-            artifact: CaptureContract = accepted(
+            accepted(
                 "CaptureContract",
                 name,
                 (CaptureContractV1, LightCaptureContract, NamedCaptureContract),
             )
-            captures[name] = capture_contract_digest(artifact).tagged
+            captures.add(name)
     types: dict[str, SourceClaimType] = {}
     kinds: set[str] = set(subject_kinds)
     for claim_type in claim_types:
@@ -274,13 +256,11 @@ def resolve_source(
         structure = ClaimTypeStructure.model_validate(
             {name: getattr(claim_type, name) for name in ClaimTypeStructure.model_fields}
         )
-        types[claim_type.predicate] = SourceClaimType(
-            version=claim_type_digest(claim_type).tagged, structure=structure
-        )
+        types[claim_type.predicate] = SourceClaimType(structure=structure)
         kinds.update(claim_type.allowed_subject_kinds)
         kinds.update(claim_type.allowed_object_subject_kinds)
     program = ProcedureSourceProgram(
-        rules=rules,
+        syntax_rules=rules,
         text=request.text,
         # Retain a portable source coordinate. The caller's filesystem location
         # belongs to diagnostics, not the accepted Procedure's content identity.
@@ -291,7 +271,7 @@ def resolve_source(
         bindings=bindings,
         claim_types=types,
         subject_kinds=tuple(sorted(kinds)),
-        capture_contracts=captures,
+        capture_contracts=tuple(sorted(captures)),
     )
 
     def local_span(span: SourceSpan) -> SourceSpan:
@@ -338,7 +318,6 @@ def verify_source_bindings(
     lookup: SourceLookup,
     claim_types: Iterable[object],
     subject_kinds: Iterable[str] = (),
-    by_name: bool = False,
 ) -> None:
     """Acceptance resolves retained declarations against the candidate state.
 
@@ -366,10 +345,10 @@ def verify_source_bindings(
             selections[name] = SourceProcedureSelection(name=binding.name)
     owned = {c.identity.qualified: c for c in procedure.owned_contracts}
 
-    def root(pin: ArtifactPin | ArtifactNameRef) -> SourceContract:
-        if not isinstance(pin, ArtifactPin | ArtifactNameRef) or pin.target.qualified not in owned:
+    def root(reference: ArtifactNameRef) -> SourceContract:
+        if reference.target.qualified not in owned:
             raise ValueError("Source Procedure root requires an owned Contract")
-        contract = owned[pin.target.qualified]
+        contract = owned[reference.target.qualified]
         return SourceContract(name=contract.identity.name, schema=contract.contract_schema)
 
     request = ProcedureSourceRequest(
@@ -391,7 +370,7 @@ def verify_source_bindings(
         lookup=lookup,
         claim_types=claim_types,
         subject_kinds=subject_kinds,
-        rules=getattr(program, "syntax_rules", program.rules),
+        rules=program.syntax_rules,
         retained_terminal_capability=definition.terminal_capability,
     )
     # Older retained source may carry an author's absolute source location.
@@ -408,18 +387,12 @@ def verify_source_bindings(
             )
         }
     )
-    if by_name or int(definition.graph_format) == 7:
-        from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-        from cruxible_client.contracts.procedures.names import named_graph
-        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-        def comparable(value: ProcedureDefinition) -> object:
-            body = named_graph(value.model_dump(mode="json", by_alias=True))
-            body.pop("source", None)
-            return compact_procedure(NamedProcedureDefinition.model_validate(body))
+    def comparable(value: ProcedureDefinition) -> object:
+        body = compact_procedure(value)
+        body.pop("source", None)
+        return body
 
-        matches = comparable(compiled.definition) == comparable(expected)
-    else:
-        matches = compiled.definition == expected
-    if not matches:
+    if comparable(compiled.definition) != comparable(expected):
         raise ValueError("Procedure source bindings differ from their accepted definitions")
