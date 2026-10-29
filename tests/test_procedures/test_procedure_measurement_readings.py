@@ -14,13 +14,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    ACQUISITION_POLICY_PIN_ROLE,
-    SourceAcquisitionPolicy,
-    acquisition_policy_digest,
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -37,7 +30,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
 )
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
+    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -56,6 +49,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_identity_digest,
+    line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
@@ -1358,7 +1352,11 @@ def test_zero_attestations_never_satisfy_a_max_count_of_zero_without_proof(
 
 
 def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
-    """The measured Procedure behind an accepted manual Line, mandate, and policy."""
+    """The measured Procedure behind an accepted manual Line and mandate.
+
+    This Procedure is query-only (no Source/Call nodes), so the Line binds no
+    slots and needs no acquisition override.
+    """
 
     instance, owner, procedure = _world(tmp_path)
     procedure_pin = ArtifactPin(
@@ -1366,22 +1364,12 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="measured-reads"),
-        max_age=_duration(3600),
-    )
-    policy_pin = ArtifactPin(
-        role=ACQUISITION_POLICY_PIN_ROLE,
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
     caps = procedure.definition.hard_caps
     line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name="measured-line"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        acquisition_policy=policy_pin,
         max_authority="observe",
         budgets={
             "max_capture_bytes": 0,
@@ -1390,18 +1378,17 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
         },
         epsilon={"$decimal": "0.1"},
-        pins=tuple(
-            sorted((procedure_pin, policy_pin), key=lambda pin: (pin.role, pin.target.qualified))
-        ),
     )
     from cruxible_client.contracts.named_references import name_line
 
     line = name_line(line)
-    mandate = ProcedureMandateV1(
+    mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="measured-line-mandate"),
-        procedure=procedure_pin,
-        rung=2,
-        authority_ceiling=caps,
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        grants="propose",
+        resource_ceiling=caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1409,7 +1396,6 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     inspection = submit_member_candidate(
         instance,
         members={
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
