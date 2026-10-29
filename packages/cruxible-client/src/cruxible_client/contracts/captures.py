@@ -7,7 +7,7 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
@@ -77,8 +77,8 @@ from cruxible_client.contracts.source_references import (
     validate_source_commitment,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGESTS,
     SourceReadReceipt,
+    is_workspace_file_signature,
     source_read_receipt_digest,
 )
 
@@ -133,12 +133,11 @@ class CaptureObservedContentMismatch(CaptureFormatError):
     error_code = "cruxible.capture.observed_content_mismatch"
 
 
-#: The ``web.fetch`` v3 operation definition digest (``cruxible-provider-web`` 0.2.x):
-#: its material carries the origin's body (``retrieved.body_base64``) and its
-#: digest (``retrieved.body_sha256``), which core recomputes before trusting.
-WEB_FETCH_V3_INTERFACE_DIGEST: Final = (
-    "sha256:f09e1553b05d72a9e58ed3a260417c41992ccd34b2f2541958c5733723ac2121"
-)
+#: The ``web.fetch`` operation name: its material carries the origin's body
+#: (``retrieved.body_base64``) and its digest (``retrieved.body_sha256``), which
+#: core recomputes before trusting. Recognized by operation name until core
+#: seeds the web.fetch Contracts and can recognize it by exact signature.
+WEB_FETCH_OPERATION: Final = "web.fetch"
 
 
 class _StrictCaptureModel(BaseModel):
@@ -1552,14 +1551,10 @@ class ProviderInvocationCaptureEvidence(_StrictCaptureModel):
     )
     provider_artifact_digest: str
     external_occurrence_plan_digest: str
-    interface_artifact_digest: str
-    interface_id: str
-    interface_digest: str
+    operation: str
+    operation_signature_digest: str
     implementation_digest: str
     materialization_digest: str
-    # Historical, mirrored from the invocation receipt: present only for a call
-    # admitted before core stopped classifying inputs.
-    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
     invocation_receipt_digest: str
     source_read_receipt_digest: str | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -1570,8 +1565,7 @@ class ProviderInvocationCaptureEvidence(_StrictCaptureModel):
     @field_validator(
         "provider_artifact_digest",
         "external_occurrence_plan_digest",
-        "interface_artifact_digest",
-        "interface_digest",
+        "operation_signature_digest",
         "implementation_digest",
         "materialization_digest",
         "invocation_receipt_digest",
@@ -1606,7 +1600,7 @@ class ProviderInvocationCaptureEvidence(_StrictCaptureModel):
 
     @model_validator(mode="after")
     def _workspace_receipt(self) -> "ProviderInvocationCaptureEvidence":
-        if (self.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
+        if is_workspace_file_signature(self.operation_signature_digest) != (
             self.source_read_receipt_digest is not None
         ):
             raise ValueError(
@@ -2662,8 +2656,8 @@ def provider_capture_receipt_matches_occurrence(
     return (
         receipt.occurrence_path == occurrence.occurrence_path
         and receipt.provider_artifact_digest == occurrence.provider_artifact_digest
-        and receipt.interface_id == occurrence.interface_id
-        and receipt.interface_digest == occurrence.interface_digest
+        and receipt.operation == occurrence.operation.name
+        and receipt.operation_signature_digest == occurrence.operation_signature_digest
         and receipt.implementation_digest == occurrence.implementation_digest
         and receipt.materialization_digest == local.materialization_digest
         and receipt.deployment_digest == local.deployment_digest
@@ -2698,7 +2692,7 @@ def observed_content(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> ObservedC
     recorded = envelope.observed_content_digest
     evidence = envelope.production_evidence
     workspace = isinstance(evidence, ProviderInvocationCaptureEvidence) and (
-        evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
+        is_workspace_file_signature(evidence.operation_signature_digest)
     )
     return ObservedContent(
         digest=recorded, basis="workspace_file_bytes" if workspace else "web_fetch_body"
@@ -2777,7 +2771,7 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError("Provider Capture source schemas are not admitted")
     if result.byte_length > contract.selection_budget.max_bytes:
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
-    workspace_source = occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
+    workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     if workspace_source != (source_read_receipt is not None):
         raise CaptureFormatError("workspace.file Capture requires exactly one source-read receipt")
     if source_read_receipt is not None and (
@@ -2832,7 +2826,7 @@ def build_provider_external_capture_v2(
     if source_read_receipt is not None:
         # Cross-checked above against this result's own source echo.
         observed_content_digest = source_read_receipt.bytes_digest
-    elif occurrence.interface_digest == WEB_FETCH_V3_INTERFACE_DIGEST:
+    elif occurrence.operation.name == WEB_FETCH_OPERATION:
         observed_content_digest = _web_fetch_body_digest(content)
     stored = store.store(content)
     if stored.digest != result.bytes_digest:
@@ -2842,12 +2836,10 @@ def build_provider_external_capture_v2(
     evidence = ProviderInvocationCaptureEvidence(
         provider_artifact_digest=receipt.provider_artifact_digest,
         external_occurrence_plan_digest=occurrence_digest,
-        interface_artifact_digest=occurrence.interface_artifact_digest,
-        interface_id=receipt.interface_id,
-        interface_digest=receipt.interface_digest,
+        operation=receipt.operation,
+        operation_signature_digest=receipt.operation_signature_digest,
         implementation_digest=receipt.implementation_digest,
         materialization_digest=receipt.materialization_digest,
-        input_bucket=receipt.input_bucket,
         invocation_receipt_digest=receipt_digest,
         source_read_receipt_digest=(
             None if source_read_receipt is None else source_read_receipt_digest(source_read_receipt)
@@ -3189,6 +3181,47 @@ def capture_erasure_authorized(
     )
 
 
+class ProducerVersions(Mapping[str, str]):
+    """Producer digests at the head, plus each exact version accepted history admits.
+
+    A Capture names the exact producer version that made it. Verification
+    resolves that version, not the producer's head: a Procedure or Line
+    successor, or a build move, never unverifies a Capture or a Claim citing it
+    (F08). ``admits(identity, digest)`` reads retained accepted history.
+    """
+
+    def __init__(self, head: Mapping[str, str], admits: Callable[[str, str], bool]) -> None:
+        self._head = head
+        self._admits = admits
+
+    def __getitem__(self, key: str) -> str:
+        return self._head[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._head)
+
+    def __len__(self) -> int:
+        return len(self._head)
+
+    def admits_version(self, qualified: str, digest: str) -> bool:
+        return self._head.get(qualified) == digest or self._admits(qualified, digest)
+
+    def overlay(self, extra: Mapping[str, str]) -> "ProducerVersions":
+        return ProducerVersions({**extra, **self._head}, self._admits)
+
+
+def producer_version_admitted(
+    producers: Mapping[str, str] | None, qualified: str, digest: str
+) -> bool:
+    """Whether ``digest`` is an accepted version of producer ``qualified``."""
+
+    if producers is None:
+        return False
+    if isinstance(producers, ProducerVersions):
+        return producers.admits_version(qualified, digest)
+    return producers.get(qualified) == digest
+
+
 def verify_capture(
     digest: str,
     *,
@@ -3272,7 +3305,7 @@ def verify_capture(
             executable_digest=(
                 None
                 if executable == contract.identity
-                else (producer_artifact_digests or {}).get(executable.qualified)
+                else envelope.run_coordinate.executable_digest
             ),
             production_proven=require_production_proof,
         )
@@ -3365,9 +3398,8 @@ def _memo_answers(
     executable = memo.envelope.run_coordinate.executable_identity
     if memo.executable_digest is None:
         return executable == contract.identity
-    return (
-        producer_artifact_digests is not None
-        and producer_artifact_digests.get(executable.qualified) == memo.executable_digest
+    return producer_version_admitted(
+        producer_artifact_digests, executable.qualified, memo.executable_digest
     )
 
 
@@ -3389,7 +3421,7 @@ def _verify_observed_content(
     evidence = envelope.production_evidence
     stated = envelope.observed_content_digest
     if isinstance(evidence, ProviderInvocationCaptureEvidence):
-        if evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS:
+        if is_workspace_file_signature(evidence.operation_signature_digest):
             source_read = (
                 resolved_receipt.source_read_receipt
                 if isinstance(resolved_receipt, ProviderProducerReceiptResolution)
@@ -3397,7 +3429,7 @@ def _verify_observed_content(
             )
             if source_read is not None and stated == source_read.bytes_digest:
                 return
-        elif evidence.interface_digest == WEB_FETCH_V3_INTERFACE_DIGEST:
+        elif evidence.operation == WEB_FETCH_OPERATION:
             if stated == _web_fetch_body_digest(material):
                 return
     raise CaptureFormatError("Capture observed_content_digest does not correspond")
@@ -3433,13 +3465,10 @@ def _verify_capture_once(
             if envelope.run_coordinate.executable_digest != expected_contract:
                 raise CaptureFormatError("Capture run coordinate differs from its contract")
         elif executable == envelope.producer:
-            if (
-                executable.kind != "Provider"
-                or producer_artifact_digests is None
-                or (
-                    producer_artifact_digests.get(executable.qualified)
-                    != envelope.run_coordinate.executable_digest
-                )
+            if executable.kind != "Provider" or not producer_version_admitted(
+                producer_artifact_digests,
+                executable.qualified,
+                envelope.run_coordinate.executable_digest,
             ):
                 raise CaptureFormatError("Capture producer does not resolve at its exact digest")
         else:
@@ -3450,11 +3479,10 @@ def _verify_capture_once(
                 "a version-1 Capture under a contract that is not self-asserted carries no "
                 "producer receipt, so it cannot be cited as new evidence",
             )
-    elif (
-        executable != envelope.producer
-        or producer_artifact_digests is None
-        or producer_artifact_digests.get(executable.qualified)
-        != envelope.run_coordinate.executable_digest
+    elif executable != envelope.producer or not producer_version_admitted(
+        producer_artifact_digests,
+        executable.qualified,
+        envelope.run_coordinate.executable_digest,
     ):
         raise CaptureFormatError("Capture v2 producer does not resolve at its exact digest")
     if isinstance(envelope, CaptureEnvelope):
@@ -3493,11 +3521,7 @@ def _verify_capture_once(
                     evidence.external_occurrence_plan_digest,
                     provider_external_occurrence_plan_digest(occurrence),
                 ),
-                (
-                    "interface_artifact_digest",
-                    evidence.interface_artifact_digest,
-                    occurrence.interface_artifact_digest,
-                ),
+                ("operation", evidence.operation, occurrence.operation.name),
                 (
                     "secret_references",
                     evidence.secret_references,
@@ -3513,8 +3537,12 @@ def _verify_capture_once(
                     evidence.provider_artifact_digest,
                     receipt.provider_artifact_digest,
                 ),
-                ("interface_id", evidence.interface_id, receipt.interface_id),
-                ("interface_digest", evidence.interface_digest, receipt.interface_digest),
+                ("operation", evidence.operation, receipt.operation),
+                (
+                    "operation_signature_digest",
+                    evidence.operation_signature_digest,
+                    receipt.operation_signature_digest,
+                ),
                 (
                     "implementation_digest",
                     evidence.implementation_digest,
@@ -3525,7 +3553,6 @@ def _verify_capture_once(
                     evidence.materialization_digest,
                     receipt.materialization_digest,
                 ),
-                ("input_bucket", evidence.input_bucket, receipt.input_bucket),
                 ("egress", evidence.egress, receipt.egress),
             )
             for field_name, evidence_value, resolved_value in provider_evidence_bindings:
@@ -3536,7 +3563,7 @@ def _verify_capture_once(
             ):
                 raise CaptureFormatError("provider Capture resolved receipt is not admissible")
             source_read = resolved_receipt.source_read_receipt
-            if (evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
+            if is_workspace_file_signature(evidence.operation_signature_digest) != (
                 source_read is not None
             ):
                 raise CaptureFormatError("provider Capture source-read receipt is unavailable")
@@ -3635,7 +3662,7 @@ def _verify_capture_once(
             if (
                 isinstance(envelope, CaptureEnvelope)
                 and isinstance(material_evidence, ProviderInvocationCaptureEvidence)
-                and material_evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
+                and is_workspace_file_signature(material_evidence.operation_signature_digest)
             ):
                 if not isinstance(resolved_receipt, ProviderProducerReceiptResolution) or (
                     resolved_receipt.source_read_receipt is None
@@ -3729,10 +3756,12 @@ def _verify_capture_once(
 
 
 __all__ = [
+    "ProducerVersions",
+    "producer_version_admitted",
     "CaptureObservedContentMismatch",
     "ObservedContent",
     "ObservedContentBasis",
-    "WEB_FETCH_V3_INTERFACE_DIGEST",
+    "WEB_FETCH_OPERATION",
     "observed_content",
     "AcceptedCaptureContract",
     "CanonicalDuration",

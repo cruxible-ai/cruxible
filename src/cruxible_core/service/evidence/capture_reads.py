@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -13,6 +13,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     ProducerReceiptResolverProtocol,
+    ProducerVersions,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -193,6 +194,36 @@ class VerifiedCapture:
     contract_address: str
 
 
+_PRODUCER_FAMILIES = {"Procedure": "procedures/", "Provider": "providers/", "Line": "lines/"}
+
+
+def accepted_producer_versions(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    heads: Mapping[str, str],
+) -> ProducerVersions:
+    """Producer heads, plus each exact version accepted history retains (F08).
+
+    A Capture is verified against the producer version its envelope records,
+    read from retained accepted history when it is no longer the head; a
+    Procedure or Line successor or a build move never unverifies it.
+    """
+
+    from cruxible_client.contracts.artifacts import parse_artifact_identity
+
+    public = AcceptedCoordinate.from_internal(coordinate)
+
+    def admits(qualified: str, digest: str) -> bool:
+        identity = parse_artifact_identity(qualified)
+        family = _PRODUCER_FAMILIES.get(identity.kind)
+        if family is None:
+            return False
+        found = instance.accepted_artifact_version(public, digest, family=family)
+        return found is not None and found[0].removesuffix(".json") == (family + identity.name)
+
+    return ProducerVersions(heads, admits)
+
+
 def verify_accepted_capture(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -245,13 +276,14 @@ def verify_accepted_capture(
             contract = projection.typed.source(row[0])
             if not isinstance(contract, CaptureContract):
                 raise CaptureReadInvalid("CaptureContract source has the wrong type")
-            producers = {}
+            heads: dict[str, str] = {}
             for identity in {envelope.producer, envelope.run_coordinate.executable_identity}:
                 owner = projection.typed.envelope(identity.qualified)
                 if owner is not None:
                     # source() validates the indexed member against the accepted tree.
                     projection.typed.source(identity.qualified)
-                    producers[identity.qualified] = owner.artifact_digest
+                    heads[identity.qualified] = owner.artifact_digest
+            producers = accepted_producer_versions(instance, coordinate, heads)
         if envelope.commitment.materialization == "cas" and not PositionedBodies(store).verify(
             envelope.commitment.digest
         ):

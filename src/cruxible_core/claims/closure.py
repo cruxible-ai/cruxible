@@ -20,11 +20,6 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyError,
-    acquisition_policy_digest,
-    parse_acquisition_policy,
-)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -94,11 +89,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     parse_line_spec,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceFormatError,
-    parse_provider_interface,
-    provider_interface_digest,
-)
 from cruxible_client.contracts.providers import ProviderFormatError, parse_provider, provider_digest
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionFormatError,
@@ -132,11 +122,8 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "capture-contract",
         "resolution-contract",
         "provider",
-        "provider-interface",
-        "source-acquisition-policy",
         "claim",
         "procedure",
-        "blueprint",
         "procedure-mandate",
         "line",
         "trigger",
@@ -337,28 +324,6 @@ def _parse_dependency_artifact(
                 pins=dependency_pins(provider, by_name=by_name),
                 lifecycle=provider.lifecycle,
             )
-        if path.startswith("provider-interfaces/"):
-            registration = parse_provider_interface(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="provider-interface",
-                artifact_tag=registration.artifact_format,
-                identity=registration.identity,
-                artifact_digest=provider_interface_digest(registration).tagged,
-                pins=dependency_pins(registration, by_name=by_name),
-                lifecycle=registration.lifecycle,
-            )
-        if path.startswith("source-acquisition-policies/"):
-            policy = parse_acquisition_policy(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="source-acquisition-policy",
-                artifact_tag=policy.artifact_format,
-                identity=policy.identity,
-                artifact_digest=acquisition_policy_digest(policy).tagged,
-                pins=getattr(policy, "pins", ()),
-                lifecycle=policy.lifecycle,
-            )
         if path.startswith("claims/"):
             claim = parse_claim(content, path=path)
             return ArtifactDependencyStateV1(
@@ -380,22 +345,6 @@ def _parse_dependency_artifact(
                 artifact_digest=procedure_artifact_digest(procedure).tagged,
                 pins=dependency_pins(procedure, by_name=by_name),
                 lifecycle=procedure.lifecycle,
-            )
-        if path.startswith("blueprints/"):
-            from cruxible_client.contracts.procedures.blueprints import (
-                blueprint_digest,
-                parse_blueprint,
-            )
-
-            blueprint = parse_blueprint(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="blueprint",
-                artifact_tag=blueprint.artifact_format,
-                identity=blueprint.identity,
-                artifact_digest=blueprint_digest(blueprint).tagged,
-                pins=dependency_pins(blueprint, by_name=by_name),
-                lifecycle=blueprint.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
             procedure_mandate = parse_procedure_mandate_any(content, path=path)
@@ -446,8 +395,6 @@ def _parse_dependency_artifact(
         ClaimFormatError,
         DocumentFormatError,
         ProviderFormatError,
-        ProviderInterfaceFormatError,
-        SourceAcquisitionPolicyError,
         SubjectFormatError,
         ClaimTypeFormatError,
         ProcedureFormatError,
@@ -688,13 +635,21 @@ no accepted query yet backs.
 """
 
 
-PROVENANCE_PIN_ROLES: Final = frozenset({("claim", "capture-contract")})
+PROVENANCE_PIN_ROLES: Final = frozenset(
+    {
+        ("claim", "capture-contract"),
+        ("claim", "line"),
+        ("claim", "procedure"),
+        ("claim", "provider"),
+    }
+)
 """(source kind, pin role) pairs that record history rather than require a version.
 
-A Claim pins the exact CaptureContract version each backing Capture used. That
-pin is provenance: the Claim law verifies it against accepted history, and the
-contract moving on to a successor -- or retiring -- never obliges the Claim to
-move with it. The edge still exists while its target version is live, so proofs
+A Claim pins the exact CaptureContract version each backing Capture used, and
+the exact producer (Line, Procedure, provider build) versions that made them.
+Those pins are provenance: the Claim law verifies them against accepted
+history, and the target moving on to a successor -- or retiring -- never obliges
+the Claim to move with it (F08). The edge still exists while its target version is live, so proofs
 and the committed edge root are unchanged; closure only never demands anything
 of it.
 """

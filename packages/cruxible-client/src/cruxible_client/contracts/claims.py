@@ -46,6 +46,7 @@ from cruxible_client.contracts.captures import (
     CaptureProductionUnproven,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
+    ProducerVersions,
     VerifiedCaptureMemo,
     capture_components,
     capture_contract_digest,
@@ -58,6 +59,7 @@ from cruxible_client.contracts.captures import (
     classify_capture_reuse,
     is_coordinator_self_source_contract,
     parse_capture_envelope,
+    producer_version_admitted,
     verify_capture,
 )
 from cruxible_client.contracts.captures import (
@@ -2937,7 +2939,7 @@ def evaluate_claim_law(
 
     # Computed once per law: the producer digests every verification consults,
     # and the contracts grouped by the contract digest a Capture names.
-    known_producer_digests: dict[str, str] | None = None
+    known_producer_digests: Mapping[str, str] | None = None
     contracts_by_digest: dict[str, list[AcceptedCaptureContract]] | None = None
     cited_contract_versions: set[str] = set()
     captured_evidence = False
@@ -2946,10 +2948,15 @@ def evaluate_claim_law(
         envelope = None
         resolved_contract = None
         if known_producer_digests is None:
-            known_producer_digests = {
+            provider_heads = {
                 identity: provider_digest(provider).tagged
                 for identity, provider in resolved_providers.items()
-            } | dict(producer_artifact_digests or {})
+            }
+            known_producer_digests = (
+                producer_artifact_digests.overlay(provider_heads)
+                if isinstance(producer_artifact_digests, ProducerVersions)
+                else provider_heads | dict(producer_artifact_digests or {})
+            )
         if contracts_by_digest is None:
             contracts_by_digest = {}
             for candidate in capture_contracts.values():
@@ -3116,12 +3123,17 @@ def evaluate_claim_law(
             for item in (producer_provider, executable_provider)
             if item is not None
         }
+        executable = envelope.run_coordinate
         for required_provider in required_providers.values():
-            if not _required_pin(
-                claim,
-                role="provider",
-                identity=required_provider.identity,
-                digest=provider_digest(required_provider).tagged,
+            versions = {provider_digest(required_provider).tagged}
+            if required_provider.identity == executable.executable_identity:
+                # The exact build version that ran, which retirement never unpins (F08).
+                versions.add(executable.executable_digest)
+            if not any(
+                _required_pin(
+                    claim, role="provider", identity=required_provider.identity, digest=version
+                )
+                for version in versions
             ):
                 return _diagnostic(
                     "cruxible.claim.provider_pin_missing",
@@ -3133,12 +3145,26 @@ def evaluate_claim_law(
             for identity in (envelope.producer, envelope.run_coordinate.executable_identity)
             if identity.kind == "Procedure"
         }:
-            procedure_digest = (producer_artifact_digests or {}).get(procedure_identity.qualified)
-            if procedure_digest is None or not _required_pin(
-                claim,
-                role="procedure",
-                identity=procedure_identity,
-                digest=procedure_digest,
+            # The exact Procedure version that ran, as the envelope records and
+            # accepted history admits; a successor never unpins it (F08).
+            procedure_versions = {
+                version
+                for version in (
+                    (producer_artifact_digests or {}).get(procedure_identity.qualified),
+                    executable.executable_digest
+                    if procedure_identity == executable.executable_identity
+                    and producer_version_admitted(
+                        producer_artifact_digests,
+                        procedure_identity.qualified,
+                        executable.executable_digest,
+                    )
+                    else None,
+                )
+                if version is not None
+            }
+            if not any(
+                _required_pin(claim, role="procedure", identity=procedure_identity, digest=version)
+                for version in procedure_versions
             ):
                 return _diagnostic(
                     "cruxible.claim.procedure_pin_missing",
