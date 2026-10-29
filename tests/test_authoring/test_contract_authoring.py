@@ -254,6 +254,91 @@ def test_query_parameters_must_be_the_fields_of_their_contract() -> None:
         query()
 
 
+def test_a_null_literal_never_satisfies_a_row_contract_field() -> None:
+    """``T?`` means the key is absent; a projected literal null is never a match."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.status-row",
+            "version": 1,
+            "fields": {"item_id": "string", "status": "string?"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "row_contract": "project.status-row@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                    {"name": "status", "value": {"kind": "literal", "value": None}},
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_an_unbounded_parameter_cannot_satisfy_a_refined_row_field() -> None:
+    """A bare ``integer`` parameter declaration carries no bound to verify against."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.bounded-row",
+            "version": 1,
+            "fields": {"item_id": "string", "rank": "int{0..1}"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "rank", "value_type": "integer"}],
+            "row_contract": "project.bounded-row@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                    {"name": "rank", "value": {"kind": "parameter", "parameter": "rank"}},
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
 def accept_contract_world(tmp_path: Path) -> PlaybillInstance:
     """An instance holding security.epss-row@1 and @2 and security.epss-page@1."""
 

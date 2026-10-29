@@ -65,7 +65,12 @@ from cruxible_client.contracts.shapes import (
     Contract,
     ContractField,
     ContractRef,
+    DecimalType,
     FieldPresent,
+    FieldType,
+    IntType,
+    StringType,
+    assignable,
     check_value,
     contract_digest,
     parse_contract_ref,
@@ -793,8 +798,10 @@ def query_contract_problems(
         return found
 
     declared = {item.name: item for item in query.parameters}
+    parameter_shape: Contract | None = None
     if query.parameter_contract is not None:
         shape = contract(query.parameter_contract, "parameter")
+        parameter_shape = shape
         if shape is not None:
             if set(declared) != set(shape.fields):
                 problems.append(
@@ -835,7 +842,7 @@ def query_contract_problems(
                 field = shape.fields.get(name)
                 if field is None:
                     continue
-                problem = _projected_value_problem(value, field, declared)
+                problem = _projected_value_problem(value, field, declared, parameter_shape)
                 if problem is not None:
                     problems.append(
                         (
@@ -847,21 +854,61 @@ def query_contract_problems(
     return tuple(problems)
 
 
+def _has_refinement(field_type: FieldType) -> bool:
+    """Whether ``field_type`` narrows its kind beyond what a bare value type guarantees."""
+
+    if isinstance(field_type, StringType):
+        return (
+            field_type.pattern is not None
+            or field_type.min_len is not None
+            or field_type.max_len is not None
+        )
+    if isinstance(field_type, IntType | DecimalType):
+        return field_type.min is not None or field_type.max is not None
+    return False
+
+
 def _projected_value_problem(
     value: object,
     field: ContractField,
     declared: Mapping[str, QueryParameterDeclaration],
+    parameter_shape: Contract | None,
 ) -> str | None:
     kind = field.type.kind
     if isinstance(value, QueryParameterRef):
         parameter = declared.get(value.parameter)
         if parameter is None:
             return None
+        # A declared parameter_contract field is fully typed, refinements
+        # included: judge it with the same edge rule any other flow uses.
+        param_field = (
+            None if parameter_shape is None else parameter_shape.fields.get(value.parameter)
+        )
+        if param_field is not None:
+            return (
+                None
+                if assignable(param_field.type, field.type)
+                else f"is parameter {value.parameter!r}, typed {param_field.spelling}"
+            )
         allowed = _VALUE_TYPE_KINDS[parameter.value_type]
-        return None if kind in allowed else f"is a {parameter.value_type} parameter"
+        if kind not in allowed:
+            return f"is a {parameter.value_type} parameter"
+        if _has_refinement(field.type):
+            # No parameter_contract exists to bound this parameter's value, so
+            # a refined row field (a range, a pattern, a bounded length) can
+            # never be verified against it. Fail closed rather than let an
+            # out-of-bound value through unchecked at run time.
+            return (
+                f"is parameter {value.parameter!r}, declared only as "
+                f"{parameter.value_type} with no Contract bounding it; its field "
+                f"{field.spelling} cannot be verified"
+            )
+        return None
     if isinstance(value, QueryLiteralRef):
         if value.value is None:
-            return None if field.optional else "is a null literal for a required field"
+            # T? means the key is absent, never a null value: a projected
+            # literal null can never satisfy a Contract field, optional or not.
+            return "is a null literal; a Contract field is absent, never null"
         checked = check_value(value.value, field.type, at="/literal")
         return None if isinstance(checked, FieldPresent) else "is a literal outside its type"
     if isinstance(value, QuerySubjectFieldRef):
