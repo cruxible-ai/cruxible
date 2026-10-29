@@ -257,6 +257,7 @@ from cruxible_client.contracts.shapes import (
     contract_path,
     contract_path_for_identity,
     parse_contract,
+    type_refs,
 )
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
@@ -5325,6 +5326,74 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
     return "definition"
 
 
+def _contract_member_refs(member: ContractAuthoringPayload) -> tuple[ContractRef, ...]:
+    found: list[ContractRef] = []
+    for item in member.fields.values():
+        found.extend(type_refs(item.type))
+    return tuple(found)
+
+
+def _stage_member_order(
+    stage_indices: list[int], members: tuple[AuthoringChangeSetMember, ...]
+) -> list[int]:
+    """One stage's members, in staging order.
+
+    Members arrive canonically byte-sorted by semantic identity (one intent,
+    one wire form), which is the wrong order to *stage* in whenever a
+    Contract in this set pins another Contract in the same set: lowering
+    renders each member against only the members already staged, so a
+    dependency staged later than its dependent would refuse pin_unresolved
+    even though both are valid and acyclic. Contract members of this stage
+    are staged in dependency order (a stable topological sort); every other
+    member keeps its canonical position.
+    """
+
+    contract_indices = [
+        i for i in stage_indices if isinstance(members[i], ContractAuthoringPayload)
+    ]
+    if len(contract_indices) <= 1:
+        return stage_indices
+    by_key: dict[tuple[str, int], int] = {}
+    for i in contract_indices:
+        member = members[i]
+        assert isinstance(member, ContractAuthoringPayload)
+        by_key[(member.name, member.version)] = i
+    deps: dict[int, set[int]] = {i: set() for i in contract_indices}
+    for i in contract_indices:
+        member = members[i]
+        assert isinstance(member, ContractAuthoringPayload)
+        for ref in _contract_member_refs(member):
+            dep = by_key.get((ref.name, ref.version))
+            if dep is not None and dep != i:
+                deps[i].add(dep)
+    remaining = set(contract_indices)
+    resolved: set[int] = set()
+    ordered: list[int] = []
+    while remaining:
+        ready = sorted(i for i in remaining if deps[i] <= resolved)
+        if not ready:
+            cyclic = sorted(
+                f"{members[i].name}@{members[i].version}"  # type: ignore[union-attr]
+                for i in remaining
+            )
+            _refuse(
+                "cruxible.authoring.contract_dependency_cycle",
+                "members",
+                "These Contracts in the same change set pin each other in a cycle: "
+                + ", ".join(cyclic),
+                repair_kind="split_change_set",
+                repair_description=(
+                    "Break the cycle, or accept one side first in its own change set."
+                ),
+            )
+        ordered.extend(ready)
+        resolved.update(ready)
+        remaining -= set(ready)
+    ordered_set = set(contract_indices)
+    reordered = iter(ordered)
+    return [next(reordered) if i in ordered_set else i for i in stage_indices]
+
+
 def _member_primary_path(
     member: AuthoringChangeSetMember,
     *,
@@ -5534,9 +5603,11 @@ def _lower_change_set(
         if not isinstance(member, ProcedureAuthoringPayload)
     )
     for stage in MEMBER_STAGING_ORDER:
-        for index, member in enumerate(payload.members):
-            if _member_stage(member) != stage:
-                continue
+        stage_indices = [
+            index for index, member in enumerate(payload.members) if _member_stage(member) == stage
+        ]
+        for index in _stage_member_order(stage_indices, payload.members):
+            member = payload.members[index]
             path = primary_paths[index]
             member_paths.add(path)
             if index in consumed:

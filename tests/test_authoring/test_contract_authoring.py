@@ -173,6 +173,52 @@ def test_an_unresolved_nested_pin_is_refused(tmp_path: Path) -> None:
     assert "cruxible.contract.pin_unresolved" in _refusal(instance, page)
 
 
+def test_intra_change_set_contract_pins_resolve_in_dependency_order(tmp_path: Path) -> None:
+    """``security.a@1`` pins ``security.z@1`` in the same set, even listing ``z`` first.
+
+    Members are canonically byte-sorted by semantic identity before staging,
+    so ``security.a@1`` stages before ``security.z@1`` by identity order --
+    the wrong order for ``a``'s pin on ``z``. Staging must still resolve the
+    dependency, not refuse ``pin_unresolved``.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    z = ContractInput(kind="contract", name="security.z", version=1, fields={"x": "string"})
+    a = ContractInput(
+        kind="contract",
+        name="security.a",
+        version=1,
+        fields={"z": "security.z@1"},  # type: ignore[dict-item]
+    )
+    change_set = ChangeSetInput(kind="change_set", members=(z, a))
+    _accept(instance, owner, change_set)
+    tree = _accepted_tree(instance)
+    z_path = contract_path("security.z", 1)
+    a_path = contract_path("security.a", 1)
+    z_contract = parse_contract(tree[z_path], path=z_path)
+    a_contract = parse_contract(tree[a_path], path=a_path)
+    (ref,) = a_contract.refs()
+    assert ref.digest == contract_digest(z_contract).tagged
+
+
+def test_a_contract_dependency_cycle_in_one_change_set_is_refused(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    left = ContractInput(
+        kind="contract",
+        name="security.left",
+        version=1,
+        fields={"right": "security.right@1"},  # type: ignore[dict-item]
+    )
+    right = ContractInput(
+        kind="contract",
+        name="security.right",
+        version=1,
+        fields={"left": "security.left@1"},  # type: ignore[dict-item]
+    )
+    change_set = ChangeSetInput(kind="change_set", members=(left, right))
+    assert "cruxible.authoring.contract_dependency_cycle" in _refusal(instance, change_set)
+
+
 def _row_contract(name: str, **fields: str) -> ContractInput:
     return ContractInput(kind="contract", name=name, version=1, fields=fields)  # type: ignore[arg-type]
 
