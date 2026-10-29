@@ -69,7 +69,10 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
     ProviderLocalRuntimeRefused,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+from cruxible_core.providers.provider_runtime_contract import (
+    ProviderRuntimeRefusalV1,
+    ProviderRuntimeResultEnvelopeV1,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.support.operation_world import VALUE, operation, operation_build
@@ -1371,6 +1374,89 @@ def test_a_start_append_that_spends_part_of_the_budget_shrinks_the_provider_wind
     ].budget_translation.runtime_wall_clock_seconds
     # Measured after the start record, not before it.
     assert windows == [pytest.approx(min(provider_cap, run_seconds * 0.25))]
+
+
+class _BudgetCodeEnvelopeInvoker(_Invoker):
+    """A Provider whose own envelope refuses with the ``budget_wall_clock`` code.
+
+    F01: that code also names core's own pre-spawn/mid-invoke deadline
+    refusal, synthesized outside any envelope. A Provider that returns the
+    same code through its wire envelope is an ordinary, provider-returned
+    node refusal and must not be mistaken for core's exemption.
+    """
+
+    def invoke_provider(  # type: ignore[no-untyped-def]
+        self, *, occurrence, context, invocation_id, bound, deadline
+    ):
+        self.calls.append(invocation_id)
+        self.input_buckets.append(context.input_bucket)
+        return ProviderDriverOutcomeV1(
+            envelope=ProviderRuntimeResultEnvelopeV1(
+                protocol_version="1.0",
+                run_id=context.run_id,
+                status="refused",
+                refusal=ProviderRuntimeRefusalV1(
+                    code="budget_wall_clock",
+                    message="provider declined on its own budget accounting",
+                    detail={},
+                ),
+            ),
+            stderr="",
+            duration_seconds=0.001,
+            egress=ProviderEgressObservation(
+                observer_backend="test-attribution",
+                observer_grade="attribution",
+            ),
+            verified_binding=occurrence.local_execution,
+        )
+
+
+def test_a_provider_returned_budget_wall_clock_is_a_protocol_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F01: only core's own deadline synthesizes an exempt budget_wall_clock.
+
+    This fixture's operation declares no refusals, the same as the genuine
+    deadline tests above. A Provider that returns budget_wall_clock through
+    its own envelope -- rather than core raising it before or around the
+    call -- is an ordinary undeclared node refusal: core's deadline
+    exemption must not apply, and the run fails as a protocol violation
+    instead of passing the code through as a typed budget refusal.
+    """
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_acquisition_run(accepted, tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_BudgetCodeEnvelopeInvoker(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "failed"
+    assert result.refusal is None
+    records = tuple(
+        fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+    monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(),  # type: ignore[arg-type]
+        run_id=prepared.admission.run_id,
+    )
+    assert isinstance(state.terminal, ProcedureInternalFailure)
+    assert state.terminal.code == "provider_protocol_violation"
 
 
 def _run_through_the_real_spawner(

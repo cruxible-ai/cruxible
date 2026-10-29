@@ -589,3 +589,37 @@ def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package,
         work.append(_work(instance, monkeypatch, read))
         instance.connection.close()
     assert work[0] == work[1], work
+
+
+def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkeypatch, package):
+    """F02: an exact build reference resolves by one indexed identity seek,
+    never by enumerating the provider's other live builds.
+
+    The historical ``accepted_build_resolver.provider()`` this test exercised
+    is gone (B2 noun removal); exact-build authoring survives through the
+    current slot-binding path: ``resolve_slot_bindings`` seeks
+    ``indexed_exact_provider`` by the requested build's exact identity, then
+    ``fitting_operations`` seeks ``provider_operations`` filtered to that one
+    ``source_identity`` -- the same two indexed-seek shape the old resolver
+    guarded, just reached through Line/direct-run slot binding instead of
+    Procedure authoring.
+    """
+
+    from cruxible_core.providers.operation_index import resolve_slot_bindings
+
+    work = []
+    for size in (20, 200):
+        instance, providers = _population(tmp_path, package, size)
+        target = providers[0]
+        slots = {"compute": target.operations[0].signature()}
+        requested = {"compute": target.identity.qualified}
+
+        def read():
+            resolved = resolve_slot_bindings(instance.connection, slots, requested)
+            assert resolved["compute"].build.target == target.identity
+            assert resolved["compute"].operation == "compute"
+
+        work.append(_work(instance, monkeypatch, read))
+        instance.connection.close()
+    print("work at 20/200 builds:", work)
+    assert work[0] == work[1], work
