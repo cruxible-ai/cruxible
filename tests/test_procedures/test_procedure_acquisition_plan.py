@@ -5,13 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-    acquisition_policy_digest,
-)
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
@@ -21,12 +17,14 @@ from cruxible_client.contracts.procedures.results import (
     procedure_admission_material_digest,
     procedure_provider_bindings,
 )
+from cruxible_client.contracts import provider_operations
 from cruxible_client.contracts.provider_execution import (
     ProviderBudgetTranslation,
     ProviderExternalOccurrencePlan,
     ProviderSecretResolutionPlan,
     VerifiedProviderBinding,
 )
+from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_core.procedures.execution import (
     PreparedProcedureRunV9,
     ProcedureRunAdmissionV3,
@@ -49,6 +47,18 @@ from tests.test_procedures.test_procedure_execution import (
 )
 
 
+def _demo_operation(effect: str) -> ProviderOperation:
+    return ProviderOperation.model_validate(
+        {
+            "name": "demo.interface",
+            "in": {"name": "demo.input", "version": 1, "digest": _digest("contract-in")},
+            "out": {"name": "demo.output", "version": 1, "digest": _digest("contract-out")},
+            "effect": effect,
+            "entrypoint": "demo.runtime:Provider",
+        }
+    )
+
+
 def _plan_and_admission(
     tmp_path: Path,
 ) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmissionV9]:
@@ -57,12 +67,14 @@ def _plan_and_admission(
     accepted = _state_procedure()
     v4 = _line_admission_v4(accepted, fixture)
     binding = v4.resolved_provider_bindings[0]
-    classification = binding.classification_plan
+    operation = _demo_operation(binding.effect_class)
+    operation_signature_digest = provider_operations.operation_signature_digest(
+        operation.signature()
+    )
     local = VerifiedProviderBinding(
         provider_artifact_digest=binding.provider_artifact_digest,
-        interface_artifact_digest=classification.interface_artifact_digest,
-        interface_id="demo.interface",
-        interface_digest=classification.interface_digest,
+        operation=operation.name,
+        operation_signature_digest=operation_signature_digest,
         implementation_digest=binding.implementation_digest,
         deployment_digest=_digest("local-deployment"),
         materialization_digest=_digest("materialization"),
@@ -91,14 +103,12 @@ def _plan_and_admission(
         occurrence_path="provider",
         occurrence_kind="provider",
         node_id=binding.node_id,
+        slot="fetch",
         provider_artifact_digest=binding.provider_artifact_digest,
-        interface_artifact_digest=classification.interface_artifact_digest,
-        interface_id="demo.interface",
-        interface_digest=classification.interface_digest,
+        operation=operation,
+        operation_signature_digest=operation_signature_digest,
         implementation_digest=binding.implementation_digest,
         effect_class=binding.effect_class,
-        contract_input_digest=_digest("contract-in"),
-        contract_output_digest=_digest("contract-out"),
         local_execution=local,
         secret_plan=ProviderSecretResolutionPlan(),
         budget_translation=budget,
@@ -311,10 +321,11 @@ def test_prepared_run_bindings_are_exactly_the_plans_own(tmp_path: Path) -> None
     manifest = ProcedureAdmissionMaterialManifest(members=())
     (binding,) = admission.resolved_provider_bindings
     assert binding.model_dump(mode="json") == {
-        "tag": "playbill-procedure-provider-binding-v3",
+        "tag": "cruxible-procedure-provider-binding-v4",
         "node_id": binding.node_id,
-        "interface": {"kind": "ProviderInterface", "name": "demo.interface"},
-        "interface_digest": plan.external_occurrences[0].interface_digest,
+        "slot": plan.external_occurrences[0].slot,
+        "operation": plan.external_occurrences[0].operation.name,
+        "operation_signature_digest": plan.external_occurrences[0].operation_signature_digest,
         "provider_artifact_digest": plan.external_occurrences[0].provider_artifact_digest,
         "implementation_digest": plan.external_occurrences[0].implementation_digest,
         "effect_class": plan.external_occurrences[0].effect_class,
@@ -393,14 +404,12 @@ def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Pat
     """
 
     plan, _admission = _plan_and_admission(tmp_path)
-    strict = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="tally-reads")
-    )
+    rules: dict[str, AcquisitionDefault] = {}
     assert all(item.occurrence_kind != "source" for item in plan.external_occurrences)
 
     selection = _plan_selection_decision(
-        strict,
-        policy_digest=acquisition_policy_digest(strict).tagged,
+        rules,
+        policy_digest=_digest("empty-acquisition-rules"),
         occurrences=plan.external_occurrences,
         capture_contracts={},
     )
