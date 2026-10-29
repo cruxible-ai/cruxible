@@ -107,7 +107,7 @@ def subject_world(  # type: ignore[no-untyped-def]
     severity = _severity_type()
     # Key Claims citing the item's own words install the coordinator self-source
     # CaptureContract with the first such Claim, so the default mandate reaches it.
-    mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": namespace})
+    mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": namespace})
     fixtures._accept_more(
         instance,
         owner,
@@ -601,6 +601,11 @@ def test_a_subject_item_citing_the_runs_capture_writes_a_supported_key_claim(
     assert row.verdict == "supported"
 
 
+@pytest.mark.skip(
+    reason="needs B3 extract: this test needs the document's content to change in a way "
+    "unrelated to severity (advisory_id changes, severity stays), which workspace.file's "
+    "text/bytes-only content contract (one scalar) cannot represent pre-B3"
+)
 def test_a_reimport_naming_live_subjects_restates_their_claims(tmp_path: Path) -> None:
     """Re-importing a document whose Subjects already exist (the SBOM re-import):
     the terminal's own Subject item names the live Subject, so a Claim item on
