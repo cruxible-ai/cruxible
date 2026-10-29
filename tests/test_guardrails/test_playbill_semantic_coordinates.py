@@ -57,6 +57,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
+    CONTRACT_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     GOVERNED_TRIGGERS_UPGRADE_LAW,
@@ -185,6 +186,13 @@ LAW_COORDINATES: tuple[
         "cruxible-subject-kind-v1",
         1,
         "sha256:5f8e0ef33e854fc3355bc02a3cac0a6c08f216c59175b0a53ee2195bdc819510",
+    ),
+    (
+        CONTRACT_ACCEPTANCE_LAW,
+        "cruxible.contract.v1",
+        "cruxible-contract-v1",
+        1,
+        "sha256:ef15ee167046bf9d2a08e7df6a4690338aee8c48d65f606e964da7e00e778a37",
     ),
     (
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,

@@ -448,6 +448,7 @@ _SUBJECT_KIND_PATH_RE = re.compile(
     r"^subject-kinds/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*\.json$"
 )
 _BLUEPRINT_PATH_RE = re.compile(r"^blueprints/[a-z][a-z0-9_.-]{0,255}\.json$")
+_CONTRACT_PATH_RE = re.compile(r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
@@ -468,6 +469,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _BLUEPRINT_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
+    _CONTRACT_PATH_RE,
 )
 """The member kinds whose three-way rebase reports exact per-member conflicts.
 
@@ -2624,6 +2626,64 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _contract_member(context: _MemberContext) -> _MemberVerdict:
+    """Judge one Contract version: immutable, succeeding exactly, every pin exact.
+
+    Contracts are admitted from compiler revision 36. A refused field type earns
+    ``cruxible.contract.contract_type_refused``.
+    """
+
+    from cruxible_client.contracts.shapes import (
+        ContractTypeRefused,
+        contract_digest,
+        evaluate_contract_law,
+        parse_contract,
+    )
+
+    if context.current.compiler != LIGHT_ARTIFACTS_COMPILER:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.contract.compiler_unsupported",
+                    "Contract artifacts require compiler revision 36; upgrade the instance first.",
+                    context.path,
+                ),
+            )
+        )
+    try:
+        contract = parse_contract(context.content, path=context.path)
+    except ContractTypeRefused as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic("cruxible.contract.contract_type_refused", str(exc), context.path),
+            )
+        )
+    problems = evaluate_contract_law(
+        contract,
+        path=context.path,
+        lookup=context.candidate_tree.get,
+        parent_content=context.parent_content,
+        content=context.content,
+    )
+    if problems:
+        return _MemberVerdict(
+            diagnostics=tuple(
+                _diagnostic(problem.code, problem.message, context.path) for problem in problems
+            )
+        )
+    digest = contract_digest(contract).tagged
+    return _accepted(
+        context,
+        _installed(context, contract.artifact_format),
+        predecessor_artifact_digest=None,
+        candidate_artifact_digest=digest,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": digest, "verdict": "accepted"},
+    )
+
+
 def _blueprint_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_client.contracts.procedures.blueprints import (
         AcceptedBlueprint,
@@ -4427,6 +4487,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         format_code="cruxible.subject_kind.format_invalid",
     ),
     _MemberKind(
+        name="contract",
+        pattern=_CONTRACT_PATH_RE,
+        removal_code="cruxible.contract.removal_unsupported",
+        removal_message="Contracts are immutable; author the next version instead.",
+        evaluate=_contract_member,
+        format_code="cruxible.contract.format_invalid",
+    ),
+    _MemberKind(
         name="blueprint",
         pattern=_BLUEPRINT_PATH_RE,
         removal_code="cruxible.change_set.delete_unsupported",
@@ -4525,6 +4593,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "line",
     "trigger",
     "subject-kind",
+    "contract",
     "blueprint",
     "query-definition",
     "provider",

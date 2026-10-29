@@ -253,7 +253,15 @@ def _with_build_paths(entry: ArtifactPathKind) -> ArtifactPathKind:
 
 
 PROVIDER_BUILDS_ARTIFACT_KINDS = ArtifactKindRegistry(
-    tuple(_with_build_paths(entry) for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries())
+    (
+        *(_with_build_paths(entry) for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries()),
+        # One immutable data shape per version. The path parses under revisions
+        # 34 and 35, which share this grammar; only revision 36 admits a Contract.
+        ArtifactPathKind(
+            "contract",
+            re.compile(r"^contracts/[a-z][a-z0-9_.-]{0,127}/v[1-9][0-9]{0,8}\.json$"),
+        ),
+    )
 )
 _REVISION_32_AND_LATER = (
     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
@@ -269,6 +277,7 @@ RegisteredPathKind = Literal[
     "attestation",
     "approval-policy",
     "blueprint",
+    "contract",
     "procedure-runtime-policy",
     "capture-contract",
     "changeset",
@@ -814,6 +823,45 @@ def parse_projection_tree(
                         role=pin.role,
                     )
                     for pin in dependency_pins(blueprint, by_name=by_name)
+                )
+                continue
+            if kind == "contract":
+                from cruxible_client.contracts.shapes import (
+                    CONTRACT_PIN_ROLE,
+                    contract_digest,
+                    parse_contract,
+                )
+
+                shape = parse_contract(content, path=path, codec=artifact_codec)
+                identity = shape.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = contract_digest(shape).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        shape.artifact_format,
+                        path,
+                        digest,
+                        shape.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=ref.identity.qualified,
+                        target_digest=ref.digest,
+                        role=CONTRACT_PIN_ROLE,
+                    )
+                    for ref in shape.refs()
                 )
                 continue
             if kind == "subject-kind":

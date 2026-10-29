@@ -92,8 +92,12 @@ REFUSED_TYPE_NAMES = frozenset(
 )
 
 
-class ContractFormatError(FormatError):
-    """A Contract artifact, path, or type spelling is invalid."""
+class ContractFormatError(FormatError, ValueError):
+    """A Contract artifact, path, or type spelling is invalid.
+
+    Also a ``ValueError``, so a bad spelling inside a model validates as an
+    ordinary validation failure that :func:`contract_type_refusal` can read.
+    """
 
     code: str = CONTRACT_TYPE_INVALID
 

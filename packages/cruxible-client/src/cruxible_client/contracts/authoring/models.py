@@ -90,6 +90,7 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import ContractField, contract_identity, contract_path
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
     SubjectKeyValue,
@@ -1175,6 +1176,30 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
         return self
 
 
+class ContractAuthoringPayload(_StrictAuthoringModel):
+    """One Contract version: a named, immutable data shape.
+
+    ``fields`` are typed by the Contract grammar. Lowering writes
+    ``contracts/<name>/v<version>.json``, pins each nested ``name@N`` to the
+    accepted version's digest, and names version N-1 as the predecessor of
+    every later version. An accepted version never changes; author the next.
+    """
+
+    tag: Literal["cruxible-contract-authoring-payload-v1"] = (
+        "cruxible-contract-authoring-payload-v1"
+    )
+    name: str
+    version: int = Field(ge=1, le=999_999_999)
+    description: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    fields: dict[str, ContractField] = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        contract_path(value, 1)
+        return value
+
+
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A Procedure input with an optional acquisition policy name.
 
@@ -1444,6 +1469,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | LineAuthoringPayload
     | TriggerAuthoringPayload
     | SubjectKindAuthoringPayload
+    | ContractAuthoringPayload
     | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -1516,6 +1542,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return f"Trigger:{payload.name}"
     if isinstance(payload, SubjectKindAuthoringPayload):
         return f"SubjectKind:{payload.name}"
+    if isinstance(payload, ContractAuthoringPayload):
+        return contract_identity(payload.name, payload.version).qualified
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1605,6 +1633,7 @@ AuthoringPayload = Annotated[
     | LineAuthoringPayload
     | TriggerAuthoringPayload
     | SubjectKindAuthoringPayload
+    | ContractAuthoringPayload
     | ChangeSetAuthoringPayload,
     Field(discriminator="tag"),
 ]
@@ -2550,6 +2579,7 @@ __all__ = [
     "WindowCloseAuthoringSchedule",
     "AuthoringTriggerSchedule",
     "SubjectKindAuthoringPayload",
+    "ContractAuthoringPayload",
     "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",
     "AttestationAuthoringPayload",

@@ -17,6 +17,7 @@ REFERENCEABLE = {
     "blueprint": ("Blueprint:example", "blueprints/example.json"),
     "capture-contract": ("CaptureContract:example", "capture-contracts/example.json"),
     "claim": ("Claim:CLM-" + "a" * 32, "claims/aa/CLM-" + "a" * 32 + ".json"),
+    "contract": ("Contract:example/v1", "contracts/example/v1.json"),
     "attestation": ("ClaimAttestation:sha256:" + "a" * 64, "attestations/aa/" + "a" * 64 + ".json"),
     "claim-type": ("ClaimType:example.title", "claim-types/example/title.json"),
     "document": ("document:example", "documents/example.json"),

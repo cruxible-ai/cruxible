@@ -143,6 +143,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "subject-kind",
         "query-definition",
         "exhaust-promotion",
+        "contract",
     ]
     artifact_tag: str
     identity: ArtifactIdentity
@@ -208,6 +209,31 @@ def _parse_dependency_artifact(
                 artifact_digest=subject_kind_digest(subject_kind).tagged,
                 pins=(),
                 lifecycle=subject_kind.lifecycle,
+            )
+        if path.startswith("contracts/"):
+            from cruxible_client.contracts.shapes import (
+                CONTRACT_PIN_ROLE,
+                contract_digest,
+                parse_contract,
+            )
+
+            shape = parse_contract(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="contract",
+                artifact_tag=shape.artifact_format,
+                identity=shape.identity,
+                artifact_digest=contract_digest(shape).tagged,
+                pins=tuple(
+                    ArtifactPin(
+                        role=CONTRACT_PIN_ROLE,
+                        target=ref.identity,
+                        artifact_digest=ref.digest,
+                    )
+                    for ref in shape.refs()
+                    if ref.digest is not None
+                ),
+                lifecycle=shape.lifecycle,
             )
         if path.startswith("triggers/"):
             from cruxible_client.contracts.triggers import parse_trigger, trigger_digest

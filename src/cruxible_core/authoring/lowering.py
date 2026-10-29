@@ -60,6 +60,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionDependent,
     ClaimTypeSuccessionMember,
+    ContractAuthoringPayload,
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
     ProcedureAuthoringPayload,
@@ -250,6 +251,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.resolution_contracts import resolution_contract_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.shapes import contract_path, contract_path_for_identity
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
@@ -2605,6 +2607,7 @@ def _reference_path(identity: ArtifactIdentity) -> str | None:
         "Blueprint": blueprint_path,
         "CaptureContract": capture_contract_path,
         "Claim": claim_path,
+        "Contract": contract_path_for_identity,
         "ClaimAttestation": attestation_path,
         "ClaimType": claim_type_path,
         "document": document_path,
@@ -3836,6 +3839,30 @@ def _render_subject_kind_member(
         if _same_revision_content(declared, previous):
             return path, previous_content, subject_kind_digest(previous).tagged
     return path, render_subject_kind(declared), subject_kind_digest(declared).tagged
+
+
+def _render_contract_member(
+    payload: ContractAuthoringPayload,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one Contract version; contract_lowering owns the pinning and succession."""
+
+    from cruxible_core.authoring.contract_lowering import (
+        ContractLoweringRefusal,
+        render_contract_member,
+    )
+
+    try:
+        return render_contract_member(payload, tree=tree)
+    except ContractLoweringRefusal as exc:
+        _refuse(
+            exc.code,
+            "definition",
+            exc.message,
+            repair_kind="replace_definition",
+            repair_description=exc.repair,
+        )
 
 
 def _contract_fields_summary(
@@ -5278,6 +5305,8 @@ def _member_primary_path(
         return trigger_path(member.name)
     if isinstance(member, SubjectKindAuthoringPayload):
         return subject_kind_path(member.name)
+    if isinstance(member, ContractAuthoringPayload):
+        return contract_path(member.name, member.version)
     if isinstance(member, QueryDefinitionAuthoringPayload):
         return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
@@ -5697,6 +5726,11 @@ def _stage_change_set_member(
         kind_path, content, digest = _render_subject_kind_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[kind_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, ContractAuthoringPayload):
+        contract_member_path, content, digest = _render_contract_member(member, tree=staged_tree)
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[contract_member_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(
         member,
@@ -6476,6 +6510,21 @@ def _lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
             captures=captures,
+        )
+    if isinstance(intent.payload, ContractAuthoringPayload):
+        path, content, digest = _render_contract_member(intent.payload, tree=base_tree)
+        candidate_tree = fork_tree(base_tree)
+        candidate_tree[path] = content
+        changed = () if base_tree.get(path) == content else ((path, content),)
+        return LoweredAuthoring(
+            proposed_tree=candidate_tree,
+            resolved_authoring={
+                "artifact_digest": digest,
+                "changed_members": _encoded_members(changed),
+                "identity": authoring_member_identity(intent.payload),
+            },
+            changed_members=changed,
+            idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
     if isinstance(
         intent.payload,

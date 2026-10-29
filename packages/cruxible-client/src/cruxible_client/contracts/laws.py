@@ -726,6 +726,15 @@ SUBJECT_KIND_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="subject-kind",
     artifact_tag="cruxible-subject-kind-v1",
 )
+# A Contract is one immutable data shape: a version never changes, a successor
+# names its predecessor's digest, and every nested Contract pin resolves exactly.
+CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.contract.v1", "cruxible-contract-v1", semantic_revision=1
+    ),
+    artifact_kind="contract",
+    artifact_tag="cruxible-contract-v1",
+)
 # A Trigger aims at a live Line that accepts its event, or at an internal
 # action on a cadence; a retired Trigger is never revived.
 TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
@@ -1037,6 +1046,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         BLUEPRINT_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
         SUBJECT_KIND_ACCEPTANCE_LAW,
+        CONTRACT_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,

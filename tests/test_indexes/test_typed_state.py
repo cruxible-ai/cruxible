@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 18
+    assert len(searches) == 19
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 
@@ -314,6 +314,7 @@ STORAGE_SCHEMA_DIGESTS = {
     21: "38b8959e7944c74e04c489622bfa17fb2011da2425b7ef9fb55fd1fdd6b843a2",
     22: "254e56902a6bfdde8b2a15b4c269fd5518afcdb097e47a941223429ced38ac7b",
     23: "a70fc55602839c406fadc3baca5be7c3f908f3ec94ead550116fbd7c99adfe30",
+    24: "10946be1ef0a8249b94c0536930468b85f0255a2f7dd52c7f12ac8abbd2cb8bf",
 }
 
 

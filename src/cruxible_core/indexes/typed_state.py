@@ -69,6 +69,7 @@ from cruxible_client.contracts.provider_interfaces import parse_provider_interfa
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
+from cruxible_client.contracts.shapes import parse_contract
 from cruxible_client.contracts.subject_kinds import parse_subject_kind
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_client.contracts.triggers import parse_trigger
@@ -351,6 +352,18 @@ OWNER_CODECS = (
         ),
     ),
     OwnerCodec("query-definition", "QueryDefinition", "query_definitions", parse_query_definition),
+    # One immutable data shape per version: always live, succeeded by a new version.
+    OwnerCodec(
+        "contract",
+        "Contract",
+        "contracts",
+        parse_contract,
+        (
+            ("contract_name", "TEXT NOT NULL"),
+            ("contract_version", "INTEGER NOT NULL CHECK(contract_version>=1)"),
+            ("field_count", "INTEGER NOT NULL CHECK(field_count>=1)"),
+        ),
+    ),
     OwnerCodec(
         "capture-contract",
         "CaptureContract",
@@ -700,6 +713,12 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             "rule": rule.rule,
             "uniqueness": getattr(rule, "uniqueness", None),
             "key_predicates": canonical_bytes(list(source.keys)).decode("utf-8"),
+        }
+    if owner.kind == "contract":
+        return {
+            "contract_name": source.name,
+            "contract_version": source.version,
+            "field_count": len(source.fields),
         }
     if owner.kind == "trigger":
         return {

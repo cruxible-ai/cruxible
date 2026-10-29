@@ -41,6 +41,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionDependent,
     ClaimTypeSuccessionMember,
+    ContractAuthoringPayload,
     ExistingCaptureCitationSource,
     LineAuthoringPayload,
     MandateConditionAuthoring,
@@ -89,6 +90,12 @@ from cruxible_client.contracts.query.definitions import (
     QueryDefinitionSpec,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import (
+    ContractField,
+    ContractTypeRefused,
+    contract_type_refusal,
+    parse_field_spelling,
+)
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import InternalActionName
@@ -501,6 +508,40 @@ class SubjectKindInput(_StrictInputModel):
     retire: bool = False
 
 
+class ContractFieldInput(_StrictInputModel):
+    """One Contract field with its meaning: a type spelling and an optional description."""
+
+    type: str = Field(
+        description=(
+            "The field type, e.g. 'string', 'int{0..9}', 'decimal{0..1}', 'date', "
+            "'enum[open, fixed]', 'list<string>{max_items: 50}', 'key<security.vulnerability>', "
+            "'capture<security.kev>', or another Contract as 'name@N'. A trailing '?' makes "
+            "the key optional (absent, never null)."
+        )
+    )
+    description: str | None = None
+
+
+class ContractInput(_StrictInputModel):
+    """One Contract version: a named, immutable data shape every edge is checked against.
+
+    Each field has a type from the closed grammar: there is no ``json`` type and
+    no untyped map (keep opaque bytes as a Capture), and every list states
+    ``max_items``. Nested Contracts are written ``name@N`` and pinned to the
+    accepted version. Version 1 starts a Contract; version N names version N-1
+    as its predecessor. An accepted version never changes: author the next.
+    """
+
+    kind: Literal["contract"]
+    name: str = Field(description="The Contract name, e.g. 'security.epss-row'.")
+    version: int = Field(ge=1, description="The version this declares, starting at 1.")
+    description: str | None = None
+    fields: dict[str, str | ContractFieldInput] = Field(
+        min_length=1,
+        description="Field name to its type spelling, or to {type, description}.",
+    )
+
+
 AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -516,6 +557,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | LineInput
     | TriggerInput
     | SubjectKindInput
+    | ContractInput
     | ProcedureInput,
     Field(discriminator="kind"),
     BeforeValidator(_authored_procedure_input_shape),
@@ -550,6 +592,7 @@ AuthoringInput: TypeAlias = Annotated[
     | LineInput
     | TriggerInput
     | SubjectKindInput
+    | ContractInput
     | ChangeSetInput,
     Field(discriminator="kind"),
     BeforeValidator(_authored_procedure_input_shape),
@@ -995,6 +1038,42 @@ def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayloa
         ) from exc
 
 
+def _contract_payload(value: ContractInput) -> ContractAuthoringPayload:
+    fields: dict[str, ContractField] = {}
+    try:
+        for name, declared in value.fields.items():
+            spelling = declared if isinstance(declared, str) else declared.type
+            description = None if isinstance(declared, str) else declared.description
+            field_type, optional = parse_field_spelling(spelling)
+            fields[name] = ContractField(
+                type=field_type, optional=optional, description=description
+            )
+        return ContractAuthoringPayload(
+            name=value.name,
+            version=value.version,
+            description=value.description,
+            fields=fields,
+        )
+    except ContractTypeRefused as exc:
+        raise AuthoringInputError(
+            "cruxible.contract.contract_type_refused",
+            "input.fields",
+            str(exc),
+            "Declare a typed shape: no json or untyped map (keep opaque bytes as a Capture), "
+            "and give every list max_items.",
+        ) from exc
+    except ValueError as exc:
+        refused = contract_type_refusal(exc)
+        raise AuthoringInputError(
+            "cruxible.contract.contract_type_refused"
+            if refused is not None
+            else "cruxible.contract.contract_invalid",
+            "input",
+            str(refused or exc),
+            "Name the Contract, its version, and each field's type from the Contract grammar.",
+        ) from exc
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -1044,6 +1123,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return _trigger_payload(member)
     if isinstance(member, SubjectKindInput):
         return _subject_kind_payload(member)
+    if isinstance(member, ContractInput):
+        return _contract_payload(member)
     return _mandate_payload(member)
 
 
@@ -1105,6 +1186,8 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _trigger_payload(value)
     if isinstance(value, SubjectKindInput):
         return _subject_kind_payload(value)
+    if isinstance(value, ContractInput):
+        return _contract_payload(value)
     if not isinstance(value, ChangeSetInput):
         # Every single-member *Input wrapper matched above; what is left
         # falls through assuming a change set (`.members`). A bare spec type
@@ -1164,6 +1247,8 @@ __all__ = [
     "ClaimTypeInput",
     "ClaimTypeSuccessionInput",
     "ClaimInput",
+    "ContractFieldInput",
+    "ContractInput",
     "ExistingCaptureInput",
     "ExactContentObjectInput",
     "LineInput",

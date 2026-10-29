@@ -51,6 +51,7 @@ _LOCAL_KINDS = frozenset(
     {
         "attestation",
         "blueprint",
+        "contract",
         "exhaust-promotion",
         "resolution-contract",
         "subject-kind",
