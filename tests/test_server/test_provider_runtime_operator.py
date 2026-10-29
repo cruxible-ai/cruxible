@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     evaluate_line_spec_law,
     line_identity_digest,
+    line_slot_signatures,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
@@ -50,11 +52,24 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
+    ProcedureSlot,
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
+from cruxible_client.contracts.provider_operations import (
+    LineBinding,
+    ProviderOperation,
+    binding_pin,
+    operation_signature_digest,
+)
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
+    NamedProviderBuild,
+    ProviderDistributionRef,
+    ProviderImplementationManifest,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeManifest,
     ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
@@ -62,6 +77,9 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
+from cruxible_client.contracts.shapes import Contract, contract_digest
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_IDENTITY
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
 from cruxible_core.procedures.execution import (
@@ -74,6 +92,10 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.providers.provider_local_runtime import (
     LocalProviderDeploymentV1,
     ProviderSpawnDeadline,
+)
+from cruxible_core.procedures.reference_binding import (
+    authored_procedure,
+    bind_procedure_references,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderLocalRuntimeRefused,
@@ -154,50 +176,120 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: ignore[no-untyped-def]
-    accepted = _accepted_one_provider()
-    definition = accepted.procedure.definition
-    node = definition.nodes[0]
-    assert isinstance(node, CallNode)
-    provider_pin = node.provider
-    assert not isinstance(provider_pin, str)
-    provider_pin = provider_pin.model_copy(
-        update={"artifact_digest": accepted_provider.artifact_digest}
+# This file's fake interpreter (``_fake_interpreter``) always reads its
+# document's ``input.value`` and always answers ``{"echo": <that value>}`` --
+# a fixed wire shape predating the operations model. F02 now checks every
+# operation's output against its own pinned Contract (call or Source alike),
+# so the served operation has to declare exactly this in/out shape itself,
+# rather than reusing ``operation_world``'s generic ``test.value`` Contract.
+_OPERATION_INPUT = Contract.model_validate(
+    {"name": "test.served-provider-input", "version": 1, "fields": {"value": {"type": "string"}}}
+)
+_OPERATION_OUTPUT = Contract.model_validate(
+    {"name": "test.served-provider-output", "version": 1, "fields": {"echo": {"type": "string"}}}
+)
+
+
+def _served_operation_digests(ref: object) -> str | None:
+    for contract in (_OPERATION_INPUT, _OPERATION_OUTPUT):
+        if (ref.name, ref.version) == (contract.name, contract.version):  # type: ignore[attr-defined]
+            return contract_digest(contract).tagged
+    return None
+
+
+def _served_provider_build(*, provider_id: str = "served-provider") -> NamedProviderBuild:
+    """A fresh build serving ``compute`` at the fake interpreter's exact wire shape."""
+
+    manifest = ProviderRuntimeManifest(
+        provider_id=provider_id,
+        distribution=ProviderDistributionRef(name=provider_id, version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifest(
+                interface_id="compute",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                declared_input_buckets=(),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
     )
-    implementation_digest = accepted_provider.provider.implementations[0].implementation_digest
-    node = node.model_copy(
-        update={
-            "provider": provider_pin,
-            "implementation_digest": implementation_digest,
-            "input": {"size": 3, "value": "line-served"},
+    operation = ProviderOperation.model_validate(
+        {
+            "name": "compute",
+            "in": f"{_OPERATION_INPUT.name}@{_OPERATION_INPUT.version}",
+            "out": f"{_OPERATION_OUTPUT.name}@{_OPERATION_OUTPUT.version}",
+            "effect": "pure",
+            "entrypoint": "demo.runtime:Provider",
         }
     )
-    definition = definition.model_copy(update={"nodes": (node,)})
-    pins = tuple(
-        sorted(
-            (
-                provider_pin if item.role == "provider" and item.target.kind == "Provider" else item
-                for item in accepted.procedure.pins
-            ),
-            key=lambda item: (
-                item.role.encode(),
-                item.target.qualified.encode(),
-                item.artifact_digest.encode(),
-            ),
-        )
+    document = PackageRegistrationDocumentV1(
+        schema_version=2, manifest=manifest, operations=(operation,)
     )
-    procedure = accepted.procedure.model_copy(
+    return document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name=provider_id,
+            version="1.0.0",
+            filename=f"{provider_id}-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + "0" * 64,
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "0" * 64,
+            materialization_digests={"linux-cp311+engine": "sha256:" + "0" * 64},
+        ),
+        control_domain=provider_id,
+        operations=document.pinned_operations(_served_operation_digests),
+    )
+
+
+def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: ignore[no-untyped-def]
+    """``_accepted_one_provider``'s stock Procedure, with its one Call re-input.
+
+    The executor reads ``accepted.procedure.slot_bindings`` straight off a
+    ``BoundAcceptedProcedure`` (``ProcedureExecutor.execute``'s
+    ``self.slot_bindings``), so the literal input change has to happen on the
+    unbound ``ProcedureArtifact`` first and the slot rebound afterward --
+    patching the already-bound execution plan in place would leave its
+    ``definition_digest``/``slot_bindings`` stale.
+    """
+
+    from tests.core_support._p2b1_support import digest as _p2b1_digest
+
+    accepted = _accepted_one_provider(provider=accepted_provider)
+    authored = authored_procedure(accepted)
+    node = authored.definition.nodes[0]
+    assert isinstance(node, CallNode)
+    node = node.model_copy(update={"input": {"value": "line-served"}})
+    definition = authored.definition.model_copy(update={"nodes": (node,)})
+    procedure = authored.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "pins": pins,
         }
     )
-    return accepted.model_copy(
-        update={
-            "procedure": procedure,
-            "artifact_digest": procedure_artifact_digest(procedure).tagged,
-        }
+    unbound = AcceptedProcedure(
+        path=procedure_path(procedure.identity.name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+    operation = accepted_provider.provider.operations[0]
+    build_pin = binding_pin(accepted_provider.provider.identity, accepted_provider.artifact_digest)
+    slot = next(iter(definition.slots))
+
+    def lookup(identity):  # type: ignore[no-untyped-def]
+        if identity.kind == "Provider" and identity == accepted_provider.provider.identity:
+            return accepted_provider.provider, accepted_provider.artifact_digest
+        if identity.kind == "Contract":
+            return object(), _p2b1_digest(identity.name)
+        return None
+
+    return bind_procedure_references(
+        unbound,
+        lookup=lookup,
+        bindings={slot: LineBinding(build=build_pin, operation=operation.name)},
     )
 
 
@@ -206,13 +298,22 @@ def _complete_line_for_admission(
     accepted_procedure,  # type: ignore[no-untyped-def]
     *,
     accepted_provider: AcceptedProvider,
-    interface,  # type: ignore[no-untyped-def]
 ) -> AcceptedLineSpec:
     historical = _accepted_line_for_admission(admission, accepted_procedure).line
     definition = accepted_procedure.procedure.definition
+    operation = accepted_provider.provider.operations[0]
     line = LineSpec.model_validate(
         {
             **historical.model_dump(mode="json"),
+            "bindings": {
+                slot: LineBinding(
+                    build=binding_pin(
+                        accepted_provider.provider.identity, accepted_provider.artifact_digest
+                    ),
+                    operation=operation.name,
+                ).model_dump(mode="json")
+                for slot in definition.slots
+            },
             "budgets": {
                 "max_capture_bytes": definition.budget.max_capture_bytes,
                 "max_items": definition.budget.max_items,
@@ -227,8 +328,8 @@ def _complete_line_for_admission(
         path=path,
         procedure=accepted_procedure,
         predecessor=None,
-        providers={accepted_provider.artifact_digest: accepted_provider},
-        provider_interfaces={interface.artifact_digest: interface},
+        slots=line_slot_signatures(definition),
+        providers={accepted_provider.provider.identity.qualified: accepted_provider},
     )
     assert law.verdict == "accepted", law.diagnostics
     return AcceptedLineSpec(
@@ -314,9 +415,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         lock_digest=_sha256_file(lock),
         materialization_digest=materialization_digest,
     )
-    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
-
-    base = provider_v2()
+    base = _served_provider_build()
     assert base.runtime_artifact.local_env is not None
     payload = base.runtime_artifact.model_copy(
         update={
@@ -331,21 +430,46 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
             ),
         }
     )
-    provider = ProviderV2.model_validate(
-        base.model_copy(
-            update={
-                "runtime_artifact": payload,
-                "implementations": provider_expected_implementation_records(payload),
-            }
-        ).model_dump(mode="python")
+    from tests.support.provider_builds import accepted_build
+
+    provider = base.model_copy(
+        update={
+            "runtime_artifact": payload,
+            "implementations": provider_expected_implementation_records(payload),
+        }
     )
-    accepted_provider = AcceptedProvider(
-        path="providers/demo-provider.json",
-        provider=provider,
-        artifact_digest=provider_digest(provider).tagged,
-    )
-    interface = accepted_interface()
+    accepted_provider = accepted_build(provider)
+    provider = accepted_provider.provider
     deployment_digest = _digest("operator-deployment")
+    implementation = provider.implementations[0]
+    # A build now walks the same Provider/ProviderBuild chain as a package
+    # install, so the driver's bind() requires a retained installation
+    # verification (the `isinstance(provider, Provider)` branch) same as the
+    # live-route test below.
+    from cruxible_core.providers.provider_local_runtime import (
+        ProviderInstallationVerificationV1,
+        _deployment_identity,
+    )
+
+    bare_deployment = LocalProviderDeploymentV1(
+        deployment_digest=deployment_digest,
+        distribution_path=distribution,
+        lock_path=lock,
+        environment_path=materialization,
+        environment_manifest_path=seal,
+        environment_pin_key="linux-cp311+engine",
+        interpreter_path=interpreter,
+        provider_runtime_version="1.0.0",
+    )
+    verification = ProviderInstallationVerificationV1(
+        deployment_identity_digest=_deployment_identity(bare_deployment),
+        distribution_digest=_sha256_file(distribution),
+        lock_digest=_sha256_file(lock),
+        materialization_digest=materialization_digest,
+        environment_manifest_digest=_sha256_file(seal),
+        provider_runtime_version="1.0.0",
+        entrypoints=tuple(item.entrypoint for item in provider.implementations),
+    )
     config_path = state_root / "daemon" / "provider-runtime.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_bytes(
@@ -365,6 +489,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
                         "environment_pin_key": "linux-cp311+engine",
                         "interpreter_path": str(interpreter.relative_to(state_root)),
                         "provider_runtime_version": "1.0.0",
+                        "installation_verification": verification.model_dump(mode="json"),
                     }
                 ],
             }
@@ -372,23 +497,10 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     )
 
     instance = _indexed_instance(
-        {
-            accepted_provider.path: render_provider(accepted_provider.provider),
-            interface.path: render_provider_interface(interface.registration),
-        }
+        {accepted_provider.path: render_provider(accepted_provider.provider)}
     )
 
-    implementation = provider.implementations[0]
-    deployment = LocalProviderDeploymentV1(
-        deployment_digest=deployment_digest,
-        distribution_path=distribution,
-        lock_path=lock,
-        environment_path=materialization,
-        environment_manifest_path=seal,
-        environment_pin_key="linux-cp311+engine",
-        interpreter_path=interpreter,
-        provider_runtime_version="1.0.0",
-    )
+    deployment = replace(bare_deployment, installation_verification=verification)
     operator = ProviderRuntimeOperator(state_root)
     assert operator.deployments == {deployment_digest: deployment}
     assert operator.process_leases is not None
@@ -406,16 +518,12 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
                 target=accepted_provider.provider.identity,
                 artifact_digest=accepted_provider.artifact_digest,
             ),
-            ArtifactPin(
-                role="provider-interface",
-                target=interface.registration.identity,
-                artifact_digest=interface.artifact_digest,
-            ),
         ),
     )
+    operation = provider.operations[0]
     admitted_binding = operator.driver.bind(
         accepted_provider,
-        interface,
+        operation,
         implementation.implementation_digest,
         deployment,
     ).binding
@@ -425,15 +533,16 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     occurrence = SimpleNamespace(
         local_execution=admitted_binding,
         provider_artifact_digest=accepted_provider.artifact_digest,
-        interface_artifact_digest=interface.artifact_digest,
+        operation=operation,
+        operation_signature_digest=operation_signature_digest(operation.signature()),
         implementation_digest=implementation.implementation_digest,
         secret_plan=ProviderSecretResolutionPlan(),
     )
     context = ProviderRuntimeRunContextV1(
         protocol_version="1.0",
         run_id="RUN-daemon-operator",
-        interface_id=interface.registration.interface_id,
-        interface_digest=interface_definition_digest(interface.registration),
+        interface_id=operation.name,
+        interface_digest=operation_signature_digest(operation.signature()),
         implementation_digest=implementation.implementation_digest,
         entrypoint=admitted_binding.entrypoint,
         input={"value": "served"},
@@ -460,33 +569,83 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         accepted_procedure,
         state_root / "line-service",
         provider=accepted_provider,
-        interface=interface,
         local_binding=admitted_binding,
+    )
+    # ``_prepared_acquisition_run`` hardcodes operation_world's own ``VALUE``
+    # Contract onto the occurrence it plans; this file's served operation
+    # pins its own (F02 checks the occurrence's output against exactly this
+    # closure), so the plan is corrected here rather than in that shared helper.
+    occurrence = prepared.acquisition_plan.external_occurrences[0].model_copy(
+        update={"contracts": (_OPERATION_INPUT, _OPERATION_OUTPUT)}
+    )
+    plan = prepared.acquisition_plan.model_copy(update={"external_occurrences": (occurrence,)})
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    admission_fields = {
+        name: getattr(prepared.admission, name)
+        for name in ProcedureRunAdmissionV9.model_fields
+        if name != "tag"
+    }
+    admission_fields["acquisition_plan_digest"] = plan_digest
+    provisional_admission = ProcedureRunAdmissionV9.model_construct(**admission_fields)
+    provisional_admission = provisional_admission.model_copy(
+        update={
+            "semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional_admission)
+        }
+    )
+    admission_digest = procedure_admission_digest(provisional_admission)
+    admission = ProcedureRunAdmissionV9.model_validate(
+        {
+            **provisional_admission.model_dump(mode="python"),
+            "admission_binding_digest": admission_digest,
+            "run_id": procedure_line_run_id(
+                occurrence_id=provisional_admission.occurrence_id or "",
+                attempt=provisional_admission.attempt,
+                admission_binding_digest=admission_digest,
+                occurrence_evaluation_time=provisional_admission.occurrence_evaluation_time,
+            ),
+        }
+    )
+    prepared = PreparedProcedureRunV9.model_validate(
+        {
+            **prepared.model_dump(mode="python"),
+            "admission": admission,
+            "acquisition_plan": plan,
+            "acquisition_plan_digest": plan_digest,
+        }
     )
     accepted_line = _complete_line_for_admission(
         prepared.admission,
         accepted_procedure,
         accepted_provider=accepted_provider,
-        interface=interface,
     )
     prepared = _rebind_prepared_line(prepared, accepted_line)
+    authored_for_lookup = authored_procedure(accepted_procedure)
+
+    def _source(identity):  # type: ignore[no-untyped-def]
+        # The fixture admission fixes its own provider output cap; the policy
+        # in force must be the one it was planned under. ``_accepted_procedure``
+        # resolves the plain, unbound artifact here -- it rebinds separately.
+        if identity == PROCEDURE_RUNTIME_POLICY_IDENTITY:
+            return seeded_procedure_runtime_policy().model_copy(
+                update={"provider_output_bytes_cap": prepared.admission.provider_output_bytes_cap}
+            )
+        if identity == authored_for_lookup.identity:
+            return authored_for_lookup
+        return None
+
+    def _envelope(key):  # type: ignore[no-untyped-def]
+        if key == f"Procedure:{authored_for_lookup.identity.name}":
+            return SimpleNamespace(
+                identity=authored_for_lookup.identity,
+                artifact_digest=accepted_procedure.artifact_digest,
+            )
+        return None
+
     bound = procedure_run_service.service_prepare_playbill_line_admission(
         SimpleNamespace(  # type: ignore[arg-type]
             resolve_accepted_coordinate=lambda **_kwargs: prepared.admission.bound_coordinate,
             bind_accepted_projection=lambda _coordinate: nullcontext(
-                SimpleNamespace(
-                    typed=SimpleNamespace(
-                        # The fixture admission fixes its own provider output cap;
-                        # the policy in force must be the one it was planned under.
-                        source=lambda _identity: seeded_procedure_runtime_policy().model_copy(
-                            update={
-                                "provider_output_bytes_cap": (
-                                    prepared.admission.provider_output_bytes_cap
-                                )
-                            }
-                        )
-                    )
-                )
+                SimpleNamespace(typed=SimpleNamespace(source=_source, envelope=_envelope))
             ),
         ),
         admission=prepared.admission,
