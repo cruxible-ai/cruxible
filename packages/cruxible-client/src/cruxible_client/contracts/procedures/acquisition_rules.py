@@ -46,6 +46,21 @@ def _sorted_unique_replayability(
     return tuple(sorted(set(value)))
 
 
+#: F05/§4.1/§4.4: a permitted network origin, ``scheme://host[:port]``, no path.
+_ORIGIN_RE = re.compile(r"^[a-z][a-z0-9+.-]*://[^/]+$")
+
+
+def _sorted_unique_origins(value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not value:
+        raise ValueError("origins must not be empty when declared")
+    for origin in value:
+        if not _ORIGIN_RE.fullmatch(origin):
+            raise ValueError(f"{origin!r} is not a scheme://host[:port] origin")
+    return tuple(sorted(set(value)))
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -60,6 +75,11 @@ class AcquisitionDefault(_Strict):
     #: ``None`` permits every replay class; declared, it is the closed set a
     #: Source's Capture must replay under.
     permitted_replayability: tuple[SourceReplayability, ...] | None = None
+    #: F05/§4.1/§4.4: permitted network origins (``scheme://host[:port]``).
+    #: ``None`` permits any; declared, it is the closed set core enforces on
+    #: every field named ``url`` or ``final_url`` the bound operation's
+    #: request or result carries, for this capture field alone.
+    origins: tuple[str, ...] | None = None
 
     # One schema in both modes (it is served inside accepted Procedures); an
     # ISO-8601 duration string is also read, as authoring convenience.
@@ -76,6 +96,11 @@ class AcquisitionDefault(_Strict):
         cls, value: tuple[SourceReplayability, ...] | None
     ) -> tuple[SourceReplayability, ...] | None:
         return _sorted_unique_replayability(value)
+
+    @field_validator("origins")
+    @classmethod
+    def _origins(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        return _sorted_unique_origins(value)
 
 
 def validate_acquisition_keys(
@@ -96,6 +121,7 @@ class AcquisitionRule(_Strict):
     on_stale: UnavailableBehavior = "refuse"
     on_oversized: UnavailableBehavior = "refuse"
     permitted_replayability: tuple[SourceReplayability, ...] | None = None
+    origins: tuple[str, ...] | None = None
 
     @field_validator("permitted_replayability")
     @classmethod
@@ -103,6 +129,11 @@ class AcquisitionRule(_Strict):
         cls, value: tuple[SourceReplayability, ...] | None
     ) -> tuple[SourceReplayability, ...] | None:
         return _sorted_unique_replayability(value)
+
+    @field_validator("origins")
+    @classmethod
+    def _origins(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        return _sorted_unique_origins(value)
 
 
 def resolve_acquisition_rules(
@@ -123,6 +154,7 @@ def resolve_acquisition_rules(
             on_stale=declared.on_stale,
             on_oversized=declared.on_oversized,
             permitted_replayability=declared.permitted_replayability,
+            origins=declared.origins,
         )
     return rules
 

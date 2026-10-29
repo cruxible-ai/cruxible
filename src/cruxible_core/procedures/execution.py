@@ -179,9 +179,12 @@ from cruxible_core.exhaust.writer import note_invocation_start
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.acquisition import (
+    ACQUISITION_ORIGIN_INELIGIBLE,
+    ACQUISITION_OVERSIZED,
     ProcedureCaptureMaterialV1,
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
+    disallowed_origin,
 )
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
@@ -4054,6 +4057,17 @@ class ProcedureExecutor:
                 outputs=state.outputs,
             )
         )
+        offending_origin = disallowed_origin(rule, resolved_request)
+        if offending_origin is not None:
+            # F05/§4.1,§4.4: a hard eligibility gate, never an omit choice,
+            # exactly like permitted_replayability -- checked before any
+            # provider is invoked.
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                f"Source alias {node.as_!r} requests {offending_origin!r}, whose origin is "
+                f"not in the Line's permitted acquisition.origins for this field.",
+                node_id=node.node_id,
+            )
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
         if bound_operation(occurrence).builtin == "workspace.file":
             # The author names the workspace logically, or not at all; the daemon
@@ -4180,6 +4194,16 @@ class ProcedureExecutor:
                 decision=decision,
             )
             return
+        offending_result_origin = disallowed_origin(rule, output)
+        if offending_result_origin is not None:
+            # F05/§4.1,§4.4: the result's own url/final_url fields (e.g. after
+            # a redirect) are checked too, before any Capture conversion.
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                f"Source alias {node.as_!r} result names {offending_result_origin!r}, whose "
+                f"origin is not in the Line's permitted acquisition.origins for this field.",
+                node_id=node.node_id,
+            )
         try:
             if workspace_request is None or source_read_receipt is None:
                 provider_result = ProviderResultToExternalCapture.model_validate(output)
@@ -4202,6 +4226,57 @@ class ProcedureExecutor:
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
             ) from exc
+        if provider_result.byte_length > contract.selection_budget.max_bytes:
+            # F05: a real oversized read is the typed acquisition outcome
+            # (on_oversized), not a generic protocol violation -- it is
+            # classified before any Capture conversion is attempted, exactly
+            # as an unavailable result is classified above.
+            oversized = ProcedureSourceAcquisitionResultV1(
+                node_id=node.node_id,
+                input_name=node.as_,
+                outcome="oversized",
+                reason_code=ACQUISITION_OVERSIZED,
+                detail=(
+                    f"Read {provider_result.byte_length} bytes against a "
+                    f"{contract.selection_budget.max_bytes}-byte Capture budget."
+                ),
+            )
+            decision = apply_acquisition_result(
+                rule,
+                oversized,
+                default_authorized=rule.input_name in self.default_authorizations,
+                evaluation_time=(
+                    admission.occurrence_evaluation_time
+                    if isinstance(admission, ProcedureRunAdmissionV3)
+                    else admission.admitted_at
+                ),
+            )
+            self._append_event(
+                admission,
+                records,
+                "source_acquisition",
+                {
+                    "tag": "playbill-procedure-source-acquisition-v1",
+                    "node_id": node.node_id,
+                    "input_name": node.as_,
+                    "result": oversized.model_dump(mode="json"),
+                    "decision": decision.model_dump(mode="json"),
+                    "audit": {
+                        "deployment_digest": admission.deployment_snapshot_digest,
+                        "recorded_at": format_datetime(self.clock.now()),
+                    },
+                },
+            )
+            self._bind_acquisition(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+                rule=rule,
+                result=oversized,
+                decision=decision,
+            )
+            return
         reserved_store = ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
