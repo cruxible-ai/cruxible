@@ -8,7 +8,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, typed_digest
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNode,
-    ProcedurePinSlotRef,
     SourceNode,
     StateTapNode,
 )
@@ -90,9 +89,7 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
     source_node = SourceNode(
         node_id="source",
         capture_contract=_pin("capture-contract", "CaptureContract", "world"),
-        provider=ProcedurePinSlotRef(slot_name="provider"),
-        interface=_pin("provider-interface", "ProviderInterface", "world.interface"),
-        interface_digest=_digest("world-interface"),
+        slot="fetch",
         request={},
         as_="capture",
     )
