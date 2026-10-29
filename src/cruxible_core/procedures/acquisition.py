@@ -93,10 +93,15 @@ def disallowed_origin(rule: AcquisitionRule, *values: object) -> str | None:
     """The first URL outside ``rule.origins``, or ``None`` when every one named
     ``url``/``final_url`` in ``values`` is permitted (F05/§4.1, §4.4).
 
-    ``origins`` declared ``None`` permits any; declared, it is a hard
-    eligibility gate -- never an omit choice, like
-    :data:`ACQUISITION_REPLAYABILITY_INELIGIBLE`. A URL this run cannot even
-    parse as absolute is left to the operation's own output validation.
+    ``origins`` declared ``None`` permits any, including a value this run
+    cannot parse as absolute: an ordinary string-typed Contract field gives
+    no URL-origin validation of its own, so there is nothing else to fail
+    open to. Once ``origins`` is declared, it is a hard eligibility gate --
+    never an omit choice, like :data:`ACQUISITION_REPLAYABILITY_INELIGIBLE`
+    -- and a value whose origin cannot be established (scheme-relative,
+    relative, or otherwise not ``scheme://host[:port]``) fails closed,
+    exactly like one naming a disallowed origin: a restricted Line never
+    dispatches a URL it cannot prove belongs to the permitted set.
     """
 
     if rule.origins is None:
@@ -106,7 +111,7 @@ def disallowed_origin(rule: AcquisitionRule, *values: object) -> str | None:
             try:
                 origin = url_origin(url)
             except ValueError:
-                continue
+                return url
             if origin not in rule.origins:
                 return url
     return None

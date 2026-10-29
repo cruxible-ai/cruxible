@@ -218,3 +218,30 @@ def test_disallowed_origin_is_a_hard_eligibility_gate_on_url_and_final_url_field
 def test_an_unrestricted_rule_permits_any_origin():
     rule = AcquisitionRule(input_name="doc")
     assert disallowed_origin(rule, {"url": "https://anywhere.example/x"}) is None
+
+
+def test_disallowed_origin_fails_closed_on_an_unparseable_url():
+    """F05a fix round 3: Codex's reproduction -- a scheme-relative value
+    (``//evil.example/feed``) raised inside the helper's own origin parse,
+    and the old code caught that ValueError and let it pass. Once origins
+    are restricted, a value whose origin cannot even be established must
+    refuse exactly like one naming a disallowed origin."""
+
+    rule = AcquisitionRule(input_name="doc", origins=("https://permitted.example",))
+    for unparseable in (
+        "//evil.example/feed",
+        "https:////evil.example/feed",
+        "relative/feed",
+    ):
+        assert disallowed_origin(rule, {"url": unparseable}) == unparseable
+
+    # Unrestricted, the same unparseable values are left alone (F05's
+    # original intent: nothing else validates a plain string field's URL
+    # shape, so an unrestricted Line permits them).
+    unrestricted = AcquisitionRule(input_name="doc")
+    for unparseable in (
+        "//evil.example/feed",
+        "https:////evil.example/feed",
+        "relative/feed",
+    ):
+        assert disallowed_origin(unrestricted, {"url": unparseable}) is None

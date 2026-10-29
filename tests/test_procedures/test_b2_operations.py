@@ -1493,6 +1493,26 @@ def test_a_line_acquisition_origin_inside_the_permitted_set_is_not_refused(tmp_p
     assert getattr(state.terminal, "code", None) != "cruxible.acquisition.origin_ineligible"
 
 
+def test_a_scheme_relative_url_under_restricted_origins_refuses_before_any_call(tmp_path):
+    """F05a fix round 3: a scheme-relative value (``//evil.example/feed``)
+    cannot be proven to belong to the permitted origin set, so a restricted
+    Line must refuse it exactly like a disallowed origin -- never dispatch
+    the provider call and then rely on a later failure to undo it."""
+
+    (tmp_path / "scheme-relative-origin").mkdir()
+    instance = _fetch_world(
+        tmp_path / "scheme-relative-origin",
+        line_name="test.fetched-scheme-relative",
+        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        request_url="//evil.example/feed",
+    )
+    invoker = Invoker()
+    state, _ = run_line(instance, invoker=invoker, name="test.fetched-scheme-relative")
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.origin_ineligible"
+    assert len(invoker.contexts) == 0
+
+
 # --- 8. exact producer versions -----------------------------------------------
 
 
