@@ -10,12 +10,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -148,18 +144,14 @@ def resolution_contract_digest(contract: ResolutionContract) -> ArtifactDigest:
     )
 
 
-def parse_resolution_contract(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> ResolutionContract:
+def parse_resolution_contract(content: bytes, *, path: str) -> ResolutionContract:
     try:
         contract = ResolutionContract.model_validate(json.loads(content))
     except (ValueError, UnicodeDecodeError) as exc:
         raise FormatError("ResolutionContract failed strict validation") from exc
-    if not artifact_path_matches(
-        resolution_contract_path(contract.identity.name), path, codec=codec
-    ):
+    if resolution_contract_path(contract.identity.name) != path:
         raise FormatError("ResolutionContract identity/path disagreement")
-    if artifact_bytes_for_path(render_resolution_contract(contract), path, codec=codec) != content:
+    if render_resolution_contract(contract) != content:
         raise FormatError("ResolutionContract bytes are not canonical")
     return contract
 

@@ -37,7 +37,6 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
         "candidate-v2.json",
         "depgraph-v3.json",
         "merkle-manifest-v1.json",
-        "p2-b0-artifact-codec-v1.json",
         "query-definition-v1.json",
         "changeset-v3.json",
         "subject-v1.json",

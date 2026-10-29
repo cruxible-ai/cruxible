@@ -27,12 +27,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
@@ -619,14 +614,12 @@ def claim_type_path(predicate: str) -> str:
 def validate_claim_type_path(
     claim_type: ClaimType,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     expected = claim_type_path(claim_type.predicate)
-    if not artifact_path_matches(expected, path, codec=codec):
+    if expected != path:
         raise ClaimTypeFormatError(
             f"ClaimType identity/path disagreement: {claim_type.identity.qualified!r} "
-            f"requires {artifact_path_for_codec(expected, codec)!r}"
+            f"requires {expected!r}"
         )
     return path
 
@@ -652,11 +645,10 @@ def parse_claim_type(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ClaimType:
-    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    """Parse once per exact (path, bytes); see ``content_memo``."""
     return _CLAIM_TYPE_PARSES.parse(
-        content, path, codec, lambda: _parse_claim_type(content, path=path, codec=codec)
+        content, path, None, lambda: _parse_claim_type(content, path=path)
     )
 
 
@@ -664,7 +656,6 @@ def _parse_claim_type(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ClaimType:
     try:
         payload = json.loads(content)
@@ -683,8 +674,8 @@ def _parse_claim_type(
                 "ClaimType v3 evidence freshness horizon is malformed or non-positive"
             ) from exc
         raise ClaimTypeFormatError("ClaimType failed strict versioned validation") from exc
-    validate_claim_type_path(claim_type, path, codec=codec)
-    if artifact_bytes_for_path(render_claim_type(claim_type), path, codec=codec) != content:
+    validate_claim_type_path(claim_type, path)
+    if render_claim_type(claim_type) != content:
         raise ClaimTypeFormatError("ClaimType is not in canonical wire form")
     return claim_type
 

@@ -16,8 +16,6 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
     pretty_canonical_bytes,
@@ -59,11 +57,7 @@ def render_accepted_attestation(attestation: ClaimAttestation) -> bytes:
     return pretty_canonical_bytes(attestation.model_dump(mode="json"))
 
 
-def parse_accepted_attestation(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> ClaimAttestation:
-    if codec != ArtifactCodec.CURRENT_PRETTY_JSON:
-        raise FormatError("accepted attestations require the JSON artifact codec")
+def parse_accepted_attestation(content: bytes, *, path: str) -> ClaimAttestation:
     try:
         value = ClaimAttestation.model_validate_json(content)
     except ValueError as exc:

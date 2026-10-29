@@ -42,11 +42,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -449,18 +445,16 @@ def trigger_digest(trigger: Trigger) -> ArtifactDigest:
     )
 
 
-def parse_trigger(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> Trigger:
+def parse_trigger(content: bytes, *, path: str) -> Trigger:
     try:
         trigger: Trigger = TypeAdapter[Trigger | NamedTrigger](
             Trigger | NamedTrigger
         ).validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise TriggerFormatError("Trigger failed strict validation") from exc
-    if not artifact_path_matches(trigger_path(trigger.identity.name), path, codec=codec):
+    if trigger_path(trigger.identity.name) != path:
         raise TriggerFormatError("Trigger identity/path disagreement")
-    if artifact_bytes_for_path(render_trigger(trigger), path, codec=codec) != content:
+    if render_trigger(trigger) != content:
         raise TriggerFormatError("Trigger is not in canonical wire form")
     return trigger
 

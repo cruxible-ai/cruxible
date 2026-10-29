@@ -276,7 +276,6 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
                     request=warm.accepted,
                     parsed=parse_static_owners(updated, accepted=warm.accepted),
                     sources=updated,
-                    codec=warm.typed.codec,
                     changed_paths=(path,),
                 )
                 assert [

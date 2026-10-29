@@ -8,11 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -44,9 +40,8 @@ def parse_procedure_runtime_policy(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProcedureRuntimePolicy:
-    if not artifact_path_matches(PROCEDURE_RUNTIME_POLICY_PATH, path, codec=codec):
+    if PROCEDURE_RUNTIME_POLICY_PATH != path:
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy must use its singleton path"
         )
@@ -57,10 +52,7 @@ def parse_procedure_runtime_policy(
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy failed strict validation"
         ) from exc
-    if (
-        artifact_bytes_for_path(render_procedure_runtime_policy(policy), path, codec=codec)
-        != content
-    ):
+    if render_procedure_runtime_policy(policy) != content:
         raise ProcedureRuntimePolicyFormatError("Procedure runtime policy is not canonical")
     return policy
 

@@ -18,15 +18,10 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     CanonicalValue,
     CasDigest,
     Sha256Value,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     canonical_bytes,
     canonical_equal,
     normalize_canonical,
@@ -782,14 +777,11 @@ def claim_path(claim_id: str) -> str:
 def validate_claim_path(
     claim: ClaimArtifactAny,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     expected = claim_path(claim.identity.name)
-    if not artifact_path_matches(expected, path, codec=codec):
+    if expected != path:
         raise ClaimFormatError(
-            "Claim identity/path disagreement: "
-            f"{claim.identity.qualified!r} requires {artifact_path_for_codec(expected, codec)!r}"
+            f"Claim identity/path disagreement: {claim.identity.qualified!r} requires {expected!r}"
         )
     return path
 
@@ -805,19 +797,15 @@ def parse_claim(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ClaimArtifactAny:
-    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
-    return _CLAIM_PARSES.parse(
-        content, path, codec, lambda: _parse_claim(content, path=path, codec=codec)
-    )
+    """Parse once per exact (path, bytes); see ``content_memo``."""
+    return _CLAIM_PARSES.parse(content, path, None, lambda: _parse_claim(content, path=path))
 
 
 def _parse_claim(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ClaimArtifactAny:
     try:
         payload = json.loads(content)
@@ -835,8 +823,8 @@ def _parse_claim(
         claim = model.model_validate(payload)
     except ValidationError as exc:
         raise ClaimFormatError(f"Claim failed strict {declared!r} validation") from exc
-    validate_claim_path(claim, path, codec=codec)
-    if artifact_bytes_for_path(render_claim(claim), path, codec=codec) != content:
+    validate_claim_path(claim, path)
+    if render_claim(claim) != content:
         raise ClaimFormatError("Claim is not in canonical wire form")
     return claim
 

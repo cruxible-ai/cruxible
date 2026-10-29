@@ -177,7 +177,6 @@ def populate_successor(
             "parse_normalize",
             lambda: parse_projection_tree(
                 {p: body for p, body in inputs.items() if p in members},
-                artifact_codec=assembler.artifact_codec,
                 bodies=assembler.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,

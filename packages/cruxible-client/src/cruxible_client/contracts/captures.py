@@ -30,14 +30,9 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     CasDigest,
     Sha256Value,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     canonical_bytes,
     model_canonical_bytes,
     normalize_canonical,
@@ -1046,14 +1041,12 @@ def capture_contract_path(contract_id: str) -> str:
 def validate_capture_contract_path(
     contract: CaptureContractAny,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     expected = capture_contract_path(contract.identity.name)
-    if not artifact_path_matches(expected, path, codec=codec):
+    if expected != path:
         raise CaptureFormatError(
             f"CaptureContract identity/path disagreement: {contract.identity.qualified!r} "
-            f"requires {artifact_path_for_codec(expected, codec)!r}"
+            f"requires {expected!r}"
         )
     return path
 
@@ -1071,11 +1064,10 @@ def parse_capture_contract(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> CaptureContractAny:
-    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    """Parse once per exact (path, bytes); see ``content_memo``."""
     return _CAPTURE_CONTRACT_PARSES.parse(
-        content, path, codec, lambda: _parse_capture_contract(content, path=path, codec=codec)
+        content, path, None, lambda: _parse_capture_contract(content, path=path)
     )
 
 
@@ -1083,7 +1075,6 @@ def _parse_capture_contract(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> CaptureContractAny:
     try:
         payload = json.loads(content)
@@ -1102,8 +1093,8 @@ def _parse_capture_contract(
         contract: CaptureContractAny = TypeAdapter(CaptureContractAny).validate_python(payload)
     except ValidationError as exc:
         raise CaptureFormatError("CaptureContract failed strict contract validation") from exc
-    validate_capture_contract_path(contract, path, codec=codec)
-    if artifact_bytes_for_path(render_capture_contract(contract), path, codec=codec) != content:
+    validate_capture_contract_path(contract, path)
+    if render_capture_contract(contract) != content:
         raise CaptureFormatError("CaptureContract is not in canonical wire form")
     return contract
 

@@ -23,12 +23,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -573,14 +568,12 @@ def query_definition_address(path: str) -> SemanticAddress:
 def validate_query_definition_path(
     query: QueryDefinition,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     expected = query_definition_path(query.identity.name)
-    if not artifact_path_matches(expected, path, codec=codec):
+    if expected != path:
         raise QueryDefinitionFormatError(
             f"QueryDefinition identity/path disagreement: {query.identity.qualified!r} "
-            f"requires {artifact_path_for_codec(expected, codec)!r}"
+            f"requires {expected!r}"
         )
     return path
 
@@ -649,7 +642,6 @@ def parse_query_definition(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> QueryDefinition:
     try:
         payload = json.loads(content)
@@ -670,8 +662,8 @@ def parse_query_definition(
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
         ) from exc
-    validate_query_definition_path(query, path, codec=codec)
-    if artifact_bytes_for_path(render_query_definition(query), path, codec=codec) != content:
+    validate_query_definition_path(query, path)
+    if render_query_definition(query) != content:
         raise QueryDefinitionFormatError("QueryDefinition is not in canonical wire form")
     return query
 

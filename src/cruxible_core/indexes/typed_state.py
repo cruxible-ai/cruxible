@@ -25,9 +25,6 @@ from cruxible_client.contracts.approval_policy import (
 )
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
-    artifact_path_for_codec,
     canonical_bytes,
 )
 from cruxible_client.contracts.captures import parse_capture_contract
@@ -902,7 +899,6 @@ def insert_owners(
     *,
     parsed: ParsedProjectionTree,
     blobs: Mapping[str, bytes],
-    codec: ArtifactCodec,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
 ) -> None:
     """Insert validated changed owners after removing both old and new paths.
@@ -939,9 +935,9 @@ def insert_owners(
         if row.kind == "claim":
             from cruxible_core.compiler.sealed_members import sealed_claim_member
 
-            source = sealed_claim_member(blobs[row.path], path=row.path, codec=codec).claim
+            source = sealed_claim_member(blobs[row.path], path=row.path).claim
         else:
-            source = owner.parse(blobs[row.path], path=row.path, codec=codec)
+            source = owner.parse(blobs[row.path], path=row.path)
         sources[row.identity] = source
         values: dict[str, SQLValue] = {
             "identity": row.identity,
@@ -1070,9 +1066,9 @@ def principal_registry(
         raise PrincipalIntegrityError("typed projection principal registry is invalid") from exc
 
 
-def singleton_path(identity: str, codec: ArtifactCodec) -> str | None:
+def singleton_path(identity: str) -> str | None:
     singleton = SINGLETONS.get(identity)
-    return None if singleton is None else artifact_path_for_codec(singleton[1], codec)
+    return None if singleton is None else singleton[1]
 
 
 @dataclass(frozen=True)
@@ -1112,10 +1108,6 @@ class TypedStateReader:
         self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
 
-    @property
-    def codec(self) -> ArtifactCodec:
-        return CURRENT_ARTIFACT_CODEC
-
     def member_bytes(self, path: str) -> bytes:
         self.prefetch_members((path,))
         return self._member_bytes[path]
@@ -1148,7 +1140,7 @@ class TypedStateReader:
 
     def envelope(self, identity: str) -> ArtifactEnvelopeRow | None:
         if identity in SINGLETONS:
-            path = singleton_path(identity, self.codec)
+            path = singleton_path(identity)
             assert path is not None
             if (
                 self.connection.execute("SELECT 1 FROM members WHERE path=?", (path,)).fetchone()
@@ -1162,7 +1154,7 @@ class TypedStateReader:
 
             content = self.member_bytes(path)
             kind, _, parser = SINGLETONS[identity]
-            source: Any = parser(content, path=path, codec=self.codec)
+            source: Any = parser(content, path=path)
             digest = (
                 approval_policy_digest(source).tagged
                 if identity == APPROVAL_POLICY_IDENTITY
@@ -1206,7 +1198,7 @@ class TypedStateReader:
         for identity, singleton in SINGLETONS.items():
             if kind is not None and singleton[0] != kind:
                 continue
-            path = singleton_path(identity, self.codec)
+            path = singleton_path(identity)
             assert path is not None
             if paths is not None and path not in paths:
                 continue
@@ -1263,7 +1255,7 @@ class TypedStateReader:
         parser = (
             SINGLETONS[identity][2] if identity in SINGLETONS else OWNER_BY_KIND[row.kind].parse
         )
-        return parser(self.member_bytes(row.path), path=row.path, codec=self.codec)
+        return parser(self.member_bytes(row.path), path=row.path)
 
     def principal(self, principal_id: str, *, active: bool = False) -> PrincipalRecord | None:
         row = self.connection.execute(
@@ -1470,7 +1462,6 @@ class TypedStateReader:
         )
         return parse_projection_tree(
             {path: self.member_bytes(path) for path in paths},
-            artifact_codec=self.codec,
             bodies=self.bodies,
             coordinate=request,
             accepted_coordinates_by_sequence=coordinates,

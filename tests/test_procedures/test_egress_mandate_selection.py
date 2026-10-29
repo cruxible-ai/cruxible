@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
@@ -62,7 +61,6 @@ def projection_factory():
             connection,
             parsed=parse_static_owners(sources, accepted=coordinate),
             blobs=sources,
-            codec=CURRENT_ARTIFACT_CODEC,
         )
         blobs = {
             oid: (path, sources[path])

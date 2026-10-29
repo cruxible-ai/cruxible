@@ -24,11 +24,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     normalize_canonical,
     pretty_canonical_bytes,
     typed_digest,
@@ -289,15 +285,14 @@ def parse_line_spec(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> LineSpec:
     try:
         line = _LINE_SPEC_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise LineSpecFormatError("LineSpec failed strict versioned validation") from exc
-    if not artifact_path_matches(line_spec_path(line.identity.name), path, codec=codec):
+    if line_spec_path(line.identity.name) != path:
         raise LineSpecFormatError("LineSpec identity/path disagreement")
-    if artifact_bytes_for_path(render_line_spec(line), path, codec=codec) != content:
+    if render_line_spec(line) != content:
         raise LineSpecFormatError("LineSpec is not in canonical wire form")
     return line
 

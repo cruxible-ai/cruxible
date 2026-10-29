@@ -19,7 +19,6 @@ SOURCE_ROOTS = (
 MOVING_ALIAS_NAMES = frozenset(
     {
         "CLAIM_LAW_V3",
-        "CURRENT_ARTIFACT_CODEC",
         "current_compiler_coordinate",
     }
 )

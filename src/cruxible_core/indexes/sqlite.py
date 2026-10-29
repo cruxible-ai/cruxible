@@ -457,7 +457,6 @@ def update_projection_database(
     resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
 ) -> dict[str, int]:
     """Copy one verified typed publication, then replace changed owners atomically."""
-    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_client.contracts.types import CompilerCoordinate
     from cruxible_core.compiler.compiler import require_current_compiler
     from cruxible_core.indexes.typed_sqlite import update
@@ -471,7 +470,6 @@ def update_projection_database(
         sources=sources,
         changed_paths=changed_paths,
         inventory=inventory,
-        codec=CURRENT_ARTIFACT_CODEC,
         bodies=bodies,
         resolve_digest=resolve_digest,
     )
@@ -490,7 +488,6 @@ def initialize_projection_database(
 ) -> dict[str, int]:
     """Create and populate the complete PB-B one-piece SQLite projection."""
 
-    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_client.contracts.types import CompilerCoordinate
     from cruxible_core.compiler.compiler import require_current_compiler
     from cruxible_core.indexes.typed_sqlite import initialize
@@ -506,7 +503,6 @@ def initialize_projection_database(
         parsed=parsed,
         sources=sources,
         repository=repository,
-        codec=CURRENT_ARTIFACT_CODEC,
         assembler_implementation=assembler_implementation,
         bodies=bodies,
         resolve_digest=resolve_digest,

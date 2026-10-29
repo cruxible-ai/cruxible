@@ -26,7 +26,6 @@ def _parse(instance, *, blobs=None):
     )
     parsed = parse_projection_tree(
         instance.tree_at(instance.accepted_coordinate().git_oid) if blobs is None else blobs,
-        artifact_codec=assembler.artifact_codec,
         bodies=instance.body_store(),
         coordinate=request,
         accepted_coordinates_by_sequence=instance._accepted_coordinates_by_sequence(),

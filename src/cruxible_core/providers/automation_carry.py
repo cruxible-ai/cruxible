@@ -10,7 +10,7 @@ parameters and conditions are data, never reference replacement targets.
 from collections.abc import Mapping
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactNameRef, ArtifactPin
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, normalize_canonical
+from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -46,9 +46,7 @@ _mandate_digest = sealed_memo(procedure_mandate_digest)
 
 
 def parse_carry_line(content: bytes, *, path: str) -> LineSpec:
-    return _LINES.parse(
-        content, path, CURRENT_ARTIFACT_CODEC, lambda: parse_line_spec(content, path=path)
-    )
+    return _LINES.parse(content, path, None, lambda: parse_line_spec(content, path=path))
 
 
 def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProcedure) -> None:
@@ -113,7 +111,7 @@ def carry_mandate(
     mandate = _MANDATES.parse(
         content,
         path,
-        CURRENT_ARTIFACT_CODEC,
+        None,
         lambda: parse_procedure_mandate_any(content, path=path),
     )
     old = _mandate_digest(mandate).tagged

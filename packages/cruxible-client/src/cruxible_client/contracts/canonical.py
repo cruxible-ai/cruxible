@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import threading
 import typing
@@ -11,7 +10,6 @@ import unicodedata
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from enum import Enum
 from functools import lru_cache
 from typing import ClassVar, TypeVar, cast
 
@@ -34,17 +32,6 @@ def _valid_sha256_hex(value: str) -> None:
     if _SHA256_RE.fullmatch(value) is None:
         # lru_cache does not retain calls that raise.
         raise ValueError("invalid SHA-256 hex")
-
-
-class ArtifactCodec(str, Enum):
-    """Compiler-selected governed-artifact byte and path spelling."""
-
-    CURRENT_PRETTY_JSON = "playbill-artifact-codec-pretty-json-v1"
-    P2_B0_COMPACT_JSON = "playbill-artifact-codec-compact-json-v1"
-
-
-CURRENT_ARTIFACT_CODEC = ArtifactCodec.CURRENT_PRETTY_JSON
-P2_B0_ARTIFACT_CODEC = ArtifactCodec.P2_B0_COMPACT_JSON
 
 
 def _normalize_string(value: str) -> str:
@@ -413,63 +400,6 @@ def pretty_canonical_bytes(value: object) -> bytes:
     if _canonical_ready(value):
         return pretty_json(value).encode("utf-8") + b"\n"
     return pretty_json(normalize_canonical(value)).encode("utf-8") + b"\n"
-
-
-def artifact_path_for_codec(current_path: str, codec: ArtifactCodec) -> str:
-    """Return the one path spelling selected by ``codec``."""
-
-    if not current_path.endswith(".json"):
-        raise CanonicalEncodingError("current artifact path must end in .json")
-    if codec is ArtifactCodec.CURRENT_PRETTY_JSON:
-        return current_path
-    if codec is ArtifactCodec.P2_B0_COMPACT_JSON:
-        return current_path.removesuffix(".json") + ".yaml"
-    raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
-
-
-def artifact_bytes_for_codec(
-    rendered_current: bytes,
-    *,
-    path: str,
-    codec: ArtifactCodec,
-) -> bytes:
-    """Encode bytes from the compiler-selected codec; suffix only checks consistency."""
-
-    allowed_suffixes = (
-        (".json",) if codec is ArtifactCodec.CURRENT_PRETTY_JSON else (".yaml", ".json")
-    )
-    if not path.endswith(allowed_suffixes):
-        raise CanonicalEncodingError(
-            f"artifact path is inconsistent with {codec.value}: expected one of "
-            f"{allowed_suffixes!r}"
-        )
-    if codec is ArtifactCodec.CURRENT_PRETTY_JSON:
-        return rendered_current
-    if codec is ArtifactCodec.P2_B0_COMPACT_JSON:
-        return canonical_bytes(json.loads(rendered_current)) + b"\n"
-    raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
-
-
-def artifact_bytes_for_path(
-    rendered_current: bytes,
-    path: str,
-    *,
-    codec: ArtifactCodec,
-) -> bytes:
-    """Encode one artifact using an explicit compiler-selected codec."""
-
-    return artifact_bytes_for_codec(rendered_current, path=path, codec=codec)
-
-
-def artifact_path_matches(
-    current_path: str,
-    actual_path: str,
-    *,
-    codec: ArtifactCodec,
-) -> bool:
-    """Check that an identity-derived current path agrees with the selected codec."""
-
-    return actual_path == artifact_path_for_codec(current_path, codec)
 
 
 def canonical_digest(domain: str, payload: Mapping[str, object]) -> str:
@@ -876,15 +806,8 @@ def semantic_diff(
 
 __all__ = [
     "CARD_NAMESPACE",
-    "ArtifactCodec",
     "ArtifactDigest",
-    "CURRENT_ARTIFACT_CODEC",
-    "P2_B0_ARTIFACT_CODEC",
-    "artifact_bytes_for_codec",
     "is_candidate_card_path",
-    "artifact_bytes_for_path",
-    "artifact_path_for_codec",
-    "artifact_path_matches",
     "AcceptanceLawDigest",
     "ApprovalDigest",
     "BootstrapRoot",

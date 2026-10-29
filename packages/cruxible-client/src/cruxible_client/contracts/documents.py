@@ -17,13 +17,8 @@ from cruxible_client.contracts.artifacts import (
     parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     CasDigest,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     normalize_ledger_path,
     pretty_canonical_bytes,
     typed_digest,
@@ -251,18 +246,15 @@ def document_path(document_id: str) -> str:
 def validate_document_path(
     shell: DocumentShell,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     try:
         normalized = normalize_ledger_path(path)
     except CanonicalEncodingError as exc:
         raise DocumentFormatError("Document path is not a canonical ledger path") from exc
     expected = document_path(shell.document_id)
-    if normalized != path or not artifact_path_matches(expected, path, codec=codec):
+    if normalized != path or not expected == path:
         raise DocumentFormatError(
-            "Document identity/path disagreement: "
-            f"{shell.identity!r} requires {artifact_path_for_codec(expected, codec)!r}"
+            f"Document identity/path disagreement: {shell.identity!r} requires {expected!r}"
         )
     return path
 
@@ -275,7 +267,6 @@ def parse_document(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> DocumentShell:
     """Dispatch by explicit format and refuse unknown or noncanonical wire forms."""
 
@@ -290,8 +281,8 @@ def parse_document(
         shell = DocumentShell.model_validate(payload)
     except ValidationError as exc:
         raise DocumentFormatError("Document shell failed strict v1 validation") from exc
-    validate_document_path(shell, path, codec=codec)
-    if artifact_bytes_for_path(render_document(shell), path, codec=codec) != content:
+    validate_document_path(shell, path)
+    if render_document(shell) != content:
         raise DocumentFormatError("Document shell is not in canonical wire form")
     return shell
 

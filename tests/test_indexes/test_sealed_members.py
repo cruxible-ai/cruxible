@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, file_digest
+from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.claims import (
     _parse_claim,
     claim_artifact_digest,
@@ -31,7 +31,7 @@ def _member():
 def test_carried_member_equals_the_cold_parse_digests_and_normalized_rows(monkeypatch):
     path, content = _member()
     member = sealed_claim_member(content, path=path)
-    fresh = _parse_claim(content, path=path, codec=CURRENT_ARTIFACT_CODEC)
+    fresh = _parse_claim(content, path=path)
     assert member.claim == fresh
     assert member.input_digest == file_digest(content).tagged
     assert member.artifact_digest == claim_artifact_digest(fresh).tagged
@@ -94,7 +94,7 @@ def test_request_owns_a_member_when_the_process_carrier_cannot_retain_it(monkeyp
         with artifact_request():
             assert sealed_claim_member(content, path=path) is member
         # The oracle bypasses both the request carrier and process LRU.
-        fresh = _parse_claim(content, path=path, codec=CURRENT_ARTIFACT_CODEC)
+        fresh = _parse_claim(content, path=path)
         assert member.claim == fresh
         assert member.facts == _claim_static_facts(
             fresh,

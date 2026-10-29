@@ -23,13 +23,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
-    artifact_bytes_for_path,
-    artifact_path_for_codec,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -134,14 +129,12 @@ def subject_path(subject_kind: str, subject_id: str) -> str:
 def validate_subject_path(
     shell: SubjectShell,
     path: str,
-    *,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> str:
     expected = subject_path(shell.subject_kind, shell.subject_id)
-    if not artifact_path_matches(expected, path, codec=codec):
+    if expected != path:
         raise SubjectFormatError(
             "Subject identity/path disagreement: "
-            f"{shell.qualified_identity!r} requires {artifact_path_for_codec(expected, codec)!r}"
+            f"{shell.qualified_identity!r} requires {expected!r}"
         )
     return path
 
@@ -157,19 +150,15 @@ def parse_subject(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> SubjectShell:
-    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
-    return _SUBJECT_PARSES.parse(
-        content, path, codec, lambda: _parse_subject(content, path=path, codec=codec)
-    )
+    """Parse once per exact (path, bytes); see ``content_memo``."""
+    return _SUBJECT_PARSES.parse(content, path, None, lambda: _parse_subject(content, path=path))
 
 
 def _parse_subject(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> SubjectShell:
     try:
         payload = json.loads(content)
@@ -182,8 +171,8 @@ def _parse_subject(
         shell = SubjectShell.model_validate(payload)
     except ValidationError as exc:
         raise SubjectFormatError("Subject shell failed strict v1 validation") from exc
-    validate_subject_path(shell, path, codec=codec)
-    if artifact_bytes_for_path(render_subject(shell), path, codec=codec) != content:
+    validate_subject_path(shell, path)
+    if render_subject(shell) != content:
         raise SubjectFormatError("Subject shell is not in canonical wire form")
     return shell
 

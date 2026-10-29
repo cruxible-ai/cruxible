@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.service.procedures.provider_installation import installed_providers
 from tests.core_support._support import initialize_local
@@ -163,13 +162,11 @@ def _population(tmp_path: Path, package, size: int):
         coordinate=coordinate,
         tree=tree,
     )
-    codec = CURRENT_ARTIFACT_CODEC
     insert_members(connection, tree, coordinate.git_object_format)
     insert_owners(
         connection,
         parsed=parse_static_owners(tree, accepted=coordinate),
         blobs=tree,
-        codec=codec,
     )
     connection.executemany(
         "INSERT INTO provider_registration_order VALUES (?,'',?)",

@@ -27,11 +27,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
@@ -958,27 +954,23 @@ def parse_provider(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProviderAny:
-    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
-    return _PROVIDER_PARSES.parse(
-        content, path, codec, lambda: _parse_provider(content, path=path, codec=codec)
-    )
+    """Parse once per exact (path, bytes); see ``content_memo``."""
+    return _PROVIDER_PARSES.parse(content, path, None, lambda: _parse_provider(content, path=path))
 
 
 def _parse_provider(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProviderAny:
     try:
         provider = _PROVIDER_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderFormatError("Provider failed strict versioned validation") from exc
-    if not artifact_path_matches(provider_path(provider.identity.name), path, codec=codec):
+    if provider_path(provider.identity.name) != path:
         raise ProviderFormatError("Provider identity/path disagreement")
-    if artifact_bytes_for_path(render_provider(provider), path, codec=codec) != content:
+    if render_provider(provider) != content:
         raise ProviderFormatError("Provider is not in canonical wire form")
     return provider
 

@@ -47,7 +47,6 @@ def _fixture(tmp_path, sources):
     request = assembler.request(output_staging_directory=directory / ".stage")
     parsed = parse_projection_tree(
         sources,
-        artifact_codec=assembler.artifact_codec,
     )
     path = directory / "fixture.sqlite"
     initialize_projection_database(

@@ -1,12 +1,12 @@
 """Bounded per-process memos for pure parses and digests of immutable artifacts.
 
-A governed artifact's parse is a pure function of its path, its codec and its
+A governed artifact's parse is a pure function of its path and its
 exact bytes, and each of its digests is a pure function of the parsed value.
 Within one write or one Line run the same few ClaimTypes, CaptureContracts,
 Providers, Subjects and Claims are parsed and digested dozens of times by
 different laws and indexes. These memos make each of those a lookup:
 
-- ``ParseMemo`` keys a parse by ``(path, codec, bytes)``: the content itself,
+- ``ParseMemo`` keys a parse by ``(path, variant, bytes)``: the content itself,
   never a caller's object. A parsed value whose whole model tree is sealable
   (see ``seal``) is sealed once, and that one immutable value is handed to
   every caller. Any other value is kept pickled and every caller gets its own
@@ -393,7 +393,7 @@ def request_derive(
 
 
 class ParseMemo(Generic[_V]):
-    """``(path, codec, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
+    """``(path, variant, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
 
     def __init__(
         self, *, capacity: int, max_bytes: int, max_entry_bytes: int | None = None
@@ -409,10 +409,10 @@ class ParseMemo(Generic[_V]):
         self._bytes = 0
         self._lock = threading.Lock()
 
-    def parse(self, content: bytes, path: str, codec: object, parse: Callable[[], _V]) -> _V:
+    def parse(self, content: bytes, path: str, variant: object, parse: Callable[[], _V]) -> _V:
         if type(content) is not bytes or type(path) is not str:
             return parse()
-        key = (path, codec, content)
+        key = (path, variant, content)
         try:
             hash(key)
         except TypeError:

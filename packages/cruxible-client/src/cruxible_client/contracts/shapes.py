@@ -38,11 +38,7 @@ from pydantic import (
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -933,9 +929,7 @@ def validate_contract(data: object) -> Contract:
         raise ContractFormatError(f"Contract failed strict validation: {exc}") from exc
 
 
-def parse_contract(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> Contract:
+def parse_contract(content: bytes, *, path: str) -> Contract:
     """Strict canonical parse of one accepted Contract; every nested pin carries its digest."""
 
     try:
@@ -945,9 +939,9 @@ def parse_contract(
     contract = validate_contract(data)
     if any(ref.digest is None for ref in all_field_refs(contract)):
         raise ContractFormatError("an accepted Contract pins every nested Contract by digest")
-    if not artifact_path_matches(contract_path(contract.name, contract.version), path, codec=codec):
+    if not contract_path(contract.name, contract.version) == path:
         raise ContractFormatError("Contract identity/path disagreement")
-    if artifact_bytes_for_path(render_contract(contract), path, codec=codec) != content:
+    if render_contract(contract) != content:
         raise ContractFormatError("Contract is not in canonical wire form")
     return contract
 

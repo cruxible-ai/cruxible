@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.providers import (
     ProviderDistributionRef,
     ProviderImplementationManifest,
@@ -168,13 +167,11 @@ def _population(tmp_path, package, size):
     )
     instance = _instance(tmp_path / str(size), tree)
     connection = instance.connection
-    codec = CURRENT_ARTIFACT_CODEC
     insert_members(connection, tree, instance.coordinate.git_object_format)
     insert_owners(
         connection,
         parsed=parse_static_owners(tree, accepted=instance.coordinate),
         blobs=tree,
-        codec=codec,
     )
     connection.executemany(
         "INSERT INTO provider_registration_order VALUES (?,'',?)",
@@ -332,7 +329,6 @@ def test_head_updates_are_flat_and_retirement_falls_back(tmp_path, monkeypatch, 
                 request=instance.coordinate,
                 parsed=parse_static_owners(changed, accepted=instance.coordinate),
                 sources=changed,
-                codec=CURRENT_ARTIFACT_CODEC,
                 changed_paths=(path,),
                 whole_checks=False,
             )

@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.canonical import ArtifactCodec, file_digest, is_candidate_card_path
+from cruxible_client.contracts.canonical import file_digest, is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.compiler.projection_artifacts import ParsedProjectionTree
 from cruxible_core.indexes.evidence.citation_sql import (
@@ -66,7 +66,6 @@ def cold_claim_digest_resolver(
     *,
     repository: Any,
     head_oid: str,
-    codec: ArtifactCodec,
     coordinates: Mapping[int, Any],
 ) -> Callable[[str], tuple[str, ...]]:
     """Resolve full-rebuild inputs from exact retained occurrences, even if deleted.
@@ -114,7 +113,7 @@ def cold_claim_digest_resolver(
                     raise ProjectionIntegrityError(
                         "legacy Claim occurrence input differs from retained commitment"
                     )
-                claim = parse_claim(content, path=member.path, codec=codec)
+                claim = parse_claim(content, path=member.path)
                 actual = claim_artifact_digest(claim).tagged
                 if exact is not None and actual != exact:
                     raise ProjectionIntegrityError(
@@ -142,7 +141,6 @@ def parse_static_owners(
     """
     from dataclasses import replace
 
-    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_client.contracts.documents import document_digest, parse_document
     from cruxible_core.compiler.compiler import require_current_compiler
     from cruxible_core.compiler.projection_artifacts import (
@@ -153,7 +151,6 @@ def parse_static_owners(
     )
 
     require_current_compiler(accepted.compiler)
-    codec = CURRENT_ARTIFACT_CODEC
     source_kinds = {
         path: None if is_candidate_card_path(path) else registered_path_kind(path)
         for path in sources
@@ -161,7 +158,6 @@ def parse_static_owners(
     documents = {path: body for path, body in sources.items() if source_kinds[path] == "document"}
     parsed = parse_projection_tree(
         {path: body for path, body in sources.items() if path not in documents},
-        artifact_codec=codec,
         verified_change_sets=verified_change_sets,
         selected_member_history=selected_member_history,
         carry_members=True,
@@ -181,7 +177,7 @@ def parse_static_owners(
         for pin in parsed.pins
     }
     for path, content in documents.items():
-        document = parse_document(content, path=path, codec=codec)
+        document = parse_document(content, path=path)
         envelopes.append(
             ArtifactEnvelopeRow(
                 document.identity,
@@ -216,7 +212,6 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
     inventory. Citation envelope availability is evaluated under
     its own live source rules, outside this proof.
     """
-    from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
     from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 
     accepted = projection.accepted
@@ -224,7 +219,6 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
         blob.path: blob.content
         for blob in read_registered_tree(repository, accepted.git_oid, limits=TreeReadLimits())
     }
-    codec = CURRENT_ARTIFACT_CODEC
     parsed = parse_static_owners(sources, accepted=accepted)
     expected = sqlite3.connect(":memory:")
     try:
@@ -234,12 +228,10 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             expected,
             parsed=parsed,
             blobs=sources,
-            codec=codec,
             resolve_digest=cold_claim_digest_resolver(
                 sources,
                 repository=repository,
                 head_oid=accepted.git_oid,
-                codec=codec,
                 coordinates={},
             ),
         )
@@ -378,7 +370,6 @@ def replace_rows(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     sources: Mapping[str, bytes],
-    codec: ArtifactCodec,
     changed_paths: Iterable[str] = (),
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
@@ -473,9 +464,7 @@ def replace_rows(
     execute_in(connection, "DELETE FROM principals WHERE path IN ({})", changed)
     execute_in(connection, "DELETE FROM members WHERE path IN ({})", changed)
     insert_members(connection, sources, request.git_object_format)
-    insert_owners(
-        connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
-    )
+    insert_owners(connection, parsed=parsed, blobs=sources, resolve_digest=resolve_digest)
     from cruxible_core.indexes.provider_heads import refresh_provider_heads
 
     refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
@@ -539,7 +528,6 @@ def replace_rows(
                 ).fetchone()
                 is not None
             ),
-            artifact_codec=codec,
         )
     for fact in parsed.semantic_facts:
         if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
@@ -585,7 +573,6 @@ def initialize(
     parsed: ParsedProjectionTree,
     sources: Mapping[str, bytes],
     repository: Any,
-    codec: ArtifactCodec,
     assembler_implementation: str,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
@@ -603,7 +590,6 @@ def initialize(
             request=request,
             parsed=parsed,
             sources=sources,
-            codec=codec,
             resolve_digest=resolve_digest,
             bodies=bodies,
         )
@@ -647,7 +633,6 @@ def update(
     parsed: ParsedProjectionTree,
     sources: Mapping[str, bytes],
     changed_paths: Iterable[str],
-    codec: ArtifactCodec,
     inventory: tuple[int, int],
     bodies: Any = None,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
@@ -674,7 +659,6 @@ def update(
             parsed=parsed,
             sources=sources,
             changed_paths=changed_paths,
-            codec=codec,
             bodies=bodies,
             resolve_digest=resolve_digest,
             whole_checks=False,

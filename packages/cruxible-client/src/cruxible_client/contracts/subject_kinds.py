@@ -37,11 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
@@ -181,16 +177,14 @@ def subject_kind_digest(subject_kind: SubjectKind) -> ArtifactDigest:
     )
 
 
-def parse_subject_kind(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> SubjectKind:
+def parse_subject_kind(content: bytes, *, path: str) -> SubjectKind:
     try:
         subject_kind = SubjectKind.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise SubjectKindFormatError("SubjectKind failed strict validation") from exc
-    if not artifact_path_matches(subject_kind_path(subject_kind.identity.name), path, codec=codec):
+    if subject_kind_path(subject_kind.identity.name) != path:
         raise SubjectKindFormatError("SubjectKind identity/path disagreement")
-    if artifact_bytes_for_path(render_subject_kind(subject_kind), path, codec=codec) != content:
+    if render_subject_kind(subject_kind) != content:
         raise SubjectKindFormatError("SubjectKind is not in canonical wire form")
     return subject_kind
 

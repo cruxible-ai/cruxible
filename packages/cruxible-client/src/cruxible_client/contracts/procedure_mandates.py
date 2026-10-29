@@ -26,12 +26,8 @@ from pydantic import (
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
-    artifact_bytes_for_path,
-    artifact_path_matches,
     normalize_ledger_path,
     pretty_canonical_bytes,
     typed_digest,
@@ -662,7 +658,6 @@ def parse_procedure_mandate_any(
     content: bytes,
     *,
     path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProcedureMandateAny:
     """Parse one Mandate; every earlier generation pinned a Procedure and is not read."""
 
@@ -679,9 +674,9 @@ def parse_procedure_mandate_any(
         mandate = ProcedureMandate.model_validate(raw)
     except ValueError as exc:
         raise ProcedureMandateError("ProcedureMandate failed strict validation") from exc
-    if not artifact_path_matches(procedure_mandate_path(mandate.identity.name), path, codec=codec):
+    if procedure_mandate_path(mandate.identity.name) != path:
         raise ProcedureMandateError("ProcedureMandate identity/path disagreement")
-    if artifact_bytes_for_path(render_procedure_mandate(mandate), path, codec=codec) != content:
+    if render_procedure_mandate(mandate) != content:
         raise ProcedureMandateError("ProcedureMandate is not in canonical wire form")
     return mandate
 

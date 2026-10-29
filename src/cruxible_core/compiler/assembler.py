@@ -9,7 +9,6 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
     ProjectionIntegrityError,
@@ -167,7 +166,6 @@ class ProjectionAssembler:
         self._repository = repository
         self.accepted = accepted
         self.publication_directory = publication_directory.resolve(strict=True)
-        self.artifact_codec = CURRENT_ARTIFACT_CODEC
         self.bodies = bodies
         self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
         self.resolve_claim_digest = resolve_claim_digest
@@ -417,7 +415,6 @@ class ProjectionAssembler:
             "parse_normalize",
             lambda: parse_projection_tree(
                 blob_map,
-                artifact_codec=self.artifact_codec,
                 bodies=self.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
@@ -432,7 +429,6 @@ class ProjectionAssembler:
                 blob_map,
                 repository=self._repository,
                 head_oid=request.git_oid,
-                codec=self.artifact_codec,
                 coordinates=self.accepted_coordinates_by_sequence,
             )
 

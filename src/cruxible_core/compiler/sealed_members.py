@@ -1,7 +1,7 @@
 """Byte-bound immutable Claim derivations shared by the write pipeline.
 
-The strict parse owns this value, not a request or a tree. Its path, codec and
-exact bytes are the parse memo's key; changing any of them derives a new value.
+The strict parse owns this value, not a request or a tree. Its path and exact
+bytes are the parse memo's key; changing any of them derives a new value.
 Acceptance-dependent rows (revision, verdict and explanations) stay with the
 generation compiler. Only intrinsic rows can travel with a member.
 """
@@ -13,11 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
-    ArtifactCodec,
-    file_digest,
-)
+from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_artifact_digest,
@@ -34,7 +30,6 @@ if TYPE_CHECKING:
 class SealedClaimMember:
     path: str
     content: bytes
-    codec: ArtifactCodec
     claim: ClaimArtifactAny
     input_digest: str
     artifact_digest: str
@@ -42,7 +37,7 @@ class SealedClaimMember:
     facts: tuple[ProjectionFact, ...]
 
 
-_MEMBERS: OrderedDict[tuple[str, ArtifactCodec, bytes], SealedClaimMember] = OrderedDict()
+_MEMBERS: OrderedDict[tuple[str, bytes], SealedClaimMember] = OrderedDict()
 _LOCK = threading.RLock()
 _MAX_BYTES = 32 * 1024 * 1024
 _WEIGHT = 0
@@ -56,20 +51,18 @@ def _clear() -> None:
         _WEIGHT = 0
 
 
-def sealed_claim_member(
-    content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> SealedClaimMember:
+def sealed_claim_member(content: bytes, *, path: str) -> SealedClaimMember:
     """The request owns the member even if the bounded process memo evicts it."""
     return request_derive(
-        ("core.sealed_claim_member", path, codec, content),
-        lambda: _sealed_claim_member(content, path=path, codec=codec),
+        ("core.sealed_claim_member", path, content),
+        lambda: _sealed_claim_member(content, path=path),
     )
 
 
-def _sealed_claim_member(content: bytes, *, path: str, codec: ArtifactCodec) -> SealedClaimMember:
+def _sealed_claim_member(content: bytes, *, path: str) -> SealedClaimMember:
     global _WEIGHT
-    cacheable = type(content) is bytes and type(path) is str and type(codec) is ArtifactCodec
-    key = (path, codec, content)
+    cacheable = type(content) is bytes and type(path) is str
+    key = (path, content)
     # Hold one lock through construction: concurrent consumers also derive the
     # member once. Only intrinsic computation occurs here, with no I/O.
     with _LOCK:
@@ -77,7 +70,7 @@ def _sealed_claim_member(content: bytes, *, path: str, codec: ArtifactCodec) -> 
         if found is not None:
             _MEMBERS.move_to_end(key)
             return found
-        claim = parse_claim(content, path=path, codec=codec)
+        claim = parse_claim(content, path=path)
         from cruxible_core.compiler.projection_artifacts import _claim_static_facts
 
         input_digest = file_digest(content).tagged
@@ -95,7 +88,7 @@ def _sealed_claim_member(content: bytes, *, path: str, codec: ArtifactCodec) -> 
         if not all(seal(fact) for fact in facts):
             raise TypeError("intrinsic Claim projection facts must be sealable")
         member = SealedClaimMember(
-            path, content, codec, claim, input_digest, artifact_digest, statement_digest, facts
+            path, content, claim, input_digest, artifact_digest, statement_digest, facts
         )
         # Account for the bytes, parsed model and normalized facts. A large
         # member bypasses retention; no cache grows with the instance.

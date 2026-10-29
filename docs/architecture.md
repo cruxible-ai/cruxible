@@ -147,7 +147,7 @@ Indexes, search engines or graph databases that accelerate reads are
 projections of accepted state and can be rebuilt from it.
 
 Each write or Line request owns an artifact carrier across lowering, evaluation
-and projection. Every parser keys it by parser, exact bytes, path and codec;
+and projection. Every parser keys it by parser, exact bytes and path;
 nested stages join the outer request. It retains oversized and evicted process
 memo entries until that request exits, so LRU budgets do not cause repeated
 parsing within a large change. Sealed models are shared; unsealable parses stay
@@ -162,7 +162,7 @@ the same artifact parsers as accepted-tree reconstruction.
 
 The write pipeline shares each Claim's sealed member: exact bytes, strict
 parsed model, digests and normalized intrinsic projection facts. The bounded
-cache keys all of these by path, codec and exact bytes. Changed bytes derive a
+cache keys all of these by path and exact bytes. Changed bytes derive a
 new member. Generation-dependent revisions, verdicts and explanation proofs
 are compiled for the accepting coordinate. Carried rows are checked against
 fresh derivation in tests; cold reconstruction remains the projection oracle.

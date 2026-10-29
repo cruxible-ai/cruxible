@@ -11,7 +11,6 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, ArtifactCodec
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_digest,
@@ -228,7 +227,6 @@ def populate_citations(
     *,
     bodies: BodyProjectionProtocol,
     owner_exists: OwnerExists,
-    artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> None:
     """Replace changed Claim owners after typed owner publication, with exact source IDs."""
     # SAVEPOINT composes with a larger transaction and rolls back a partial owner
@@ -259,7 +257,7 @@ def populate_citations(
                     claim_attestation_v2_envelope_digest,
                 )
 
-                value = parse_accepted_attestation(content, path=path, codec=artifact_codec)
+                value = parse_accepted_attestation(content, path=path)
                 key = claim_attestation_v2_envelope_digest(value)
                 if not owner_exists("attestation", key):
                     raise ProjectionFormatError("citation attestation owner is not published")
@@ -273,7 +271,7 @@ def populate_citations(
                 continue
             if not path.startswith("claims/"):
                 continue
-            claim = parse_claim(content, path=path, codec=artifact_codec)
+            claim = parse_claim(content, path=path)
             identity = claim.identity.qualified
             if not owner_exists("Claim", identity):
                 raise ProjectionFormatError("citation Claim owner is not published")

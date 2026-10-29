@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -287,31 +286,6 @@ def _update_source_reference_golden() -> None:
     _write(path, fixture)
 
 
-def _update_p2_b0_artifact_codec_golden() -> None:
-    path = GOLDENS / "p2-b0-artifact-codec-v1.json"
-    fixture = _read(path)
-    artifacts = fixture.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise TypeError("P2-B0 codec golden has no artifact inventory")
-    for raw in artifacts:
-        if not isinstance(raw, dict):
-            raise TypeError("P2-B0 codec artifact row is not an object")
-        kind = raw.get("kind")
-        current_path = raw.get("current_path")
-        model = raw.get("model")
-        if not isinstance(kind, str) or not isinstance(current_path, str):
-            raise TypeError("P2-B0 codec artifact identity is malformed")
-        if not isinstance(model, dict):
-            raise TypeError("P2-B0 codec artifact model is malformed")
-        p2_b0_path = current_path.removesuffix(".json") + ".yaml"
-        compact = canonical_bytes(model) + b"\n"
-        raw["p2_b0_path"] = p2_b0_path
-        raw["compact_wire"] = compact.decode("utf-8")
-        raw["exact_member_digest"] = "sha256:" + hashlib.sha256(compact).hexdigest()
-    artifacts.sort(key=lambda item: str(item["kind"]).encode("utf-8"))
-    _write(path, fixture)
-
-
 def _update_candidate_v2_golden() -> None:
     path = GOLDENS / "candidate-v2.json"
     fixture = _read(path)
@@ -467,7 +441,6 @@ def main() -> None:
     _update_dependency_edge_golden()
     _update_changeset_golden()
     _update_source_reference_golden()
-    _update_p2_b0_artifact_codec_golden()
     _update_seed_bundle()
 
 
