@@ -4810,6 +4810,21 @@
                 "title": "On Unavailable",
                 "type": "string"
               },
+              "origins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Origins"
+              },
               "permitted_replayability": {
                 "anyOf": [
                   {
@@ -35911,6 +35926,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -36608,6 +36625,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -53576,6 +53595,21 @@
                 "title": "On Unavailable",
                 "type": "string"
               },
+              "origins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Origins"
+              },
               "permitted_replayability": {
                 "anyOf": [
                   {
@@ -63944,6 +63978,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -66660,6 +66696,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -68819,6 +68857,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -71310,6 +71350,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -73906,6 +73948,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -76789,6 +76833,8 @@
                   "cruxible.acquisition.stale",
                   "cruxible.acquisition.oversized",
                   "cruxible.acquisition.refused",
+                  "cruxible.acquisition.replayability_ineligible",
+                  "cruxible.acquisition.origin_ineligible",
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
@@ -91604,6 +91650,21 @@
                 "title": "On Unavailable",
                 "type": "string"
               },
+              "origins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Origins"
+              },
               "permitted_replayability": {
                 "anyOf": [
                   {
@@ -101346,6 +101407,21 @@
                 ],
                 "title": "On Unavailable",
                 "type": "string"
+              },
+              "origins": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Origins"
               },
               "permitted_replayability": {
                 "anyOf": [
