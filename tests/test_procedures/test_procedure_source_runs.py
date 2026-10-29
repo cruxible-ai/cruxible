@@ -2,8 +2,9 @@
 
 These are lane tests, not kernel tests: everything from the accepted tree to the
 run receipt is the real served path -- accepted Provider seed, accepted
-CaptureContract and SourceAcquisitionPolicy, the shared occurrence planner, the
-V5 admission the direct lane now binds, the governed `WorkspaceFileReader`, and
+CaptureContract and the Procedure's inline acquisition defaults, the shared
+occurrence planner, the V5 admission the direct lane now binds, the governed
+`WorkspaceFileReader`, and
 the Capture the read becomes. The one stubbed seam is the Provider SUBPROCESS
 itself, which `tests/test_exhaust/p2b4_unit2/test_workspace_source_runtime.py`
 already stubs at the same boundary; materializing the adapter environment is a
@@ -22,18 +23,7 @@ from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    ACQUISITION_POLICY_PIN_ROLE,
-    SourceAcquisitionPolicy,
-    acquisition_policy_digest,
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_path,
-)
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -48,7 +38,8 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
+    MandateGrant,
+    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -67,6 +58,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_identity_digest,
+    line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
@@ -94,15 +86,11 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.repairs import HandEditRepair
-from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    WorkspaceFileSourceRequestV2,
-)
+from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
     WORKSPACE_FILE_INTERFACE_ID,
 )
@@ -139,7 +127,7 @@ ACCEPT_STAMP = "2026-09-12T11:30:00.000000Z"
 PROCEDURE_NAME = "osv-advisory"
 SOURCE_ALIAS = "advisory"
 RELATIVE_PATH = "data/osv-advisory.json"
-ADVISORY = {"advisory_id": "OSV-2026-0001", "severity": "high"}
+ADVISORY = b"high"
 
 
 class _WorkspaceInvoker:
@@ -182,9 +170,15 @@ class _WorkspaceInvoker:
                         "byte_length": context.input["byte_length"],
                     },
                     "content": {
-                        "kind": "json",
+                        "kind": "text",
                         "encoding": "utf-8",
-                        "json": json.loads(raw),
+                        "bom": False,
+                        "newline": "none",
+                        "trailing_newline": False,
+                        "line_count": 1,
+                        "character_count": len(raw.decode("utf-8")),
+                        "text": raw.decode("utf-8"),
+                        "lines": [raw.decode("utf-8")],
                     },
                 },
             ),
@@ -210,19 +204,18 @@ class _Operator:
     def admit_line_provider(  # type: ignore[no-untyped-def]
         self,
         accepted_provider,
-        accepted_interface,
+        bound,
         implementation_digest,
         *,
         eligible_environment_pin_keys,
     ) -> VerifiedProviderBinding:
-        from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+        from cruxible_client.contracts.provider_operations import operation_signature_digest
 
         implementation = accepted_provider.provider.implementations[0]
         return VerifiedProviderBinding(
             provider_artifact_digest=accepted_provider.artifact_digest,
-            interface_artifact_digest=accepted_interface.artifact_digest,
-            interface_id=accepted_interface.registration.interface_id,
-            interface_digest=interface_definition_digest(accepted_interface.registration),
+            operation=bound.name,
+            operation_signature_digest=operation_signature_digest(bound.signature()),
             implementation_digest=implementation_digest,
             deployment_digest="sha256:" + "a" * 64,
             materialization_digest=(
@@ -266,10 +259,8 @@ def _procedure(  # noqa: PLR0913
     *,
     root: Path,
     contract: CaptureContract,
-    provider_pin: ArtifactPin,
-    interface_pin: ArtifactPin,
     relative_path: str = RELATIVE_PATH,
-    policy_pin: ArtifactPin | None = None,
+    acquisition_defaults: dict[str, AcquisitionDefault] | None = None,
 ) -> ProcedureArtifact:
     input_contract, output_contract = _contracts()
     contract_in = ArtifactPin(
@@ -304,26 +295,42 @@ def _procedure(  # noqa: PLR0913
             ),
         }
     )
+    from cruxible_client.contracts.shapes import contract_digest
+    from cruxible_client.contracts.workspace_file import workspace_file_contracts
+
+    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
     definition = ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read one accepted advisory document and shape its severity.",
         contract_in=contract_in,
         contract_out=contract_out,
+        slots={
+            "read": {
+                "in": {
+                    "name": "workspace.file.request",
+                    "version": 1,
+                    "digest": contract_digest(wf_request).tagged,
+                },
+                "out": {
+                    "name": "workspace.file.result",
+                    "version": 1,
+                    "digest": contract_digest(wf_result).tagged,
+                },
+                "effect": "pure",
+            }
+        },
         nodes=(
             SourceNode(
                 node_id="read",
                 capture_contract=capture_pin,
-                provider=provider_pin,
-                interface=interface_pin,
-                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+                slot="read",
                 request=request.model_dump(mode="json"),
                 as_=SOURCE_ALIAS,
                 next="shape",
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": f"$steps.{SOURCE_ALIAS}.content.json.severity"},
+                fields={"severity": f"$steps.{SOURCE_ALIAS}.content.text"},
                 contract_out=contract_out,
                 as_="result",
             ),
@@ -352,14 +359,7 @@ def _procedure(  # noqa: PLR0913
         definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
-                (
-                    contract_in,
-                    contract_out,
-                    capture_pin,
-                    provider_pin,
-                    interface_pin,
-                    *(() if policy_pin is None else (policy_pin,)),
-                ),
+                (contract_in, contract_out, capture_pin),
                 key=lambda pin: (
                     pin.role.encode("utf-8"),
                     pin.target.qualified.encode("utf-8"),
@@ -374,35 +374,19 @@ def _procedure(  # noqa: PLR0913
             )
         ),
         activation_policy="drain",
+        acquisition_defaults=acquisition_defaults or {},
     )
 
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    from cruxible_client.contracts.procedures.names import name_procedure
 
-    if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER:
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        return name_procedure(procedure)
-    return procedure
+    return name_procedure(procedure)
 
 
 def _policy(
     *, name: str = "default", overrides: dict[str, CanonicalDuration | None] | None = None
-) -> SourceAcquisitionPolicy:
-    return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
-        max_age=CanonicalDuration(microseconds=3_600_000_000),
-        overrides=overrides or {},
-    )
-
-
-def _policy_pin(policy: SourceAcquisitionPolicy) -> ArtifactPin:
-    """The envelope pin an author's `acquisition_policy` name lowers into."""
-
-    return ArtifactPin(
-        role=ACQUISITION_POLICY_PIN_ROLE,
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
+) -> AcquisitionDefault:
+    del name  # Acquisition defaults are inline data now, not a named artifact.
+    return AcquisitionDefault(max_age=CanonicalDuration(microseconds=3_600_000_000))
 
 
 def _world(  # noqa: PLR0913
@@ -410,81 +394,26 @@ def _world(  # noqa: PLR0913
     *,
     contents: bytes | None = None,
     contract: CaptureContract | None = None,
-    policy: SourceAcquisitionPolicy | None = None,
-    accept_policy: bool = True,
+    policy: AcquisitionDefault | None = None,
     accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
-    pin_policy: bool = False,
-    historical: bool = False,
 ):  # type: ignore[no-untyped-def]
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
-
-    initialize = initialize_legacy_local if historical else initialize_local
-    instance, owner = initialize(tmp_path)
-    # Genesis seeds the workspace.file interface and the core built-in Provider
-    # (and the classifier is compiler-owned); the Procedure pins them as accepted.
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    registration = parse_provider_interface(
-        tree[provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)],
-        path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID),
-    )
-    provider = parse_provider(
-        tree[provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID)],
-        path=provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID),
-    )
-    provider_pin = ArtifactPin(
-        role="provider",
-        target=provider.identity,
-        artifact_digest=provider_digest(provider).tagged,
-    )
-    interface_pin = ArtifactPin(
-        role="provider-interface",
-        target=registration.identity,
-        artifact_digest=provider_interface_digest(registration).tagged,
-    )
+    instance, owner = initialize_local(tmp_path)
     # `initialize_local` attaches exactly this root to the instance.
     workspace_root = tmp_path / "workspace"
     target = workspace_root / write_at
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(canonical_bytes(ADVISORY) if contents is None else contents)
+    target.write_bytes(ADVISORY if contents is None else contents)
 
     accepted_contract = capture_contract() if contract is None else contract
     accepted_policy = _policy() if policy is None else policy
-    if historical:
-        from cruxible_client.contracts.acquisition_policies import (
-            IndependentCoherence,
-            InputAcquisitionRule,
-            SourceAcquisitionPolicyV1,
-        )
-
-        from tests.core_support._pc_c_support import capture_contract as frozen_contract
-
-        accepted_contract = frozen_contract() if contract is None else contract
-        accepted_policy = SourceAcquisitionPolicyV1(
-            identity=accepted_policy.identity,
-            inputs=(
-                InputAcquisitionRule(
-                    input_name=SOURCE_ALIAS,
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    max_age=accepted_policy.max_age,
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="preserve",
-                ),
-            ),
-            coherence=IndependentCoherence(),
-        )
     procedure = _procedure(
         instance,
         root=workspace_root,
         contract=accepted_contract,
-        provider_pin=provider_pin,
-        interface_pin=interface_pin,
         relative_path=relative_path,
-        policy_pin=_policy_pin(accepted_policy) if pin_policy else None,
+        acquisition_defaults={SOURCE_ALIAS: accepted_policy},
     )
     members = {
         capture_contract_path(accepted_contract.identity.name): render_capture_contract(
@@ -493,10 +422,6 @@ def _world(  # noqa: PLR0913
     }
     if accept_procedure:
         members[procedure_path(PROCEDURE_NAME)] = render_procedure(procedure)
-    if accept_policy:
-        members[acquisition_policy_path(accepted_policy.identity.name)] = render_acquisition_policy(
-            accepted_policy
-        )
     inspection = submit_member_candidate(
         instance,
         members=members,
@@ -609,7 +534,7 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
     assert observation.source_read_receipt.bytes_digest == (
-        "sha256:" + hashlib.sha256(canonical_bytes(ADVISORY)).hexdigest()
+        "sha256:" + hashlib.sha256(ADVISORY).hexdigest()
     )
     # The Source was authored without a binding digest: the one recorded is the
     # daemon's binding of the attached root to this instance.
@@ -648,7 +573,7 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
         status.source_observations[0].source_read_receipt_digest
         == observation.source_read_receipt_digest
     )
-    assert acquisition_policy_digest(policy_artifact).tagged is not None
+    assert policy_artifact.max_age is not None
 
 
 def test_a_changed_file_yields_a_different_receipt_and_a_different_value(
@@ -659,8 +584,8 @@ def test_a_changed_file_yields_a_different_receipt_and_a_different_value(
     first, _invoker = _run(instance, root)
     assert first.status == "succeeded"
 
-    changed = {"advisory_id": "OSV-2026-0001", "severity": "critical"}
-    (root / RELATIVE_PATH).write_bytes(canonical_bytes(changed))
+    changed = b"critical"
+    (root / RELATIVE_PATH).write_bytes(changed)
 
     # Re-running AT THE SAME EVALUATION INSTANT is the same occurrence, so it
     # replays the retained observation rather than silently minting a second
@@ -692,24 +617,37 @@ LINE_NAME = "advisory-hourly"
 
 
 def _served_line(
+    instance: PlaybillInstance,
     procedure: ProcedureArtifact,
-    policy: SourceAcquisitionPolicy,
+    policy: AcquisitionDefault,
 ) -> LineSpec:
     """A Line over the same Source Procedure the direct lane runs."""
+
+    from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
 
     procedure_pin = ArtifactPin(
         role="procedure",
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy_pin = _policy_pin(policy)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    provider = parse_provider(
+        tree[provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID)],
+        path=provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID),
+    )
     caps = procedure.definition.hard_caps
     line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name=LINE_NAME),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        acquisition_policy=policy_pin,
+        bindings={
+            "read": LineBinding(
+                build=binding_pin(provider.identity, provider_digest(provider).tagged),
+                operation=WORKSPACE_FILE_INTERFACE_ID,
+            )
+        },
+        acquisition={SOURCE_ALIAS: policy},
         max_authority="observe",
         budgets={
             "max_capture_bytes": caps.max_capture_bytes,
@@ -718,16 +656,6 @@ def _served_line(
             "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
         },
         epsilon={"$decimal": "0.1"},
-        pins=tuple(
-            sorted(
-                (procedure_pin, policy_pin),
-                key=lambda pin: (
-                    pin.role.encode("utf-8"),
-                    pin.target.qualified.encode("utf-8"),
-                    pin.artifact_digest.encode("ascii"),
-                ),
-            )
-        ),
     )
 
     if procedure.artifact_format == "cruxible-procedure-v3":
@@ -737,16 +665,16 @@ def _served_line(
     return line
 
 
-def _line_mandate(procedure: ProcedureArtifact) -> ProcedureMandateV1:
-    return ProcedureMandateV1(
+def _line_mandate(line: LineSpec, procedure: ProcedureArtifact) -> ProcedureMandate:
+    return ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="advisory-line-mandate"),
-        procedure=ArtifactPin(
-            role="procedure",
-            target=procedure.identity,
-            artifact_digest=procedure_artifact_digest(procedure).tagged,
+        line=ArtifactPin(
+            role="line",
+            target=line.identity,
+            artifact_digest=line_spec_digest(line).tagged,
         ),
-        rung=2,
-        authority_ceiling=procedure.definition.hard_caps,
+        grants="propose",
+        resource_ceiling=procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -757,8 +685,8 @@ def _line_world(tmp_path: Path, **kwargs):  # type: ignore[no-untyped-def]
     """The direct lane's world, plus the accepted Line that triggers the same graph."""
 
     instance, owner, procedure, root, policy_artifact = _world(tmp_path, **kwargs)
-    line = _served_line(procedure, policy_artifact)
-    mandate = _line_mandate(procedure)
+    line = _served_line(instance, procedure, policy_artifact)
+    mandate = _line_mandate(line, procedure)
     _accept_more(
         instance,
         owner,
@@ -1068,22 +996,6 @@ def test_two_authorized_workspaces_and_no_name_refuse_listing_them(tmp_path: Pat
     assert invoker.spawn_calls == 0
 
 
-def test_a_missing_accepted_policy_refuses_before_any_journal(tmp_path: Path) -> None:
-    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path, accept_policy=False)
-    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
-    assert not journal_root.exists()
-
-    state, invoker = _run(instance, root)
-
-    assert state.status == "admission_refused"
-    assert isinstance(state.terminal, ProcedureAdmissionRefusal)
-    assert state.terminal.code == "source_acquisition_policy_required"
-    assert state.terminal.details["required_input_names"] == [SOURCE_ALIAS]
-    assert state.terminal.repair is not None
-    assert invoker.spawn_calls == 0
-    assert not journal_root.exists()
-
-
 class _DecliningInvoker(_WorkspaceInvoker):
     """The governed read happens; the Provider then declines the material."""
 
@@ -1300,246 +1212,6 @@ def _accept_more(instance, owner, members, *, name: str) -> None:  # type: ignor
     accept_proposal(instance, owner, inspection)
 
 
-def _twin_policy() -> SourceAcquisitionPolicy:
-    """Another team's policy that happens to declare the same alias set."""
-
-    return _policy(name="advisory-twin")
-
-
-def test_a_pinned_procedure_reads_its_policy_off_its_own_envelope(tmp_path: Path) -> None:
-    """The pin is the binding: it names the exact policy, and nothing else does."""
-
-    instance, _owner, procedure, root, policy_artifact = _world(
-        tmp_path, pin_policy=True, historical=True
-    )
-    pin = _policy_pin(policy_artifact)
-    assert pin in procedure.pins
-
-    state, invoker = _run(instance, root)
-
-    assert state.status == "succeeded", state.terminal
-    assert invoker.spawn_calls == 1
-    assert _admission(instance, state).acquisition_policy_digest == pin.artifact_digest
-
-
-def test_accepting_an_unrelated_policy_cannot_change_a_pinned_procedures_run(
-    tmp_path: Path,
-) -> None:
-    """The defect the pin closes: another team's acceptance is not this run's input.
-
-    Resolve-from-accepted-state keys on the Procedure's alias SET, and aliases
-    are Procedure-local names, so a second live policy declaring the same set
-    made an already accepted Procedure unrunnable. A pinned Procedure never
-    consults the rest of the tree, so the same acceptance is a no-op for it.
-    """
-
-    instance, owner, _procedure, root, policy_artifact = _world(tmp_path, pin_policy=True)
-    twin = _twin_policy()
-    assert twin.max_age == policy_artifact.max_age
-    _accept_more(
-        instance,
-        owner,
-        {acquisition_policy_path(twin.identity.name): render_acquisition_policy(twin)},
-        name="twin-policy",
-    )
-
-    state, invoker = _run(instance, root, evaluation_time=NOW + timedelta(minutes=5))
-
-    assert state.status == "succeeded", state.terminal
-    assert invoker.spawn_calls == 1
-    # It resolved the PINNED policy, not one of the two the alias set matches.
-    assert _admission(instance, state).acquisition_policy_digest == (
-        acquisition_policy_digest(policy_artifact).tagged
-    )
-
-
-def test_an_unrelated_policy_cannot_change_default_resolution(tmp_path: Path) -> None:
-    instance, owner, _procedure, root, default = _world(tmp_path)
-    twin = _twin_policy()
-    _accept_more(
-        instance,
-        owner,
-        {acquisition_policy_path(twin.identity.name): render_acquisition_policy(twin)},
-        name="twin-policy",
-    )
-    state, invoker = _run(instance, root, evaluation_time=NOW + timedelta(minutes=5))
-    assert state.status == "succeeded", state.terminal
-    assert invoker.spawn_calls == 1
-    assert (
-        _admission(instance, state).acquisition_policy_digest
-        == acquisition_policy_digest(default).tagged
-    )
-
-
-def test_a_pinned_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
-    """A policy COVERS a Procedure when each Source alias has a rule; extras are allowed."""
-
-    instance, _owner, _procedure, root, policy_artifact = _world(
-        tmp_path,
-        policy=_policy(overrides={"other-input": CanonicalDuration(microseconds=1)}),
-        pin_policy=True,
-    )
-    assert set(policy_artifact.overrides) == {"other-input"}
-
-    state, invoker = _run(instance, root)
-
-    assert state.status == "succeeded", state.terminal
-    assert invoker.spawn_calls == 1
-    assert _admission(instance, state).acquisition_policy_digest == (
-        acquisition_policy_digest(policy_artifact).tagged
-    )
-
-
-# --- the same coverage law, on the Line lane ---------------------------------
-
-
-def test_a_line_policy_with_extra_rules_covers_the_procedure(tmp_path: Path) -> None:
-    """The Line lane applies the direct lane's law: a covering policy runs."""
-
-    instance, root, line = _line_world(
-        tmp_path, policy=_policy(overrides={"other-input": CanonicalDuration(microseconds=1)})
-    )
-
-    state, invoker = _run_line(instance, root, line)
-
-    assert state.status == "succeeded", state.terminal
-    assert invoker.spawn_calls == 1
-
-
-def test_a_procedure_pinning_an_absent_policy_is_refused_at_acceptance(tmp_path: Path) -> None:
-    """The pin closes at acceptance, like every other non-deferred pin kind."""
-
-    instance, _owner, procedure, _root, _policy_artifact = _world(
-        tmp_path, accept_procedure=False, historical=True
-    )
-    absent = _policy(name="never-accepted")
-    dangling = procedure.model_copy(
-        update={
-            "pins": tuple(
-                sorted(
-                    (*procedure.pins, _policy_pin(absent)),
-                    key=lambda pin: (
-                        pin.role.encode("utf-8"),
-                        pin.target.qualified.encode("utf-8"),
-                        pin.artifact_digest.encode("ascii"),
-                    ),
-                )
-            )
-        }
-    )
-
-    inspection = submit_member_candidate(
-        instance,
-        members={procedure_path(PROCEDURE_NAME): render_procedure(dangling)},
-        actor_id="owner",
-        proposal_name="dangling-policy-pin",
-        proposal_family="procedure",
-        timestamp=SECOND_STAMP,
-    )
-
-    evaluation = inspection.proposal.evaluation
-    assert evaluation.verdict == "refused"
-    unresolved = [
-        item for item in evaluation.diagnostics if item.code == "cruxible.change_set.unresolved_pin"
-    ]
-    assert len(unresolved) == 1
-    detail = json.loads(unresolved[0].message)["pins"]
-    assert [item["pin_role"] for item in detail] == [ACQUISITION_POLICY_PIN_ROLE]
-    assert detail[0]["target_identity"]["name"] == absent.identity.name
-    assert detail[0]["reason"] == "missing_or_digest_mismatch"
-
-
-def test_the_policy_pin_leaves_the_definition_digest_byte_identical(tmp_path: Path) -> None:
-    """The pin rides on the envelope, so no accepted definition byte moves."""
-
-    _instance, _owner, unpinned, _root, policy_artifact = _world(tmp_path, historical=True)
-    pinned = unpinned.model_copy(
-        update={
-            "pins": tuple(
-                sorted(
-                    (*unpinned.pins, _policy_pin(policy_artifact)),
-                    key=lambda pin: (
-                        pin.role.encode("utf-8"),
-                        pin.target.qualified.encode("utf-8"),
-                        pin.artifact_digest.encode("ascii"),
-                    ),
-                )
-            )
-        }
-    )
-
-    assert pinned.definition_digest == unpinned.definition_digest
-    assert compute_procedure_definition_digest(pinned.definition).tagged == (
-        compute_procedure_definition_digest(unpinned.definition).tagged
-    )
-    # The ARTIFACT digest moves, because adopting the pin authors a new
-    # Procedure; nothing already accepted is rewritten.
-    assert procedure_artifact_digest(pinned).tagged != procedure_artifact_digest(unpinned).tagged
-
-
-def test_the_authoring_path_stores_a_policy_name_without_an_envelope_pin(
-    tmp_path: Path,
-) -> None:
-    """How an author names it: the policy's semantic name, and lowering owns the digest."""
-
-    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
-    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-    from cruxible_core.authoring.preflight import compute_preflight
-    from cruxible_core.proposals.proposals import AuthenticatedActor
-
-    instance, _owner, procedure, _root, policy_artifact = _world(
-        tmp_path, accept_procedure=False, pin_policy=True
-    )
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-
-    compiled = coordinator.compile(
-        actor=actor,
-        payload=ProcedureAuthoringPayload(
-            definition=_authored_definition(procedure),
-            activation_policy=procedure.activation_policy,
-            owned_contracts=procedure.owned_contracts,
-            acquisition_policy=policy_artifact.identity.name,
-            retire=False,
-        ),
-        canonical_timestamp=ACCEPT_STAMP,
-    )
-
-    assert compiled.verdict == "passed", compiled.frontier.diagnostics
-    intent = coordinator.list_pending(actor=actor).intents[0]
-    lowered = compute_preflight(instance, intent=intent, actor=actor).lowered
-    assert lowered is not None
-    from cruxible_client.contracts.procedures.artifacts import parse_procedure
-
-    authored = parse_procedure(
-        lowered.proposed_tree[procedure_path(PROCEDURE_NAME)], path=procedure_path(PROCEDURE_NAME)
-    )
-    assert authored.definition_digest == procedure.definition_digest
-    assert authored.acquisition_policy == policy_artifact.identity.name
-    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in authored.pins)
-    assert (
-        _policy_pin(policy_artifact).model_dump(mode="json")
-        not in lowered.resolved_authoring["pins"]
-    )
-
-
-def test_the_sdk_carries_the_named_policy_into_the_authoring_payload(tmp_path: Path) -> None:
-    """The SDK verb an author reaches for, and the payload it emits."""
-
-    from cruxible_client.authoring.sdk import Cruxible, ProcedureDraft
-
-    _instance, _owner, procedure, _root, policy_artifact = _world(tmp_path)
-    draft = Cruxible.procedure(
-        object(),
-        definition=_sdk_procedure_input(procedure).model_copy(
-            update={"acquisition_policy": policy_artifact.identity.name}
-        ),
-    )
-
-    assert isinstance(draft, ProcedureDraft)
-    assert draft.payload.acquisition_policy == policy_artifact.identity.name
-
-
 def _admission(instance: PlaybillInstance, state):  # type: ignore[no-untyped-def]
     """The V9 admission this run bound, read back off its own journal."""
 
@@ -1658,7 +1330,7 @@ def test_a_crash_between_the_read_receipt_and_the_capture_leaves_no_half_capture
     observation = status.source_observations[0]
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.bytes_digest == (
-        "sha256:" + hashlib.sha256(canonical_bytes(ADVISORY)).hexdigest()
+        "sha256:" + hashlib.sha256(ADVISORY).hexdigest()
     )
     assert observation.capture_digest is None
 
@@ -1695,10 +1367,8 @@ def test_the_admitted_plan_mismatch_code_stays_served(tmp_path: Path) -> None:
     assert "workspace_file_read_refused" in get_args(ProcedureNodeRefusalCode)
 
 
-@pytest.mark.parametrize("historical", [False, True])
 def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     tmp_path: Path,
-    historical: bool,
 ) -> None:
     """One lowering, one artifact: what authoring lowers is what the lane runs.
 
@@ -1714,7 +1384,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     from cruxible_core.proposals.proposals import AuthenticatedActor
 
     instance, _owner, procedure, _root, _policy_artifact = _world(
-        tmp_path, accept_procedure=False, historical=historical
+        tmp_path, accept_procedure=False
     )
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
@@ -1735,10 +1405,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     assert lowered.resolved_authoring["artifact_digest"] == (
         procedure_artifact_digest(procedure).tagged
     )
-    if historical:
-        assert lowered.resolved_authoring["definition"]["graph_format"] == 6
-    else:
-        assert lowered.resolved_authoring["definition"]["graph_format"] == 7
+    assert lowered.resolved_authoring["definition"]["graph_format"] == 7
     assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
 
 
@@ -1787,10 +1454,15 @@ def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
     )
 
 
-def test_a_line_over_a_source_procedure_inherits_the_default_policy(
+def test_a_line_over_a_source_procedure_authors_without_an_acquisition_override(
     tmp_path: Path,
 ) -> None:
-    """Only an acquiring Procedure needs a policy pin; its Line is refused without one."""
+    """A Line authored with no `acquisition` override still lowers and binds its slot.
+
+    Acquisition rules resolve per run from the Procedure's `acquisition_defaults`
+    and the Line's `acquisition` override (C2/F05); a Line need not declare an
+    override to run -- there is no separate pinned policy artifact to require.
+    """
 
     from cruxible_client.contracts.authoring.models import LineAuthoringPayload
     from cruxible_core.authoring import lowering
@@ -1814,8 +1486,8 @@ def test_a_line_over_a_source_procedure_inherits_the_default_policy(
     line = parse_line_spec(
         lowered.proposed_tree[line_spec_path("source-line")], path=line_spec_path("source-line")
     )
-    assert line.acquisition_policy is None
-    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in line.pins)
+    assert line.acquisition == {}
+    assert "read" in line.bindings
 
 
 def test_a_direct_run_without_an_instant_evaluates_when_it_is_admitted(tmp_path: Path) -> None:
