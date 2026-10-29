@@ -7,21 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    InputAcquisitionRule,
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
-from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceContract,
-    ProviderInterfaceDefinition,
-    provider_interface_contract,
-    render_provider_interface,
-)
-
-import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
@@ -61,31 +46,24 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.core_support._p2b1_support import (
-    accepted_interface,
-    accepted_provider,
-)
-from tests.core_support._pc_c_support import capture_contract as legacy_capture_contract
 from tests.core_support._support import generate_client
-from tests.core_support.legacy_capture_builders import initialize_legacy_local
-from tests.support.procedures import PERMISSIVE_CONTRACT
-from tests.support.provider_builds import accepted_build
 from tests.test_authoring.test_authoring_existing_capture import _activate
 from tests.test_authoring.test_authoring_preflight import _working_payload
 from tests.test_claims.test_claim_attestation_service import _request
 from tests.test_claims.test_claims import _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import (
+    _acquisition_rules,
     _payloads,
     _source_fixture,
+    _source_provider,
     _SourceInvoker,
+    source_contract_files,
 )
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 
 
-def _instance(root: Path, *, historical: bool = False) -> tuple[PlaybillInstance, object]:
-    if historical:
-        return initialize_legacy_local(root, instance_id="instance-a")
+def _instance(root: Path) -> tuple[PlaybillInstance, object]:
     managed = root / "managed"
     owner = generate_client(
         root,
@@ -108,49 +86,6 @@ def _instance(root: Path, *, historical: bool = False) -> tuple[PlaybillInstance
             timestamp="2026-09-02T12:00:00.000000Z",
         ),
         owner,
-    )
-
-
-_DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
-
-
-def _acquisition_registration() -> ProviderInterfaceContract:
-    """A current typed demo interface with the Source acquisition result schema."""
-    base = _DEMO_INTERFACE_REGISTRATION()
-    return provider_interface_contract(
-        interface=ProviderInterfaceDefinition.model_validate(
-            {
-                "interface_id": base.interface_id,
-                "version": 1,
-                "contracts": {
-                    "input": PERMISSIVE_CONTRACT.model_dump(mode="json"),
-                    "output": ACQUISITION_RESULT,
-                },
-                "effect_class": base.effect_class,
-            }
-        )
-    )
-
-
-@pytest.fixture
-def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
-
-    # All producers and prepared runs pin the same current package build.
-    def build_provider():
-        from cruxible_client.contracts.named_references import name_provider
-        from cruxible_client.contracts.providers import provider_digest
-
-        accepted = accepted_build(p2b1_support.provider_v2())
-        provider = name_provider(accepted.provider)
-        return accepted.model_copy(
-            update={"provider": provider, "artifact_digest": provider_digest(provider).tagged}
-        )
-
-    monkeypatch.setattr(p2b1_support, "accepted_provider", build_provider)
-    monkeypatch.setattr(__name__ + ".accepted_provider", build_provider)
-    monkeypatch.setattr(
-        "tests.test_providers.test_provider_invocation_journal.accepted_provider", build_provider
     )
 
 
@@ -183,7 +118,6 @@ class ProducedCaptures:
 def run_capture_producers(
     tmp_path: Path,
     *,
-    rule: InputAcquisitionRule | None = None,
     include_terminal: bool = True,
 ) -> ProducedCaptures:
     """Accept a Source Procedure under an admitting ClaimType and run it once.
@@ -193,17 +127,13 @@ def run_capture_producers(
     Procedure Capture of the same result.
     """
 
-    instance, owner = _instance(tmp_path, historical=rule is not None)
-    contract = capture_contract() if rule is None else legacy_capture_contract()
-    terminal_contract = (
-        lower_capture_contract_input(
-            CaptureContractInputRecord(
-                name="test.procedure-output", shape="procedure_output", max_bytes=4096
-            ),
-            named=True,
-        )
-        if rule is None
-        else legacy_capture_contract(name="test.procedure-output")
+    instance, owner = _instance(tmp_path)
+    contract = capture_contract()
+    terminal_contract = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name="test.procedure-output", shape="procedure_output", max_bytes=4096
+        ),
+        named=True,
     )
     contract_digest = capture_contract_digest(contract).tagged
     shell = _subject()
@@ -242,51 +172,19 @@ def run_capture_producers(
         proposal_name="v2-capture-surface",
     )
 
-    interface = accepted_interface()
-    provider = accepted_provider()
-    if rule is not None:
-        from cruxible_client.contracts.provider_interfaces import (
-            interface_definition_bytes,
-            interface_definition_digest,
-            interface_definition_digest_domain,
-            provider_interface_digest,
-            provider_interface_path,
-        )
-
-        from tests.support.provider_builds import legacy_interface_contract
-
-        registration = legacy_interface_contract(
-            interface_id=interface.registration.interface_id,
-            interface_bytes_hex=interface_definition_bytes(interface.registration).hex(),
-            interface_digest=interface_definition_digest(interface.registration),
-            interface_digest_domain=interface_definition_digest_domain(interface.registration),
-            effect_class=interface.registration.effect_class,
-        )
-        interface = interface.model_copy(
-            update={
-                "registration": registration,
-                "path": provider_interface_path(registration.identity.name),
-                "artifact_digest": provider_interface_digest(registration).tagged,
-            }
-        )
-        provider = accepted_build(p2b1_support.provider_v2(registration=registration))
-
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     accepted, prepared, fixture, policy, _contract = _source_fixture(
         runtime_root,
         include_terminal=include_terminal,
-        rule=rule,
         contract=contract,
         terminal_contract=terminal_contract,
-        historical_provider=provider if rule is not None else None,
-        historical_interface=interface if rule is not None else None,
     )
+    provider = _source_provider()
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[interface.path] = render_provider_interface(interface.registration)
+    tree.update(source_contract_files())
     tree[provider_path(provider.provider.identity.name)] = render_provider(provider.provider)
     tree[accepted.path] = render_procedure(authored_procedure(accepted))
-    tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
     _accept_tree(
         instance,
         owner,
@@ -335,7 +233,7 @@ def run_capture_producers(
             contract_digest: contract,
             capture_contract_digest(terminal_contract).tagged: terminal_contract,
         },
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         effective_rung=rung,
         egress_sink=CaptureTerminalEgressSink(
             store=fixture.bodies,
@@ -347,7 +245,7 @@ def run_capture_producers(
             producer_binding_digest=accepted.artifact_digest,
         ),
     ).execute(prepared, accepted)
-    if include_terminal and rule is None:
+    if include_terminal:
         assert result.status == "succeeded"
     records, payloads = _payloads(prepared, fixture)
     return ProducedCaptures(
@@ -362,7 +260,7 @@ def run_capture_producers(
 
 
 def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
-    tmp_path: Path, acquisition_demo: None
+    tmp_path: Path,
 ) -> None:
     produced_world = run_capture_producers(tmp_path)
     instance, owner = produced_world.instance, produced_world.owner

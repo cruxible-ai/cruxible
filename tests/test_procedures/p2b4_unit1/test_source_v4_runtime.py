@@ -149,6 +149,21 @@ _EFFECTIVE_CONTRACT = Contract.model_validate(
         },
     }
 )
+
+
+def _pinned_nested(contract: Contract) -> dict[str, Any]:
+    """A nested-Contract field type, pinned by exact digest (required once accepted)."""
+
+    return {
+        "kind": "contract",
+        "contract": {
+            "name": contract.name,
+            "version": contract.version,
+            "digest": contract_digest(contract).tagged,
+        },
+    }
+
+
 _ENVELOPE_CONTRACT = Contract.model_validate(
     {
         "name": "test.source-envelope",
@@ -157,18 +172,16 @@ _ENVELOPE_CONTRACT = Contract.model_validate(
             "tag": {"type": "string"},
             "source_identity": {"type": "string"},
             "coordinate_type": {"type": "string"},
-            "coordinate": {"type": f"{_COORDINATE_CONTRACT.name}@{_COORDINATE_CONTRACT.version}"},
+            "coordinate": {"type": _pinned_nested(_COORDINATE_CONTRACT)},
             "selector_type": {"type": "string"},
-            "selector": {"type": f"{_SELECTOR_CONTRACT.name}@{_SELECTOR_CONTRACT.version}"},
+            "selector": {"type": _pinned_nested(_SELECTOR_CONTRACT)},
             "replayability": {"type": "string"},
             "content_encoding": {"type": "string"},
             "content_base64": {"type": "string"},
             "byte_length": {"type": "int"},
             "bytes_digest": {"type": "string"},
             "observed_at": {"type": "datetime"},
-            "source_effective_time": {
-                "type": f"{_EFFECTIVE_CONTRACT.name}@{_EFFECTIVE_CONTRACT.version}"
-            },
+            "source_effective_time": {"type": _pinned_nested(_EFFECTIVE_CONTRACT)},
         },
     }
 )
@@ -189,6 +202,16 @@ def _source_contract_digest(ref: Any) -> str | None:
         if (ref.name, ref.version) == (item.name, item.version):
             return contract_digest(item).tagged
     return None
+
+
+def source_contract_files() -> dict[str, bytes]:
+    """Every Contract :func:`_source_provider`'s operation pins, for an accepted tree."""
+
+    from cruxible_client.contracts.shapes import contract_path, render_contract
+
+    return {
+        contract_path(item.name, item.version): render_contract(item) for item in _SOURCE_CONTRACTS
+    }
 
 
 def _source_provider() -> AcceptedProvider:
@@ -398,6 +421,13 @@ def _source_fixture(
             "acquisition_defaults": {source_node.as_: policy},
         }
     )
+    # New Procedure artifacts are accepted only in the named (v3) format at the
+    # current compiler; name it here so execution and any later real
+    # acceptance of the same bytes (test_live_capture_consumers.py) agree on
+    # one exact digest throughout.
+    from cruxible_client.contracts.procedures.names import name_procedure
+
+    procedure = name_procedure(procedure)
     plain = AcceptedProcedure(
         path=provider_accepted.path,
         procedure=procedure,
