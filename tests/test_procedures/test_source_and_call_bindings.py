@@ -11,28 +11,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
-
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
-    ProcedureOwnedContract,
-    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-from cruxible_client.contracts.procedures.models import CallNode, ProjectNode, SourceNode
 from cruxible_client.contracts.provider_execution import ProviderEgressObservation
-from cruxible_core.governance.seed_artifacts.workspace_file import (
-    workspace_file_accepted_registration,
-)
 from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
 from cruxible_core.service.procedures.procedure_runs import (
@@ -68,80 +58,31 @@ class _Invoker(fixtures._WorkspaceInvoker):
         )
 
 
-def _call_contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
-    """Owned contracts exactly the workspace.file operation contract declares."""
-
-    operation = read_provider_operation_contract(
-        workspace_file_accepted_registration().registration.interface_bytes_hex
-    )
-    assert not isinstance(operation.output, str)
-    return (
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name="records-input"),
-            schema=operation.input,
-        ),
-        ProcedureOwnedContract(
-            identity=ArtifactIdentity(kind="Contract", name="records-output"),
-            schema=operation.output,
-        ),
-    )
-
-
-def _pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
-    return ArtifactPin(
-        role=role,
-        target=contract.identity,
-        artifact_digest=procedure_owned_contract_digest(contract).tagged,
-    )
-
-
 def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
+    """Add a second, Call, node through the same ``read`` slot the Source uses.
+
+    Both nodes bind the same slot (a Line binds every slot once, regardless of
+    how many nodes name it), so no extra Contract pins are needed -- the
+    Call's input/output are exactly the slot's signature. ``fixtures._world``
+    always lowers through ``name_procedure`` now, so this is always the
+    name-referenced (format 7) node set.
+    """
+
     from cruxible_client.contracts.procedures.named_models import NamedCallNode
 
     source, shape = procedure.definition.nodes
-    if isinstance(procedure, NamedProcedureArtifact):
-        definition = procedure.definition.model_copy(
-            update={
-                "nodes": (
-                    source.model_copy(update={"node_id": "export", "next": "records"}),
-                    NamedCallNode(
-                        node_id="records",
-                        provider=source.provider,
-                        interface=source.interface,
-                        input={},
-                        **{"as": "records"},
-                        next="shape",
-                    ),
-                    shape,
-                )
-            }
-        )
-        return procedure.model_copy(
-            update={
-                "definition": definition,
-                "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            }
-        )
-    assert isinstance(source, SourceNode) and isinstance(shape, ProjectNode)
-    records_in, records_out = _call_contracts()
-    contract_in, contract_out = _pin("contract-in", records_in), _pin("contract-out", records_out)
+    call_node = NamedCallNode(
+        node_id="records",
+        slot="read",
+        input={},
+        **{"as": "records"},
+        next="shape",
+    )
     definition = procedure.definition.model_copy(
         update={
             "nodes": (
                 source.model_copy(update={"node_id": "export", "next": "records"}),
-                CallNode(
-                    node_id="records",
-                    provider=source.provider,
-                    interface=source.interface,
-                    interface_digest=source.interface_digest,
-                    implementation_digest=source.implementation_digest,
-                    contract_in=contract_in,
-                    contract_out=contract_out,
-                    input={},
-                    **{"as": "records"},
-                    next="shape",
-                ),
+                call_node,
                 shape,
             )
         }
@@ -150,22 +91,6 @@ def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "pins": tuple(
-                sorted(
-                    (*procedure.pins, contract_in, contract_out),
-                    key=lambda pin: (
-                        pin.role.encode("utf-8"),
-                        pin.target.qualified.encode("utf-8"),
-                        pin.artifact_digest.encode("ascii"),
-                    ),
-                )
-            ),
-            "owned_contracts": tuple(
-                sorted(
-                    (*procedure.owned_contracts, records_in, records_out),
-                    key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
-                )
-            ),
         }
     )
 
@@ -173,8 +98,8 @@ def _source_then_call(procedure: ProcedureArtifact) -> ProcedureArtifact:
 def _world(tmp_path: Path) -> tuple[Any, Any, Path, Any]:
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     both = _source_then_call(procedure)
-    line = fixtures._served_line(both, policy)
-    mandate = fixtures._line_mandate(both)
+    line = fixtures._served_line(instance, both, policy)
+    mandate = fixtures._line_mandate(line, both)
     fixtures._accept_more(
         instance,
         owner,
