@@ -932,11 +932,9 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     whose slot takes workspace.file, travel without carrying, installing or remapping
     the built-ins; the consumer must hold the same frozen ones."""
 
-    from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.dependencies import dependency_pins
     from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-    from cruxible_core.service.kits import _builtin, service_add_kit, service_build_kit
+    from cruxible_core.service.kits import service_add_kit, service_build_kit
     from tests.core_support._candidate_support import submit_member_candidate
     from tests.core_support._knowledge_loop_support import accept_proposal
     from tests.core_support._support import initialize_local
@@ -945,18 +943,14 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     monkeypatch.setattr(sources, "PROCEDURE_NAME", "acme.files")
     (tmp_path / "publisher").mkdir()
     instance, owner, procedure, _root, _policy = sources._world(tmp_path / "publisher")
+    # B2: a Procedure's Source/Call nodes already name an open slot (`slot:
+    # str`), and the Procedure declares that slot's signature in `slots`
+    # (`ProviderInterface`/pin_slots/the separate "Blueprint" shape this test
+    # used to build by hand are gone; the open-slot/bound-build distinction is
+    # a Line concern now, not a Procedure one). "acme.files-skeleton" is
+    # therefore just this same open-slot definition under another name.
     raw = procedure.definition.model_dump(mode="json", by_alias=True)
     raw["name"] = "acme.files-skeleton"
-    raw["nodes"][0]["provider"] = {
-        "tag": "playbill-procedure-pin-slot-ref-v1",
-        "slot_name": "files",
-    }
-    raw["pin_slots"] = [
-        {
-            "slot_name": "files",
-            "interface": raw["nodes"][0]["interface"],
-        }
-    ]
     from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
 
@@ -987,29 +981,12 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
     assert "procedures/acme.files-skeleton.json" in paths
     assert not any(path.startswith(("providers/", "provider-interfaces/")) for path in paths)
     assert release.manifest.providers == ()
-    released = parse_procedure(
-        release.contents()["procedures/acme.files.json"], path="procedures/acme.files.json"
-    )
-    builtins = [
-        pin
-        for pin in dependency_pins(released, by_name=False)
-        if pin.target.kind in {"Provider", "ProviderInterface"}
-    ]
-    assert len(builtins) == 2
-    if all(isinstance(pin, ArtifactPin) for pin in builtins):
-        assert all(
-            _builtin(pin.target.kind, pin.target.name, pin.artifact_digest) for pin in builtins
-        )
-    else:
-        from cruxible_core.claims.closure import parse_dependency_artifact
-
-        publisher_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-        for pin in builtins:
-            path = "providers/" if pin.target.kind == "Provider" else "provider-interfaces/"
-            path += pin.target.name + ".json"
-            state = parse_dependency_artifact(path, publisher_tree[path])
-            assert state is not None
-            assert _builtin(pin.target.kind, pin.target.name, state.artifact_digest)
+    # A Procedure no longer pins a Provider at all (B2): its Source/Call nodes
+    # only name an open slot; the exact build is recorded on a Line's own
+    # bindings at acceptance, never on the Procedure. There is therefore
+    # nothing resembling a Provider/ProviderInterface pin left on the released
+    # Procedure artifact to check -- the asserts above (no provider path in
+    # the release, no provider in the manifest) are the whole of this guarantee.
 
     (tmp_path / "consumer").mkdir()
     consumer, _consumer_owner = initialize_local(tmp_path / "consumer")
