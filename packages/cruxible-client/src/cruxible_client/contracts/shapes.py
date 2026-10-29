@@ -1717,16 +1717,21 @@ def evaluate_predicate(
     if pair is None:
         return "unknown"
     a, b = pair
+    # Evaluate only the chosen operator. Building every comparison eagerly
+    # (as a dict literal of values would) means an operator the pair does not
+    # support -- an unordered type under "lt", a decimal NaN under ordering --
+    # defeats even an "eq" the pair supports perfectly well.
+    comparisons: dict[ComparisonOp, Callable[[], bool]] = {
+        "eq": lambda: a == b,
+        "ne": lambda: a != b,
+        "lt": lambda: a < b,
+        "le": lambda: a <= b,
+        "gt": lambda: a > b,
+        "ge": lambda: a >= b,
+    }
     try:
-        outcome = {
-            "eq": a == b,
-            "ne": a != b,
-            "lt": a < b,
-            "le": a <= b,
-            "gt": a > b,
-            "ge": a >= b,
-        }[predicate.op]
-    except TypeError:
+        outcome = comparisons[predicate.op]()
+    except (TypeError, InvalidOperation):
         return "unknown"
     return "true" if outcome else "false"
 

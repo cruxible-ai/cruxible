@@ -347,3 +347,32 @@ def test_a_decimal_bound_keeps_its_full_declared_precision() -> None:
     long_bound = "0.12345678901234567890123456789"
     bounded = parse_type(f"decimal{{{long_bound}..}}")
     assert bounded.min == long_bound
+
+
+# -- F8: predicate dispatch evaluates only the needed operator ---------------------------
+
+
+def test_eq_is_not_defeated_by_an_unsupported_ordering_operator() -> None:
+    contract = validate_contract(
+        {
+            "name": "security.duration-row",
+            "version": 1,
+            "fields": {"d1": "duration", "d2": "duration"},
+        }
+    )
+    record = check_record(
+        {"d1": {"microseconds": 5_000_000}, "d2": {"microseconds": 5_000_000}},
+        contract,
+        record="/rows/0",
+    )
+    predicate = parse_predicate("eq($item.fields.d1, $item.fields.d2)")
+    assert evaluate_predicate(predicate, fields=record) == "true"
+
+
+def test_decimal_comparison_with_nan_does_not_raise() -> None:
+    contract = validate_contract(
+        {"name": "security.decimal-row", "version": 1, "fields": {"x": "decimal"}}
+    )
+    record = check_record({"x": "0.5"}, contract, record="/rows/0")
+    predicate = parse_predicate('eq($item.fields.x, "NaN")')
+    assert evaluate_predicate(predicate, fields=record) == "false"
