@@ -53,6 +53,10 @@ from cruxible_client.contracts.procedures.pin_expectations import (
     TRIGGER_CAPTURE_CONTRACT,
     validate_exact_pin_expectation,
 )
+from cruxible_client.contracts.procedures.trigger_rules import (
+    trigger_capture_source,
+    validate_trigger_input,
+)
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     NamedCaptureEventSelector,
@@ -232,36 +236,6 @@ def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
     return AUTHORITY_RUNG[line.max_authority]
 
 
-def trigger_capture_source(
-    line: LineSpec, procedure: AcceptedProcedure, *, by_name: bool = True
-) -> SourceNode:
-    """Resolve the single input and verify its closed CaptureContract pin."""
-    if line.trigger_input is None:
-        raise ValueError("this Line binds no trigger input")
-    nodes = [
-        n
-        for n in procedure.procedure.definition.nodes
-        if getattr(n, "as_", None) == line.trigger_input
-    ]
-    if len(nodes) != 1 or not isinstance(nodes[0], SourceNode):
-        raise ValueError("trigger_input must name exactly one Source input")
-    node = nodes[0]
-    pin = node.capture_contract
-    selector = line.trigger_event
-    if (
-        not isinstance(pin, ArtifactPin | ArtifactNameRef)
-        or selector is None
-        or (pin.target != selector.capture_contract_identity)
-        or (
-            not by_name
-            and isinstance(pin, ArtifactPin)
-            and pin.artifact_digest != selector.capture_contract_digest
-        )
-    ):
-        raise ValueError("trigger input CaptureContract differs from the event selector")
-    return node
-
-
 _LINE_SPEC_ADAPTER: TypeAdapter[LineSpec | NamedLineSpec] = TypeAdapter(LineSpec | NamedLineSpec)
 
 
@@ -404,13 +378,11 @@ def evaluate_line_spec_law(
             f"({', '.join(exhaust_taps)}); a Line over it could never run.",
             path=path,
         )
-    if line.trigger_input is not None:
-        try:
-            trigger_capture_source(
-                line, procedure, by_name=by_name or isinstance(line, NamedLineSpec)
-            )
-        except ValueError as exc:
-            return _refusal("cruxible.line.trigger_input_mismatch", str(exc), path=path)
+    trigger_problem = validate_trigger_input(
+        line, procedure, by_name=by_name or isinstance(line, NamedLineSpec)
+    )
+    if trigger_problem is not None:
+        return _refusal("cruxible.line.trigger_input_mismatch", trigger_problem, path=path)
     if by_name or isinstance(line, NamedLineSpec):
         from cruxible_client.contracts.procedures.contracts import (
             OwnedProcedureContractValidator,
