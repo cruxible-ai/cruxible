@@ -33,7 +33,9 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.procedures.acquisition_rules import (
     AcquisitionInputDecision,
     AcquisitionRule,
+    UnavailableBehavior,
 )
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_core.evidence.source_readers import ExternalCaptureAcquisitionV1
 
 ProcedureAcquisitionOutcomeV1 = Literal[
@@ -48,6 +50,9 @@ ACQUISITION_UNAVAILABLE = "cruxible.acquisition.unavailable"
 ACQUISITION_STALE = "cruxible.acquisition.stale"
 ACQUISITION_OVERSIZED = "cruxible.acquisition.oversized"
 ACQUISITION_REFUSED = "cruxible.acquisition.refused"
+#: F05: a Source whose Capture replays outside the rule's declared set. A
+#: hard eligibility gate, never an omit choice (unlike the three above).
+ACQUISITION_REPLAYABILITY_INELIGIBLE = "cruxible.acquisition.replayability_ineligible"
 
 _OUTCOME_REASONS: dict[ProcedureAcquisitionOutcomeV1, str] = {
     "unavailable": ACQUISITION_UNAVAILABLE,
@@ -55,6 +60,20 @@ _OUTCOME_REASONS: dict[ProcedureAcquisitionOutcomeV1, str] = {
     "oversized": ACQUISITION_OVERSIZED,
     "refused": ACQUISITION_REFUSED,
 }
+
+#: F05: the rule field each omittable failure reason reads its behaviour
+#: from. A reason with no entry here (e.g. the replayability gate, or a bare
+#: "refused" outcome) can never be omitted.
+_OMITTABLE_REASON_FIELDS: dict[str, str] = {
+    ACQUISITION_UNAVAILABLE: "on_unavailable",
+    ACQUISITION_STALE: "on_stale",
+    ACQUISITION_OVERSIZED: "on_oversized",
+}
+
+
+def _omit_behavior(rule: AcquisitionRule, reason: str) -> UnavailableBehavior:
+    field = _OMITTABLE_REASON_FIELDS.get(reason)
+    return "refuse" if field is None else getattr(rule, field)
 
 
 class _StrictAcquisitionModel(BaseModel):
@@ -153,6 +172,14 @@ def capture_selection_failure(
         evaluation_time - envelope.observed_at > timedelta(microseconds=rule.max_age.microseconds)
     ):
         return ACQUISITION_STALE
+    if (
+        rule.permitted_replayability is not None
+        and isinstance(envelope.source, ExternalSourceReference)
+        and envelope.source.replayability not in rule.permitted_replayability
+    ):
+        # F05: the old replayability eligibility check. Never an omit choice:
+        # a Source outside the declared replay class is never selected.
+        return ACQUISITION_REPLAYABILITY_INELIGIBLE
     return None
 
 
@@ -165,9 +192,10 @@ def apply_acquisition_result(
 ) -> AcquisitionInputDecision:
     """Apply the declared behaviour to a real typed acquisition result only.
 
-    A stale or oversized result refuses. An unavailable result (an absorbable
-    typed refusal of the bound operation) is omitted when the rule says
-    ``on_unavailable: omit``, and refuses otherwise.
+    An unavailable, stale, or oversized result is omitted when the rule's
+    matching field (``on_unavailable``/``on_stale``/``on_oversized``) says
+    ``omit``, and refuses otherwise (F05). A replayability-ineligible or bare
+    "refused" result always refuses: eligibility is a gate, not a choice.
     """
 
     del default_authorized
@@ -194,13 +222,13 @@ def apply_acquisition_result(
         reason = failure
     else:
         reason = _OUTCOME_REASONS[result.outcome]
-        if result.outcome == "unavailable" and rule.on_unavailable == "omit":
-            return AcquisitionInputDecision(
-                input_name=rule.input_name,
-                disposition="omitted",
-                considered_capture_digests=considered,
-                reason_codes=(reason,),
-            )
+    if _omit_behavior(rule, reason) == "omit":
+        return AcquisitionInputDecision(
+            input_name=rule.input_name,
+            disposition="omitted",
+            considered_capture_digests=considered,
+            reason_codes=(reason,),
+        )
     return AcquisitionInputDecision(
         input_name=rule.input_name,
         disposition="refused",
@@ -212,6 +240,7 @@ def apply_acquisition_result(
 __all__ = [
     "ACQUISITION_OVERSIZED",
     "ACQUISITION_REFUSED",
+    "ACQUISITION_REPLAYABILITY_INELIGIBLE",
     "ACQUISITION_STALE",
     "ACQUISITION_UNAVAILABLE",
     "ProcedureAcquisitionOutcomeV1",

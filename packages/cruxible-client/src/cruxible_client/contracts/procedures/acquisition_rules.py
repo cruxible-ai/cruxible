@@ -1,10 +1,16 @@
-"""Acquisition rules: how fresh a Source's Capture must be, and what unavailability does.
+"""Acquisition rules: how fresh and how replayable a Source's Capture must
+be, and what unavailability, staleness and an oversized read each do.
 
 A Procedure declares ``acquisition_defaults`` per Source alias; a Line's
 ``acquisition`` replaces the default for any alias it names. The rule a run
-admits for one Source is :class:`AcquisitionRule` (its alias, ``max_age`` and
-``on_unavailable``). ``on_unavailable: omit`` lets an *absorbable* typed
-refusal of the bound operation omit the Source instead of failing the run.
+admits for one Source is :class:`AcquisitionRule`. ``on_unavailable``,
+``on_stale`` and ``on_oversized`` each choose ``refuse`` (the default) or
+``omit``: an absorbable typed refusal, a Capture older than ``max_age``, or
+one over the bound operation's byte budget, omits the Source from the run
+instead of failing it (F05). ``permitted_replayability``, when declared, is a
+hard eligibility gate, never an omit choice: a Source whose replay class is
+outside the declared set is never selected (the old replayability
+eligibility check, F05).
 """
 
 from __future__ import annotations
@@ -27,6 +33,17 @@ _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 ACQUISITION_RULES_DIGEST_DOMAIN = "cruxible-acquisition-rules-v1"
 
 UnavailableBehavior = Literal["refuse", "omit"]
+SourceReplayability = Literal["exact", "attested_only"]
+
+
+def _sorted_unique_replayability(
+    value: tuple[SourceReplayability, ...] | None,
+) -> tuple[SourceReplayability, ...] | None:
+    if value is None:
+        return None
+    if not value:
+        raise ValueError("permitted_replayability must not be empty when declared")
+    return tuple(sorted(set(value)))
 
 
 class _Strict(BaseModel):
@@ -38,6 +55,11 @@ class AcquisitionDefault(_Strict):
 
     max_age: CanonicalDuration | None = None
     on_unavailable: UnavailableBehavior = "refuse"
+    on_stale: UnavailableBehavior = "refuse"
+    on_oversized: UnavailableBehavior = "refuse"
+    #: ``None`` permits every replay class; declared, it is the closed set a
+    #: Source's Capture must replay under.
+    permitted_replayability: tuple[SourceReplayability, ...] | None = None
 
     # One schema in both modes (it is served inside accepted Procedures); an
     # ISO-8601 duration string is also read, as authoring convenience.
@@ -47,6 +69,13 @@ class AcquisitionDefault(_Strict):
         if isinstance(value, str):
             return CanonicalDuration(microseconds=parse_iso_duration_microseconds(value))
         return value
+
+    @field_validator("permitted_replayability")
+    @classmethod
+    def _replayability(
+        cls, value: tuple[SourceReplayability, ...] | None
+    ) -> tuple[SourceReplayability, ...] | None:
+        return _sorted_unique_replayability(value)
 
 
 def validate_acquisition_keys(
@@ -64,6 +93,16 @@ class AcquisitionRule(_Strict):
     input_name: str
     max_age: CanonicalDuration | None = None
     on_unavailable: UnavailableBehavior = "refuse"
+    on_stale: UnavailableBehavior = "refuse"
+    on_oversized: UnavailableBehavior = "refuse"
+    permitted_replayability: tuple[SourceReplayability, ...] | None = None
+
+    @field_validator("permitted_replayability")
+    @classmethod
+    def _replayability(
+        cls, value: tuple[SourceReplayability, ...] | None
+    ) -> tuple[SourceReplayability, ...] | None:
+        return _sorted_unique_replayability(value)
 
 
 def resolve_acquisition_rules(
@@ -81,6 +120,9 @@ def resolve_acquisition_rules(
             input_name=alias,
             max_age=declared.max_age,
             on_unavailable=declared.on_unavailable,
+            on_stale=declared.on_stale,
+            on_oversized=declared.on_oversized,
+            permitted_replayability=declared.permitted_replayability,
         )
     return rules
 
