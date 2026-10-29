@@ -1472,6 +1472,12 @@ def _check_refusal(
     target = None if resolve is None else resolve(field_type.contract)
     if target is None:
         return _invalid("type_mismatch", field, value)
+    # Name and version agreeing is not a pin: the value's own claimed digest
+    # must match the exact accepted version, the same way any other pin is
+    # judged. A missing or wrong digest is indistinguishable from a refusal
+    # claiming a Contract it is not.
+    if contract_ref.get("digest") != contract_digest(target).tagged:
+        return _invalid("type_mismatch", field, value)
     body = value["body"]
     if not isinstance(body, Mapping):
         return _invalid("type_mismatch", field, value)

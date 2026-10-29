@@ -8,6 +8,7 @@ import pytest
 
 from cruxible_client.contracts.shapes import (
     ContractFormatError,
+    ContractRef,
     ContractTypeRefused,
     FieldAbsent,
     FieldInvalid,
@@ -15,6 +16,7 @@ from cruxible_client.contracts.shapes import (
     InvalidRecordArm,
     Not,
     RecordArm,
+    RefusalType,
     assignable,
     cast_record,
     check_record,
@@ -349,24 +351,64 @@ def test_check_value_enforces_the_generic_type_parameter() -> None:
     )
     assert isinstance(checked, FieldInvalid)
 
+    demo_digest = contract_digest(demo).tagged
+    pinned_refusal_type = RefusalType(
+        contract=ContractRef(name="security.demo", version=1, digest=demo_digest)
+    )
+
     other_contract_refusal = {
         "code": "any_code",
-        "contract": {"name": "security.other", "version": 9},
+        "contract": {"name": "security.other", "version": 9, "digest": demo_digest},
         "body": {"whatever": True},
     }
-    checked = check_value(
-        other_contract_refusal, parse_type("refusal<security.demo@1>"), at="/f", resolve=resolve
-    )
+    checked = check_value(other_contract_refusal, pinned_refusal_type, at="/f", resolve=resolve)
     assert isinstance(checked, FieldInvalid)
 
     valid_refusal = {
         "code": "any_code",
+        "contract": {"name": "security.demo", "version": 1, "digest": demo_digest},
+        "body": {"n": 3},
+    }
+    checked = check_value(valid_refusal, pinned_refusal_type, at="/f", resolve=resolve)
+    assert isinstance(checked, FieldPresent)
+
+
+def test_refusal_values_claimed_digest_must_match_the_pinned_contract() -> None:
+    """A refusal<C> value's own ``contract.digest`` is checked, not only name/version."""
+
+    demo = validate_contract({"name": "security.demo", "version": 1, "fields": {"n": "int"}})
+    real_digest = contract_digest(demo).tagged
+    wrong_digest = "sha256:" + "0" * 64
+
+    def resolve(ref: object) -> object:
+        return demo if (ref.name, ref.version) == ("security.demo", 1) else None  # type: ignore[attr-defined]
+
+    pinned_refusal_type = RefusalType(
+        contract=ContractRef(name="security.demo", version=1, digest=real_digest)
+    )
+
+    wrong_digest_refusal = {
+        "code": "any_code",
+        "contract": {"name": "security.demo", "version": 1, "digest": wrong_digest},
+        "body": {"n": 3},
+    }
+    checked = check_value(wrong_digest_refusal, pinned_refusal_type, at="/f", resolve=resolve)
+    assert isinstance(checked, FieldInvalid)
+
+    missing_digest_refusal = {
+        "code": "any_code",
         "contract": {"name": "security.demo", "version": 1},
         "body": {"n": 3},
     }
-    checked = check_value(
-        valid_refusal, parse_type("refusal<security.demo@1>"), at="/f", resolve=resolve
-    )
+    checked = check_value(missing_digest_refusal, pinned_refusal_type, at="/f", resolve=resolve)
+    assert isinstance(checked, FieldInvalid)
+
+    correct_digest_refusal = {
+        "code": "any_code",
+        "contract": {"name": "security.demo", "version": 1, "digest": real_digest},
+        "body": {"n": 3},
+    }
+    checked = check_value(correct_digest_refusal, pinned_refusal_type, at="/f", resolve=resolve)
     assert isinstance(checked, FieldPresent)
 
 
