@@ -24,6 +24,35 @@ def local_call_contract_files() -> dict[str, bytes]:
     return {contract_path(contract.name, contract.version): render_contract(contract)}
 
 
+def accept_local_call_contract(instance_id: str, approve: Any) -> None:
+    """Accept ``local.increment``'s Contract in a world before any local-call install.
+
+    Every world that installs a package from ``build_local_call`` calls this
+    first: an install pins the operation's Contracts to the accepted ones.
+    ``approve(proposal_id)`` approves and activates the proposal the way the
+    world's policy requires. A world that already holds the Contract is left
+    as it is.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from tests.core_support._candidate_support import submit_member_candidate
+
+    instance = get_playbill_manager().get(instance_id)
+    members = local_call_contract_files()
+    if set(members) <= set(instance.tree_at(instance.accepted_coordinate().git_oid)):
+        return
+    proposal = submit_member_candidate(
+        instance,
+        members=members,
+        actor_id="operator",
+        proposal_name="local-call-contract",
+        proposal_family="procedure",
+        timestamp="2026-10-29T11:00:00.000000Z",
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    approve(proposal.admission.proposal_id)
+
+
 def build_local_call(
     directory: Path,
     repository: Path,

@@ -189,8 +189,26 @@ def _package(
     return project
 
 
+def _accept_local_call_contract(world: Any) -> None:
+    """Accept the Contract a ``build_local_call`` package pins, as this world accepts."""
+
+    from tests.support.provider_installation import (
+        accept_local_call_contract,
+        local_call_contract_files,
+    )
+
+    members = local_call_contract_files()
+    if hasattr(world, "accept_members"):
+        if not set(members) <= set(world.tree()):
+            world.accept_members(members, timestamp="2026-10-24T11:00:00.000000Z")
+    else:
+        accept_local_call_contract(world.instance_id, world.approve)
+
+
 def _install(world: Any, project: Path, *, control_domain: str = "operator") -> None:
     from packaging.utils import canonicalize_name, parse_wheel_filename
+
+    _accept_local_call_contract(world)
 
     name = tomllib.loads((project / "pyproject.toml").read_text())["project"]["name"]
     wheels = sorted((project / "dist").glob("*.whl"))

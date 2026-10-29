@@ -48,15 +48,18 @@ def installer_http(tmp_path, monkeypatch, request, provider_checkout):
             }
         )
     )
-    from tests.support.provider_installation import local_call_contract_files
+    from tests.support.provider_installation import accept_local_call_contract
     from tests.test_server.conftest import _playbill_http
+    from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
     world = _playbill_http(
         tmp_path, monkeypatch, require_independent_approval=getattr(request, "param", False)
     )
     http, instance_id, reviewer = next(world)
     # The Contract the local-call package's operation pins, accepted before it installs.
-    _accept(http, instance_id, reviewer, local_call_contract_files(), name="local-call-contracts")
+    accept_local_call_contract(
+        instance_id, lambda proposal: _approve_and_activate(http, instance_id, reviewer, proposal)
+    )
     yield http, instance_id, reviewer
     for _ in world:
         pass
