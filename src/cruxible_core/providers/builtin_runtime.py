@@ -38,10 +38,10 @@ to fence; the daemon closes such starts at startup
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
@@ -62,17 +62,28 @@ from cruxible_core.providers.builtin_workspace_file import WorkspaceFile
 from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
     ProviderSpawnDeadline,
+    require_exact_binding,
 )
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_PROTOCOL,
-    ProviderRuntimeProtocolVersion,
     ProviderRuntimeProviderErrorPayload,
+    ProviderRuntimeRefusal,
     ProviderRuntimeResultEnvelope,
     ProviderRuntimeRunContext,
+    ProviderRuntimeWireError,
 )
 
 BUILTIN_EGRESS_OBSERVER = "core.in-process"
+
+
+class BuiltinAdapter(Protocol):
+    """A built-in's adapter: what it serves, and the call that serves it."""
+
+    @property
+    def operations(self) -> tuple[str, ...]: ...
+
+    def __call__(self, context: ProviderRuntimeRunContext) -> ProviderRuntimeResultEnvelope: ...
 
 
 @dataclass(frozen=True)
@@ -85,7 +96,7 @@ class BuiltinImplementation:
     """
 
     identity: BuiltinProviderIdentity
-    adapter: Callable[[ProviderRuntimeRunContext], ProviderRuntimeResultEnvelope]
+    adapter: BuiltinAdapter
 
     @property
     def implementation_digest(self) -> str:
@@ -232,33 +243,13 @@ class BuiltinProviderInvoker:
                 "Provider binding changed after the durable invocation start",
             )
         binding = bound.binding
-        if (
-            context.implementation_digest != binding.implementation_digest
-            or context.entrypoint != binding.entrypoint
-        ):
-            raise ProviderLocalRuntimeRefused(
-                "provider_protocol_violation", "run context names another implementation"
-            )
-        requested = ProviderRuntimeProtocolVersion.parse(context.protocol_version)
-        if requested.major != ProviderRuntimeProtocolVersion.parse(PROVIDER_RUNTIME_PROTOCOL).major:
-            raise ProviderLocalRuntimeRefused(
-                "unsupported_protocol", "run context protocol is unsupported"
-            )
+        # The same exact-binding check the subprocess driver makes.
+        require_exact_binding(context, binding)
         if deadline is not None:
             deadline.require_remaining()
         adapter = BUILTIN_IMPLEMENTATIONS[binding.implementation_digest].adapter
         started = time.monotonic()
-        try:
-            envelope = adapter(context)
-        except Exception as exc:  # the child harness reports a raise the same way
-            envelope = ProviderRuntimeResultEnvelope(
-                protocol_version=PROVIDER_RUNTIME_PROTOCOL,
-                run_id=context.run_id,
-                status="error",
-                error=ProviderRuntimeProviderErrorPayload(
-                    kind=type(exc).__name__, message=str(exc)
-                ),
-            )
+        envelope = _guarded_call(adapter, context)
         duration = time.monotonic() - started
         if len(envelope.to_json()) > context.budgets.output_bytes:
             raise ProviderLocalRuntimeRefused(
@@ -274,6 +265,71 @@ class BuiltinProviderInvoker:
             ),
             verified_binding=binding,
         )
+
+
+def _envelope(
+    context: ProviderRuntimeRunContext, code: str, message: str, **detail: Any
+) -> ProviderRuntimeResultEnvelope:
+    return ProviderRuntimeResultEnvelope(
+        protocol_version=PROVIDER_RUNTIME_PROTOCOL,
+        run_id=context.run_id,
+        status="refused",
+        refusal=ProviderRuntimeRefusal(code=code, message=message, detail=detail),
+    )
+
+
+def _guarded_call(
+    adapter: BuiltinAdapter, context: ProviderRuntimeRunContext
+) -> ProviderRuntimeResultEnvelope:
+    """Run built-in adapter code under the guard the runtime child puts around provider code.
+
+    The adapter is provider code: its declarations are read, and it is called,
+    the way the child harness reads and calls an entrypoint. Only the harness
+    produces runtime refusal codes, so a runtime code the adapter raises or
+    returns is reported as ``provider_protocol_violation`` naming the stage and
+    the code it asserted, never as the condition it names. An operation the
+    adapter does not declare refuses ``undeclared_operation``, as the child's
+    dispatch does.
+    """
+
+    def violation(stage: str, asserted: str) -> ProviderRuntimeResultEnvelope:
+        return _envelope(
+            context,
+            "provider_protocol_violation",
+            f"provider code asserted the runtime's own refusal code {asserted!r} during "
+            f"{stage}; runtime codes come from runtime machinery only",
+            stage=stage,
+            entrypoint=context.entrypoint,
+            operation=context.operation,
+            refused_code=asserted,
+        )
+
+    try:
+        declared = tuple(str(item) for item in adapter.operations)
+    except ProviderRuntimeWireError as exc:
+        return violation("declaration access", exc.code)
+    if context.operation not in declared:
+        return _envelope(
+            context,
+            "undeclared_operation",
+            f"entrypoint {context.entrypoint!r} does not serve {context.operation!r}",
+            operation=context.operation,
+            declared=sorted(declared),
+        )
+    try:
+        envelope = adapter(context)
+    except ProviderRuntimeWireError as exc:
+        return violation("call", exc.code)
+    except Exception as exc:  # the child harness reports a raise the same way
+        return ProviderRuntimeResultEnvelope(
+            protocol_version=PROVIDER_RUNTIME_PROTOCOL,
+            run_id=context.run_id,
+            status="error",
+            error=ProviderRuntimeProviderErrorPayload(kind=type(exc).__name__, message=str(exc)),
+        )
+    if envelope.refusal is not None and envelope.refusal.is_runtime:
+        return violation("call", envelope.refusal.code)
+    return envelope
 
 
 class BuiltinDispatchingInvoker:
@@ -299,6 +355,7 @@ __all__ = [
     "BUILTIN_EGRESS_OBSERVER",
     "BUILTIN_IMPLEMENTATIONS",
     "BoundBuiltinProviderV1",
+    "BuiltinAdapter",
     "BuiltinDispatchingInvoker",
     "BuiltinImplementation",
     "BuiltinProviderInvoker",

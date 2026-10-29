@@ -62,7 +62,6 @@ from cruxible_core.providers.provider_process_leases import (
 from cruxible_core.providers.provider_runtime_contract import (
     MAX_PROVIDER_SECRET_BUNDLE_BYTES,
     PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
-    PROVIDER_RUNTIME_PROTOCOL,
     ProviderRuntimeBudgets,
     ProviderRuntimeResultEnvelope,
     ProviderRuntimeRunContext,
@@ -70,6 +69,7 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeSecretRef,
     ProviderRuntimeWireError,
     parse_provider_runtime_result,
+    require_supported_protocol,
 )
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
@@ -665,6 +665,44 @@ def translate_provider_budget(
     )
 
 
+def require_exact_binding(
+    context: ProviderRuntimeRunContext, binding: VerifiedProviderBinding
+) -> None:
+    """The run context is exactly the admitted binding, or the run refuses.
+
+    Checked before any secret is resolved or any child exists: the operation,
+    its signature, the governed build, the entrypoint and the implementation
+    the child is told are the ones the Line bound, at the protocol major core
+    speaks.
+    """
+
+    try:
+        require_supported_protocol(context.protocol_version, where="the run context")
+    except ProviderRuntimeWireError as exc:
+        raise ProviderLocalRuntimeRefused("unsupported_protocol", str(exc)) from exc
+    if context.protocol_version != binding.protocol_version:
+        raise ProviderLocalRuntimeRefused(
+            "unsupported_protocol", "run context protocol differs from the admitted binding"
+        )
+    for label, told, admitted in (
+        ("operation", context.operation, binding.operation),
+        (
+            "operation signature",
+            context.operation_signature_digest,
+            binding.operation_signature_digest,
+        ),
+        ("build", context.build_digest, binding.provider_artifact_digest),
+        ("entrypoint", context.entrypoint, binding.entrypoint),
+        ("implementation", context.implementation_digest, binding.implementation_digest),
+    ):
+        if told != admitted:
+            raise ProviderLocalRuntimeRefused(
+                "acceptance_divergence",
+                f"run context names another {label} than the admitted binding",
+                details={"field": label},
+            )
+
+
 class LocalProviderExecutionDriver:
     """Verify a pre-materialized local environment and invoke its runtime child."""
 
@@ -878,14 +916,7 @@ class LocalProviderExecutionDriver:
         # run this profile will refuse must not decrypt customer secret material
         # into the daemon on its way to the refusal.
         enforce_customer_code_execution_supported()
-        if context.implementation_digest != binding.binding.implementation_digest:
-            raise ProviderLocalRuntimeRefused(
-                "provider_protocol_violation", "run context names another implementation"
-            )
-        if context.protocol_version != PROVIDER_RUNTIME_PROTOCOL:
-            raise ProviderLocalRuntimeRefused(
-                "unsupported_protocol", "run context protocol is unsupported"
-            )
+        require_exact_binding(context, binding.binding)
         unknown_dynamic = tuple(
             endpoint
             for endpoint in binding.binding.declared_endpoints

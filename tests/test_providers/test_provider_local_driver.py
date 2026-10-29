@@ -1375,3 +1375,76 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
             process_leases=_lease_store(tmp_path / "dynamic-leases"),
         )
     assert caught.value.code == "undeclared_egress"
+
+
+class _NeverResolved:
+    resolver_kind = "environment"
+
+    def resolve(self, reference: object) -> str:
+        raise AssertionError("no secret is resolved for a run context the binding refuses")
+
+
+@pytest.mark.parametrize(
+    ("update", "code", "field"),
+    [
+        ({"operation": "demo.other"}, "acceptance_divergence", "operation"),
+        (
+            {"operation_signature_digest": _digest("other-signature")},
+            "acceptance_divergence",
+            "operation signature",
+        ),
+        ({"build_digest": _digest("other-build")}, "acceptance_divergence", "build"),
+        ({"entrypoint": "demo.runtime:Other"}, "acceptance_divergence", "entrypoint"),
+        (
+            {"implementation_digest": _digest("other-implementation")},
+            "acceptance_divergence",
+            "implementation",
+        ),
+        ({"protocol_version": "1.0"}, "unsupported_protocol", None),
+    ],
+)
+def test_the_driver_runs_only_the_exact_admitted_binding_before_secrets_or_spawn(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
+    tmp_path: Path,
+    update: dict[str, object],
+    code: str,
+    field: str | None,
+) -> None:
+    interpreter = tmp_path / "never-spawned"
+    binding = BoundLocalProviderV1(
+        binding=VerifiedProviderBinding(
+            provider_artifact_digest=_digest("provider"),
+            operation="demo.interface",
+            operation_signature_digest=_digest("interface"),
+            implementation_digest=_digest("implementation"),
+            deployment_digest=_digest("deployment"),
+            materialization_digest=_digest("materialization"),
+            environment_manifest_digest=_digest("environment"),
+            entrypoint="demo.runtime:Provider",
+        ),
+        interpreter_path=interpreter,
+    )
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
+        run_id="RUN-exact",
+        operation="demo.interface",
+        operation_signature_digest=_digest("interface"),
+        build_digest=_digest("provider"),
+        implementation_digest=_digest("implementation"),
+        entrypoint="demo.runtime:Provider",
+        input={},
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=1024),
+    )
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        LocalProviderExecutionDriver().invoke(
+            binding,
+            context.model_copy(update=update),
+            secret_plan=_secret_plan(),
+            secret_resolvers=ProviderSecretResolverRegistry((_NeverResolved(),)),
+            invocation_id=_digest("exact"),
+            process_leases=_lease_store(tmp_path / "exact-leases"),
+        )
+    assert caught.value.code == code
+    if field is not None:
+        assert caught.value.details == {"field": field}
+    assert not interpreter.exists()
