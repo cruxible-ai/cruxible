@@ -7,12 +7,12 @@ Moved out of :mod:`~cruxible_client.contracts.procedures.models`, which keeps
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Annotated, ClassVar, Literal, TypeAlias, cast
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
-from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
+from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 from cruxible_client.contracts.procedures.model_base import (
     _ALIAS_RE,
@@ -158,42 +158,29 @@ class StateTapNode(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-def _validate_explicit_provider_binding(
-    provider: LegacyProcedurePinBinding,
-    implementation_digest: str | None,
-) -> None:
-    if isinstance(provider, ArtifactPin):
-        if implementation_digest is None:
-            raise ValueError("direct Provider bindings require implementation_digest")
-    elif implementation_digest is not None:
-        raise ValueError("slot Provider bindings prohibit implementation_digest")
+def _slot_name(value: str) -> str:
+    from cruxible_client.contracts.provider_operations import validate_slot_name
+
+    return validate_slot_name(value)
 
 
 class SourceNode(_StrictProcedureModel):
+    """An acquisition: the slot's bound operation returns material core captures."""
+
     kind: Literal["source"] = "source"
     node_id: str
     capture_contract: LegacyProcedurePinBinding
-    provider: LegacyProcedurePinBinding
-    interface: ArtifactPin
-    interface_digest: str
-    implementation_digest: str | None = None
+    slot: str
     request: object
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
-        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
-    )
+    _slot = field_validator("slot")(_slot_name)
 
     @field_validator("request", mode="before")
     @classmethod
     def _request(cls, value: object) -> object:
         return normalize_canonical(value)
-
-    @model_validator(mode="after")
-    def _provider_binding(self) -> "SourceNode":
-        _validate_explicit_provider_binding(self.provider, self.implementation_digest)
-        return self
 
 
 class ExhaustTapNode(_StrictProcedureModel):
@@ -211,38 +198,22 @@ class ExhaustTapNode(_StrictProcedureModel):
 
 
 class CallNode(_StrictProcedureModel):
-    """A contracted call; Provider names its implementation, not a node category."""
+    """A typed call: the slot names the signature; the Line names the operation."""
 
     kind: Literal["call"] = "call"
     node_id: str
-    provider: LegacyProcedurePinBinding
-    interface: ArtifactPin
-    interface_digest: str
-    implementation_digest: str | None = None
-    contract_in: LegacyProcedurePinBinding | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    contract_out: LegacyProcedurePinBinding | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    slot: str
     effect_policy: LegacyProcedurePinBinding | None = None
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
 
-    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
-        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
-    )
+    _slot = field_validator("slot")(_slot_name)
 
     @field_validator("input", mode="before")
     @classmethod
     def _input(cls, value: object) -> object:
         return normalize_canonical(value)
-
-    @model_validator(mode="after")
-    def _provider_binding(self) -> "CallNode":
-        _validate_explicit_provider_binding(self.provider, self.implementation_digest)
-        return self
 
 
 TransformKind = Literal[
@@ -410,15 +381,12 @@ class ProjectNode(_StrictProcedureModel):
 
 
 class RepeatBodyNode(_StrictProcedureModel):
-    """One bounded repeat operation with occurrence-local explicit Provider pins."""
+    """One bounded repeat operation: a slotted call or a typed transform."""
 
     node_id: str
     operation: Literal["call", "transform"]
     transform_kind: TransformKind | None = None
-    provider: LegacyProcedurePinBinding | None = None
-    interface: ArtifactPin | None = None
-    interface_digest: str | None = None
-    implementation_digest: str | None = None
+    slot: str | None = Field(default=None, exclude_if=lambda value: value is None)
     contract_in: LegacyProcedurePinBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -432,9 +400,10 @@ class RepeatBodyNode(_StrictProcedureModel):
     spec: ProcedureTransformSpec | object
     as_: str = Field(alias="as")
 
-    _digests = field_validator("interface_digest", "implementation_digest", check_fields=False)(
-        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
-    )
+    @field_validator("slot")
+    @classmethod
+    def _slot(cls, value: str | None) -> str | None:
+        return None if value is None else _slot_name(value)
 
     @field_validator("spec", mode="before")
     @classmethod
@@ -444,27 +413,17 @@ class RepeatBodyNode(_StrictProcedureModel):
     @model_validator(mode="after")
     def _operation_shape(self) -> "RepeatBodyNode":
         if self.operation == "call":
-            if self.provider is None or self.interface is None or self.interface_digest is None:
-                raise ValueError(
-                    "repeat provider operations require provider and interface pin/digest"
-                )
+            if self.slot is None:
+                raise ValueError("a repeat call names its slot")
             if self.transform_kind is not None:
-                raise ValueError("repeat provider operations cannot declare transform_kind")
-            _validate_explicit_provider_binding(self.provider, self.implementation_digest)
+                raise ValueError("repeat calls cannot declare transform_kind")
+            if self.contract_in is not None or self.contract_out is not None:
+                raise ValueError("a repeat call's I/O is its slot signature")
             return self
         if self.contract_in is None or self.contract_out is None:
             raise ValueError("repeat transforms require input and output contracts")
-        if any(
-            value is not None
-            for value in (
-                self.provider,
-                self.interface,
-                self.interface_digest,
-                self.implementation_digest,
-                self.effect_policy,
-            )
-        ):
-            raise ValueError("repeat transform operations cannot declare Provider or effect pins")
+        if self.slot is not None or self.effect_policy is not None:
+            raise ValueError("repeat transform operations cannot declare a slot or effect policy")
         if self.transform_kind is None or not isinstance(self.spec, BaseModel):
             raise ValueError("repeat transform operations require a typed transform spec")
         if getattr(self.spec, "tag", None) != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
@@ -743,14 +702,6 @@ class NamedStateTapNode(StateTapNode):
 
 class NamedSourceNode(SourceNode):
     capture_contract: NameBinding  # type: ignore[assignment]
-    provider: NameBinding  # type: ignore[assignment]
-    interface: ArtifactNameRef  # type: ignore[assignment]
-    interface_digest: ClassVar[None] = None  # type: ignore[assignment, misc]
-    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
-
-    @model_validator(mode="after")
-    def _provider_binding(self) -> NamedSourceNode:
-        return self
 
 
 class NamedExhaustTapNode(ExhaustTapNode):
@@ -758,17 +709,7 @@ class NamedExhaustTapNode(ExhaustTapNode):
 
 
 class NamedCallNode(CallNode):
-    provider: NameBinding  # type: ignore[assignment]
-    interface: ArtifactNameRef  # type: ignore[assignment]
-    contract_in: ClassVar[None] = None  # type: ignore[misc]
-    contract_out: ClassVar[None] = None  # type: ignore[misc]
     effect_policy: NameBinding | None = None  # type: ignore[assignment]
-    interface_digest: ClassVar[None] = None  # type: ignore[assignment, misc]
-    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
-
-    @model_validator(mode="after")
-    def _provider_binding(self) -> NamedCallNode:
-        return self
 
 
 class NamedTransformNode(TransformNode):
@@ -781,31 +722,15 @@ class NamedProjectNode(ProjectNode):
 
 
 class NamedRepeatBodyNode(RepeatBodyNode):
-    provider: NameBinding | None = None  # type: ignore[assignment]
-    interface: ArtifactNameRef | None = None  # type: ignore[assignment]
-    contract_in: NameBinding | None = None  # type: ignore[assignment]
-    contract_out: NameBinding | None = None  # type: ignore[assignment]
-    effect_policy: NameBinding | None = None  # type: ignore[assignment]
-    interface_digest: ClassVar[None] = None  # type: ignore[misc]
-    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
-
-    @model_validator(mode="after")
-    def _operation_shape(self) -> NamedRepeatBodyNode:
-        if self.operation == "call":
-            if self.provider is None or self.interface is None or self.transform_kind is not None:
-                raise ValueError("repeat Calls name a provider and interface")
-            if self.contract_in is not None or self.contract_out is not None:
-                raise ValueError("Call I/O belongs to its interface")
-            return self
-        if self.provider is not None or self.interface is not None:
-            raise ValueError("repeat transforms cannot declare a provider")
-        if self.contract_in is None or self.contract_out is None:
-            raise ValueError("repeat transforms require input and output contracts")
-        if self.transform_kind is None or getattr(
-            self.spec, "tag", None
-        ) != _TRANSFORM_SPEC_TAGS.get(self.transform_kind):
-            raise ValueError("repeat transform spec does not match its kind")
-        return self
+    contract_in: NameBinding | None = Field(  # type: ignore[assignment]
+        default=None, exclude_if=lambda value: value is None
+    )
+    contract_out: NameBinding | None = Field(  # type: ignore[assignment]
+        default=None, exclude_if=lambda value: value is None
+    )
+    effect_policy: NameBinding | None = Field(  # type: ignore[assignment]
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class NamedCaptureEgressNode(CaptureEgressNode):

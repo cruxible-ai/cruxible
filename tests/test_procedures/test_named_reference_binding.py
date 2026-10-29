@@ -21,7 +21,7 @@ from tests.test_procedures.test_procedure_artifacts import _artifact, _definitio
 
 
 def authored_policy_call(*, named=False):
-    """Literal Call input; expected pins are not derived from a conversion."""
+    """Literal Call input through slot ``act``; expected pins are not derived from a conversion."""
     from cruxible_client.contracts.artifacts import ArtifactPin
     from cruxible_client.contracts.procedures.artifacts import (
         NamedProcedureArtifact,
@@ -30,11 +30,21 @@ def authored_policy_call(*, named=False):
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
     from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
+    from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
+    from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
+    from cruxible_client.contracts.shapes import contract_digest
+    from tests.support.operation_world import VALUE, operation, operation_build
     from tests.test_procedures.test_named_reference_closure import authored_procedure
 
     base = authored_procedure(name="effectful", query=None, named=named)
-    provider, interface = accepted_provider(), accepted_interface()
+    build = operation_build(
+        operations=(operation("act", effect="external_mutation"),), side_effects=True
+    )
+    provider = AcceptedProvider(
+        path=provider_path(build.identity.name),
+        provider=build,
+        artifact_digest=provider_digest(build).tagged,
+    )
     effect = ArtifactPin.model_validate(
         {
             "role": "effect-policy",
@@ -49,24 +59,18 @@ def authored_policy_call(*, named=False):
             value.update(role=role, artifact_digest=digest)
         return value
 
+    value = {"name": "test.value", "version": 1, "digest": contract_digest(VALUE).tagged}
     node = {
         "kind": "call",
         "node_id": "call",
         "as": "result",
-        "input": {"value": "hello"},
-        "provider": reference(provider.provider.identity, "provider", provider.artifact_digest),
-        "interface": reference(
-            interface.registration.identity, "provider-interface", interface.artifact_digest
-        ),
+        "input": {"value": 1},
+        "slot": "act",
         "effect_policy": reference(effect.target, "effect-policy", effect.artifact_digest),
     }
-    if not named:
-        node.update(
-            interface_digest=provider.provider.implementations[0].interface_digest,
-            implementation_digest=provider.provider.implementations[0].implementation_digest,
-        )
     raw = base.definition.model_dump(mode="json", by_alias=True)
     raw["nodes"] = [node]
+    raw["slots"] = {"act": {"in": value, "out": value, "effect": "external_mutation"}}
     raw["budget"]["max_provider_calls"] = raw["hard_caps"]["max_provider_calls"] = 1
     definition = (NamedProcedureDefinition if named else ProcedureDefinition).model_validate(raw)
     payload = {
@@ -76,30 +80,29 @@ def authored_policy_call(*, named=False):
     }
     if not named:
         payload["pins"] = sorted(
-            [
-                *base.pins,
-                effect,
-                ArtifactPin.model_validate(node["provider"]),
-                ArtifactPin.model_validate(node["interface"]),
-            ],
+            [*base.pins, effect],
             key=lambda p: (p.role, p.target.qualified),
         )
     artifact = (NamedProcedureArtifact if named else ProcedureArtifact).model_validate(payload)
-    return artifact, provider, interface, effect
+    binding = LineBinding(
+        build=binding_pin(build.identity, provider.artifact_digest), operation="act"
+    )
+    return artifact, provider, binding, effect
 
 
 def test_call_effect_policy_pin_survives_binding_and_exact_replay_without_an_owner_lookup():
-    artifact, provider, interface, effect = authored_policy_call()
+    from cruxible_client.contracts.provider_operations import closure_lookup
+    from tests.support.operation_world import VALUE
+
+    artifact, provider, binding, effect = authored_policy_call()
     original = render_procedure(artifact)
     accepted = AcceptedProcedure(
         path=procedure_path(artifact.identity.name),
         procedure=artifact,
         artifact_digest=procedure_artifact_digest(artifact).tagged,
     )
-    material = {
-        provider.provider.identity: (provider.provider, provider.artifact_digest),
-        interface.registration.identity: (interface.registration, interface.artifact_digest),
-    }
+    material = {provider.provider.identity: (provider.provider, provider.artifact_digest)}
+    bindings = {"act": binding}
     reads = []
 
     def lookup(identity):
@@ -107,7 +110,9 @@ def test_call_effect_policy_pin_survives_binding_and_exact_replay_without_an_own
         assert identity.kind != "EffectPolicy", "Registry material has no ledger owner"
         return material.get(identity)
 
-    bound = bind_procedure_references(accepted, lookup=lookup)
+    bound = bind_procedure_references(
+        accepted, lookup=lookup, bindings=bindings, contracts=closure_lookup((VALUE,))
+    )
     assert set(reads) == set(material)
     assert bound.procedure.definition.nodes[0].effect_policy == effect
     assert effect in bound.procedure.pins
@@ -119,7 +124,9 @@ def test_call_effect_policy_pin_survives_binding_and_exact_replay_without_an_own
         assert result[1] == digest
         return result
 
-    replayed = replay_procedure_references(accepted, pins=bound.procedure.pins, lookup_exact=exact)
+    replayed = replay_procedure_references(
+        accepted, pins=bound.procedure.pins, lookup_exact=exact, bindings=bindings
+    )
     assert replayed.procedure.definition.nodes[0].effect_policy == effect
     assert replayed.procedure.pins == bound.procedure.pins
     assert set(reads) == set(material)
@@ -132,6 +139,7 @@ def test_call_effect_policy_pin_survives_binding_and_exact_replay_without_an_own
                 for p in bound.procedure.pins
             ),
             lookup_exact=exact,
+            bindings=bindings,
         )
 
 
@@ -177,24 +185,24 @@ def test_deferred_registry_envelope_pins_are_not_reinterpreted_as_names(kind):
     bound = bind_procedure_references(accepted, lookup=no_lookup)
     assert extra in bound.procedure.pins
     replayed = replay_procedure_references(
-        accepted, pins=bound.procedure.pins, lookup_exact=no_lookup
+        accepted, pins=bound.procedure.pins, lookup_exact=no_lookup, bindings={}
     )
     assert replayed.procedure.pins == bound.procedure.pins
 
 
 def test_name_only_effect_policy_is_refused_by_admission_law(tmp_path):
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
     from cruxible_client.contracts.providers import render_provider
     from cruxible_core.proposals.proposals import evaluate_proposal_tree
     from tests.core_support._support import initialize_local
+    from tests.support.operation_world import contract_files
 
-    artifact, provider, interface, _ = authored_policy_call(named=True)
+    artifact, provider, _binding, _ = authored_policy_call(named=True)
     instance, _ = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     parent = {
         **instance.tree_at(current.git_oid),
+        **contract_files(),
         provider.path: render_provider(provider.provider),
-        interface.path: render_provider_interface(interface.registration),
     }
     result = evaluate_proposal_tree(
         base_tree=parent,
@@ -285,7 +293,7 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
         return SimpleNamespace(identity=identity), recorded
 
     replayed = replay_procedure_references(
-        accepted, pins=admitted.procedure.pins, lookup_exact=exact
+        accepted, pins=admitted.procedure.pins, lookup_exact=exact, bindings={}
     )
     assert reads == [("QueryDefinition:claims-by-status", recorded)]
     assert replayed.procedure.pins == admitted.procedure.pins
@@ -299,9 +307,10 @@ def test_replay_uses_recorded_versions_and_refuses_substituted_material():
                 SimpleNamespace(identity=identity),
                 _digest("new-head-query"),
             ),
+            bindings={},
         )
     with pytest.raises(ExecutionError, match="lacks QueryDefinition"):
-        replay_procedure_references(accepted, pins=(), lookup_exact=exact)
+        replay_procedure_references(accepted, pins=(), lookup_exact=exact, bindings={})
 
 
 def test_v3_artifact_and_admission_graph_digests_reproduce_from_compact_named_wire():

@@ -26,6 +26,7 @@ from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonS
 from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
@@ -50,6 +51,7 @@ from cruxible_client.contracts.procedures.named_models import (
 from cruxible_client.contracts.procedures.named_models import (
     NamedRepeatBodyNode as RepeatBodyNode,
 )
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.procedures.source_program import (
     NamedProcedureSourceProgram,
     ProcedureSourceProgram,
@@ -97,8 +99,7 @@ class StepOptions(_Model):
 class SourceStep(StepOptions):
     source: StepId
     contract: str
-    interface: str
-    provider: str | None = None
+    slot: str
     request: Template
 
 
@@ -119,8 +120,7 @@ class ClaimStep(StepOptions):
 
 class CallStep(StepOptions):
     call: StepId
-    interface: str
-    provider: str | None = None
+    slot: str
     input: Template
     effect_policy: str | None = None
 
@@ -279,8 +279,14 @@ class ProcedureSpec(_Model):
     activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     budget: ProcedureLimits = ProcedureLimits()
     caps: ProcedureLimits | None = None
-    slots: dict[str, str] = Field(default_factory=dict)
-    acquisition_policy: str | None = None
+    slots: dict[str, ProcedureSlot] = Field(
+        default_factory=dict,
+        description="Each slot's signature {in: name@N, out: name@N, effect}; a Line binds it.",
+    )
+    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict,
+        description="Default acquisition rule per Source alias; a Line overrides it.",
+    )
     steps: tuple[Step, ...] = Field(min_length=1)
     # Names/schema details are optional: retained owners can preserve their
     # contract identities; ordinary new Procedures derive them from their name.
@@ -578,16 +584,13 @@ def lower_procedure_spec(
             details = {} if resolve is None else resolve("binding", step)
             if not isinstance(details, dict):
                 raise ValueError("binding resolver must return binding details")
-            node.update(
-                kind="call" if isinstance(step, CallStep) else "source",
-                provider=ref("Provider", step.provider or "unbound", "provider"),
-                interface=ref(
-                    "ProviderInterface", _interface_name(step.interface), "provider-interface"
-                ),
-            )
-            node.update(details.get("bindings", {}))
-            if step.provider in spec.slots:
-                node["provider"] = {"slot_name": step.provider}
+            if step.slot not in spec.slots:
+                raise ProcedureSpecError(
+                    "procedure_slot_undeclared",
+                    path + ".slot",
+                    f"Slot {step.slot!r} is not declared in slots: {sorted(spec.slots)}",
+                )
+            node.update(kind="call" if isinstance(step, CallStep) else "source", slot=step.slot)
             output = details.get("output")
             if isinstance(step, CallStep):
                 node["input"] = template(step.input, path + ".input")
@@ -811,7 +814,7 @@ def lower_procedure_spec(
                 raise ProcedureSpecError(
                     "procedure_ref_unknown",
                     "$.returns",
-                    "Return projection requires the interface output schema at prepare",
+                    "Return projection requires the slot output schema at prepare",
                 )
             if schemas.get(returns.from_) is not None:
                 for name in returns.omit:
@@ -896,33 +899,12 @@ def lower_procedure_spec(
     if caps.result_bytes is not None:
         definition["hard_caps"]["max_result_bytes"] = caps.result_bytes
     if spec.slots:
-        definition["pin_slots"] = (
-            [
-                {
-                    "slot_name": slot,
-                    **(
-                        {
-                            "interface": ref(
-                                "ProviderInterface",
-                                _interface_name(interface),
-                                "provider-interface",
-                            )
-                        }
-                        if named
-                        else {
-                            "pin_role": "provider",
-                            "artifact_kind": "Provider",
-                            "interface_digest": resolve("slot", interface)
-                            if resolve is not None
-                            else None,
-                        }
-                    ),
-                }
-                for slot, interface in sorted(spec.slots.items())
-            ]
-            if named or resolve is not None
-            else []
-        )
+        definition["slots"] = {
+            name: (resolve("slot", slot) if resolve is not None else slot).model_dump(
+                mode="json", by_alias=True
+            )
+            for name, slot in sorted(spec.slots.items())
+        }
     if spec.params:
         definition["parameter_contract"] = contract(
             spec.parameter_contract or spec.procedure + "-params",
@@ -934,7 +916,7 @@ def lower_procedure_spec(
         kind="procedure",
         definition=definition,
         activation_policy=spec.activation,
-        acquisition_policy=spec.acquisition_policy,
+        acquisition_defaults=dict(spec.acquisition_defaults),
         contracts=tuple(
             CarriedContractInput(
                 name=name,
@@ -972,12 +954,6 @@ def _step_id(step: Step, index: int) -> str:
     if isinstance(step, InvokeStep):
         return step.as_ or step.id or f"step_{index + 1}"
     return f"step_{index + 1}"
-
-
-def _interface_name(value: str) -> str:
-    value = value.removeprefix("ProviderInterface:")
-    name, at, version = value.rpartition("@")
-    return f"{name}/v{version}" if at else value
 
 
 def _branch(
@@ -1139,7 +1115,7 @@ def _check_call_input(
                 raise ProcedureSpecError(
                     "procedure_ref_unknown",
                     path,
-                    f"Required interface input field {name!r} is missing",
+                    f"Required slot input field {name!r} is missing",
                 )
             continue
         if value[name] is None and field.optional:
@@ -1159,7 +1135,7 @@ def _check_call_input(
             raise ProcedureSpecError(
                 "procedure_operand_type_mismatch",
                 path + "." + name,
-                f"Interface input expects {expected_type}, got {actual_type}",
+                f"Slot input expects {expected_type}, got {actual_type}",
             )
 
 

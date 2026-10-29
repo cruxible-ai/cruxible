@@ -20,7 +20,6 @@ from cruxible_client.contracts.procedures.contract_schema import (
     PropertyType,
 )
 from cruxible_client.contracts.procedures.models import (
-    CallNode,
     PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
@@ -34,7 +33,6 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceDiagnostic,
     SourceMapEntry,
     SourceProcedureBinding,
-    SourceProviderBinding,
     SourceQueryBinding,
     SourceSlotBinding,
     SourceSpan,
@@ -130,7 +128,6 @@ Expression = (
     | Value
     | Constructor
     | Namespace
-    | SourceProviderBinding
     | SourceSlotBinding
     | SourceQueryBinding
 )
@@ -579,10 +576,7 @@ class _Compiler:
                     binding = self.program.bindings.get(node.attr)
                     if not isinstance(
                         binding,
-                        SourceProviderBinding
-                        | SourceSlotBinding
-                        | SourceQueryBinding
-                        | SourceProcedureBinding,
+                        SourceSlotBinding | SourceQueryBinding | SourceProcedureBinding,
                     ):
                         self.fail(
                             node,
@@ -595,11 +589,8 @@ class _Compiler:
                 self.fail(node, f"Unknown source member {node.attr!r}", "unknown_field")
             if isinstance(owner, SourceProcedureBinding) and node.attr == "input":
                 return Constructor(owner.input)
-            if (
-                isinstance(owner, SourceProviderBinding | SourceSlotBinding)
-                and node.attr == "input"
-            ):
-                return Constructor(owner.operation.input)
+            if isinstance(owner, SourceSlotBinding) and node.attr == "input":
+                return Constructor(owner.input)
             if isinstance(owner, SourceQueryBinding) and node.attr == "parameters":
                 from cruxible_client.contracts.query.parameters import QueryParameters
 
@@ -858,83 +849,54 @@ class _Compiler:
                 **{"as": True},
             )
             return Value("$steps." + emitted["as"], query_view_schema(), phase="state")
-        if not isinstance(binding, SourceProviderBinding | SourceSlotBinding):
-            self.fail(node.args[0], "Expected an accepted provider binding", "binding_kind")
+        if not isinstance(binding, SourceSlotBinding):
+            self.fail(node.args[0], "Expected a slot binding", "binding_kind")
         argument = "request" if name == "source" else "input"
         if argument not in kwargs:
             self.fail(node, f"{name} requires {argument}")
         value = self.value(kwargs[argument])
-        if not isinstance(value.type, ContractSchema) or value.type != binding.operation.input:
+        if not isinstance(value.type, ContractSchema) or value.type != binding.input:
             self.fail(
                 kwargs[argument],
-                "Use the selected provider's typed input constructor",
+                "Use the slot's typed input constructor",
                 "contract_mismatch",
             )
-
-        def pin(role: str, kind: str, target: str, digest: str) -> dict[str, Any]:
-            return self.reference(
-                role=role,
-                target=ArtifactIdentity(kind=kind, name=target.removeprefix(kind + ":")),
-                artifact_digest=digest,
-            ).model_dump(mode="json")
-
         slot_name = next(
             (name for name, value in self.program.bindings.items() if value is binding), None
         )
-        provider: dict[str, Any] = (
-            {"tag": "playbill-procedure-pin-slot-ref-v1", "slot_name": slot_name}
-            if isinstance(binding, SourceSlotBinding)
-            else pin("provider", "Provider", binding.provider, binding.provider_version)
-        )
-        if isinstance(binding, SourceSlotBinding):
-            assert slot_name is not None
-            self.slots[slot_name] = binding
-        fields = dict(
-            provider=provider,
-            interface=pin(
-                "provider-interface",
-                "ProviderInterface",
-                binding.interface,
-                binding.interface_version,
-            ),
-            interface_digest=binding.interface_digest,
-            implementation_digest=(
-                None if isinstance(binding, SourceSlotBinding) else binding.implementation_digest
-            ),
-        )
+        assert slot_name is not None
+        self.slots[slot_name] = binding
         if name == "source":
             if set(kwargs) != {"request", "capture_contract"}:
                 self.fail(node, "source requires request and capture_contract")
-            if binding.operation.material is None:
-                self.fail(
-                    node,
-                    "This acquisition interface does not declare its captured material schema",
-                    "material_contract_required",
-                    "Publish the provider material schema before using typed Source fields.",
-                )
+            if binding.effect == "external_mutation":
+                self.fail(node, "A Source slot cannot mutate", "binding_kind")
             capture_pin = self.capture_pin(kwargs["capture_contract"])
             emitted = self.append(
                 "source",
                 node,
-                **fields,
+                slot=slot_name,
                 request=self.wire(value, node),
                 capture_contract=capture_pin,
                 **{"as": True},
             )
-            return Observation("$steps." + emitted["as"], binding.operation.material)
+            return Observation("$steps." + emitted["as"], binding.output)
         if set(kwargs) != {"input"}:
             self.fail(node, "call accepts only its typed input in this form")
-        if not isinstance(binding.operation.output, ContractSchema):
-            self.fail(node, "An acquisition interface must be used through source", "binding_kind")
+        if binding.effect == "external_mutation":
+            self.fail(
+                node,
+                "An external_mutation slot needs an effect policy; author it as a graph node",
+                "binding_kind",
+            )
         emitted = self.append(
             "call",
             node,
-            **fields,
+            slot=slot_name,
             input=self.wire(value, node),
-            effect_policy=None,
             **{"as": True},
         )
-        return Value("$steps." + emitted["as"], binding.operation.output)
+        return Value("$steps." + emitted["as"], binding.output)
 
     def claim_read(
         self, selected: ClaimSelection, node: ast.Call, cardinality: str, limit: int | None = None
@@ -1724,15 +1686,10 @@ def _compile_source(
         budget=budget,
         hard_caps=hard_caps,
         terminal_capability=capability,
-        pin_slots=[
-            {
-                "slot_name": name,
-                "pin_role": "provider",
-                "artifact_kind": "Provider",
-                "interface_digest": compiler.slots[name].interface_digest,
-            }
+        slots={
+            name: compiler.slots[name].signature().model_dump(mode="json")
             for name in sorted(compiler.slots, key=lambda item: item.encode("utf-8"))
-        ],
+        },
         source=program.model_copy(
             update={
                 "contracts": {
@@ -1816,16 +1773,14 @@ def verify_source_graph(procedure: Any) -> None:
     """Prove retained source/graph association without running authored Python."""
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.artifacts import (
-        BlueprintArtifact,
         ProcedureArtifact,
-        ProcedureOwnedContract,
         procedure_owned_contract_digest,
     )
 
     definition = procedure.definition
     if not isinstance(definition, ProcedureDefinition) or definition.source is None:
         return
-    if not isinstance(procedure, ProcedureArtifact | BlueprintArtifact):
+    if not isinstance(procedure, ProcedureArtifact):
         raise ProjectionFormatError("Source Procedures must carry their declared Contracts")
 
     def root(pin: Any) -> SourceContract:
@@ -1857,50 +1812,10 @@ def verify_source_graph(procedure: Any) -> None:
         SourceContract(name=c.identity.name, schema=c.contract_schema)
         for c in procedure.owned_contracts
     )
-    # Historical source graphs carried anonymous copies of Call I/O. Reproduce
-    # those exact pins for verification only; the source writer never emits them.
     if len(definition.nodes) != len(compiled.definition.nodes):
         raise ProjectionFormatError("Retained Procedure source and compiled graph disagree")
-    expected_nodes = []
+    expected_nodes = list(compiled.definition.nodes)
     expected_contracts = {contract.name: contract for contract in compiled.contracts}
-    for actual, expected in zip(definition.nodes, compiled.definition.nodes, strict=True):
-        if (
-            isinstance(actual, CallNode)
-            and isinstance(expected, CallNode)
-            and (actual.contract_in is not None or actual.contract_out is not None)
-        ):
-            binding = next(
-                (
-                    binding
-                    for binding in definition.source.bindings.values()
-                    if isinstance(binding, (SourceProviderBinding, SourceSlotBinding))
-                    and binding.interface_version == actual.interface.artifact_digest
-                ),
-                None,
-            )
-            if binding is None or isinstance(binding.operation.output, str):
-                raise ProjectionFormatError("Historical Call has no matching operation binding")
-            pins = {}
-            for side, schema in (
-                ("in", binding.operation.input),
-                ("out", binding.operation.output),
-            ):
-                name = (
-                    "source."
-                    + sha256(canonical_bytes(schema.model_dump(mode="json"))).hexdigest()[:24]
-                )
-                contract = SourceContract(name=name, schema=schema)
-                expected_contracts[name] = contract
-                owned = ProcedureOwnedContract(
-                    identity=ArtifactIdentity(kind="Contract", name=name), schema=schema
-                )
-                pins["contract_" + side] = ArtifactPin(
-                    role="contract-" + side,
-                    target=owned.identity,
-                    artifact_digest=procedure_owned_contract_digest(owned).tagged,
-                )
-            expected = expected.model_copy(update=pins)
-        expected_nodes.append(expected)
     expected_definition = compiled.definition.model_copy(update={"nodes": tuple(expected_nodes)})
     expected_contract_tuple = tuple(expected_contracts[name] for name in sorted(expected_contracts))
     if getattr(procedure, "artifact_format") == "cruxible-procedure-v3":

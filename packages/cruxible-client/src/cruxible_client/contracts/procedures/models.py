@@ -1,8 +1,8 @@
 """The Procedure graph grammar (graph format 6).
 
 This packaged contract module owns the live Cruxible Procedure graph profile.
-Its dependencies are exact Cruxible pins or, on a Blueprint only, interface-typed
-slots; nothing here performs a mutable config or registry lookup.
+Its dependencies are exact Cruxible pins and typed slot signatures a Line
+binds; nothing here performs a mutable config or registry lookup.
 """
 
 from __future__ import annotations
@@ -78,14 +78,11 @@ from cruxible_client.contracts.procedures.nodes import (
     derived_terminal_capability,
     required_authority,
 )
-from cruxible_client.contracts.procedures.nodes import (
-    _validate_explicit_provider_binding as _validate_explicit_provider_binding,
-)
 from cruxible_client.contracts.procedures.slots import (
     LegacyProcedurePinBinding,
     ProcedurePinBinding,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
+    ProcedureSlot,
+    validate_procedure_slots,
 )
 from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 
@@ -129,9 +126,9 @@ class ProcedureHardCaps(_StrictProcedureModel):
 class ProcedureDefinition(_StrictProcedureModel):
     """The one Procedure graph format (6): explicit value joins and typed return paths.
 
-    Slots (``pin_slots`` plus slot references in node pins) are interface-typed
-    binding points. Only a Blueprint may leave them open; an accepted Procedure
-    pins every Provider exactly.
+    ``slots`` declares each provider-calling node's signature ``{in, out,
+    effect}`` by name. The Procedure never names a provider; a Line binds every
+    slot to one exact build and operation when it is accepted.
     """
 
     graph_format: Literal[6] = 6
@@ -142,7 +139,9 @@ class ProcedureDefinition(_StrictProcedureModel):
     parameter_contract: LegacyProcedurePinBinding | None = None
     nodes: tuple[ProcedureNode, ...]
     returns: str | None = None
-    pin_slots: tuple[ProcedurePinSlot, ...] = ()
+    slots: dict[str, ProcedureSlot] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
     budget: ProcedureBudget
     hard_caps: ProcedureHardCaps
@@ -164,13 +163,7 @@ class ProcedureDefinition(_StrictProcedureModel):
             else _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
         )
 
-    @field_validator("pin_slots")
-    @classmethod
-    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
-        names = tuple(item.slot_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
-        return value
+    _slots = field_validator("slots")(validate_procedure_slots)
 
     @field_validator("measurements")
     @classmethod
@@ -213,6 +206,34 @@ class ProcedureDefinition(_StrictProcedureModel):
             and self.returns is not None
         ):
             raise ValueError("Source-v2 uses explicit return paths, not a return alias")
+        used = {slot for _occurrence, slot in self.slot_nodes()}
+        if used != set(self.slots):
+            undeclared = sorted(used - set(self.slots))
+            unused = sorted(set(self.slots) - used)
+            raise ValueError(
+                "every slotted node names a declared slot and every slot is used"
+                + (f"; undeclared: {undeclared}" if undeclared else "")
+                + (f"; unused: {unused}" if unused else "")
+            )
+        for node in self.nodes:
+            bodies: tuple[object, ...] = (node,)
+            if isinstance(node, RepeatNode):
+                bodies = tuple(body for body in node.body if body.operation == "call")
+            for item in bodies:
+                slot_name = getattr(item, "slot", None)
+                if slot_name is None or slot_name not in self.slots:
+                    continue
+                effect = self.slots[slot_name].effect
+                if isinstance(item, SourceNode):
+                    if effect == "external_mutation":
+                        raise ValueError(f"Source {item.node_id!r}: a Source slot cannot mutate")
+                elif (effect == "external_mutation") != (
+                    getattr(item, "effect_policy", None) is not None
+                ):
+                    raise ValueError(
+                        f"node {getattr(item, 'node_id', '?')!r}: an effect policy is declared "
+                        "exactly when its slot's effect is external_mutation"
+                    )
         if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
             raise ValueError("Procedure budget exceeds its wall-clock hard cap")
         if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
@@ -266,20 +287,20 @@ class ProcedureDefinition(_StrictProcedureModel):
                 )
         return self
 
-    @property
-    def open_slots(self) -> tuple[str, ...]:
-        """Slot names some node pin still references; empty for a runnable Procedure."""
+    def slot_nodes(self) -> tuple[tuple[str, str], ...]:
+        """``(occurrence id, slot)`` for every slotted node, repeat bodies included."""
 
-        return tuple(
-            sorted(
-                {
-                    binding.slot_name
-                    for binding in iter_pin_bindings(self)
-                    if isinstance(binding, ProcedurePinSlotRef)
-                },
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
+        found: list[tuple[str, str]] = []
+        for node in self.nodes:
+            if isinstance(node, CallNode | SourceNode):
+                found.append((node.node_id, node.slot))
+            elif isinstance(node, RepeatNode):
+                found.extend(
+                    (f"{node.node_id}.{body.node_id}", body.slot)
+                    for body in node.body
+                    if body.operation == "call" and body.slot is not None
+                )
+        return tuple(found)
 
 
 def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
@@ -288,7 +309,7 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
     found: list[ProcedurePinBinding] = []
 
     def visit(item: object) -> None:
-        if isinstance(item, ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef):
+        if isinstance(item, ArtifactPin | ArtifactNameRef):
             found.append(item)
             return
         if isinstance(item, BaseModel):
@@ -332,8 +353,7 @@ __all__ = [
     "ProcedureMeasurementDeclaration",
     "ProcedureNode",
     "ProcedurePinBinding",
-    "ProcedurePinSlot",
-    "ProcedurePinSlotRef",
+    "ProcedureSlot",
     "ProcedureTransformSpec",
     "ProjectNode",
     "ProposalItemsFanOut",

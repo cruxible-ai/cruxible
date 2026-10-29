@@ -28,7 +28,7 @@ from cruxible_client.contracts.procedures.nodes import (
     NamedStateTapNode,
     NamedTransformNode,
 )
-from cruxible_client.contracts.procedures.slots import NameBinding, NamedProcedurePinSlot
+from cruxible_client.contracts.procedures.slots import NameBinding
 from cruxible_client.contracts.procedures.source_program import NamedProcedureSourceProgram
 
 
@@ -38,7 +38,6 @@ class NamedProcedureDefinition(old.ProcedureDefinition):
     contract_out: NameBinding  # type: ignore[assignment]
     parameter_contract: NameBinding | None = None  # type: ignore[assignment]
     nodes: tuple[NamedProcedureNode, ...]
-    pin_slots: tuple[NamedProcedurePinSlot, ...] = ()
     source: NamedProcedureSourceProgram | None = None
 
 
@@ -52,7 +51,6 @@ __all__ = [
     "NamedInvokeNode",
     "NamedProcedureDefinition",
     "NamedProcedureNode",
-    "NamedProcedurePinSlot",
     "NamedProjectNode",
     "NamedProposeChangeSetNode",
     "NamedRepeatBodyNode",

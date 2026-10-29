@@ -25,7 +25,6 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureDefinition,
     ProcedureNode,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatNode,
@@ -33,7 +32,6 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
     StateTapNode,
     TransformNode,
-    iter_pin_bindings,
 )
 
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -249,7 +247,6 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     position = {node_id: index for index, node_id in enumerate(node_ids)}
     kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
     edges: dict[str, dict[str, str]] = {}
-    declared_slots = {slot.slot_name for slot in definition.pin_slots}
     guard_halt_targets = procedure_guard_halt_targets(definition)
 
     for index, node in enumerate(definition.nodes):
@@ -291,12 +288,6 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
             if position[target] <= index:
                 raise ProcedureGraphFormatError(
                     f"R2: node {node.node_id!r} {label} must target a later node"
-                )
-        for binding in iter_pin_bindings(node):
-            if isinstance(binding, ProcedurePinSlotRef) and binding.slot_name not in declared_slots:
-                raise ProcedureGraphFormatError(
-                    f"Procedure node {node.node_id!r} references undeclared pin slot "
-                    f"{binding.slot_name!r}"
                 )
         edges[node.node_id] = _canonical_edges(declared)
 

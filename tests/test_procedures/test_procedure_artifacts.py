@@ -38,8 +38,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     StateTapNode,
@@ -64,7 +62,7 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
 
 def _definition(
     *,
-    query: ArtifactPin | ProcedurePinSlotRef | None = None,
+    query: ArtifactPin | None = None,
     nodes: tuple[object, ...] | None = None,
     terminal_capability: int = 1,
 ) -> ProcedureDefinition:
@@ -87,18 +85,6 @@ def _definition(
         contract_out=contract_out,
         nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
         returns="result",
-        pin_slots=(
-            (
-                ProcedurePinSlot(
-                    slot_name="query",
-                    pin_role="query",
-                    artifact_kind="QueryDefinition",
-                    interface_digest=_digest("query-interface"),
-                ),
-            )
-            if isinstance(query, ProcedurePinSlotRef)
-            else ()
-        ),
         budget=ProcedureBudget(
             wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=0,
@@ -161,7 +147,7 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 6
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:05dfe8ae33871cffa1fbe92826661ece478f2817cdd7e1da8e8e79d455c80ef6"
+        "sha256:9137cc26b9aa3967da2dd004ca4c82bb5dda2cfbc15883f5f753776a9162d9a3"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (
@@ -171,22 +157,6 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     content = render_procedure(procedure)
     assert parse_procedure(content, path=procedure_path("triage")) == procedure
     assert procedure_artifact_digest(procedure).tagged.startswith("sha256:")
-
-
-def test_open_slot_procedure_is_refused_and_unsupported() -> None:
-    definition = _definition(query=ProcedurePinSlotRef(slot_name="query"))
-    procedure = _artifact(definition)
-
-    runnable, rows = procedure_runnability(definition)
-    assert runnable == "unsupported"
-    assert [(row.kind, row.runs_on) for row in rows] == [("open_slot", "nowhere")]
-    result = evaluate_procedure_law(
-        procedure,
-        path=procedure_path("triage"),
-        predecessor=None,
-    )
-    assert result.verdict == "refused"
-    assert result.diagnostics[0].code == "cruxible.procedure.open_slots"
 
 
 def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
@@ -282,7 +252,7 @@ def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
     )
 
 
-def test_procedure_v2_closes_owned_contracts_and_refuses_an_open_query_slot() -> None:
+def test_procedure_v2_closes_owned_contracts() -> None:
     contracts = tuple(
         ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=name),
@@ -301,18 +271,13 @@ def test_procedure_v2_closes_owned_contracts_and_refuses_an_open_query_slot() ->
         target=by_name["claim-rows"].identity,
         artifact_digest=procedure_owned_contract_digest(by_name["claim-rows"]).tagged,
     )
-    query_slot = ProcedurePinSlotRef(slot_name="query")
-    definition = _definition(query=query_slot).model_copy(
+    exact_query = _pin("query", "QueryDefinition", "claims-by-status")
+    definition = _definition(query=exact_query).model_copy(
         update={
             "contract_in": contract_in,
             "contract_out": contract_out,
             "nodes": (
-                StateTapNode(
-                    node_id="read",
-                    query=query_slot,
-                    parameters={},
-                    as_="rows",
-                ),
+                StateTapNode(node_id="read", query=exact_query, parameters={}, as_="rows"),
                 ProjectNode(
                     node_id="shape",
                     fields={},
@@ -322,56 +287,31 @@ def test_procedure_v2_closes_owned_contracts_and_refuses_an_open_query_slot() ->
             ),
         }
     )
-    procedure = ProcedureArtifact(
+    closed_definition = definition
+    owned = tuple(
+        sorted(
+            contracts,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
+        )
+    )
+    procedure = closed = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="triage"),
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=(contract_in, contract_out),
-        owned_contracts=tuple(
+        definition=closed_definition,
+        definition_digest=compute_procedure_definition_digest(closed_definition).tagged,
+        pins=tuple(
             sorted(
-                contracts,
-                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
+                (contract_in, contract_out, exact_query),
+                key=lambda pin: (
+                    pin.role.encode(),
+                    pin.target.qualified.encode(),
+                    pin.artifact_digest.encode(),
+                ),
             )
         ),
+        owned_contracts=owned,
         activation_policy="drain",
     )
-
-    assert procedure_runnability(definition)[0] == "unsupported"
     assert parse_procedure(render_procedure(procedure), path=procedure_path("triage")) == procedure
-    refused = evaluate_procedure_law(
-        procedure,
-        path=procedure_path("triage"),
-        predecessor=None,
-    )
-    assert refused.verdict == "refused"
-    assert refused.diagnostics[0].code == "cruxible.procedure.open_slots"
-    exact_query = _pin("query", "QueryDefinition", "claims-by-status")
-    closed_definition = definition.model_copy(
-        update={
-            "pin_slots": (),
-            "nodes": (
-                StateTapNode(node_id="read", query=exact_query, parameters={}, as_="rows"),
-                definition.nodes[1],
-            ),
-        }
-    )
-    closed = ProcedureArtifact(
-        **{
-            **procedure.model_dump(mode="python", exclude={"artifact_format"}),
-            "definition": closed_definition,
-            "definition_digest": compute_procedure_definition_digest(closed_definition).tagged,
-            "pins": tuple(
-                sorted(
-                    (contract_in, contract_out, exact_query),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.qualified.encode(),
-                        pin.artifact_digest.encode(),
-                    ),
-                )
-            ),
-        }
-    )
     assert procedure_runnability(closed_definition) == ("direct", ())
     assert (
         evaluate_procedure_law(
@@ -403,7 +343,16 @@ def test_procedure_v2_closes_owned_contracts_and_refuses_an_open_query_slot() ->
                 **procedure.model_dump(mode="python", exclude={"artifact_format"}),
                 "definition": wrong_definition,
                 "definition_digest": compute_procedure_definition_digest(wrong_definition).tagged,
-                "pins": (contract_in, wrong),
+                "pins": tuple(
+                    sorted(
+                        (contract_in, exact_query, wrong),
+                        key=lambda pin: (
+                            pin.role.encode(),
+                            pin.target.qualified.encode(),
+                            pin.artifact_digest.encode(),
+                        ),
+                    )
+                ),
             }
         )
 

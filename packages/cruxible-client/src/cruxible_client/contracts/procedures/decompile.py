@@ -26,7 +26,6 @@ from cruxible_client.contracts.procedures.models import (
     HaltNode,
     InboxEgressNode,
     InvokeNode,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatNode,
@@ -40,8 +39,6 @@ from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 
 
 def _name(pin: Any) -> str:
-    if isinstance(pin, ProcedurePinSlotRef):
-        return pin.slot_name
     if not isinstance(pin, (ArtifactNameRef, ArtifactPin)):
         raise ValueError("open binding needs an explicit step")
     return pin.target.name
@@ -176,15 +173,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(
                     source=node.as_,
                     contract=_name(node.capture_contract),
-                    interface=_name(node.interface),
-                    provider=_name(node.provider),
+                    slot=node.slot,
                     request=short(node.request),
                 )
             elif isinstance(node, CallNode):
                 step = dict(
                     call=node.as_,
-                    interface=_name(node.interface),
-                    provider=_name(node.provider),
+                    slot=node.slot,
                     input=short(node.input),
                 )
                 if node.effect_policy is not None:
@@ -306,10 +301,8 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             procedure=definition.name,
             description=definition.description,
             slots={
-                slot.slot_name: re.sub(
-                    r"/v([0-9]+)$", lambda match: "@" + match[1], _name(getattr(slot, "interface"))
-                )
-                for slot in definition.pin_slots
+                name: slot.model_dump(mode="json", by_alias=True)
+                for name, slot in definition.slots.items()
             },
             input=schema(definition.contract_in).fields,
             input_contract=_name(definition.contract_in),
@@ -327,7 +320,10 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
             annotations=definition.annotations,
             halt_order=tuple(node.node_id for node in nodes if node.node_id in folded_halts),
             activation=procedure.activation_policy,
-            acquisition_policy=procedure.acquisition_policy,
+            acquisition_defaults={
+                alias: rule.model_dump(mode="json")
+                for alias, rule in procedure.acquisition_defaults.items()
+            },
             contracts=contracts,
             steps=steps,
             budget=dict(

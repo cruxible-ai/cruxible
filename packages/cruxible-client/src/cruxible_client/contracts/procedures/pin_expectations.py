@@ -1,9 +1,8 @@
 """Central field-to-pin expectations for Procedure graphs.
 
-An ``ArtifactPin`` proves exact bytes and a slot declaration proves an
-interface binding point.  Neither fact says that the artifact is suitable for
-the Procedure field that names it.  This module is the one nominal typing seam
-between graph fields and exact/slot-backed pins.
+An ``ArtifactPin`` proves exact bytes; it does not say that the artifact is
+suitable for the Procedure field that names it.  This module is the one
+nominal typing seam between graph fields and their pins.
 """
 
 from __future__ import annotations
@@ -19,8 +18,6 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureDefinition,
     ProcedurePinBinding,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatNode,
@@ -47,7 +44,6 @@ CONTRACT_OUT = PinExpectation((("contract-out", "Contract"),))
 PARAMETER_CONTRACT = PinExpectation((("parameter-contract", "Contract"),))
 QUERY = PinExpectation((("query", "QueryDefinition"),))
 PROVIDER = PinExpectation((("provider", "Provider"),))
-PROVIDER_INTERFACE = PinExpectation((("provider-interface", "ProviderInterface"),))
 CAPTURE_CONTRACT = PinExpectation((("capture-contract", "CaptureContract"),))
 EFFECT_POLICY = PinExpectation((("effect-policy", "EffectPolicy"),))
 REDUCER_OR_QUERY = PinExpectation((("query", "QueryDefinition"), ("reducer", "Reducer")))
@@ -78,34 +74,8 @@ def validate_exact_pin_expectation(
         )
 
 
-def _validate_binding_expectation(
-    binding: ProcedurePinBinding,
-    expectation: PinExpectation,
-    *,
-    location: str,
-    slots: dict[str, ProcedurePinSlot],
-) -> None:
-    if isinstance(binding, ArtifactPin | ArtifactNameRef):
-        validate_exact_pin_expectation(binding, expectation, location=location)
-        return
-    if not isinstance(binding, ProcedurePinSlotRef):  # pragma: no cover - closed union
-        raise TypeError(f"unsupported Procedure pin binding at {location}")
-    declaration = slots.get(binding.slot_name)
-    if declaration is None:
-        raise ValueError(f"{location} references undeclared pin slot {binding.slot_name!r}")
-    actual = (declaration.pin_role, declaration.artifact_kind)
-    if actual not in expectation.allowed:
-        raise ValueError(
-            f"{location} slot {binding.slot_name!r} requires "
-            f"{expectation.description}; declaration has "
-            f"role={declaration.pin_role!r} kind={declaration.artifact_kind!r}"
-        )
-
-
 def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None:
-    """Validate every exact or slot-backed semantic pin field in one graph."""
-
-    slots = {slot.slot_name: slot for slot in definition.pin_slots}
+    """Validate every semantic pin field in one graph."""
 
     def check(
         binding: ProcedurePinBinding | None,
@@ -113,12 +83,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
         location: str,
     ) -> None:
         if binding is not None:
-            _validate_binding_expectation(
-                binding,
-                expectation,
-                location=location,
-                slots=slots,
-            )
+            validate_exact_pin_expectation(binding, expectation, location=location)
 
     check(definition.contract_in, CONTRACT_IN, "Procedure contract_in")
     check(definition.contract_out, CONTRACT_OUT, "Procedure contract_out")
@@ -147,23 +112,6 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
             check(node.query, QUERY, f"{prefix} query")
         elif isinstance(node, SourceNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
-            check(node.provider, PROVIDER, f"{prefix} provider")
-            validate_exact_pin_expectation(
-                node.interface,
-                PROVIDER_INTERFACE,
-                location=f"{prefix} interface",
-            )
-            if isinstance(node.provider, ProcedurePinSlotRef):
-                slot = slots[node.provider.slot_name]
-                if (
-                    getattr(slot, "interface", None) != node.interface
-                    if getattr(definition, "graph_format") == 7
-                    else slot.interface_digest != node.interface_digest
-                ):
-                    raise ValueError(
-                        f"{prefix} interface_digest disagrees with Provider slot "
-                        f"{node.provider.slot_name!r}"
-                    )
         elif isinstance(node, ExhaustTapNode):
             check(
                 node.reducer_or_query,
@@ -171,25 +119,6 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 f"{prefix} reducer_or_query",
             )
         elif isinstance(node, CallNode):
-            check(node.provider, PROVIDER, f"{prefix} provider")
-            check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
-            check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
-            validate_exact_pin_expectation(
-                node.interface,
-                PROVIDER_INTERFACE,
-                location=f"{prefix} interface",
-            )
-            if isinstance(node.provider, ProcedurePinSlotRef):
-                slot = slots[node.provider.slot_name]
-                if (
-                    getattr(slot, "interface", None) != node.interface
-                    if getattr(definition, "graph_format") == 7
-                    else slot.interface_digest != node.interface_digest
-                ):
-                    raise ValueError(
-                        f"{prefix} interface_digest disagrees with Provider slot "
-                        f"{node.provider.slot_name!r}"
-                    )
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
         elif isinstance(node, TransformNode):
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
@@ -199,29 +128,8 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
         elif isinstance(node, RepeatNode):
             for body in node.body:
                 body_prefix = f"{prefix} repeat body {body.node_id!r}"
-                check(body.provider, PROVIDER, f"{body_prefix} provider")
                 check(body.contract_in, CONTRACT_IN, f"{body_prefix} contract_in")
                 check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
-                if body.operation != "call":
-                    continue
-                if body.interface is None:
-                    raise ValueError(f"{body_prefix} lacks its Provider interface")
-                validate_exact_pin_expectation(
-                    body.interface,
-                    PROVIDER_INTERFACE,
-                    location=f"{body_prefix} interface",
-                )
-                if isinstance(body.provider, ProcedurePinSlotRef):
-                    slot = slots[body.provider.slot_name]
-                    if (
-                        getattr(slot, "interface", None) != body.interface
-                        if getattr(definition, "graph_format") == 7
-                        else slot.interface_digest != body.interface_digest
-                    ):
-                        raise ValueError(
-                            f"{body_prefix} interface_digest disagrees with Provider slot "
-                            f"{body.provider.slot_name!r}"
-                        )
                 check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
         elif isinstance(node, CaptureEgressNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")

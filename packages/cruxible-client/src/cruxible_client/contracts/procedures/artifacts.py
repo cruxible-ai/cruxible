@@ -36,7 +36,10 @@ from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
-from cruxible_client.contracts.procedures.closure import ProcedureSlotBinding
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionDefault,
+    validate_acquisition_keys,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
@@ -45,20 +48,12 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
-    ProcedurePinSlotRef,
     RepeatNode,
-    SelectNode,
     SourceNode,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.named_models import NamedProcedureDefinition
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_bytes,
-    interface_definition_digest,
-)
-from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2, provider_interface_pin
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -132,7 +127,7 @@ def _owned_contract_key(contract: ProcedureOwnedContract) -> bytes:
 
 
 class _GraphEnvelope(_StrictProcedureArtifactModel):
-    """What a Procedure and a Blueprint share: one graph and the Contracts it carries."""
+    """A Procedure's envelope: one graph and the Contracts it carries."""
 
     identity: ArtifactIdentity
     definition: ProcedureDefinition
@@ -232,10 +227,6 @@ class _GraphEnvelope(_StrictProcedureArtifactModel):
         }
         if not referenced_exact.issubset(declared_exact):
             raise ValueError(f"{kind} definition contains exact pins absent from its envelope")
-        declared_slots = {slot.slot_name for slot in self.definition.pin_slots}
-        referenced_slots = set(self.definition.open_slots)
-        if not referenced_slots.issubset(declared_slots):
-            raise ValueError(f"{kind} definition references undeclared slots")
 
         contracts = {
             contract.identity.qualified: procedure_owned_contract_digest(contract).tagged
@@ -261,48 +252,28 @@ class _GraphEnvelope(_StrictProcedureArtifactModel):
             raise ValueError(f"{kind} envelope contains an unreferenced Contract pin")
 
 
-class BlueprintOrigin(_StrictProcedureArtifactModel):
-    """The Blueprint a Procedure was instantiated from, and the Provider bound per slot."""
-
-    tag: Literal["cruxible-blueprint-origin-v1"] = "cruxible-blueprint-origin-v1"
-    blueprint: ArtifactPin
-    bindings: tuple[ProcedureSlotBinding, ...]
-
-    @model_validator(mode="after")
-    def _shape(self) -> "BlueprintOrigin":
-        if self.blueprint.role != "blueprint" or self.blueprint.target.kind != "Blueprint":
-            raise ValueError("a Blueprint origin pins its Blueprint with role blueprint")
-        names = tuple(item.slot_name for item in self.bindings)
-        if not names or names != tuple(sorted(set(names), key=lambda item: item.encode())):
-            raise ValueError("Blueprint bindings must be nonempty, sorted and unique by slot")
-        for item in self.bindings:
-            if item.artifact_pin.target.kind != "Provider" or item.artifact_pin.role != "provider":
-                raise ValueError("a Blueprint slot binds one exact Provider")
-        return self
-
-
 class ProcedureArtifact(_GraphEnvelope):
     """Procedure envelope whose Contract closure rides with its owner.
 
-    ``blueprint`` records the Blueprint it was instantiated from and the exact
-    Provider bound to each slot; it is provenance, not a dependency.
+    ``acquisition_defaults`` holds the Procedure's acquisition rule per Source
+    alias (``max_age``, ``on_unavailable``); a Line's ``acquisition`` overrides
+    them field by field.
     """
 
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
-    acquisition_policy: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    acquisition_defaults: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
-    @field_validator("acquisition_policy")
-    @classmethod
-    def _policy_name(cls, value: str | None) -> str | None:
-        if value is not None and not _PROCEDURE_NAME_RE.fullmatch(value):
-            raise ValueError("acquisition_policy must be a canonical policy name")
-        return value
-
-    blueprint: BlueprintOrigin | None = Field(default=None, exclude_if=lambda value: value is None)
+    _defaults = field_validator("acquisition_defaults")(validate_acquisition_keys)
 
     @model_validator(mode="after")
     def _correspondence(self) -> "ProcedureArtifact":
         self._check_envelope("Procedure")
+        aliases = {node.as_ for node in self.definition.nodes if isinstance(node, SourceNode)}
+        unknown = sorted(set(self.acquisition_defaults) - aliases)
+        if unknown:
+            raise ValueError(f"acquisition_defaults name no Source alias: {unknown}")
         if getattr(self, "artifact_format") == "cruxible-procedure-v3":
             guard_halts = procedure_guard_halt_targets(self.definition)
             nodes = []
@@ -324,63 +295,6 @@ class ProcedureArtifact(_GraphEnvelope):
         return self
 
 
-class BlueprintArtifact(_GraphEnvelope):
-    """A Procedure skeleton: the same definition with interface-typed Provider slots open.
-
-    Not runnable. Instantiating it binds one compatible accepted Provider per
-    slot and yields an ordinary Procedure that records this Blueprint and its
-    bindings.
-    """
-
-    artifact_format: Literal["cruxible-blueprint-v1"] = "cruxible-blueprint-v1"
-
-    @model_validator(mode="after")
-    def _correspondence(self) -> "BlueprintArtifact":
-        self._check_envelope("Blueprint")
-        slots = {slot.slot_name: slot for slot in self.definition.pin_slots}
-        if not slots:
-            raise ValueError("a Blueprint declares at least one open Provider slot")
-        if set(self.definition.open_slots) != set(slots):
-            raise ValueError("every declared Blueprint slot must be used by a node")
-        for slot in slots.values():
-            if slot.artifact_kind != "Provider" or slot.pin_role != "provider":
-                raise ValueError("a Blueprint slot is an interface-typed Provider slot")
-        provider_slots = {
-            getattr(occurrence, "provider").slot_name
-            for _occurrence_id, occurrence in provider_occurrences(self.definition)
-            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef)
-        }
-        if provider_slots != set(slots):
-            raise ValueError("Blueprint slots stand only in Provider positions")
-        return self
-
-
-class NamedBlueprintBinding(_StrictProcedureArtifactModel):
-    slot_name: str
-    provider: ArtifactNameRef
-
-    @model_validator(mode="after")
-    def _kind(self) -> NamedBlueprintBinding:
-        if self.provider.target.kind != "Provider":
-            raise ValueError("a Blueprint binds a named Provider")
-        return self
-
-
-class NamedBlueprintOrigin(_StrictProcedureArtifactModel):
-    tag: Literal["cruxible-blueprint-origin-v2"] = "cruxible-blueprint-origin-v2"
-    blueprint: ArtifactNameRef
-    bindings: tuple[NamedBlueprintBinding, ...]
-
-    @model_validator(mode="after")
-    def _shape(self) -> NamedBlueprintOrigin:
-        if self.blueprint.target.kind != "Blueprint":
-            raise ValueError("a Blueprint origin names a Blueprint")
-        names = tuple(binding.slot_name for binding in self.bindings)
-        if not names or names != tuple(sorted(set(names))):
-            raise ValueError("Blueprint bindings must be nonempty, sorted and unique")
-        return self
-
-
 def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
     if envelope.identity.kind != kind or not _PROCEDURE_NAME_RE.fullmatch(envelope.identity.name):
         raise ValueError(f"{kind} identity must be path-addressable")
@@ -391,20 +305,6 @@ def _check_named_envelope(envelope: _GraphEnvelope, kind: str) -> None:
         != compute_procedure_definition_digest(envelope.definition).tagged
     ):
         raise ValueError(f"{kind} definition digest does not reproduce")
-    if kind == "Procedure":
-        slots = {slot.slot_name: slot for slot in envelope.definition.pin_slots}
-        provider_slots = {
-            getattr(occurrence, "provider").slot_name
-            for _, occurrence in provider_occurrences(envelope.definition)
-            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef)
-        }
-        if set(envelope.definition.open_slots) != provider_slots or provider_slots != set(slots):
-            raise ValueError("Declare and use slots only in Provider positions")
-        for _, occurrence in provider_occurrences(envelope.definition):
-            if isinstance(getattr(occurrence, "provider"), ProcedurePinSlotRef):
-                slot = slots[getattr(occurrence, "provider").slot_name]
-                if getattr(slot, "interface", None) != getattr(occurrence, "interface"):
-                    raise ValueError("Provider slot and occurrence interfaces differ")
     contracts = {contract.identity for contract in envelope.owned_contracts}
     referenced = {
         binding.target
@@ -421,7 +321,6 @@ class NamedProcedureArtifact(ProcedureArtifact):
     artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"  # type: ignore[assignment]
     definition: NamedProcedureDefinition
     pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
-    blueprint: NamedBlueprintOrigin | None = Field(default=None, exclude_if=lambda v: v is None)  # type: ignore[assignment]
 
     @model_validator(mode="before")
     @classmethod
@@ -435,15 +334,6 @@ class NamedProcedureArtifact(ProcedureArtifact):
 
                 return expand_procedure(value)
         return value
-
-    def _check_envelope(self, kind: str) -> None:
-        _check_named_envelope(self, kind)
-
-
-class NamedBlueprintArtifact(BlueprintArtifact):
-    artifact_format: Literal["cruxible-blueprint-v2"] = "cruxible-blueprint-v2"  # type: ignore[assignment]
-    definition: NamedProcedureDefinition
-    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
 
     def _check_envelope(self, kind: str) -> None:
         _check_named_envelope(self, kind)
@@ -507,8 +397,6 @@ def procedure_runnability(
                 for body in node.body
                 if body.operation != "transform"
             )
-    if (definition.open_slots or definition.pin_slots) and definition.graph_format == 6:
-        rows.append(ProcedureNodeSupport(node_id="procedure", kind="open_slot", runs_on="nowhere"))
     if any(row.runs_on == "nowhere" for row in rows):
         return "unsupported", tuple(rows)
     return ("line" if rows else "direct"), tuple(rows)
@@ -627,16 +515,17 @@ def evaluate_procedure_law(
     *,
     path: str,
     predecessor: AcceptedProcedure | None,
-    providers: Mapping[str, AcceptedProvider] | None = None,
-    provider_interfaces: Mapping[
-        str,
-        AcceptedProviderInterfaceRegistration,
-    ]
-    | None = None,
+    contracts: Mapping[tuple[str, int], str] | None = None,
     by_name: bool = False,
 ) -> ProcedureLawResult:
-    """Evaluate stable identity, predecessor, and exact closure."""
+    """Evaluate stable identity, predecessor, and slot signatures.
 
+    ``contracts`` maps each accepted Contract ``(name, version)`` the slots
+    name to its digest; every slot must pin both Contracts exactly. A Procedure
+    never names a provider: a Line binds its slots.
+    """
+
+    del by_name
     if path != procedure_path(procedure.identity.name):
         return _refusal(
             "cruxible.procedure.path_mismatch",
@@ -668,6 +557,7 @@ def evaluate_procedure_law(
             and procedure.activation_policy == predecessor.procedure.activation_policy
             and procedure.pins == predecessor.procedure.pins
             and procedure.owned_contracts == predecessor.procedure.owned_contracts
+            and procedure.acquisition_defaults == predecessor.procedure.acquisition_defaults
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
@@ -675,32 +565,33 @@ def evaluate_procedure_law(
                 "The proposal changes no registered semantic member.",
                 path=path,
             )
-    slots = sorted(
-        {*procedure.definition.open_slots, *(s.slot_name for s in procedure.definition.pin_slots)}
-    )
-    if slots and procedure.definition.graph_format == 6:
-        return _refusal(
-            "cruxible.procedure.open_slots",
-            "A Procedure pins every Provider exactly; open slots belong only to a "
-            f"Blueprint. Open: {', '.join(slots)}.",
-            path=path,
-        )
-    provider_refusal = _evaluate_provider_pins(
-        procedure.definition,
-        procedure=procedure,
-        providers={} if providers is None else providers,
-        provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
-        by_name=by_name or isinstance(procedure, NamedProcedureArtifact),
-    )
-    if provider_refusal is not None:
-        code, message = provider_refusal
-        return _refusal(code, message, path=path)
+    problem = slot_contract_problem(procedure.definition.slots, contracts or {})
+    if problem is not None:
+        return _refusal("cruxible.procedure.slot_contract_unresolved", problem, path=path)
     return ProcedureLawResult(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,
         required_tier="governed_write",
         approval_scope=(),
     )
+
+
+def slot_contract_problem(
+    slots: Mapping[str, ProcedureSlot], contracts: Mapping[tuple[str, int], str]
+) -> str | None:
+    """Why a slot's Contracts are not pinned to accepted versions, or ``None``."""
+
+    for name, slot in slots.items():
+        for side, ref in (("in", slot.in_), ("out", slot.out)):
+            accepted = contracts.get((ref.name, ref.version))
+            if accepted is None:
+                return f"slot {name!r} {side} Contract {ref.spelling} is not accepted"
+            if ref.digest != accepted:
+                return (
+                    f"slot {name!r} {side} Contract {ref.spelling} must pin {accepted}, "
+                    f"not {ref.digest}"
+                )
+    return None
 
 
 def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, object], ...]:
@@ -717,162 +608,6 @@ def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, ob
                 if body.operation == "call"
             )
     return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
-
-
-def _evaluate_provider_pins(
-    definition: ProcedureDefinition,
-    *,
-    procedure: ProcedureArtifact | None,
-    providers: Mapping[str, AcceptedProvider],
-    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
-    by_name: bool = False,
-    bindings: Mapping[str, ArtifactNameRef] | None = None,
-) -> tuple[str, str] | None:
-    for occurrence_id, occurrence in provider_occurrences(definition):
-        interface_pin = getattr(occurrence, "interface")
-        accepted_interface = provider_interfaces.get(interface_pin.target.qualified)
-        if accepted_interface is None and isinstance(interface_pin, ArtifactPin):
-            accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
-        if accepted_interface is None or (
-            accepted_interface.registration.identity != interface_pin.target
-        ):
-            return (
-                "cruxible.procedure.provider_interface_pin_mismatch",
-                f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
-            )
-        if not by_name and (
-            not isinstance(interface_pin, ArtifactPin)
-            or interface_pin.artifact_digest != accepted_interface.artifact_digest
-            or getattr(occurrence, "interface_digest")
-            != interface_definition_digest(accepted_interface.registration)
-        ):
-            return (
-                "cruxible.procedure.provider_interface_pin_mismatch",
-                "Provider occurrence does not pin its exact interface.",
-            )
-        try:
-            if procedure is not None:
-                check_provider_node_contract(occurrence, accepted_interface, procedure)
-        except (ValueError, KeyError) as exc:
-            return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
-        provider_binding = getattr(occurrence, "provider")
-        if isinstance(provider_binding, ProcedurePinSlotRef):
-            selected = (bindings or {}).get(provider_binding.slot_name)
-            if selected is None:
-                continue
-            provider_binding = selected
-        accepted_provider = providers.get(provider_binding.target.qualified)
-        if accepted_provider is None and isinstance(provider_binding, ArtifactPin):
-            accepted_provider = providers.get(provider_binding.artifact_digest)
-        if accepted_provider is None or (
-            accepted_provider.provider.identity != provider_binding.target
-            or not isinstance(accepted_provider.provider, ProviderV2)
-        ):
-            return (
-                "cruxible.procedure.provider_runtime_manifest_required",
-                f"Provider occurrence {occurrence_id!r} requires an accepted Provider v2.",
-            )
-        if by_name:
-            declared_interface = provider_interface_pin(
-                accepted_provider.provider, accepted_interface.registration.interface_id
-            )
-            if declared_interface is None or declared_interface.target != interface_pin.target:
-                return (
-                    "cruxible.procedure.provider_interface_pin_mismatch",
-                    "Provider does not declare the named interface.",
-                )
-        if not by_name and provider_binding.artifact_digest != accepted_provider.artifact_digest:
-            return (
-                "cruxible.procedure.provider_runtime_manifest_required",
-                "Provider occurrence does not pin its accepted runtime.",
-            )
-        matches = tuple(
-            row
-            for row in accepted_provider.provider.implementations
-            if (
-                by_name or row.implementation_digest == getattr(occurrence, "implementation_digest")
-            )
-            and row.interface_id == accepted_interface.registration.interface_id
-            and row.interface_digest == interface_definition_digest(accepted_interface.registration)
-        )
-        if not matches:
-            return (
-                "cruxible.procedure.provider_implementation_unavailable",
-                f"Provider occurrence {occurrence_id!r} implementation is unavailable.",
-            )
-        if len(matches) != 1:
-            return (
-                "cruxible.procedure.provider_implementation_ambiguous",
-                f"Provider occurrence {occurrence_id!r} implementation is ambiguous.",
-            )
-    return None
-
-
-def check_provider_node_contract(
-    node: object,
-    interface: AcceptedProviderInterfaceRegistration,
-    procedure: ProcedureArtifact | BlueprintArtifact,
-) -> ProviderOperationContract | None:
-    """Check specialization and exact operation schemas before materialization.
-
-    The first ``workspace.file`` interface revision declares no operation
-    contract: the daemon owns that read and its receipt, so a Source over it is
-    checked by the host protocol, not here, and has no operation contract.
-    """
-    from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_effect_class,
-        provider_operation_contract,
-    )
-    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
-
-    if (
-        isinstance(node, SourceNode)
-        and interface_definition_digest(interface.registration) == WORKSPACE_FILE_INTERFACE_DIGEST
-    ):
-        return None
-    contract = provider_operation_contract(interface.registration)
-    declared_effect = json.loads(
-        bytes.fromhex(interface_definition_bytes(interface.registration).hex())
-    ).get("effect_class")
-    if declared_effect != provider_effect_class(interface.registration):
-        raise ValueError("ProviderInterface effect class differs from its operation declaration")
-    if isinstance(node, SourceNode):
-        from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
-
-        # The daemon owns workspace reads and wraps the structured byte result
-        # with its independently retained source-read receipt. Generic Sources
-        # must themselves return the external acquisition envelope.
-        workspace_read = (
-            interface_definition_digest(interface.registration)
-            == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-        )
-        if contract.output != ACQUISITION_RESULT and not workspace_read:
-            raise ValueError("Source requires the shared external acquisition result contract")
-        if interface.registration.effect_class == "external_mutation":
-            raise ValueError("Source cannot invoke an external mutation")
-        return contract
-    if isinstance(contract.output, str):
-        raise ValueError("Call requires an operation output schema; use Source for acquisition")
-    if isinstance(node, CallNode):
-        from cruxible_client.contracts.provider_contracts import operation_schema_shape
-
-        for consumer in procedure.definition.nodes:
-            if isinstance(consumer, SelectNode) and node.as_ in consumer.sources:
-                expected = next(
-                    (
-                        owned
-                        for owned in procedure.owned_contracts
-                        if isinstance(consumer.contract_out, ArtifactPin | ArtifactNameRef)
-                        and owned.identity == consumer.contract_out.target
-                    ),
-                    None,
-                )
-                if expected is not None and operation_schema_shape(
-                    expected.contract_schema
-                ) != operation_schema_shape(contract.output):
-                    raise ValueError("Select output does not match the Call's interface output")
-    return contract
 
 
 __all__ = [
@@ -892,5 +627,7 @@ __all__ = [
     "procedure_owned_contract_digest",
     "procedure_path",
     "provider_occurrences",
+    "slot_contract_problem",
+    "AcquisitionDefault",
     "render_procedure",
 ]

@@ -9,8 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+from cruxible_client.contracts.provider_operations import OperationEffect, ProcedureSlot
 from cruxible_client.contracts.query.definitions import NamedQueryDefinition, QueryDefinition
+from cruxible_client.contracts.shapes import ContractRef
 
 
 class _Closed(BaseModel):
@@ -32,43 +33,34 @@ class SourceContract(_Closed):
     schema_: ContractSchema = Field(alias="schema")
 
 
-class SourceProviderBinding(_Closed):
-    kind: Literal["provider"] = "provider"
-    provider: str
-    provider_version: str
-    interface: str
-    interface_version: str
-    interface_digest: str
-    implementation_digest: str
-    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
-    operation: ProviderOperationContract
-
-    _versions = field_validator(
-        "provider_version",
-        "interface_version",
-        "interface_digest",
-        "implementation_digest",
-        check_fields=False,
-    )(lambda value: ArtifactDigest.from_tagged(value).tagged)
-
-
 class SourceSlotBinding(_Closed):
-    """An open Provider slot: the interface it needs, no implementation chosen.
+    """A slot the source calls: its signature, and the compiler's typing views of it.
 
-    Source that uses one compiles to a Blueprint; instantiating the Blueprint
-    replaces it with a ``SourceProviderBinding`` and compiles again.
+    ``in`` and ``out`` pin the slot's Contracts; ``input`` and ``output`` are
+    the compiler's typing views of those Contracts (derived by core when the
+    source is resolved, never authored). A Line binds the slot to one exact
+    build and operation.
     """
 
-    kind: Literal["slot"] = "slot"
-    interface: str
-    interface_version: str
-    interface_digest: str
-    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
-    operation: ProviderOperationContract
-
-    _versions = field_validator("interface_version", "interface_digest", check_fields=False)(
-        lambda value: ArtifactDigest.from_tagged(value).tagged
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_mode_override="validation",
+        populate_by_name=True,
+        serialize_by_alias=True,
     )
+
+    kind: Literal["slot"] = "slot"
+    in_: ContractRef = Field(alias="in")
+    out: ContractRef
+    effect: OperationEffect
+    input: ContractSchema
+    output: ContractSchema
+
+    def signature(self) -> ProcedureSlot:
+        return ProcedureSlot.model_validate(
+            {"in": self.in_, "out": self.out, "effect": self.effect}
+        )
 
 
 class SourceQueryBinding(_Closed):
@@ -97,7 +89,7 @@ class SourceProcedureBinding(_Closed):
 
 
 SourceBinding = Annotated[
-    SourceProviderBinding | SourceSlotBinding | SourceQueryBinding | SourceProcedureBinding,
+    SourceSlotBinding | SourceQueryBinding | SourceProcedureBinding,
     Field(discriminator="kind"),
 ]
 
@@ -141,20 +133,6 @@ class SourceDiagnostic(_Closed):
     related_spans: tuple[SourceSpan, ...] = ()
 
 
-class NamedSourceProviderBinding(SourceProviderBinding):
-    effect_class: Literal["pure", "external_read", "external_mutation"]
-    provider_version: ClassVar[None] = None  # type: ignore[misc, assignment]
-    interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
-    interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
-    implementation_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
-
-
-class NamedSourceSlotBinding(SourceSlotBinding):
-    effect_class: Literal["pure", "external_read", "external_mutation"]
-    interface_version: ClassVar[None] = None  # type: ignore[misc, assignment]
-    interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
-
-
 class NamedSourceQueryBinding(SourceQueryBinding):
     definition: NamedQueryDefinition
     version: ClassVar[None] = None  # type: ignore[misc, assignment]
@@ -176,10 +154,7 @@ class NamedProcedureSourceProgram(ProcedureSourceProgram):
     bindings: dict[
         str,
         Annotated[
-            NamedSourceProviderBinding
-            | NamedSourceSlotBinding
-            | NamedSourceQueryBinding
-            | NamedSourceProcedureBinding,
+            SourceSlotBinding | NamedSourceQueryBinding | NamedSourceProcedureBinding,
             Field(discriminator="kind"),
         ],
     ] = Field(default_factory=dict)  # type: ignore[assignment]

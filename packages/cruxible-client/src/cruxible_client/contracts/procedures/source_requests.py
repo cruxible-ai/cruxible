@@ -19,24 +19,22 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceMapEntry,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_installation import ProviderBuildResolutionV1
+from cruxible_client.contracts.provider_operations import OperationEffect
 
 
 class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class SourceProviderSelection(_Closed):
-    kind: Literal["provider"] = "provider"
-    provider: str
-    interface: str
-
-
 class SourceSlotSelection(_Closed):
-    """An open Provider slot typed by an accepted interface: the source builds a Blueprint."""
+    """A slot the source calls, typed by its signature. A Line binds it to an operation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     kind: Literal["slot"] = "slot"
-    interface: str
+    in_: str = Field(alias="in", description="the input Contract, name@N")
+    out: str = Field(description="the output Contract, name@N")
+    effect: OperationEffect
 
 
 class SourceQuerySelection(_Closed):
@@ -50,7 +48,7 @@ class SourceProcedureSelection(_Closed):
 
 
 SourceSelection = Annotated[
-    SourceProviderSelection | SourceSlotSelection | SourceQuerySelection | SourceProcedureSelection,
+    SourceSlotSelection | SourceQuerySelection | SourceProcedureSelection,
     Field(discriminator="kind"),
 ]
 
@@ -90,10 +88,6 @@ class ProcedureSourcePreview(_Closed):
         "Admission verifies installation, authority and effective budgets.",
         "Runtime values must satisfy the pinned contracts. Preview executes no effects.",
     )
-    #: Which provider build each provider selection resolved to: a bare name
-    #: resolves to its most recently registered live build, and the compiled
-    #: definition pins that exact build.
-    provider_builds: tuple[ProviderBuildResolutionV1, ...] = ()
 
     @property
     def ready_for_prepare(self) -> bool:
