@@ -18,6 +18,7 @@ from cruxible_client.contracts.shapes import (
     assignable,
     cast_record,
     check_record,
+    check_value,
     contract_digest,
     contract_path,
     edge_refusal,
@@ -307,3 +308,18 @@ def test_parse_contract_requires_a_digest_on_every_occurrence() -> None:
     )
     with pytest.raises(ContractFormatError):
         parse_contract(render_contract(outer), path=contract_path("security.outer2", 1))
+
+
+# -- F4: key<K> fails closed on untyped nested data ----------------------------------------
+
+
+def test_key_type_refuses_untyped_nested_data() -> None:
+    field_type = parse_type("key<security.vulnerability>")
+    checked = check_value({"undeclared": [{"opaque": True}]}, field_type, at="/k")
+    assert isinstance(checked, FieldInvalid)
+    assert checked.problem.code == "key_unparseable"
+    # A plain string key spelling is still accepted; full SubjectKind
+    # canonicalization is deferred past B1 (no identity rule invented here).
+    assert check_value("CVE-2024-1234", field_type, at="/k") == FieldPresent(
+        value="CVE-2024-1234", at="/k"
+    )

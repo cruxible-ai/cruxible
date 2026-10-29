@@ -1255,10 +1255,14 @@ def check_value(
                 )
         return FieldPresent(value=dict(value), at=at)
     if isinstance(field_type, KeyType | SubjectType):
+        # Core canonicalizes a key with its SubjectKind's identity rule; that
+        # hook is not built yet (deferred past B1, no identity rule invented
+        # here). A plain non-empty string -- the key's written spelling -- is
+        # accepted unchanged until then. Untyped nested data (a mapping) names
+        # no identity rule at all, so it fails closed rather than passing
+        # through as an opaque blob.
         if isinstance(value, str) and value:
             return FieldPresent(value=value, at=at)
-        if isinstance(field_type, KeyType) and isinstance(value, Mapping) and value:
-            return FieldPresent(value=dict(value), at=at)
         return _invalid(
             "key_unparseable" if isinstance(field_type, KeyType) else "type_mismatch", field, value
         )
