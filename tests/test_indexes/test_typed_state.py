@@ -315,6 +315,7 @@ STORAGE_SCHEMA_DIGESTS = {
     22: "254e56902a6bfdde8b2a15b4c269fd5518afcdb097e47a941223429ced38ac7b",
     23: "a70fc55602839c406fadc3baca5be7c3f908f3ec94ead550116fbd7c99adfe30",
     24: "10946be1ef0a8249b94c0536930468b85f0255a2f7dd52c7f12ac8abbd2cb8bf",
+    25: "7c13be8df631d40d1aa34d70211e982fc073b97ddaf910c6c1e7318faa41e0a5",
 }
 
 
@@ -330,6 +331,83 @@ def test_a_physical_schema_change_moves_the_storage_schema_version():
         f"the new schema here ({version}: {digest})."
     )
     assert len(set(STORAGE_SCHEMA_DIGESTS.values())) == len(STORAGE_SCHEMA_DIGESTS)
+
+
+def _seed_contracts(connection: sqlite3.Connection, names: list[str]) -> None:
+    """Rows enough to exercise the ``contracts`` table's reads; no real Contract bytes."""
+
+    for index, name in enumerate(names):
+        path = f"contracts/{name}/v1.json"
+        connection.execute(
+            "INSERT INTO members(path, git_blob_oid, file_digest, byte_length) VALUES (?,?,?,?)",
+            (path, f"oid{index}", f"digest{index}", 1),
+        )
+        connection.execute(
+            "INSERT INTO contracts(identity, path, format_tag, artifact_digest, "
+            "predecessor_digest, revision, lifecycle, contract_name, contract_version, "
+            "field_count) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"Contract:{name}/v1",
+                path,
+                "cruxible-contract-v1",
+                f"sha256:{index:064d}",
+                None,
+                1,
+                "live",
+                name,
+                1,
+                1,
+            ),
+        )
+    connection.commit()
+
+
+def _query_plan(connection: sqlite3.Connection, statement: str, params: tuple[object, ...]) -> str:
+    return " | ".join(
+        str(row[-1]) for row in connection.execute(f"EXPLAIN QUERY PLAN {statement}", params)
+    )
+
+
+def test_newest_contract_lookup_seeks_the_name_version_index():
+    """``get Contract:<name>`` (service/discovery/get.py's newest lookup) seeks, never scans."""
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(schema_sql())
+    _seed_contracts(connection, [f"security.c{i:04d}" for i in range(500)])
+    plan = _query_plan(
+        connection,
+        "SELECT identity FROM contracts WHERE contract_name=? "
+        "ORDER BY contract_version DESC LIMIT 1",
+        ("security.c0250",),
+    )
+    assert "SCAN contracts" not in plan
+    assert "contracts_by_name_version" in plan
+
+
+def test_orient_contracts_page_is_a_bounded_keyset_seek_not_a_full_sort():
+    """orient's contracts section (contracts_page) never sorts the whole population."""
+
+    from cruxible_core.service.discovery.contracts import ContractKey, contracts_page
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(schema_sql())
+    names = sorted(f"security.c{i:04d}" for i in range(500))
+    _seed_contracts(connection, names)
+
+    page, stop = contracts_page(connection, limit=10, after=None)
+    assert len(page) == 10
+    assert [name for _identity, name, _version in page] == names[:10]
+    assert stop == ContractKey(names[9], 1)
+
+    plan = _query_plan(
+        connection,
+        "SELECT identity, contract_name, contract_version FROM contracts "
+        "WHERE (contract_name, contract_version) > (?, ?) "
+        "ORDER BY contract_name, contract_version LIMIT ?",
+        (names[9], 1, 10),
+    )
+    assert "USE TEMP B-TREE" not in plan
+    assert "contracts_by_name_version" in plan
 
 
 #: The predicate-scoped Claim reads a served query makes (as the scaling probe saw them).

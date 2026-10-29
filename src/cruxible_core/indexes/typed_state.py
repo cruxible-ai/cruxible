@@ -566,6 +566,10 @@ def schema_sql() -> str:
             # The builds of one provider name: newest-build resolution and the
             # build verbs read one name's rows, never every Provider.
             "CREATE INDEX providers_by_name ON providers(provider_name,identity)",
+            # Newest-by-name resolution (``get Contract:<name>``) and the orient
+            # contracts page both order by (name, version); without this, both
+            # cost a scan and a temporary sort of every accepted Contract.
+            "CREATE INDEX contracts_by_name_version ON contracts(contract_name,contract_version)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX lines_by_procedure ON lines(procedure_identity,identity) WHERE lifecycle='live'",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",

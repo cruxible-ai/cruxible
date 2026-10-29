@@ -92,6 +92,7 @@ from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.activity import ActivityPosition, activity_page
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.contracts import ContractKey, contracts_page
 from cruxible_core.service.discovery.discovery import (
     AcceptedProviderInterface,
     accepted_provider_interfaces,
@@ -809,26 +810,24 @@ def _contracts_section(
     limit: int,
     surface: OrientSurface,
 ) -> OrientResult:
-    """Accepted Contract versions by name then version; only the page's artifacts are read."""
+    """One keyset page of accepted Contract versions, by name then version.
 
+    Read through ``contracts_by_name_version``: a page costs its own rows,
+    one more to detect truncation, never a scan or sort of every accepted
+    Contract.
+    """
+
+    after = _keyset_after(continuation)
+    key = None if after is None else ContractKey.decode(after)
+    if after is not None and key is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
     with instance.bind_accepted_projection(coordinate) as projection:
-        rows = tuple(
-            projection.typed.connection.execute(
-                "SELECT identity,contract_name,contract_version FROM contracts "
-                "ORDER BY contract_name,contract_version"
-            )
-        )
-        keys = [f"{name}@{version}" for _identity, name, version in rows]
-        page, next_cursor = _page(
-            rows,
-            keys,
-            view="contracts",
-            served=served,
-            continuation=continuation,
-            limit=limit,
-        )
+        rows, stop = contracts_page(projection.typed.connection, limit=limit, after=key)
         listed = []
-        for identity, name, version in page:
+        for identity, name, version in rows:
             declared = cast(Contract, projection.typed.source(identity))
             listed.append(
                 OrientContract(
@@ -838,6 +837,11 @@ def _contracts_section(
                     pins=tuple(ref.spelling for ref in declared.refs()),
                 )
             )
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="contracts", served=served, last_key=stop.encode())
+    )
     calls: list[_Call] = []
     if listed:
         calls.append(_Call("get", (("ref", f"Contract:{listed[0].contract}"),)))
