@@ -27,13 +27,15 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretResolutionPlan,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGEST,
     SourceReadReceipt,
     WorkspaceFileSourceRequestV2,
+    workspace_file_contracts,
+    workspace_file_signature_digest,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import journal_producer_receipt_resolver
+from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operation
 from cruxible_core.procedures.execution import (
     PreparedProcedureRunV9,
     ProcedureExecutor,
@@ -51,7 +53,10 @@ from cruxible_core.providers.provider_local_runtime import (
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.case_folding import volume_folds_case
-from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import _source_fixture
+from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import (
+    _acquisition_rules,
+    _source_fixture,
+)
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 
 
@@ -151,18 +156,34 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     )
     old_node = accepted.procedure.definition.nodes[0]
     assert isinstance(old_node, SourceNode)
-    source_node = old_node.model_copy(
-        update={
-            "request": request.model_dump(mode="json"),
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
-        }
-    )
+    source_node = old_node.model_copy(update={"request": request.model_dump(mode="json")})
     definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
     definition._authored = authored_definition
+    # is_workspace_file_signature() (cruxible_client.contracts.captures) keys
+    # the "this occurrence is a workspace.file read" test off the exact
+    # operation signature digest. The executor's slot-matching never refits
+    # (ruling C2), so the slot's own binding must carry that same operation,
+    # not just the admitted occurrence.
+    workspace_operation = workspace_file_operation()
+    signature_digest = workspace_file_signature_digest()
+    old_binding = accepted.procedure.binding_for(source_node.slot)
+    assert old_binding is not None
+    new_binding = old_binding.model_copy(
+        update={
+            "operation": workspace_operation,
+            "operation_signature_digest": signature_digest,
+            "contracts": tuple(workspace_file_contracts()),
+        }
+    )
+    slot_bindings = tuple(
+        new_binding if item.slot == source_node.slot else item
+        for item in accepted.procedure.slot_bindings
+    )
     procedure = accepted.procedure.model_copy(
         update={
             "definition": definition,
             "definition_digest": authored.definition_digest,
+            "slot_bindings": slot_bindings,
         }
     )
     accepted = BoundAcceptedProcedure(
@@ -175,17 +196,18 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     old_occurrence = prepared.acquisition_plan.external_occurrences[0]
     local = old_occurrence.local_execution.model_copy(
         update={
-            "interface_id": "workspace.file",
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "operation": workspace_operation.name,
+            "operation_signature_digest": signature_digest,
             "declared_endpoints": (),
         }
     )
     occurrence = ProviderExternalOccurrencePlan.model_validate(
         {
             **old_occurrence.model_dump(mode="python"),
-            "interface_id": "workspace.file",
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
-            "effect_class": "none",
+            "operation": workspace_operation,
+            "operation_signature_digest": signature_digest,
+            "effect_class": workspace_operation.effect,
+            "contracts": list(workspace_file_contracts()),
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
         }
@@ -261,7 +283,7 @@ def _execute(tmp_path: Path, relative_path: str):  # type: ignore[no-untyped-def
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         workspace_file_reader=reader,
     ).execute(prepared, accepted)
     records = fixture.journal.all_records(
@@ -314,7 +336,9 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         store=fixture.bodies,
         contract=contract,
         producer_artifact_digests={
-            source_node.provider.target.qualified: completed["provider_artifact_digest"]
+            accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                "provider_artifact_digest"
+            ]
         },
         producer_receipt_resolver=journal_producer_receipt_resolver(
             journal=fixture.journal,
@@ -356,7 +380,9 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
             store=fixture.bodies,
             contract=contract,
             producer_artifact_digests={
-                source_node.provider.target.qualified: completed["provider_artifact_digest"]
+                accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                    "provider_artifact_digest"
+                ]
             },
             producer_receipt_resolver=journal_producer_receipt_resolver(
                 journal=fixture.journal,
@@ -398,7 +424,9 @@ def test_v1_derived_request_in_history_still_verifies(
         store=fixture.bodies,
         contract=contract,
         producer_artifact_digests={
-            source_node.provider.target.qualified: completed["provider_artifact_digest"]
+            accepted.procedure.binding_for(source_node.slot).build.target.qualified: completed[
+                "provider_artifact_digest"
+            ]
         },
         producer_receipt_resolver=journal_producer_receipt_resolver(
             journal=fixture.journal,
@@ -429,7 +457,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
             contract_validator=_Contracts(),
             provider_runtime_invoker=_WorkspaceInvoker(),
             capture_contracts={capture_contract_digest(contract).tagged: contract},
-            acquisition_policy=policy,
+            acquisition_rules=_acquisition_rules(policy),
             workspace_file_reader=reader,
         ).execute(item, accepted)
         assert result.status == "succeeded"
@@ -471,13 +499,15 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
         instance_id=first.instance_id,
         bodies=fixture.bodies,
     )
+    binding = accepted.procedure.binding_for(source_node.slot)
+    assert binding is not None
     for payload in produced.values():
         verify_capture(
             str(payload["capture_digest"]),
             store=fixture.bodies,
             contract=contract,
             producer_artifact_digests={
-                source_node.provider.target.qualified: source_node.provider.artifact_digest
+                binding.build.target.qualified: binding.build.artifact_digest
             },
             producer_receipt_resolver=resolver,
         )
@@ -536,7 +566,7 @@ def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         workspace_file_reader=reader,
     ).execute(prepared, accepted)
     assert result.status == "refused"
@@ -569,7 +599,7 @@ def test_unavailable_workspace_reader_is_a_typed_source_refusal(tmp_path: Path) 
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         workspace_file_reader=None,
     ).execute(prepared, accepted)
 

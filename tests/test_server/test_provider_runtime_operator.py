@@ -14,17 +14,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_digest,
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    provider_interface_digest,
-    provider_interface_path,
-    render_provider_interface,
-)
 from fastapi.testclient import TestClient
 
 import cruxible_core.runtime.playbill_manager as playbill_manager_module
@@ -32,7 +21,7 @@ import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
+    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -104,10 +93,7 @@ from cruxible_core.server.config import get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import ProcedureRunRecoveryRequired
 from cruxible_core.service.procedures.procedures import service_execute_direct_procedure
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._p2b1_support import (
-    accepted_interface,
-    provider_v2,
-)
+from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
@@ -124,30 +110,24 @@ from tests.test_providers.test_provider_invocation_journal import (
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 from tests.test_server.test_playbill_line_run_refusals import (
     _accept_members,
-    _acquisition_policy,
+    _line_mandate,
 )
 
 
 def _indexed_instance(tree: dict[str, bytes]) -> SimpleNamespace:
-    """Unit double for the pinned-version reader: one row per exact (identity, digest)."""
-    from cruxible_client.contracts.provider_interfaces import (
-        parse_provider_interface,
-        provider_interface_digest,
-    )
+    """Unit double for the pinned-version reader: one row per exact (identity, digest).
 
+    Every path is a provider build now (ProviderInterface removed, C12): there
+    is no second artifact kind this tree can hold.
+    """
     from cruxible_client.contracts.providers import parse_provider, provider_digest
 
     sources: dict[str, object] = {}
     rows: dict[tuple[str, str], str] = {}
     for path, content in tree.items():
-        if path.startswith("providers/"):
-            provider = parse_provider(content, path=path)
-            digest = provider_digest(provider).tagged
-            source: object = provider
-        else:
-            provider = parse_provider_interface(content, path=path)
-            digest = provider_interface_digest(provider).tagged
-            source = provider
+        provider = parse_provider(content, path=path)
+        digest = provider_digest(provider).tagged
+        source: object = provider
         sources[provider.identity.qualified] = source
         if provider.lifecycle.state == "live":
             rows[(provider.identity.qualified, digest)] = path
