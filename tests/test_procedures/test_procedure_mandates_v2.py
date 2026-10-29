@@ -46,7 +46,8 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
-from tests.test_procedures.test_procedure_mandates import _caps, _mandate, _procedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
+from tests.test_procedures.test_procedure_mandates import _accepted_line, _caps, _line, _mandate, _procedure
 
 ASSET = "sec.asset"
 EXPOSURE = ArtifactIdentity(kind="ClaimType", name="sec.exposure.status")
@@ -121,17 +122,19 @@ def _settle(
     query: AcceptedQueryDefinition,
     *,
     procedure: AcceptedProcedure | None = None,
+    line: object = None,
     change_kinds: tuple[str, ...] = ("revise",),
     required_fields: tuple[str, ...] = ("criticality", "environment"),
     **updates: object,
 ) -> ProcedureMandate:
     accepted = procedure or _procedure()
+    bound_line = line or _line(procedure=accepted)
     values: dict[str, object] = dict(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
-        procedure=ArtifactPin(
-            role="procedure",
-            target=accepted.procedure.identity,
-            artifact_digest=accepted.artifact_digest,
+        line=ArtifactPin(
+            role="line",
+            target=bound_line.identity,
+            artifact_digest=line_spec_digest(bound_line).tagged,
         ),
         grants="settle",
         resource_ceiling=_caps(),
@@ -173,12 +176,22 @@ def _claim_types() -> dict[ArtifactIdentity, ScopedClaimType]:
     }
 
 
-def _law(mandate: ProcedureMandate, query: AcceptedQueryDefinition, predecessor=None):
+def _law(
+    mandate: ProcedureMandate,
+    query: AcceptedQueryDefinition,
+    predecessor=None,
+    *,
+    procedure: AcceptedProcedure | None = None,
+    line: AcceptedLineSpec | None = None,
+):
+    accepted_procedure = procedure or _procedure()
+    accepted_line = line or _accepted_line(_line(procedure=accepted_procedure))
     return evaluate_procedure_mandate_v2_law(
         mandate,
         path=procedure_mandate_path(mandate.identity.name),
         predecessor=predecessor,
-        procedure=_procedure(),
+        line=accepted_line,
+        procedure=accepted_procedure,
         claim_types=_claim_types(),
         condition_query=query,
     )
@@ -201,7 +214,7 @@ def test_v2_round_trips_and_parses_beside_v1() -> None:
     mandate = _settle(_accepted_query(_query()))
     path = procedure_mandate_path("triage")
     assert parse_procedure_mandate_any(render_procedure_mandate(mandate), path=path) == mandate
-    legacy = _mandate()
+    legacy = _mandate(grants="settle")
     assert parse_procedure_mandate_any(render_procedure_mandate(legacy), path=path) == legacy
     assert (mandate_grant(mandate), mandate_grant(legacy)) == ("settle", "settle")
     with pytest.raises(ProcedureMandateError, match="canonical wire"):
@@ -227,7 +240,7 @@ def test_a_propose_grant_carries_no_settle_terms() -> None:
     with pytest.raises(ValueError, match="propose grant carries no settle"):
         _settle(query, grants="propose")
     propose = _settle(query, grants="propose", scope=(), condition=None, namespace=("documents",))
-    assert propose.pins == (propose.procedure,)
+    assert propose.pins == (propose.line,)
 
 
 def test_the_binding_parameter_is_bound_by_core_never_fixed() -> None:
@@ -415,8 +428,8 @@ def test_a_settle_grant_names_the_subject_kinds_it_may_create() -> None:
         return evaluate_procedure_mandate(
             base,
             ProcedureMandateInvocation(
-                procedure_identity=base.procedure.target,
-                procedure_artifact_digest=base.procedure.artifact_digest,
+                line_identity=base.line.target,
+                line_artifact_digest=base.line.artifact_digest,
                 requested_rung=3,
                 requested_authority=_caps(),
                 target_paths=targets,
@@ -511,9 +524,16 @@ def _world(tmp_path):
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     accepted_query = _accepted_query(query)
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_path,
+        render_line_spec,
+    )
+
+    this_line = _line(procedure=accepted_procedure)
     mandate = _settle(
         accepted_query,
         procedure=accepted_procedure,
+        line=this_line,
         required_fields=("status",),
         scope=(
             MandateClaimScope(
@@ -533,6 +553,7 @@ def _world(tmp_path):
         **tree,
         accepted_procedure.path: render_procedure(procedure),
         accepted_query.path: render_query_definition(query),
+        line_spec_path(this_line.identity.name): render_line_spec(this_line),
     }
     return instance, current, tree, grown, mandate, query
 
@@ -713,7 +734,7 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
     _instance, _current, _tree, grown, mandate, query = _world(tmp_path)
     payload = ProcedureMandateAuthoringPayload(
         name="triage",
-        procedure_name=mandate.procedure.target.name,
+        line_name=mandate.line.target.name,
         grants="settle",
         resource_ceiling=mandate.resource_ceiling,
         namespace=("claims",),
