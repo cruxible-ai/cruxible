@@ -35,9 +35,13 @@ from cruxible_client.contracts.shapes import (
     ContractRef,
     EnumResolver,
     FieldInvalid,
+    FieldResultType,
     FieldType,
     ListType,
     NestedType,
+    RecordType,
+    RefusalType,
+    ResultType,
     VariantType,
     check_value,
     contract_digest,
@@ -383,6 +387,83 @@ def _close_member(
                     body = {key: item for key, item in value.items() if key != "tag"}
                     _closed(body, target, resolve=resolve, path=f"{path}.", problems=problems)
         return
+    if isinstance(field_type, FieldResultType):
+        # field_result<T> = variant{present: {value: T, at}, absent: {}, invalid: {problem}};
+        # only the "present" arm carries a value to close, at ``field_type.value``.
+        if isinstance(value, Mapping) and value.get("tag") == "present" and "value" in value:
+            _close_member(
+                value["value"],
+                field_type.value,
+                resolve=resolve,
+                path=f"{path}.value",
+                problems=problems,
+            )
+        return
+    if isinstance(field_type, RecordType):
+        # record<C> = {record, key, fields: {f: field_result<C.f>}}.
+        if isinstance(value, Mapping):
+            target = resolve(field_type.contract)
+            if target is not None:
+                _close_record_envelope(value, target, resolve=resolve, path=path, problems=problems)
+        return
+    if isinstance(field_type, ResultType):
+        # result<C> = variant{record: record<C>, invalid_record, duplicate};
+        # only the "record" arm carries a record<C> envelope to close.
+        if isinstance(value, Mapping) and value.get("tag") == "record":
+            target = resolve(field_type.contract)
+            record_value = value.get("record")
+            if target is not None and isinstance(record_value, Mapping):
+                _close_record_envelope(
+                    record_value,
+                    target,
+                    resolve=resolve,
+                    path=f"{path}.record",
+                    problems=problems,
+                )
+        return
+    if isinstance(field_type, RefusalType):
+        # refusal<C> = {code, contract, body}; the body is a plain record of C
+        # (not field_result-wrapped), exactly like a nested Contract's fields.
+        if isinstance(value, Mapping):
+            target = resolve(field_type.contract)
+            refusal_body = value.get("body")
+            if target is not None and isinstance(refusal_body, Mapping):
+                _closed(
+                    refusal_body, target, resolve=resolve, path=f"{path}.body.", problems=problems
+                )
+        return
+
+
+def _close_record_envelope(
+    value: Mapping[str, object],
+    contract: Contract,
+    *,
+    resolve: ContractLookup,
+    path: str,
+    problems: list[str],
+) -> None:
+    """Close a ``record<C>`` envelope's ``fields``: each is ``field_result<C.f>``.
+
+    Keys ``fields`` carries outside ``contract``'s own fields refuse; each
+    declared field's present value is closed at its own type, same as any
+    other field_result.
+    """
+
+    fields_data = value.get("fields")
+    if not isinstance(fields_data, Mapping):
+        return
+    for key in fields_data:
+        if key not in contract.fields:
+            problems.append(f"{path}.fields.{key}: undeclared field")
+    for name, declared in contract.fields.items():
+        if name in fields_data:
+            _close_member(
+                fields_data[name],
+                FieldResultType(value=declared.type),
+                resolve=resolve,
+                path=f"{path}.fields.{name}",
+                problems=problems,
+            )
 
 
 class OperationItemBudgetExceeded(ValueError):
