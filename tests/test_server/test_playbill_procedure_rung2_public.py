@@ -508,14 +508,12 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         assert submitted.status.proposal_id is not None, submitted
         _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
 
-    # A Mandate names an *accepted* Line (packages/cruxible-client/.../authoring/
-    # models.py ProcedureMandateAuthoringPayload.line_name docstring: "accepted,
-    # or defined in the same set"); in practice `MEMBER_STAGING_ORDER` in
-    # cruxible_core.authoring.lowering lowers the procedure_mandate stage before
-    # the line stage, so a same-set Mandate never resolves its Line and always
-    # refuses `procedure_mandate_line_missing`. Not a test-shape issue (not
-    # fixed here): the Mandate is always accepted in its own change set, after
-    # its Line is already accepted.
+    # A Mandate names an *accepted or same-set* Line (packages/cruxible-client/
+    # .../authoring/models.py ProcedureMandateAuthoringPayload.line_name
+    # docstring: "accepted, or defined in the same set"); `MEMBER_STAGING_ORDER`
+    # in cruxible_core.authoring.lowering stages `line` before
+    # `procedure_mandate`, so the Mandate below is accepted together with its
+    # Line in one change set.
     mandate_tag = "cruxible-procedure-mandate-authoring-payload-v2"
     line_tag = "cruxible-line-authoring-payload-v2"
 
@@ -551,11 +549,9 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         submitted_procedure = prepared.submit(accept="never").status()
         assert submitted_procedure.proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, submitted_procedure.proposal_id)
-        accept_members([member for member in members if member["tag"] == line_tag])
-        accept_members([member for member in members if member["tag"] == mandate_tag])
+        accept_members([member for member in members if member["tag"] in {line_tag, mandate_tag}])
     else:
-        accept_members([member for member in members if member["tag"] != mandate_tag])
-        accept_members([member for member in members if member["tag"] == mandate_tag])
+        accept_members(members)
 
     # 3. Trigger the Line through its public route.
     identity_digest = line_identity_digest(ArtifactIdentity(kind="Line", name=LINE_NAME))

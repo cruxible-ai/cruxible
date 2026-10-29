@@ -59,28 +59,16 @@ def test_the_procedure_line_policy_and_mandate_examples_are_accepted_together(
     playbill_http: tuple[TestClient, str, Path],
     names: tuple[str, ...],
 ) -> None:
-    """A Mandate names an *accepted* Line.
+    """A Mandate names an *accepted or same-ChangeSet* Line (ruling C3).
 
-    Authoring a Line and a Mandate pinning it in the SAME change set currently
-    refuses `procedure_mandate_line_missing`: `MEMBER_STAGING_ORDER` in
-    `cruxible_core.authoring.lowering` lowers the `procedure_mandate` stage
-    before the `line` stage, so the Mandate's `line_name` never resolves
-    against the same-set Line, even though `ProcedureMandateInput`/`LineInput`
-    document same-set authoring as supported (ruling C3: a Mandate pins a
-    Line, not a Procedure). This looks like a same-set ordering bug left over
-    from the pre-C3 staging order (which only needed procedure-before-mandate).
-    Not fixed here (out of scope: a src change). Accepting the Line first,
-    then the Mandate in its own change set, exercises the half of the
-    documented behaviour that does work.
+    `MEMBER_STAGING_ORDER` in `cruxible_core.authoring.lowering` stages
+    `line` before `procedure_mandate`, so a same-set Mandate pinning a Line
+    authored in the same change set resolves the Line's bytes in the tree
+    already staged when the Mandate renders.
     """
 
     http, instance_id, key = playbill_http
-    if "procedure-mandate" in names:
-        others = tuple(name for name in names if name != "procedure-mandate")
-        _accept(http, instance_id, key, _members(*others))
-        _accept(http, instance_id, key, _members("procedure-mandate"))
-    else:
-        _accept(http, instance_id, key, _members(*names))
+    _accept(http, instance_id, key, _members(*names))
 
 
 def test_an_observe_only_line_runs_without_a_mandate(

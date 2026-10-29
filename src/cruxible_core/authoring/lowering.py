@@ -5175,8 +5175,8 @@ MEMBER_STAGING_ORDER = (
     "subject_creation",
     "claim",
     "procedure",
-    "procedure_mandate",
     "line",
+    "procedure_mandate",
     "trigger",
     "claim_retirement",
 )
