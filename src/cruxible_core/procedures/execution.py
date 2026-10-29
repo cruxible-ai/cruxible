@@ -5292,11 +5292,27 @@ class ProcedureExecutor:
         *,
         node_id: str,
     ) -> None:
-        """A refusal code the operation declares carries a detail of its Contract."""
+        """A refusal code the operation declares carries a detail of its Contract.
+
+        An operation's ``refusals`` is its complete domain vocabulary (F10): a
+        provider-declared node refusal (``outcome.outcome_class ==
+        "node_refusal"``) whose code the operation never declared is a
+        protocol violation, never an undeclared pass-through. Core/transport
+        failures are a different outcome class and never reach here.
+        """
 
         declared = occurrence.operation.refusals.get(outcome.code or "")
         if declared is None:
-            return
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node_id,
+                    "reason": (
+                        f"operation {occurrence.operation.name!r} declares no refusal "
+                        f"{outcome.code!r}"
+                    ),
+                },
+            )
         resolve = closure_lookup(occurrence.contracts)
         contract = resolve(declared.contract)
         detail = outcome.detail if isinstance(outcome.detail, dict) else {}

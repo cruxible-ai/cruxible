@@ -1000,6 +1000,18 @@ def test_an_unaccepted_enum_of_claim_type_member_is_refused(tmp_path):
     assert state.terminal.code == "contract_output_refused"
 
 
+def test_an_undeclared_provider_refusal_is_a_protocol_violation(tmp_path):
+    """F10: an operation that declares no refusals cannot have a provider
+    refusal pass through as if it were a declared, typed domain refusal."""
+
+    instance = _refusing_world(tmp_path, {})
+    state, _ = run_line(instance, invoker=Invoker(refusal=("provider_declined", {"reason": "x"})))
+    assert state.status != "succeeded"
+    assert state.terminal is not None
+    assert state.terminal.code != "provider_declined"
+    assert state.terminal.code == "provider_protocol_violation"
+
+
 # --- 8. exact producer versions -----------------------------------------------
 
 
