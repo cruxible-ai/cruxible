@@ -43,21 +43,14 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
-    QueryClaimFieldRef,
-    QueryClaimValueRef,
     QueryEntry,
-    QueryEvaluationTimeRef,
     QueryFilter,
     QueryInclude,
-    QueryLiteralRef,
     QueryOrdering,
     QueryParameterDeclaration,
-    QueryParameterRef,
     QueryProjection,
     QueryReferenceInventory,
-    QuerySubjectFieldRef,
     QueryTraversalStep,
-    QueryValueRef,
     require_union_discriminators,
     sorted_unique,
     validate_ordering_keys,
@@ -65,17 +58,7 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import (
     Contract,
-    ContractField,
     ContractRef,
-    DecimalType,
-    EnumOfType,
-    EnumType,
-    FieldPresent,
-    FieldType,
-    IntType,
-    StringType,
-    check_value,
-    contract_digest,
     parse_contract_ref,
 )
 
@@ -166,10 +149,13 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     includes: tuple[QueryInclude, ...] = ()
     parameters: tuple[QueryParameterDeclaration, ...] = ()
     #: The Contract the parameters a caller supplies must satisfy (``name@N``).
+    #: Not supported in B1: the acceptance law refuses any Query that declares
+    #: one (``contract_unsupported``). B3 enables runtime validation.
     parameter_contract: ContractRef | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    #: The Contract every projected row satisfies (``name@N``); checked at acceptance.
+    #: The Contract every projected row satisfies (``name@N``). Not supported
+    #: in B1; see ``parameter_contract``.
     row_contract: ContractRef | None = Field(default=None, exclude_if=lambda value: value is None)
     evaluation_policy: QueryEvaluationPolicy
     default_budgets: QueryBudgets
@@ -752,257 +738,6 @@ def _refusal(code: str, message: str, *, path: str) -> QueryDefinitionLawResult:
     )
 
 
-#: Which Contract field kinds each query value type agrees with.
-_VALUE_TYPE_KINDS: Mapping[str, frozenset[str]] = {
-    "string": frozenset({"string", "enum", "enum_of", "key", "subject"}),
-    "integer": frozenset({"int"}),
-    "boolean": frozenset({"bool"}),
-    "decimal": frozenset({"decimal"}),
-    "timestamp": frozenset({"datetime"}),
-    "subject_reference": frozenset({"subject", "key"}),
-}
-
-
-def query_contract_problems(
-    query: QueryDefinition,
-    *,
-    resolve: Callable[[ContractRef], Contract | None],
-) -> tuple[tuple[str, str], ...]:
-    """Where the query disagrees with its parameter and row Contracts, as (code, message).
-
-    Parameters: the declared names are exactly the Contract's fields, a required
-    parameter is a required field, and the value types agree. Rows: the
-    projection's field names are exactly the Contract's fields, and each
-    projected value whose type is fixed by the query (a parameter, a literal, a
-    Subject field, the evaluation time, a Claim's role or verdict) agrees with
-    its field. A Claim value's type is the ClaimType's, judged where Claims are.
-    """
-
-    problems: list[tuple[str, str]] = []
-
-    def contract(ref: ContractRef, label: str) -> Contract | None:
-        found = resolve(ref)
-        if found is None:
-            problems.append(
-                (
-                    "cruxible.query_definition.contract_unresolved",
-                    f"The {label} Contract {ref.spelling} is not accepted.",
-                )
-            )
-            return None
-        if ref.digest is not None and contract_digest(found).tagged != ref.digest:
-            problems.append(
-                (
-                    "cruxible.query_definition.contract_unresolved",
-                    f"The {label} Contract {ref.spelling} is accepted at another digest.",
-                )
-            )
-            return None
-        return found
-
-    declared = {item.name: item for item in query.parameters}
-    if query.parameter_contract is not None:
-        shape = contract(query.parameter_contract, "parameter")
-        if shape is not None:
-            refined = _refined_field_names(shape)
-            if refined:
-                problems.append(
-                    (
-                        "cruxible.query_definition.parameters_disagree",
-                        f"{query.parameter_contract.spelling} declares a refinement on "
-                        f"{', '.join(refined)}; parameter Contracts are structural only in "
-                        "B1 (a kind, never a bound/pattern/enum), since no refinement on a "
-                        "supplied parameter is enforced at execution.",
-                    )
-                )
-            if set(declared) != set(shape.fields):
-                problems.append(
-                    (
-                        "cruxible.query_definition.parameters_disagree",
-                        f"The parameters {sorted(declared)} are not the fields of "
-                        f"{query.parameter_contract.spelling}: {sorted(shape.fields)}.",
-                    )
-                )
-            for name, item in declared.items():
-                field = shape.fields.get(name)
-                if field is None:
-                    continue
-                if item.required == field.optional or (
-                    field.type.kind not in _VALUE_TYPE_KINDS[item.value_type]
-                ):
-                    problems.append(
-                        (
-                            "cruxible.query_definition.parameters_disagree",
-                            f"Parameter {name!r} ({item.value_type}, "
-                            f"{'required' if item.required else 'optional'}) disagrees with "
-                            f"its field {field.spelling}.",
-                        )
-                    )
-    if query.row_contract is not None and query.projection is not None:
-        shape = contract(query.row_contract, "row")
-        if shape is not None:
-            refined = _refined_field_names(shape)
-            if refined:
-                problems.append(
-                    (
-                        "cruxible.query_definition.row_disagrees",
-                        f"{query.row_contract.spelling} declares a refinement on "
-                        f"{', '.join(refined)}; row Contracts are structural only in B1 (a "
-                        "kind, never a bound/pattern/enum), since execution enforces no "
-                        "refinement on any source that produces a row.",
-                    )
-                )
-            projected = {item.name: item.value for item in query.projection.fields}
-            if set(projected) != set(shape.fields):
-                problems.append(
-                    (
-                        "cruxible.query_definition.row_disagrees",
-                        f"The projection produces {sorted(projected)}, but "
-                        f"{query.row_contract.spelling} declares {sorted(shape.fields)}.",
-                    )
-                )
-            entry_binding = query.entry.binding if isinstance(query.entry, QueryEntry) else None
-            for name, value in projected.items():
-                field = shape.fields.get(name)
-                if field is None:
-                    continue
-                problem = _projected_value_problem(
-                    value, field, declared, entry_binding=entry_binding
-                )
-                if problem is not None:
-                    problems.append(
-                        (
-                            "cruxible.query_definition.row_disagrees",
-                            f"Projected field {name!r} {problem}; its Contract field is "
-                            f"{field.spelling}.",
-                        )
-                    )
-    return tuple(problems)
-
-
-def _has_refinement(field_type: FieldType) -> bool:
-    """Whether ``field_type`` narrows its kind beyond what a bare value of that kind holds.
-
-    Query row and parameter Contracts are structural only in B1 (coordinator
-    ruling): no refinement is enforced anywhere, not at run time for a
-    supplied parameter, and not for a Subject, Claim or evaluation-time
-    source either. ``enum``/``enum_of`` restrict membership exactly as much
-    as a numeric bound restricts range, so they count as refinements too.
-    """
-
-    if isinstance(field_type, StringType):
-        return (
-            field_type.pattern is not None
-            or field_type.min_len is not None
-            or field_type.max_len is not None
-        )
-    if isinstance(field_type, IntType | DecimalType):
-        return field_type.min is not None or field_type.max is not None
-    if isinstance(field_type, EnumType | EnumOfType):
-        return True
-    return False
-
-
-def _refined_field_names(contract: Contract) -> tuple[str, ...]:
-    """Every field of ``contract`` that declares a refinement, byte-sorted."""
-
-    return tuple(
-        sorted(name for name, item in contract.fields.items() if _has_refinement(item.type))
-    )
-
-
-#: Sources a well-formed, successfully evaluated row is guaranteed to carry a
-#: present value for, and why a required row field may use them:
-#:
-#: - a non-null literal: a definition-fixed constant, never conditionally absent;
-#: - the evaluation time: a required argument to every evaluation call;
-#: - a required parameter: resolve_query_parameters refuses before any row is
-#:   built if its value is missing or null (F3c), so once execution proceeds
-#:   a bound required parameter's value is never None.
-#:
-#: Also guaranteed: the query's own *entry* Subject field (not a traversal
-#: step's), since a row for one entry Subject cannot exist without that
-#: Subject bound -- the entry is what anchors the row in the first place. A
-#: traversal step's binding is not guaranteed the same way (an optional step
-#: may bind nothing for a given row), so it stays off this list.
-#:
-#: Every other source can resolve absent for a given row -- a non-entry
-#: Subject field's binding may carry no Subject, an optional parameter may be
-#: omitted, and a Claim-sourced value or field need not exist for its
-#: predicate -- so none of them may ever satisfy a required field. When in
-#: doubt, this list stays short: the field must be declared optional instead.
-def _source_guarantees_presence(
-    value: QueryValueRef,
-    declared: Mapping[str, QueryParameterDeclaration],
-    *,
-    entry_binding: str | None,
-) -> bool:
-    if isinstance(value, QueryLiteralRef):
-        return value.value is not None
-    if isinstance(value, QueryEvaluationTimeRef):
-        return True
-    if isinstance(value, QueryParameterRef):
-        parameter = declared.get(value.parameter)
-        return parameter is not None and parameter.required
-    if isinstance(value, QuerySubjectFieldRef):
-        return entry_binding is not None and value.binding == entry_binding
-    return False
-
-
-def _projected_value_problem(
-    value: QueryValueRef,
-    field: ContractField,
-    declared: Mapping[str, QueryParameterDeclaration],
-    *,
-    entry_binding: str | None,
-) -> str | None:
-    """Why ``value`` cannot be trusted to satisfy ``field``, or ``None`` if it can.
-
-    Row and parameter Contracts are structural only in B1: no field may
-    declare a refinement (``query_contract_problems`` refuses the whole
-    Contract first if one does, see ``_refined_field_names``), so only two
-    questions remain: does the source's bare kind agree with the field's
-    bare kind, and -- for a required field -- does execution guarantee the
-    source present (``_source_guarantees_presence``).
-    """
-
-    kind = field.type.kind
-    if not field.optional and not _source_guarantees_presence(
-        value, declared, entry_binding=entry_binding
-    ):
-        return (
-            "cannot be guaranteed present for a required field (only a literal, the "
-            "evaluation time, a required parameter, or the query's own entry Subject is)"
-        )
-    if isinstance(value, QueryParameterRef):
-        parameter = declared.get(value.parameter)
-        if parameter is None:
-            return None
-        allowed = _VALUE_TYPE_KINDS[parameter.value_type]
-        return None if kind in allowed else f"is a {parameter.value_type} parameter"
-    if isinstance(value, QueryLiteralRef):
-        if value.value is None:
-            # T? means the key is absent, never a null value: a projected
-            # literal null can never satisfy a Contract field, optional or not.
-            return "is a null literal; a Contract field is absent, never null"
-        checked = check_value(value.value, field.type, at="/literal")
-        return None if isinstance(checked, FieldPresent) else "is a literal outside its type"
-    if isinstance(value, QuerySubjectFieldRef):
-        return None if kind == "string" else "is a Subject identity string"
-    if isinstance(value, QueryEvaluationTimeRef):
-        return None if kind == "datetime" else "is the evaluation time (a datetime)"
-    if isinstance(value, QueryClaimFieldRef):
-        return None if kind == "string" else "is a Claim role or verdict (a string)"
-    if isinstance(value, QueryClaimValueRef):
-        # A Claim's own value type is the ClaimType's, established where
-        # Claims are admitted, not by this row Contract; nothing here
-        # resolves it. The presence check above already refuses it for any
-        # required field (no Claim need exist for a predicate); an optional
-        # field accepts it structurally, since its kind cannot be checked.
-        return None
-    return None
-
-
 def evaluate_query_definition_law(
     query: QueryDefinition,
     *,
@@ -1012,32 +747,31 @@ def evaluate_query_definition_law(
     by_name: bool = False,
     contracts: Callable[[ContractRef], Contract | None] | None = None,
 ) -> QueryDefinitionLawResult:
-    """Evaluate exact path, digest-pinned dependencies, Contract agreement, and lifecycle."""
+    """Evaluate exact path, digest-pinned dependencies, Contract support, and lifecycle.
+
+    ``contracts`` is accepted but unused: B1 does not support a Query
+    Contract at all (see the ``contract_unsupported`` refusal below). It
+    stays in the signature so B3 can wire in runtime validation of
+    supplied parameters and emitted rows without changing this boundary.
+    """
 
     try:
         validate_query_definition_path(query, path)
     except QueryDefinitionFormatError as exc:
         return _refusal("cruxible.query_definition.path_mismatch", str(exc), path=path)
-    # Ordinary authoring (lowering) always fills these before a Query reaches
-    # a candidate tree; a stored artifact missing the exact digest -- even
-    # one whose name/version agree with an accepted Contract -- has bypassed
-    # that pinning and is not an accepted dependency.
-    for ref, label in ((query.parameter_contract, "parameter"), (query.row_contract, "row")):
-        if ref is not None and ref.digest is None:
-            return _refusal(
-                "cruxible.query_definition.contract_unresolved",
-                f"The {label} Contract {ref.spelling} must be pinned to its exact accepted "
-                "digest, not named without one.",
-                path=path,
-            )
-    if contracts is not None:
-        problems = query_contract_problems(query, resolve=contracts)
-        if problems:
-            return _refusal(problems[0][0], " ".join(item[1] for item in problems), path=path)
-    elif query.parameter_contract is not None or query.row_contract is not None:
+    # Acceptance-time proof of a declared Contract (field agreement,
+    # refinement, source presence) repeatedly let a signed, accepted,
+    # executed Query violate its own declared Contract -- nested refinements,
+    # Claim-sourced kinds/cardinality, and parameter-vs-Contract bare-type
+    # gaps each slipped through. Rather than chase a sound acceptance-time
+    # proof, B1 refuses either field outright: the model fields, lowering's
+    # exact-digest pin, and the dependency edge all stay built for B3, which
+    # owns runtime validation.
+    if query.parameter_contract is not None or query.row_contract is not None:
         return _refusal(
-            "cruxible.query_definition.contract_unresolved",
-            "A QueryDefinition with Contract pins is judged against its accepted Contracts.",
+            "cruxible.query_definition.contract_unsupported",
+            "Query Contracts (parameter_contract/row_contract) are enforced from B3; "
+            "not yet supported.",
             path=path,
         )
     if accepted_artifacts is not None:
@@ -1116,7 +850,6 @@ __all__ = [
     "QueryResultShape",
     "RESULT_CONTRACT_PIN_ROLE",
     "evaluate_query_definition_law",
-    "query_contract_problems",
     "parse_query_definition",
     "query_definition_address",
     "query_definition_digest",
