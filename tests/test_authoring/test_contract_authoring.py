@@ -420,6 +420,48 @@ def test_a_query_definitions_contract_pins_are_dependencies() -> None:
     assert ArtifactIdentity(kind="Contract", name="project.status-row/v1") in targets
 
 
+def test_acceptance_refuses_a_row_contract_pin_without_its_exact_digest() -> None:
+    """The stored-artifact acceptance law requires an exact digest, not an unpinned name@N.
+
+    Ordinary authoring (lowering) always fills the digest before a Query
+    reaches a candidate tree, so this exercises the law directly: a raw
+    candidate that bypasses lowering must still be refused, not merely
+    accepted with an unresolved pin.
+    """
+
+    from cruxible_client.contracts.query.definitions import (
+        NamedQueryDefinition,
+        evaluate_query_definition_law,
+        query_definition_path,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    row = validate_contract(
+        {
+            "name": "project.status-row",
+            "version": 1,
+            "fields": {"item_id": "string", "status": "string"},
+        }
+    )
+    data = query_claims_by_type_example().query_definition.model_dump(
+        mode="json", exclude={"pins", "artifact_format"}
+    )
+    data["artifact_format"] = "cruxible-query-definition-v3"
+    data["row_contract"] = {"name": "project.status-row", "version": 1}  # no digest
+    query = NamedQueryDefinition.model_validate(data)
+    result = evaluate_query_definition_law(
+        query,
+        path=query_definition_path(query.identity.name),
+        predecessor=None,
+        contracts=lambda _ref: row,
+    )
+    assert result.verdict == "refused"
+    assert any(
+        diagnostic.code == "cruxible.query_definition.contract_unresolved"
+        for diagnostic in result.diagnostics
+    )
+
+
 def accept_contract_world(tmp_path: Path) -> PlaybillInstance:
     """An instance holding security.epss-row@1 and @2 and security.epss-page@1."""
 

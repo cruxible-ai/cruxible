@@ -935,6 +935,18 @@ def evaluate_query_definition_law(
         validate_query_definition_path(query, path)
     except QueryDefinitionFormatError as exc:
         return _refusal("cruxible.query_definition.path_mismatch", str(exc), path=path)
+    # Ordinary authoring (lowering) always fills these before a Query reaches
+    # a candidate tree; a stored artifact missing the exact digest -- even
+    # one whose name/version agree with an accepted Contract -- has bypassed
+    # that pinning and is not an accepted dependency.
+    for ref, label in ((query.parameter_contract, "parameter"), (query.row_contract, "row")):
+        if ref is not None and ref.digest is None:
+            return _refusal(
+                "cruxible.query_definition.contract_unresolved",
+                f"The {label} Contract {ref.spelling} must be pinned to its exact accepted "
+                "digest, not named without one.",
+                path=path,
+            )
     if contracts is not None:
         problems = query_contract_problems(query, resolve=contracts)
         if problems:
