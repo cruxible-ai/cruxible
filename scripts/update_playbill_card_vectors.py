@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     CARD_TEMPLATE_DIGESTS,
@@ -32,11 +31,7 @@ def main() -> None:
         "artifact": artifact,
         "artifact_path": artifact_path,
         "card_path": candidate_card_path(artifact_path),
-        "rendered": render_candidate_card(
-            artifact_path,
-            artifact_bytes,
-            artifact_kinds=P2_C_ARTIFACT_KINDS,
-        ).decode("utf-8"),
+        "rendered": render_candidate_card(artifact_path, artifact_bytes).decode("utf-8"),
         "removal": render_removal_card(coordinate="a" * 40).decode("utf-8"),
         "renderer_digest": CARD_RENDERER_DIGEST,
         "template_digests": list(CARD_TEMPLATE_DIGESTS),

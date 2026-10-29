@@ -7,9 +7,9 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.query.definitions import (
-    query_definition_digest,
     query_definition_path,
     render_query_definition,
 )
@@ -28,9 +28,7 @@ from tests.test_claims.test_claims import _claim_type
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    coordinator, _actor = _world_holding_a_document(
-        tmp_path_factory.mktemp("reference-lowering"), historical=True
-    )
+    coordinator, _actor = _world_holding_a_document(tmp_path_factory.mktemp("reference-lowering"))
     instance = coordinator.instance
     base = instance.accepted_coordinate()
     return instance, base, instance.immutable_tree_at(base.git_oid)
@@ -93,9 +91,11 @@ def test_reference_bytes_pins_and_typed_refusals_match_full_tree(world, monkeypa
         )
     else:
         procedure = parse_procedure(actual[0][0][1], path="procedures/triage.json")
-        assert next(pin for pin in procedure.pins if pin.role == "query").artifact_digest == (
-            query_definition_digest(query).tagged
-        )
+        # Lowering writes the named format: the query is followed by name.
+        assert procedure.artifact_format == "cruxible-procedure-v3"
+        assert query.identity.qualified in {
+            pin.target.qualified for pin in dependency_pins(procedure)
+        }
 
 
 def test_staged_claim_type_and_capture_contract_match_full_tree(world, monkeypatch):
@@ -156,7 +156,7 @@ def test_staged_claim_type_and_capture_contract_match_full_tree(world, monkeypat
     monkeypatch.setattr(lowering, "_reference_blobs", lambda tree, *_args, **_kwargs: tree)
     assert actual == _outcome(instance, base, staged, payload, **kwargs)
     procedure = parse_procedure(actual[0][0][1], path="procedures/triage.json")
-    assert candidates <= {pin.target.qualified for pin in procedure.pins}
+    assert candidates <= {pin.target.qualified for pin in dependency_pins(procedure)}
 
 
 def test_duplicate_envelopes_remain_unresolved(world, monkeypatch):

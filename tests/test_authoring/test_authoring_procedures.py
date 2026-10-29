@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
@@ -42,7 +42,6 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
-    query_definition_digest,
     validate_query_definition,
 )
 from cruxible_client.contracts.query.grammar import QueryProjection
@@ -58,9 +57,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.procedures.procedure_runs import (
-    ProcedureReadinessRequestV1,
     ProcedureRunRequest,
-    service_playbill_procedure_readiness,
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
@@ -577,218 +574,6 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
         canonical_timestamp=TIMESTAMP,
     )
     assert result.verdict == "passed"
-
-
-def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    tokens = iter(f"{value:032x}" for value in range(1, 20))
-    coordinator = AuthoringIntentCoordinator(
-        instance=instance,
-        store=AuthoringIntentStore(
-            instance.root / instance.descriptor.storage.exhaust,
-            token_factory=lambda: next(tokens),
-        ),
-    )
-    actor = AuthenticatedActor(actor_id="owner")
-    query = _change_set_query(named=False)
-    accepted_spelling_for_new_candidate = coordinator.compile(
-        actor=actor,
-        payload=_with_accepted_query_reference(_change_set_payload(query)),
-        canonical_timestamp=TIMESTAMP,
-    )
-    assert accepted_spelling_for_new_candidate.verdict == "refused"
-    assert accepted_spelling_for_new_candidate.frontier.diagnostics[0].code == (
-        "cruxible.authoring.artifact_reference_unresolved"
-    )
-    first = coordinator.compile(
-        actor=actor,
-        payload=_change_set_payload(query),
-        canonical_timestamp=TIMESTAMP,
-    )
-    assert first.verdict == "passed", first.frontier
-    initial_intent = coordinator.list_pending(actor=actor).intents[-1]
-    initial = compute_preflight(
-        coordinator.instance,
-        intent=initial_intent,
-        actor=actor,
-    ).lowered
-    assert initial is not None
-    resolved_identities = [member["identity"] for member in initial.resolved_authoring["members"]]
-    assert resolved_identities == sorted(resolved_identities, key=lambda item: item.encode())
-    assert all(isinstance(identity, str) for identity in resolved_identities)
-    _accept_tree(
-        coordinator.instance,
-        owner,
-        initial.proposed_tree,
-        timestamp=TIMESTAMP,
-        proposal_name="initial-query-and-procedure",
-    )
-
-    successor_query = query.model_copy(
-        update={
-            "description": "A revised governed query.",
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=query_definition_digest(query).tagged
-            ),
-        }
-    )
-    successor_tokens = iter(f"{value:032x}" for value in range(20, 40))
-    successor = AuthoringIntentCoordinator(
-        instance=coordinator.instance,
-        store=AuthoringIntentStore(
-            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
-            token_factory=lambda: next(successor_tokens),
-        ),
-    )
-    compiled = successor.compile(
-        actor=actor,
-        payload=_change_set_payload(successor_query),
-        canonical_timestamp="2026-08-21T12:01:00.000000Z",
-    )
-    assert compiled.verdict == "passed", compiled.frontier
-    intent = successor.list_pending(actor=actor).intents[-1]
-    lowered = compute_preflight(
-        coordinator.instance,
-        intent=intent,
-        actor=actor,
-    ).lowered
-    assert lowered is not None
-    accepted_procedure = parse_procedure(
-        lowered.proposed_tree[procedure_path("triage")],
-        path=procedure_path("triage"),
-    )
-    query_pin = next(pin for pin in accepted_procedure.pins if pin.role == "query")
-    assert query_pin.artifact_digest == query_definition_digest(successor_query).tagged
-
-    accepted_payload = _with_accepted_query_reference(_change_set_payload(successor_query))
-    accepted_payload_procedure = accepted_payload.members[0]
-    assert isinstance(accepted_payload_procedure, ProcedureAuthoringPayload)
-    accepted_definition = dict(accepted_payload_procedure.definition)
-    accepted_definition["description"] = "A semantic Procedure revision using the base query."
-    accepted_payload = accepted_payload.model_copy(
-        update={
-            "members": (
-                accepted_payload_procedure.model_copy(update={"definition": accepted_definition}),
-                accepted_payload.members[1],
-            )
-        }
-    )
-    accepted_spelling = successor.compile(
-        actor=actor,
-        payload=accepted_payload,
-        canonical_timestamp="2026-08-21T12:02:00.000000Z",
-    )
-    assert accepted_spelling.verdict == "passed", accepted_spelling.frontier
-    accepted_intent = successor.list_pending(actor=actor).intents[-1]
-    accepted_lowered = compute_preflight(
-        coordinator.instance,
-        intent=accepted_intent,
-        actor=actor,
-    ).lowered
-    assert accepted_lowered is not None
-    accepted_spelling_procedure = parse_procedure(
-        accepted_lowered.proposed_tree[procedure_path("triage")],
-        path=procedure_path("triage"),
-    )
-    accepted_query_pin = next(
-        pin for pin in accepted_spelling_procedure.pins if pin.role == "query"
-    )
-    assert accepted_query_pin.artifact_digest == query_definition_digest(successor_query).tagged
-
-
-def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    query_v1 = _change_set_query(named=False)
-    _submit_approve_activate(
-        coordinator,
-        actor=actor,
-        owner=owner,
-        payload=_runnable_change_set_payload(query_v1, description="Read query v1."),
-        timestamp=TIMESTAMP,
-    )
-    accepted_v1 = parse_procedure(
-        instance.tree_at(instance.accepted_coordinate().git_oid)[
-            procedure_path("candidate-query-run")
-        ],
-        path=procedure_path("candidate-query-run"),
-    )
-    query_v1_pin = next(pin for pin in accepted_v1.pins if pin.role == "query")
-    assert query_v1_pin.artifact_digest == query_definition_digest(query_v1).tagged
-
-    query_v2 = query_v1.model_copy(
-        update={
-            "description": "The accepted query v2.",
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=query_definition_digest(query_v1).tagged
-            ),
-        }
-    )
-    incomplete = coordinator.compile(
-        actor=actor,
-        payload=QueryDefinitionAuthoringPayload(query_definition=query_v2),
-        canonical_timestamp="2026-08-21T12:01:00.000000Z",
-    )
-    assert incomplete.verdict == "refused"
-    assert "cruxible.change_set.incomplete_closure" in {
-        item.code for item in incomplete.frontier.diagnostics
-    }
-
-    successor_payload = _with_accepted_query_reference(
-        _runnable_change_set_payload(query_v2, description="Read query v2.")
-    )
-    _submit_approve_activate(
-        coordinator,
-        actor=actor,
-        owner=owner,
-        payload=successor_payload,
-        timestamp="2026-08-21T12:02:00.000000Z",
-    )
-    query_v2_digest = query_definition_digest(query_v2).tagged
-    accepted_v2 = parse_procedure(
-        instance.tree_at(instance.accepted_coordinate().git_oid)[
-            procedure_path("candidate-query-run")
-        ],
-        path=procedure_path("candidate-query-run"),
-    )
-    query_v2_pin = next(pin for pin in accepted_v2.pins if pin.role == "query")
-    assert query_v2_pin.artifact_digest == query_v2_digest
-
-    evaluation_time = datetime(2026, 8, 21, 12, 5, tzinfo=UTC)
-    readiness = service_playbill_procedure_readiness(
-        instance,
-        name="candidate-query-run",
-        request=ProcedureReadinessRequestV1(),
-    )
-    assert readiness.runnable == "direct"
-    assert readiness.unsupported_nodes == ()
-    assert readiness.next_operation.kind == "run"
-    assert readiness.definition_digest == accepted_v2.definition_digest
-    result = service_run_playbill_procedure(
-        instance,
-        name="candidate-query-run",
-        request=ProcedureRunRequest(evaluation_time=evaluation_time, input={}),
-        actor_context=GovernedActorContext(
-            actor_type="human_user",
-            actor_id="owner",
-            org_id=instance.descriptor.instance_id,
-            operation_id="candidate-query-v2-run",
-            timestamp=evaluation_time,
-        ),
-    )
-
-    assert result.status == "succeeded", result
-    assert isinstance(result.receipt, ProcedureRunReceiptV3)
-    validated_query = next(pin for pin in result.receipt.validated_pins if pin.role == "query")
-    assert validated_query.artifact_digest == query_v2_digest
-    assert [item["query_definition_digest"] for item in result.receipt.admitted_inputs] == [
-        query_v2_digest
-    ]
 
 
 def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:

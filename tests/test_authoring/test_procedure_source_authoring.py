@@ -124,7 +124,6 @@ def test_source_failure_is_localized_and_does_not_execute(tmp_path):
 
 
 def test_source_inspection_without_context_is_explicitly_unresolved():
-    import pytest
 
     from cruxible_client.authoring.procedures import ProcedureCompositionError
 
@@ -139,7 +138,6 @@ def test_source_inspection_without_context_is_explicitly_unresolved():
 
 
 def test_source_relocation_preserves_identity_and_local_diagnostics():
-    import pytest
 
     from cruxible_client.contracts.procedures.source_compiler import (
         SourceCompileError,
@@ -212,7 +210,6 @@ def test_source_relocation_preserves_identity_and_local_diagnostics():
 
 
 def test_source_and_sequence_refuse_nonexistent_standalone_contracts():
-    import pytest
 
     from cruxible_client.authoring.inputs import AcceptedReferenceInput
     from cruxible_client.authoring.procedures import Sequence
@@ -318,8 +315,6 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
     assert paths == [claim_type_path(claim_type.identity.name)]
     assert tuple(preview.definition.source.claim_types) == (claim_type.predicate,)
 
-    import pytest
-
     from cruxible_core.authoring import lowering
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -372,15 +367,13 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
             resolve_indexed_source(_field_request(), selected)
 
 
-@pytest.mark.parametrize("historical", [True, False])
-def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path, historical):
+def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.authoring.models import (
         ChangeSetAuthoringPayload,
         ClaimTypeAuthoringPayload,
         QueryDefinitionAuthoringPayload,
     )
-    from cruxible_client.contracts.claim_types import claim_type_digest
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
     from cruxible_client.contracts.procedures.source_requests import SourceQuerySelection
     from cruxible_client.contracts.query.definitions import query_definition_digest
@@ -395,7 +388,7 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path, hist
     instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    claim_type, query = _claim_type(), _change_set_query(named=not historical)
+    claim_type, query = _claim_type(), _change_set_query(named=True)
     request = _field_request()
     # Use a governed query and a field read in the same source; neither yet exists.
     request = request.model_copy(
@@ -439,22 +432,13 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path, hist
         path = procedure_path(request.name)
         procedure = parse_procedure(lowered.proposed_tree[path], path=path)
         source = procedure.definition.source
-        if historical:
-            assert (
-                source.claim_types[claim_type.predicate].version
-                == claim_type_digest(claim_type).tagged
-            )
-            assert source.bindings["items"].version == query_definition_digest(query).tagged
-        else:
-            assert source.claim_types[claim_type.predicate].version is None
-            assert (
-                source.claim_types[claim_type.predicate].structure.predicate == claim_type.predicate
-            )
-            assert source.bindings["items"].version is None
-            assert source.bindings["items"].definition.identity == query.identity
-            assert query_definition_digest(
-                source.bindings["items"].definition
-            ) == query_definition_digest(query)
+        assert source.claim_types[claim_type.predicate].version is None
+        assert source.claim_types[claim_type.predicate].structure.predicate == claim_type.predicate
+        assert source.bindings["items"].version is None
+        assert source.bindings["items"].definition.identity == query.identity
+        assert query_definition_digest(
+            source.bindings["items"].definition
+        ) == query_definition_digest(query)
         _accept_tree(
             instance,
             owner,

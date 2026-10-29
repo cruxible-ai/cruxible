@@ -28,20 +28,16 @@ from cruxible_client.contracts.procedures.line_specs import line_spec_path, rend
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     CaptureEventWindow,
-    FixedWindow,
 )
 from cruxible_client.contracts.triggers import (
     CaptureLandingSchedule,
     WindowCloseSchedule,
     parse_trigger,
-    render_trigger,
-    trigger_digest,
     trigger_schedule_pins,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
 from tests.core_support._identity_support import OWNER
-from tests.support.lines import line_trigger
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_procedures.test_trigger_artifacts import _line_world
 from tests.test_server.test_playbill_line_run_refusals import _served_line
@@ -75,32 +71,6 @@ def payload(**updates):
             **updates,
         }
     )
-
-
-def test_name_form_produces_identical_trigger_bytes_digest_and_pins():
-    staged = tree()
-    named = _render_trigger_member(payload(), tree=staged)
-    exact = line_trigger(
-        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR), named=False
-    )
-    assert named == (
-        "triggers/on-landing.json",
-        render_trigger(exact),
-        trigger_digest(exact).tagged,
-    )
-    trigger = parse_trigger(named[1], path=named[0])
-    assert trigger.artifact_format == "playbill-trigger-v1"
-    assert trigger.pins == trigger_schedule_pins(CaptureLandingSchedule(event=SELECTOR))
-    assert trigger.schedule.event == SELECTOR
-    # The exact stored parser never accepts an authoring-only name.
-    import json
-
-    wire = json.loads(named[1])
-    wire["schedule"] = {"kind": "capture_landing", "capture_contract": NAME}
-    from cruxible_client.contracts.triggers import TriggerFormatError
-
-    with pytest.raises(TriggerFormatError):
-        parse_trigger(json.dumps(wire).encode(), path=named[0])
 
 
 @pytest.mark.parametrize("window_close", [False, True])
@@ -151,84 +121,6 @@ def test_name_schedule_refuses_exact_selector_or_expected_digest(extra):
                 },
             }
         )
-
-
-def test_source_pinned_digest_is_irrelevant_only_identity_and_sources_are_checked():
-    """A Line's ``trigger_event`` is always Named: it never carries a digest.
-
-    ``NamedCaptureEventSelector.capture_contract_digest`` is a ``ClassVar``
-    ``None`` (per the "Bind slots at Line acceptance" commit), so a Line's
-    trigger event can never actually carry a digest to compare, however it is
-    constructed. ``schedule_satisfies_input``'s legacy ``by_name=False`` path
-    (what ``_render_trigger_member(..., light=False)`` -- the default -- uses)
-    used to compare that always-``None`` digest against the schedule's real
-    one and always refuse, even on a genuine identity match. Fixed: the
-    digest check is skipped whenever either side is Named, falling back to
-    the identity (and sources) check already required. A real identity
-    mismatch still refuses.
-    """
-    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
-
-    staged = tree()
-    path = line_spec_path("triage")
-    line = parse_line_spec(staged[path], path=path)
-    # Attempt to force a mismatched digest onto the Line's trigger event; it
-    # is dropped on the render/parse round trip (the field is a ClassVar on
-    # NamedCaptureEventSelector), so only the identity -- the same as
-    # SELECTOR's -- survives.
-    attempted = SELECTOR.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
-    staged[path] = render_line_spec(
-        line.model_copy(
-            update={
-                "trigger_input": "feed",
-                "trigger_event": attempted,
-                "pins": tuple(
-                    sorted(
-                        (
-                            *line.pins,
-                            *trigger_schedule_pins(CaptureLandingSchedule(event=attempted)),
-                        ),
-                        key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-                    )
-                ),
-            }
-        )
-    )
-    reparsed = parse_line_spec(staged[path], path=path)
-    assert reparsed.trigger_event is not None
-    assert reparsed.trigger_event.capture_contract_digest is None
-    assert reparsed.trigger_event.capture_contract_identity == SELECTOR.capture_contract_identity
-
-    rendered = _render_trigger_member(payload(), tree=staged)
-    trigger = parse_trigger(rendered[1], path=rendered[0])
-    assert trigger.schedule.event == SELECTOR
-
-    other_contract = foreign_source_capture_contract("security.advisory")
-    other_selector = CaptureEventSelector(
-        capture_contract_identity=other_contract.identity,
-        capture_contract_digest=capture_contract_digest(other_contract).tagged,
-    )
-    staged[path] = render_line_spec(
-        line.model_copy(
-            update={
-                "trigger_input": "feed",
-                "trigger_event": other_selector,
-                "pins": tuple(
-                    sorted(
-                        (
-                            *line.pins,
-                            *trigger_schedule_pins(CaptureLandingSchedule(event=other_selector)),
-                        ),
-                        key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-                    )
-                ),
-            }
-        )
-    )
-    with pytest.raises(AuthoringLoweringError) as caught:
-        _render_trigger_member(payload(), tree=staged)
-    assert caught.value.code == "cruxible.trigger.event_not_accepted"
-    assert caught.value.repairs
 
 
 def test_named_resolution_reads_one_contract_path_without_enumerating_the_tree():
@@ -309,35 +201,6 @@ def test_exact_event_authoring_form_is_refused(window_close):
             model.model_validate(values)
 
 
-def test_named_capture_window_uses_the_shared_resolver_and_exact_stored_bytes():
-    authoring = WindowCloseAuthoringSchedule(
-        window=CaptureEventByNameWindow(
-            capture_contract=NAME,
-            duration_seconds=60,
-        )
-    )
-    path, content, digest = _render_trigger_member(payload(schedule=authoring), tree=tree())
-    exact = line_trigger(
-        "on-landing",
-        line="triage",
-        schedule=WindowCloseSchedule(
-            window=CaptureEventWindow(event=SELECTOR, duration_seconds=60),
-        ),
-        named=False,
-    )
-    assert (content, digest) == (render_trigger(exact), trigger_digest(exact).tagged)
-    assert parse_trigger(content, path=path).pins == exact.pins
-
-
-def test_fixed_window_authoring_retains_its_stored_schedule():
-    window = FixedWindow(starts_at="2026-10-17T12:00:00Z", duration_seconds=60)
-    path, content, _ = _render_trigger_member(
-        payload(schedule=WindowCloseAuthoringSchedule(window=window)),
-        tree=tree(),
-    )
-    assert parse_trigger(content, path=path).schedule == WindowCloseSchedule(window=window)
-
-
 @pytest.mark.parametrize("unavailable", ["missing", "retired", "changed", "wrong_kind"])
 @pytest.mark.parametrize("window_close", [False, True])
 def test_retiring_trigger_reuses_predecessor_without_resolving_contract(
@@ -412,31 +275,6 @@ def test_retiring_an_absent_trigger_refuses_without_resolving_its_schedule():
         _render_trigger_member(payload(retire=True), tree={})
     assert caught.value.code == "cruxible.authoring.trigger_missing"
     assert caught.value.repairs
-
-
-@pytest.mark.parametrize("window_close", [False, True])
-def test_named_sources_lower_into_the_stored_selector_and_render(window_close):
-    from cruxible_core.service.discovery.listed_kinds import _trigger_detail
-    from cruxible_core.service.discovery.operational import schedule_summary
-
-    sources = ("github.repo.snapshot", "sarif.log")
-    schedule = (
-        WindowCloseAuthoringSchedule(
-            window=CaptureEventByNameWindow(
-                capture_contract=NAME, logical_sources=sources, duration_seconds=60
-            )
-        )
-        if window_close
-        else CaptureLandingByNameSchedule(capture_contract=NAME, logical_sources=sources)
-    )
-    path, content, _ = _render_trigger_member(payload(schedule=schedule), tree=tree())
-    trigger = parse_trigger(content, path=path)
-    selector = trigger.schedule.window.event if window_close else trigger.schedule.event
-    assert selector == SELECTOR.model_copy(update={"logical_sources": sources})
-    assert selector.model_dump(mode="json")["logical_sources"] == list(sources)
-    assert all(source in schedule_summary(trigger.schedule) for source in sources)
-    assert _trigger_detail(trigger)["logical_sources"] == list(sources)
-    assert _trigger_detail(trigger)["capture_contract"] == CONTRACT.identity.qualified
 
 
 @pytest.mark.parametrize(

@@ -1272,9 +1272,40 @@ def _claim_attestation_threshold(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.test_evidence.test_attestation_consequence_next import threshold_world
+    from cruxible_client.contracts.accepted_attestations import (
+        attestation_path,
+        render_accepted_attestation,
+    )
+    from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
+    from tests.core_support._support import client_material
+    from tests.test_claims.test_claim_attestation_service import _request as _attestation
+    from tests.test_evidence.test_attestation_consequence_next import (
+        EVALUATION_TIME,
+        threshold_world,
+    )
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
 
-    instance, owner, _claim = threshold_world(root, monkeypatch)
+    instance, owner, claim = threshold_world(root, monkeypatch)
+    # Two independent principals attest unsure as standalone signed artifacts.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for signer in (owner, client_material(root, instance)):
+        envelope = _attestation(
+            instance,
+            signer,
+            claim.identity.name,
+            root,
+            stance="unsure",
+            attested_at=EVALUATION_TIME,
+        ).attestation
+        digest = claim_attestation_v2_envelope_digest(envelope)
+        tree[attestation_path(digest)] = render_accepted_attestation(envelope)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=EVALUATION_TIME.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        proposal_name="closed-loop-threshold-attestations",
+    )
     row = _row(instance, "claim_attestation_threshold_met", _request(instance))
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_attestation_threshold_met"]
     current = _current_claim(instance)

@@ -413,8 +413,7 @@ def test_named_v3_wire_omits_pin_tags_defaults_and_duplicate_node_ids():
     )
 
 
-@pytest.mark.parametrize("historical", [False, True])
-def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, historical):
+def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
     from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
     from cruxible_client.contracts.authoring.models import QueryDefinitionAuthoringPayload
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
@@ -425,8 +424,7 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
 
-    initialize = initialize_local
-    instance, _ = initialize(tmp_path)
+    instance, _ = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
         store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
@@ -450,12 +448,12 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
         (
             lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
             "procedures/test.writer.json",
-            "playbill-procedure-v2" if historical else "cruxible-procedure-v3",
+            "cruxible-procedure-v3",
         ),
         (
             QueryDefinitionAuthoringPayload(query_definition=query),
             "query-definitions/test.writer.json",
-            "playbill-query-definition-v2" if historical else "cruxible-query-definition-v3",
+            "cruxible-query-definition-v3",
         ),
     )
     for payload, path, expected in cases:
@@ -467,8 +465,7 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
         lowered = lower_authoring(instance, intent=view.intent, actor_id="owner")
         body = json.loads(lowered.proposed_tree[path])
         assert body["artifact_format"] == expected
-        if not historical:
-            assert "pins" not in body
+        assert "pins" not in body
 
 
 def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
