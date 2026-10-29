@@ -20,6 +20,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     render_procedure,
 )
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.query.definitions import (
     NamedQueryDefinition,
     QueryDefinition,
@@ -118,12 +124,34 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
             )
         )
     )
-    mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+    # A Mandate pins an exact Line, not a Procedure (ruling C3): this
+    # Procedure has no provider slots (a closed-form Claims-terminal graph),
+    # so its Line binds none either.
+    caps = procedure.definition.hard_caps
+    line = LineSpec(
+        identity=ArtifactIdentity(kind="Line", name="triage-line"),
+        occurrence_epoch=1,
         procedure=ArtifactPin(
             role="procedure",
             target=procedure.identity,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
+        ),
+        parameters={},
+        max_authority="settle",
+        budgets={
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+        },
+        epsilon={"$decimal": "0"},
+    )
+    mandate = ProcedureMandate(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
+        line=ArtifactPin(
+            role="line",
+            target=line.identity,
+            artifact_digest=line_spec_digest(line).tagged,
         ),
         grants="settle",
         resource_ceiling=_caps(),
@@ -158,6 +186,7 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
             **tree,
             "procedures/triage.json": render_procedure(procedure),
             query_definition_path(query.identity.name): render_query_definition(query),
+            line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(mandate),
         },
         timestamp=TIMESTAMP,
