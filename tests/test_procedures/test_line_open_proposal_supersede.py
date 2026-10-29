@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.exhaust.records import parse_journal_payload
@@ -60,9 +59,7 @@ def _first_proposal(instance: PlaybillInstance, root: Path, line: Any) -> str:
 
 
 def _change_the_source(root: Path) -> None:
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "severity": "critical"})
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
 
 
 def _prepared_payloads(instance: PlaybillInstance, run_id: str) -> list[dict[str, Any]]:
@@ -273,9 +270,7 @@ def test_a_settle_mode_line_never_weighs_or_supersedes_its_proposals(tmp_path: P
     # A false condition falls back to an ordinary proposal, every run.
     instance, root, line = settle_world(tmp_path, only_subject="someone-else")
     first = run_settle(instance, root, line)
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "severity": "critical"})
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
     second = run_settle(instance, root, line, now=NOW + timedelta(minutes=10))
 
     proposals = []
