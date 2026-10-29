@@ -5366,6 +5366,15 @@ def _stage_member_order(
             dep = by_key.get((ref.name, ref.version))
             if dep is not None and dep != i:
                 deps[i].add(dep)
+        # A version also depends on its own predecessor version when both are
+        # staged in this set: lowering computes predecessor_digest from the
+        # tree, so version N-1 must already be staged before version N. This
+        # edge is implicit (the author's field refs never name it), and
+        # canonical identity order gets it wrong whenever a version number's
+        # digit count changes (".../v10" sorts before ".../v2").
+        predecessor = by_key.get((member.name, member.version - 1))
+        if predecessor is not None:
+            deps[i].add(predecessor)
     remaining = set(contract_indices)
     resolved: set[int] = set()
     ordered: list[int] = []

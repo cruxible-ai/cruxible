@@ -219,6 +219,33 @@ def test_a_contract_dependency_cycle_in_one_change_set_is_refused(tmp_path: Path
     assert "cruxible.authoring.contract_dependency_cycle" in _refusal(instance, change_set)
 
 
+def test_a_version_chain_stages_in_numeric_not_lexical_order(tmp_path: Path) -> None:
+    """Versions 1..10 of one Contract, submitted together: v10 must stage after v9.
+
+    Canonical member ordering byte-sorts by identity string, and
+    "Contract:security.chain/v10" sorts before ".../v2" lexically. Without
+    an implicit predecessor edge, v10 would stage before v2..v9 exist,
+    refusing predecessor_missing even though the whole chain is valid.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    members = tuple(
+        ContractInput(
+            kind="contract", name="security.chain", version=version, fields={"x": "string"}
+        )
+        for version in range(1, 11)
+    )
+    change_set = ChangeSetInput(kind="change_set", members=members)
+    _accept(instance, owner, change_set)
+    tree = _accepted_tree(instance)
+    previous_digest: str | None = None
+    for version in range(1, 11):
+        path = contract_path("security.chain", version)
+        contract = parse_contract(tree[path], path=path)
+        assert contract.predecessor_digest == previous_digest
+        previous_digest = contract_digest(contract).tagged
+
+
 def _row_contract(name: str, **fields: str) -> ContractInput:
     return ContractInput(kind="contract", name=name, version=1, fields=fields)  # type: ignore[arg-type]
 
