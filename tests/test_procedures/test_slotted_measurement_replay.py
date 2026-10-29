@@ -405,20 +405,13 @@ def test_measure_replays_explicit_build_and_refuses_retired_build(tmp_path, orig
         update={"validated_pins": (*run.receipt.validated_pins, extra_contract)}
     )
     pin_mismatch = replace(grain, state=run.model_copy(update={"receipt": mismatched_pins}))
-    # NOTE (real src finding, not a test-shape issue): a cleared
-    # provider_bindings grain used to fail closed here too; it no longer
-    # does. replay_procedure_references() always calls
-    # bind_procedure_references(..., partial=True) (reference_binding.py),
-    # and partial silently tolerates a slot with no binding at all --
-    # recorded_slot_bindings() then returns {} without error when
-    # provider_bindings is empty, and replay succeeds with every slot simply
-    # left unbound. The docstring frames `partial` as "a replay of a slot
-    # only supplied Sources used", but the check does not actually
-    # distinguish a Source slot from a Call slot: clearing the only
-    # provider_bindings entry for a Procedure whose one node is a plain Call
-    # (this fixture) also goes undetected. Only the two genuinely-still-
-    # refused cases are asserted below.
-    for broken in (bad, pin_mismatch):
+    # A cleared provider_bindings grain fails closed too: this fixture's one
+    # node is a plain Call, whose slot binding is never optional even under
+    # bind_procedure_references(..., partial=True) (reference_binding.py's
+    # _source_only_slot_names restricts partial's exemption to slots only a
+    # Source node uses).
+    cleared_bindings = replace(grain, provider_bindings=())
+    for broken in (bad, pin_mismatch, cleared_bindings):
         with pytest.raises(ProcedureMeasurementRefused) as mismatch:
             _replay_measured_run(
                 instance,

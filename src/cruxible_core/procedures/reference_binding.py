@@ -23,7 +23,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ProcedureDefinition,
+    RepeatNode,
+    SourceNode,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
@@ -153,6 +156,29 @@ def validate_slot_names(bindings: Iterable[str], declared: Iterable[str]) -> Non
         )
 
 
+def _source_only_slot_names(definition: ProcedureDefinition) -> frozenset[str]:
+    """Slot names every node that uses them is a Source: a Call never is one.
+
+    ``partial`` admits a missing binding only for these: a Source's input may
+    be supplied directly (a landed Capture, exhaust input or a parent run's
+    material) rather than invoked, so its slot was never bound at admission.
+    A Call is always invoked, so its slot binding is never optional.
+    """
+
+    source_slots: set[str] = set()
+    other_slots: set[str] = set()
+    for node in definition.nodes:
+        if isinstance(node, SourceNode):
+            source_slots.add(node.slot)
+        elif isinstance(node, CallNode):
+            other_slots.add(node.slot)
+        elif isinstance(node, RepeatNode):
+            for body in node.body:
+                if body.operation == "call" and body.slot is not None:
+                    other_slots.add(body.slot)
+    return frozenset(source_slots - other_slots)
+
+
 def bind_procedure_references(
     accepted: AcceptedProcedure,
     *,
@@ -169,8 +195,11 @@ def bind_procedure_references(
     slot's exact ``{build, operation}`` (the Line's, or a direct run's
     ephemeral spec); nothing is fitted here. ``contracts`` resolves the bound
     operations' Contract closures; a replay passes none. With ``partial`` a
-    slot may be left unbound (a replay of a slot only supplied Sources used).
-    Payloads, schemas and retained source snapshots are not traversed.
+    Source-only slot may be left unbound (a replay of a slot only supplied
+    Sources used); a slot any Call node also uses still fails closed, since a
+    Call is always invoked and never has supplied material standing in for
+    its binding. Payloads, schemas and retained source snapshots are not
+    traversed.
     """
     authored = authored_procedure(accepted)
     if frozen_pins is not None and {
@@ -195,6 +224,7 @@ def bind_procedure_references(
 
     slot_declarations: dict[str, ProcedureSlot] = dict(authored.definition.slots)
     validate_slot_names(bindings or {}, slot_declarations)
+    source_only_slots = _source_only_slot_names(authored.definition)
     data = authored.definition.model_dump(mode="json", by_alias=True)
     data.pop("source", None)
 
@@ -235,7 +265,7 @@ def bind_procedure_references(
     for name, slot in slot_declarations.items():
         binding = (bindings or {}).get(name)
         if binding is None:
-            if partial:
+            if partial and name in source_only_slots:
                 continue
             from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
             from cruxible_core.errors import RequestRefusedError
