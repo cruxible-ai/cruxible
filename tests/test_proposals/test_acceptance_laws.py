@@ -18,7 +18,6 @@ from cruxible_client.contracts.laws import (
     LINE_V6_ACCEPTANCE_LAW,
     PROCEDURE_LAW_V2,
     PROCEDURE_RUNTIME_POLICY_LAW,
-    PROVIDER_INTERFACE_LAW,
     PROVIDER_LAW_V2,
 )
 from cruxible_core.proposals.proposals import ROLE_DEMOTED_MEMBER_FAMILIES
@@ -74,15 +73,17 @@ def test_procedure_law_is_the_one_v2_envelope_coordinate() -> None:
     )
 
 
-def test_p2_b1_provider_interface_and_line_successor_laws_are_current() -> None:
+def test_p2_b1_provider_and_line_successor_laws_are_current() -> None:
+    # The provider-interface law itself is gone (B2 noun removal, C13 cut
+    # clean): there is no historical-replay obligation since 0.5 never
+    # shipped, so "playbill-provider-interface-v1" has no acceptance law at
+    # all any more.
     assert (
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-provider-v2").coordinate
         == PROVIDER_LAW_V2
     )
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-provider-interface-v1").coordinate
-        == PROVIDER_INTERFACE_LAW
-    )
+    with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-provider-interface-v1")
     assert (
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v6").coordinate
         == LINE_V6_ACCEPTANCE_LAW.coordinate
@@ -136,11 +137,9 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "line",
         "trigger",
         "subject-kind",
-        "blueprint",
+        "contract",
         "query-definition",
         "provider",
-        "provider-interface",
-        "source-acquisition-policy",
         "procedure-mandate",
         "capture-contract",
         "claim",
