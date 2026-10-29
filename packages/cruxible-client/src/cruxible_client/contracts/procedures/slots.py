@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import field_validator
 
@@ -71,8 +71,23 @@ LegacyProcedurePinBinding = ArtifactPin | ProcedurePinSlotRef
 ProcedurePinBinding = LegacyProcedurePinBinding | ArtifactNameRef
 
 
+# Graph format 7 (name-referenced) slots and bindings; re-exported by
+# ``named_models``.
+NameBinding = ArtifactNameRef | ProcedurePinSlotRef
+
+
+class NamedProcedurePinSlot(ProcedurePinSlot):
+    tag: Literal["cruxible-procedure-slot-v2"] = "cruxible-procedure-slot-v2"  # type: ignore[assignment]
+    pin_role: ClassVar[str] = "provider"  # type: ignore[misc]
+    artifact_kind: ClassVar[str] = "Provider"  # type: ignore[misc]
+    interface_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
+    interface: ArtifactNameRef
+
+
 __all__ = [
     "LegacyProcedurePinBinding",
+    "NameBinding",
+    "NamedProcedurePinSlot",
     "ProcedurePinBinding",
     "ProcedurePinSlot",
     "ProcedurePinSlotRef",

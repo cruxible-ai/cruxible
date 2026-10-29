@@ -7,11 +7,11 @@ Moved out of :mod:`~cruxible_client.contracts.procedures.models`, which keeps
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
 from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 from cruxible_client.contracts.procedures.model_base import (
@@ -20,7 +20,7 @@ from cruxible_client.contracts.procedures.model_base import (
     _canonical_identifier,
     _StrictProcedureModel,
 )
-from cruxible_client.contracts.procedures.slots import LegacyProcedurePinBinding
+from cruxible_client.contracts.procedures.slots import LegacyProcedurePinBinding, NameBinding
 from cruxible_client.contracts.query.grammar import QueryBudgets
 
 PredicateScalar = None | bool | int | str
@@ -733,6 +733,140 @@ ProcedureNode = Annotated[
 EgressNode: TypeAlias = CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
 
 
+# Graph format 7 (name-referenced) node models: each format-6 node with its
+# pins as names. Re-exported by ``named_models``.
+
+
+class NamedStateTapNode(StateTapNode):
+    query: NameBinding  # type: ignore[assignment]
+
+
+class NamedSourceNode(SourceNode):
+    capture_contract: NameBinding  # type: ignore[assignment]
+    provider: NameBinding  # type: ignore[assignment]
+    interface: ArtifactNameRef  # type: ignore[assignment]
+    interface_digest: ClassVar[None] = None  # type: ignore[assignment, misc]
+    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _provider_binding(self) -> NamedSourceNode:
+        return self
+
+
+class NamedExhaustTapNode(ExhaustTapNode):
+    reducer_or_query: NameBinding  # type: ignore[assignment]
+
+
+class NamedCallNode(CallNode):
+    provider: NameBinding  # type: ignore[assignment]
+    interface: ArtifactNameRef  # type: ignore[assignment]
+    contract_in: ClassVar[None] = None  # type: ignore[misc]
+    contract_out: ClassVar[None] = None  # type: ignore[misc]
+    effect_policy: NameBinding | None = None  # type: ignore[assignment]
+    interface_digest: ClassVar[None] = None  # type: ignore[assignment, misc]
+    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _provider_binding(self) -> NamedCallNode:
+        return self
+
+
+class NamedTransformNode(TransformNode):
+    contract_in: NameBinding  # type: ignore[assignment]
+    contract_out: NameBinding  # type: ignore[assignment]
+
+
+class NamedProjectNode(ProjectNode):
+    contract_out: NameBinding  # type: ignore[assignment]
+
+
+class NamedRepeatBodyNode(RepeatBodyNode):
+    provider: NameBinding | None = None  # type: ignore[assignment]
+    interface: ArtifactNameRef | None = None  # type: ignore[assignment]
+    contract_in: NameBinding | None = None  # type: ignore[assignment]
+    contract_out: NameBinding | None = None  # type: ignore[assignment]
+    effect_policy: NameBinding | None = None  # type: ignore[assignment]
+    interface_digest: ClassVar[None] = None  # type: ignore[misc]
+    implementation_digest: ClassVar[None] = None  # type: ignore[misc]
+
+    @model_validator(mode="after")
+    def _operation_shape(self) -> NamedRepeatBodyNode:
+        if self.operation == "call":
+            if self.provider is None or self.interface is None or self.transform_kind is not None:
+                raise ValueError("repeat Calls name a provider and interface")
+            if self.contract_in is not None or self.contract_out is not None:
+                raise ValueError("Call I/O belongs to its interface")
+            return self
+        if self.provider is not None or self.interface is not None:
+            raise ValueError("repeat transforms cannot declare a provider")
+        if self.contract_in is None or self.contract_out is None:
+            raise ValueError("repeat transforms require input and output contracts")
+        if self.transform_kind is None or getattr(
+            self.spec, "tag", None
+        ) != _TRANSFORM_SPEC_TAGS.get(self.transform_kind):
+            raise ValueError("repeat transform spec does not match its kind")
+        return self
+
+
+class NamedCaptureEgressNode(CaptureEgressNode):
+    capture_contract: NameBinding  # type: ignore[assignment]
+
+
+class NamedProposeChangeSetNode(ProposeChangeSetNode):
+    claim_types: tuple[ArtifactNameRef, ...] = ()  # type: ignore[assignment]
+
+
+class NamedClaimTapNode(ClaimTapNode):
+    claim_type: ArtifactNameRef  # type: ignore[assignment]
+
+
+class NamedInvokeNode(InvokeNode):
+    procedure: ArtifactNameRef  # type: ignore[assignment]
+
+
+class NamedSelectNode(SelectNode):
+    contract_out: NameBinding  # type: ignore[assignment]
+
+
+class NamedReturnNode(ReturnNode):
+    contract_out: NameBinding  # type: ignore[assignment]
+
+
+class NamedConstantNode(ConstantNode):
+    contract_out: NameBinding  # type: ignore[assignment]
+
+
+class NamedSettleChangeSetNode(NamedProposeChangeSetNode, SettleChangeSetNode):
+    kind: Literal["settle_change_set"] = "settle_change_set"
+
+
+class NamedRepeatNode(RepeatNode):
+    body: tuple[NamedRepeatBodyNode, ...]
+
+
+NamedProcedureNode = Annotated[
+    NamedInvokeNode
+    | NamedClaimTapNode
+    | NamedStateTapNode
+    | NamedSourceNode
+    | NamedExhaustTapNode
+    | NamedCallNode
+    | NamedTransformNode
+    | GuardNode
+    | NamedProjectNode
+    | NamedRepeatNode
+    | NamedCaptureEgressNode
+    | InboxEgressNode
+    | NamedProposeChangeSetNode
+    | NamedSettleChangeSetNode
+    | HaltNode
+    | NamedSelectNode
+    | NamedReturnNode
+    | NamedConstantNode,
+    Field(discriminator="kind"),
+]
+
+
 __all__ = [
     "AUTHORITY_RUNG",
     "AuthorityVerb",
@@ -749,6 +883,23 @@ __all__ = [
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
+    "NamedCallNode",
+    "NamedCaptureEgressNode",
+    "NamedClaimTapNode",
+    "NamedConstantNode",
+    "NamedExhaustTapNode",
+    "NamedInvokeNode",
+    "NamedProcedureNode",
+    "NamedProjectNode",
+    "NamedProposeChangeSetNode",
+    "NamedRepeatBodyNode",
+    "NamedRepeatNode",
+    "NamedReturnNode",
+    "NamedSelectNode",
+    "NamedSettleChangeSetNode",
+    "NamedSourceNode",
+    "NamedStateTapNode",
+    "NamedTransformNode",
     "PredicateOperand",
     "PredicateScalar",
     "ProcedureNode",
