@@ -9,6 +9,12 @@ and Provider laws accept it -- with the provider runtime made unimportable, so
 none of its bucket routines can run.
 """
 
+# Skipped below (needs provider runtime protocol 2.0): the bodies still name
+# ProviderInterface/provider_interfaces symbols removed in B2 (C12), left as
+# dead code under the module-level skip rather than rewritten, since this
+# suite needs a coordinated external cruxible-provider-runtime update first.
+# ruff: noqa: F821
+
 from __future__ import annotations
 
 import hashlib
