@@ -3423,15 +3423,28 @@ class ProcedureExecutor:
 
         The rung is authority, so it is checked against the frozen tuple rather
         than recomputed here: every term already resolved through the mandate,
-        calibration, and sensitivity coordinates this admission bound.
+        calibration, and sensitivity coordinates this admission bound. A direct
+        (``actor``) admission may also bind one: ruling C4's ephemeral Line
+        spec, capped at propose. The digest correspondence below is what
+        actually ties the rung to this exact admission in either case.
         """
 
         rung = self.effective_rung
         if rung is None:
             return
+        if admission.invocation_origin == "actor":
+            # PC-E1 reserves line_spec_digest/sensitivity_policy_digest/
+            # mandate_coordinate_digest/calibration_coordinate_digest for Line
+            # runs: a direct admission binds none of them. Its ephemeral rung
+            # corresponds to this admission by the Procedure version alone.
+            if rung.procedure_definition_digest != admission.definition_digest:
+                raise ExecutionError(
+                    "effective rung was computed against another admission binding"
+                )
+            return
         if admission.invocation_origin != "line":
             raise ExecutionError(
-                "an effective rung binds a Line run, never a direct actor invocation"
+                "an effective rung binds a Line run or a direct run's ephemeral spec"
             )
         if (
             rung.procedure_definition_digest != admission.definition_digest

@@ -449,6 +449,79 @@ def compute_effective_rung(
     )
 
 
+#: A direct run's authority ceiling (ruling C4): it may propose in full, but
+#: never settle -- no accepted Line and no Procedure mandate ever covers it.
+EPHEMERAL_RUN_RUNG_CEILING = 2
+
+
+def compute_ephemeral_run_effective_rung(
+    *,
+    procedure_terminal_capability: int,
+    procedure_definition_digest: str,
+    ephemeral_spec_digest: str,
+) -> EffectiveRungV1:
+    """The effective rung for a direct ``procedure_run``'s ephemeral Line spec.
+
+    Ruling C4: a direct run has no accepted Line, so no Procedure mandate ever
+    covers it. Its ceiling is fixed at propose -- it runs a
+    ``propose_change_set`` terminal in full, and a ``settle_change_set``
+    terminal falls back to an ordinary proposal exactly as it would under an
+    accepted Line whose live mandate does not grant settle. The ephemeral
+    spec's own digest stands in for the Line and mandate coordinates a real
+    accepted Line would otherwise supply.
+    """
+
+    terms = (
+        EffectiveRungTermReadingV1(
+            term="procedure_terminal_capability",
+            rung=procedure_terminal_capability,
+            reason=(
+                f"The accepted Procedure's terminals reach "
+                f"{authority_for_rung(procedure_terminal_capability)}."
+            ),
+            basis_digest=procedure_definition_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="line_requested_rung",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason="A direct run's ephemeral Line spec requests at most propose.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="propagated_sensitivity",
+            rung=3,
+            reason="No admitted input narrows propagation.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="mandate_grant",
+            rung=EPHEMERAL_RUN_RUNG_CEILING,
+            reason=(
+                "A direct run has no accepted Line, so no Procedure mandate covers it; "
+                "its ephemeral spec grants propose, never settle."
+            ),
+            basis_digest=ephemeral_spec_digest,
+        ),
+        EffectiveRungTermReadingV1(
+            term="calibration",
+            rung=3,
+            reason="No calibration cap narrows this run.",
+            basis_digest=ephemeral_spec_digest,
+        ),
+    )
+    lowest = min(item.rung for item in terms)
+    return EffectiveRungV1(
+        procedure_definition_digest=procedure_definition_digest,
+        line_spec_digest=ephemeral_spec_digest,
+        sensitivity_policy_digest=ephemeral_spec_digest,
+        mandate_coordinate_digest=ephemeral_spec_digest,
+        calibration_coordinate_digest=ephemeral_spec_digest,
+        terms=terms,
+        effective_rung=lowest,
+        limiting_term=next(item.term for item in terms if item.rung == lowest),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Typed egress
 # ---------------------------------------------------------------------------
@@ -1737,6 +1810,7 @@ __all__ = [
     "TerminalEgressSinkProtocol",
     "build_terminal_egress_request_v2",
     "compute_effective_rung",
+    "compute_ephemeral_run_effective_rung",
     "effect_dispatch_refusal",
     "effective_rung_digest",
     "verify_terminal_egress_receipt",

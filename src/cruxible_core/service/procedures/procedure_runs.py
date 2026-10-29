@@ -217,6 +217,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressReceiptV1,
     TerminalEgressRequestV1,
     compute_effective_rung,
+    compute_ephemeral_run_effective_rung,
 )
 from cruxible_core.procedures.execution import (
     ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS,
@@ -3235,13 +3236,13 @@ def service_run_playbill_procedure(
             caller_rung=caller_rung,
         )
     readiness = _readiness(accepted, coordinate=coordinate)
-    if readiness.runnable != "direct":
-        refusal_message = (
-            "Procedure terminals act outward under a Line's authority; run one of its Lines "
-            "with cruxible line run."
-            if readiness.runnable == "line"
-            else "Procedure contains node kinds no run lane executes."
-        )
+    # A Procedure whose terminals act outward (propose_change_set,
+    # settle_change_set, emit_capture, post_inbox) still runs directly: it
+    # instantiates the ephemeral Line spec above and is capped at propose
+    # (ruling C4). Only node kinds no run lane executes at all are refused
+    # here; the terminal's own authority cap is enforced at execution.
+    if readiness.runnable == "unsupported":
+        refusal_message = "Procedure contains node kinds no run lane executes."
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -3345,6 +3346,33 @@ def service_run_playbill_procedure(
         raise ProcedureRunNotCurrent(
             f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before append"
         )
+    # A Procedure whose terminals act outward runs under the ephemeral Line
+    # spec's own authority (ruling C4): no accepted Line, so no Procedure
+    # mandate ever covers it, and its ceiling is fixed at propose.
+    direct_effective_rung = None
+    direct_egress_sink = None
+    if readiness.runnable == "line":
+        direct_effective_rung = compute_ephemeral_run_effective_rung(
+            procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
+            procedure_definition_digest=accepted.procedure.definition_digest,
+            ephemeral_spec_digest=ephemeral_spec_digest,
+        )
+        direct_egress_sink = _LineTerminalEgressSink(
+            capture=CaptureTerminalEgressSink(
+                store=ReservedCaptureStore(
+                    bodies=instance.body_store(),
+                    reservations=ProcedureMaterialReservationStore(
+                        instance.body_store().reservation_root
+                    ),
+                    admission=prepared.admission,
+                    event_kind="terminal_egress",
+                ),
+                contracts=capture_contracts,
+                producer=accepted.procedure.identity,
+                producer_binding_digest=accepted.artifact_digest,
+            ),
+            proposal=ProposalTerminalEgressSink(instance=instance, accepted_mandates={}),
+        )
     try:
         result = service_execute_direct_procedure(
             prepared,
@@ -3366,6 +3394,8 @@ def service_run_playbill_procedure(
             acquisition_rules=acquisition_rules,
             capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
+            effective_rung=direct_effective_rung,
+            egress_sink=direct_egress_sink,
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,

@@ -369,8 +369,13 @@ def test_a_direct_run_records_its_ephemeral_spec_digest(tmp_path, monkeypatch):
     assert spec_digest.startswith("sha256:")
 
 
-def test_a_direct_run_never_reaches_mandate_authority(tmp_path):
-    """A direct run has no Line, so no Mandate covers it: its terminals stay dark."""
+def test_a_direct_run_reaches_its_terminal_under_an_ephemeral_line(tmp_path):
+    """F01/C4: a direct run has no accepted Line, so no Mandate covers it -- but
+    it still runs its own terminal under an ephemeral Line, capped at propose.
+
+    Before the fix, any terminal node (even rung-0 ``emit_capture``) made the
+    Procedure ``unsupported_node`` for a direct run, before a run ever existed.
+    """
 
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from cruxible_core.procedures.nested import authority_line
@@ -396,8 +401,12 @@ def test_a_direct_run_never_reaches_mandate_authority(tmp_path):
         actor_context=actor(),
         provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
     )
-    assert result.status != "succeeded"
-    assert result.terminal is not None
+    assert result.status == "succeeded", result
+    assert result.terminal is None
+    (digest,) = _produced_captures(instance, result.run_id)
+    assert digest.startswith("sha256:")
+    # A direct run still has no real Line: invoked-child delegation and the
+    # Mandate authority lookup both read it as absent, exactly as before.
     from types import SimpleNamespace
 
     standalone = SimpleNamespace(
@@ -409,6 +418,24 @@ def test_a_direct_run_never_reaches_mandate_authority(tmp_path):
 
     assert nested.nested_admission(standalone) is None  # type: ignore[arg-type]
     assert authority_line(standalone) == (None, None)  # type: ignore[arg-type]
+
+
+def test_a_direct_run_settle_terminal_is_capped_at_propose():
+    """F01/C4: the ephemeral Line's effective rung permits propose, never settle."""
+
+    from cruxible_core.procedures.egress import compute_ephemeral_run_effective_rung
+
+    rung = compute_ephemeral_run_effective_rung(
+        procedure_terminal_capability=3,
+        procedure_definition_digest="sha256:" + "1" * 64,
+        ephemeral_spec_digest="sha256:" + "2" * 64,
+    )
+    assert rung.effective_rung == 2
+    assert rung.permits("emit_capture")
+    assert rung.permits("post_inbox")
+    assert rung.permits("propose_change_set")
+    assert not rung.permits("settle_change_set")
+    assert rung.limiting_term in {"mandate_grant", "line_requested_rung"}
 
 
 # --- 10. removed nouns are refused, naming their replacement ------------------
