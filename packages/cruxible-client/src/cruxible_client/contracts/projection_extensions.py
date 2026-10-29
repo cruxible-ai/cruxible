@@ -625,8 +625,25 @@ def replay_extension_registry() -> ProjectionExtensionRegistry:
     return runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
 
 
+#: F13 (C12 noun removal): ProviderInterface's own fact schemas. P2_B1_COMPILER
+#: is frozen (it predates the noun's removal) and keeps declaring these,
+#: unchanged, for any historical/bootstrap replay admitted under it. The
+#: current compiler (via ``p2c_extension_registry``) declares neither the
+#: "provider-interface" artifact kind nor these fact schemas: nothing current
+#: admission ever writes.
+PROVIDER_INTERFACE_FACT_SCHEMA_IDS = (
+    "cruxible.provider_interface.registration",
+    "cruxible.provider_interface.vocabulary",
+    "cruxible.provider_interface.classifier",
+)
+
+
 def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
-    """Return P2-B1 Provider runtime/interface schemas and governed kind."""
+    """Return P2-B1 Provider runtime/interface schemas and governed kind.
+
+    Frozen: this is P2_B1_COMPILER's own registry, read verbatim for replay
+    of data admitted under that exact historical compiler coordinate.
+    """
 
     prior = replay_extension_registry()
     provider_runtime = tuple(
@@ -639,16 +656,9 @@ def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
         for schema_id in (
             "cruxible.provider.runtime",
             "cruxible.provider.implementations",
-            "cruxible.provider_interface.registration",
-            "cruxible.provider_interface.vocabulary",
-            "cruxible.provider_interface.classifier",
+            *PROVIDER_INTERFACE_FACT_SCHEMA_IDS,
         )
     )
-    # F13 (C12 noun removal): ProviderInterface is gone, so the current
-    # compiler's registry declares no "provider-interface" artifact kind.
-    # Its fact schemas stay declared (never written by current admission;
-    # inventoried under C13 for the historical/bootstrap replay they still
-    # may serve).
     return ProjectionExtensionRegistry(
         (
             *prior.declarations("semantic"),
@@ -659,9 +669,21 @@ def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
 
 
 def p2c_extension_registry() -> ProjectionExtensionRegistry:
-    """Return the P2-C registry with governed Procedure mandates."""
+    """Return the P2-C registry with governed Procedure mandates.
+
+    F13 (C12 noun removal): this is the registry every compiler from P2-C
+    onward builds on, through the current one (``LIGHT_ARTIFACTS_COMPILER``).
+    ProviderInterface's fact schemas are excluded here -- current admission
+    never writes them -- while ``provider_runtime_extension_registry`` (read
+    only for P2_B1_COMPILER's own frozen replay) keeps declaring them.
+    """
 
     prior = provider_runtime_extension_registry()
+    current_declarations = tuple(
+        declaration
+        for declaration in prior.declarations("semantic")
+        if declaration.schema_id not in PROVIDER_INTERFACE_FACT_SCHEMA_IDS
+    )
     mandate = ProjectionFactDeclaration(
         schema_id="cruxible.procedure_mandate.authority",
         schema_version=1,
@@ -669,12 +691,13 @@ def p2c_extension_registry() -> ProjectionExtensionRegistry:
         constraints=("unique(subject_identity,fact_key)",),
     )
     return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), mandate),
+        (*current_declarations, mandate),
         artifact_kinds=("procedure-runtime-policy", "procedure-mandate"),
     )
 
 
 __all__ = [
+    "PROVIDER_INTERFACE_FACT_SCHEMA_IDS",
     "ProjectionExtensionRegistry",
     "ProjectionFact",
     "ProjectionFactClassification",
