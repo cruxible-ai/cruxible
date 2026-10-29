@@ -13,13 +13,6 @@ from typing import Any, Literal, NoReturn, TypeAlias, TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.accepted_attestations import attestation_path
-from cruxible_client.contracts.acquisition_policies import (
-    ACQUISITION_POLICY_PIN_ROLE,
-    acquisition_policy_digest,
-    acquisition_policy_path,
-    parse_acquisition_policy,
-    render_acquisition_policy,
-)
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     APPROVAL_POLICY_PATH,
@@ -70,7 +63,6 @@ from cruxible_client.contracts.authoring.models import (
     RepairAlternative,
     ResolutionContractAuthoringPayload,
     SelfSourceBody,
-    SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
@@ -173,7 +165,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
-from cruxible_client.contracts.named_references import name_line, name_trigger
+from cruxible_client.contracts.named_references import name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -199,9 +191,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
-)
-from cruxible_client.contracts.procedures.blueprints import (
-    blueprint_path,
 )
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -231,12 +220,7 @@ from cruxible_client.contracts.procedures.windows import (
     CaptureEventWindow,
     FixedWindow,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_path,
-)
 from cruxible_client.contracts.providers import (
-    ProviderV2,
     parse_provider,
     provider_digest,
     provider_path,
@@ -2395,50 +2379,6 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
     return tuple(lines)
 
 
-def _acquisition_policy_pin(
-    payload: ProcedureAuthoringPayload,
-    *,
-    accepted: dict[str, tuple[str, str]],
-    candidates: dict[str, tuple[str, str]],
-    candidate_identities: frozenset[str],
-) -> ArtifactPin | None:
-    """Resolve the Procedure's named acquisition policy into its exact pin.
-
-    The author names the policy the way they name any other artifact -- by its
-    semantic name -- and lowering owns the digest, so a caller can neither
-    supply one nor pin a policy this instance has not accepted. A change set may
-    accept the policy and the Procedure together: the same candidate reference
-    every other Procedure member uses resolves it.
-    """
-
-    name = payload.acquisition_policy if isinstance(payload, ProcedureAuthoringPayload) else None
-    if name is None:
-        return None
-    try:
-        target = ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
-    except ValueError:
-        _refuse(
-            "cruxible.authoring.artifact_reference_invalid",
-            "acquisition_policy",
-            "The named SourceAcquisitionPolicy identity is not canonical.",
-            repair_kind="replace_reference",
-            repair_description="Name an accepted SourceAcquisitionPolicy by its semantic name.",
-        )
-    reference: AuthoringArtifactReference | AuthoringCandidateReference = (
-        AuthoringCandidateReference(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
-        if target.qualified in candidate_identities
-        else AuthoringArtifactReference(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
-    )
-    resolved = _resolve_authoring_references(
-        reference.model_dump(mode="json"),
-        accepted=accepted,
-        candidates=candidates,
-        candidate_identities=candidate_identities,
-        location="acquisition_policy",
-    )
-    return ArtifactPin.model_validate(resolved)
-
-
 def _resolve_authoring_references(
     value: object,
     *,
@@ -2611,7 +2551,6 @@ def _reference_path(identity: ArtifactIdentity) -> str | None:
     if identity.qualified in singletons:
         return singletons[identity.qualified]
     paths: dict[str, Callable[[str], str]] = {
-        "Blueprint": blueprint_path,
         "CaptureContract": capture_contract_path,
         "Claim": claim_path,
         "Contract": contract_path_for_identity,
@@ -2623,10 +2562,8 @@ def _reference_path(identity: ArtifactIdentity) -> str | None:
         "Procedure": procedure_path,
         "ProcedureMandate": procedure_mandate_path,
         "Provider": provider_path,
-        "ProviderInterface": provider_interface_path,
         "QueryDefinition": query_definition_path,
         "ResolutionContract": resolution_contract_path,
-        "SourceAcquisitionPolicy": acquisition_policy_path,
         "SubjectKind": subject_kind_path,
         "Trigger": trigger_path,
     }
@@ -2791,10 +2728,7 @@ def _lower_procedure(
     if source_authoring:
         from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
         from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequest
-        from cruxible_core.authoring.procedure_source import (
-            accepted_build_resolver,
-            resolve_indexed_source,
-        )
+        from cruxible_core.authoring.procedure_source import resolve_indexed_source
         from cruxible_core.indexes.evaluated_state import EvaluationRows
 
         try:
@@ -2813,22 +2747,7 @@ def _lower_procedure(
                 selected = rows.overlay(edits) if edits else rows
                 # A bare provider name in a selection binds its most recently
                 # registered live build at the base; the definition pins it exactly.
-                compiled = resolve_indexed_source(
-                    source_request,
-                    selected,
-                    builds=accepted_build_resolver(instance, base, rows),
-                )
-                policy = getattr(payload, "acquisition_policy", None)
-                if policy is not None:
-                    identity = "SourceAcquisitionPolicy:" + policy
-                    for view, destination in ((rows, accepted), (selected, candidate_artifacts)):
-                        row = view.connection.execute(
-                            f"SELECT path,artifact_digest FROM {view.table('artifact_lookup')} "
-                            "WHERE identity=?",
-                            (identity,),
-                        ).fetchone()
-                        if row is not None:
-                            destination[identity] = (row[0], row[1])
+                compiled = resolve_indexed_source(source_request, selected)
             payload = type(payload)(
                 definition=compiled.definition.model_dump(mode="json", by_alias=True),
                 activation_policy=payload.activation_policy,
@@ -2839,7 +2758,7 @@ def _lower_procedure(
                     )
                     for contract in compiled.contracts
                 ),
-                acquisition_policy=payload.acquisition_policy,
+                acquisition_defaults=payload.acquisition_defaults,
                 retire=payload.retire,
             )
             if base.compiler == LIGHT_ARTIFACTS_COMPILER:
@@ -2867,16 +2786,6 @@ def _lower_procedure(
             )
     else:
         references = _reference_identities(payload.definition)
-        if payload.acquisition_policy is not None:
-            try:
-                references.add(
-                    ArtifactIdentity(
-                        kind="SourceAcquisitionPolicy", name=payload.acquisition_policy
-                    )
-                )
-            except ValueError:
-                # _acquisition_policy_pin retains the typed invalid-name refusal.
-                pass
         parsed = _parse_reference_tree(
             instance,
             _reference_blobs(
@@ -2925,67 +2834,7 @@ def _lower_procedure(
             owned_contracts=owned_contracts,
         )
     )
-    if not source_authoring:
-        # Authoring carries names; only this transient compiler input has exact
-        # implementation metadata. Governed graph7 drops these mirrors.
-        from copy import deepcopy
-
-        from cruxible_client.contracts.provider_interfaces import interface_definition_digest
-
-        resolved_definition = deepcopy(resolved_definition)
-        for node in cast(Any, resolved_definition).get("nodes", ()):
-            for occurrence in (node, *node.get("body", ())):
-                if (
-                    occurrence.get("kind") not in {"call", "source"}
-                    and occurrence.get("operation") != "call"
-                ):
-                    continue
-                interface_ref = occurrence.get("interface")
-                provider_ref = occurrence.get("provider")
-                if not isinstance(interface_ref, dict) or not isinstance(provider_ref, dict):
-                    continue
-                interface_path = provider_interface_path(interface_ref["target"]["name"])
-                registration = parse_provider_interface(
-                    base_tree[interface_path], path=interface_path
-                )
-                occurrence["interface_digest"] = interface_definition_digest(registration)
-                if "slot_name" in provider_ref:
-                    for declaration in cast(Any, resolved_definition).get("pin_slots", ()):
-                        if declaration["slot_name"] == provider_ref["slot_name"]:
-                            declaration.setdefault("pin_role", "provider")
-                            declaration.setdefault("artifact_kind", "Provider")
-                            declaration["interface_digest"] = occurrence["interface_digest"]
-                    continue
-                provider_member_path = provider_path(provider_ref["target"]["name"])
-                provider_value = parse_provider(
-                    base_tree[provider_member_path], path=provider_member_path
-                )
-                if not isinstance(provider_value, ProviderV2):
-                    _refuse(
-                        "cruxible.authoring.provider_runtime_required",
-                        "definition",
-                        "Provider occurrence requires an installed runtime build.",
-                        repair_kind="replace_binding",
-                        repair_description="Select an installed provider build.",
-                    )
-                matches = tuple(
-                    row
-                    for row in provider_value.implementations
-                    if row.interface_id == registration.interface_id
-                    and row.interface_digest == interface_definition_digest(registration)
-                )
-                if len(matches) != 1:
-                    _refuse(
-                        "cruxible.authoring.provider_implementation_ambiguous",
-                        "definition",
-                        "Select one fitting provider implementation",
-                        repair_kind="replace_binding",
-                        repair_description=(
-                            "Bind a provider implementing the named interface exactly once."
-                        ),
-                    )
-                occurrence["interface_digest"] = matches[0].interface_digest
-                occurrence["implementation_digest"] = matches[0].implementation_digest
+    resolved_definition = _pin_slot_contracts(resolved_definition, base_tree)
     definition: ProcedureDefinition
     try:
         definition = ProcedureDefinition.model_validate(resolved_definition)
@@ -3010,14 +2859,6 @@ def _lower_procedure(
     declared_pins = {
         binding for binding in iter_pin_bindings(definition) if isinstance(binding, ArtifactPin)
     }
-    # Validate an explicit name at authoring, but runs resolve its accepted
-    # value at admission; the Procedure never pins the policy's bytes.
-    _acquisition_policy_pin(
-        payload,
-        accepted=accepted,
-        candidates=candidate_artifacts,
-        candidate_identities=candidate_identities,
-    )
     pins = tuple(
         sorted(
             declared_pins,
@@ -3086,16 +2927,6 @@ def _lower_procedure(
         state="retired" if payload.retire else "live",
         predecessor_digest=(None if predecessor is None else _envelope_digest(predecessor)),
     )
-    if (
-        definition.open_slots or definition.pin_slots
-    ) and base.compiler != LIGHT_ARTIFACTS_COMPILER:
-        _refuse(
-            "cruxible.authoring.procedure_definition_invalid",
-            "definition",
-            "Provider slots require compiler revision 36 and graph 7.",
-            repair_kind="upgrade_compiler",
-            repair_description="Upgrade the compiler and author a Procedure with slots.",
-        )
     try:
         format_arguments: dict[str, Any] = {"artifact_format": "playbill-procedure-v2"}
         procedure = ProcedureArtifact(
@@ -3106,7 +2937,7 @@ def _lower_procedure(
             pins=pins,
             owned_contracts=payload.owned_contracts,
             activation_policy=payload.activation_policy,
-            blueprint=None if predecessor is None else predecessor.blueprint,
+            acquisition_defaults=payload.acquisition_defaults,
             lifecycle=lifecycle,
         )
     except ValidationError as exc:
@@ -3120,8 +2951,6 @@ def _lower_procedure(
                 "Repair the Procedure definition or its owned Contract declarations."
             ),
         )
-    if isinstance(procedure, ProcedureArtifact):
-        procedure = procedure.model_copy(update={"acquisition_policy": payload.acquisition_policy})
     return _procedure_lowered(
         instance, procedure, predecessor, path=path, base=base, base_tree=base_tree
     )
@@ -3147,14 +2976,11 @@ def _lower_named_procedure(
             repair_description="Upgrade the compiler.",
         )
     try:
-        definition = NamedProcedureDefinition.model_validate(payload.definition)
+        definition = NamedProcedureDefinition.model_validate(
+            _pin_slot_contracts(payload.definition, base_tree)
+        )
         path = procedure_path(definition.name)
         predecessor = parse_procedure(base_tree[path], path=path) if path in base_tree else None
-        if payload.acquisition_policy is not None:
-            policy_path = acquisition_policy_path(payload.acquisition_policy)
-            policy = parse_acquisition_policy(base_tree[policy_path], path=policy_path)
-            if policy.lifecycle.state != "live":
-                raise ValueError("The named acquisition policy must be live")
         procedure = NamedProcedureArtifact.model_validate(
             dict(
                 identity=ArtifactIdentity(kind="Procedure", name=definition.name),
@@ -3162,7 +2988,7 @@ def _lower_named_procedure(
                 definition_digest=compute_procedure_definition_digest(definition).tagged,
                 owned_contracts=payload.owned_contracts,
                 activation_policy=payload.activation_policy,
-                acquisition_policy=payload.acquisition_policy,
+                acquisition_defaults=payload.acquisition_defaults,
                 lifecycle=ArtifactLifecycle(
                     state="retired" if payload.retire else "live",
                     predecessor_digest=None
@@ -3187,6 +3013,62 @@ def _lower_named_procedure(
         base=base,
         base_tree=base_tree,
     )
+
+
+def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
+    """The definition with every slot Contract pinned to the version accepted in ``tree``.
+
+    A slot is ``{in, out, effect}``, authored ``name@N``; lowering owns the
+    digest, so an author can neither supply one nor pin a Contract this instance
+    has not accepted (``cruxible.authoring.slot_contract_unresolved``).
+    """
+
+    from copy import deepcopy
+
+    from cruxible_client.contracts.shapes import (
+        contract_digest,
+        contract_path,
+        parse_contract,
+        parse_contract_ref,
+    )
+
+    if not isinstance(definition, Mapping) or not definition.get("slots"):
+        return definition
+    result = deepcopy(dict(definition))
+    for name, slot in dict(result["slots"]).items():
+        if not isinstance(slot, Mapping):
+            continue
+        pinned = dict(slot)
+        for side in ("in", "out"):
+            value = slot.get(side)
+            ref = parse_contract_ref(value) if isinstance(value, str) else None
+            if ref is None and isinstance(value, Mapping):
+                ref = parse_contract_ref(f"{value.get('name')}@{value.get('version')}")
+            if ref is None:
+                continue
+            path = contract_path(ref.name, ref.version)
+            content = tree.get(path)
+            if content is None:
+                _refuse(
+                    "cruxible.authoring.slot_contract_unresolved",
+                    f"definition.slots.{name}.{side}",
+                    f"Slot {name!r} names {ref.spelling}, which is not accepted.",
+                    repair_kind="replace_reference",
+                    repair_description="Accept the Contract first, or name an accepted version.",
+                )
+            digest = contract_digest(parse_contract(content, path=path)).tagged
+            stated = value.get("digest") if isinstance(value, Mapping) else None
+            if stated is not None and stated != digest:
+                _refuse(
+                    "cruxible.authoring.slot_contract_unresolved",
+                    f"definition.slots.{name}.{side}",
+                    f"Slot {name!r} pins {ref.spelling} at {stated}; the accepted is {digest}.",
+                    repair_kind="replace_reference",
+                    repair_description="Name the Contract version without a digest.",
+                )
+            pinned[side] = {"name": ref.name, "version": ref.version, "digest": digest}
+        result["slots"][name] = pinned
+    return result
 
 
 def _envelope_digest(envelope: ProcedureArtifact) -> str:
@@ -3273,8 +3155,7 @@ def _render_non_procedure_member(
     | ClaimTypeAuthoringPayload
     | ApprovalPolicyAuthoringPayload
     | ProcedureRuntimePolicyAuthoringPayload
-    | CaptureContractAuthoringPayload
-    | SourceAcquisitionPolicyAuthoringPayload,
+    | CaptureContractAuthoringPayload,
     *,
     tree: Mapping[str, bytes] | None = None,
     light: bool = False,
@@ -3324,13 +3205,6 @@ def _render_non_procedure_member(
             capture_contract_path(contract.identity.name),
             render_capture_contract(contract),
             capture_contract_digest(contract).tagged,
-        )
-    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
-        policy = payload.acquisition_policy
-        return (
-            acquisition_policy_path(policy.identity.name),
-            render_acquisition_policy(policy),
-            acquisition_policy_digest(policy).tagged,
         )
     if isinstance(payload, ClaimTypeAuthoringPayload):
         definition = payload.claim_type
@@ -3502,29 +3376,86 @@ def _render_non_procedure_member(
 
 def _line_provider_resolver(
     instance: PlaybillInstance, base: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
-) -> Callable[[str], str]:
-    from cruxible_core.providers.builds import resolve_in_tree
+) -> Callable[[Mapping[str, Any], Mapping[str, str]], dict[str, Any]]:
+    """Resolve a Line's slot bindings through the base's signature index.
 
-    return lambda name: (
-        resolve_in_tree(instance, base, tree, name.removeprefix("Provider:")).resolved
-    )
+    ``(slots, requested) -> {slot: LineBinding}``: each requested
+    ``provider[/build][#operation]`` names its build and operation; a slot left
+    out is fitted (exactly one live operation must serve its signature).
+    """
+
+    del tree
+    from cruxible_core.providers.operation_index import resolve_slot_bindings
+
+    def resolve(slots: Mapping[str, Any], requested: Mapping[str, str]) -> dict[str, Any]:
+        with instance.bind_accepted_projection(base) as projection:
+            return resolve_slot_bindings(projection.typed.connection, slots, requested)
+
+    return resolve
+
+
+def _carried_line_mandates(
+    instance: PlaybillInstance,
+    base: AcceptedProjectionCoordinate,
+    tree: Mapping[str, bytes],
+    line_path: str,
+    content: bytes,
+) -> dict[str, bytes]:
+    """Propose-only successors of the live Mandates granting the Line this replaces.
+
+    A grant never follows a changed Line (ruling C3): each Mandate pinning the
+    accepted Line version takes a successor pinning the new one, propose-only,
+    in the same change. A Mandate the change already authors is left to it.
+    Found by Line digest in the base's Mandate index: O(Mandates of the Line).
+    """
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from cruxible_core.providers.automation_carry import carry_mandate, parse_carry_line
+
+    previous = tree.get(line_path)
+    if previous is None or previous == content:
+        return {}
+    old = parse_carry_line(previous, path=line_path)
+    old_digest = line_spec_digest(old).tagged
+    new_digest = line_spec_digest(parse_carry_line(content, path=line_path)).tagged
+    with instance.bind_accepted_projection(base) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT path FROM procedure_mandates WHERE line_identity=? AND line_digest=? "
+            "AND lifecycle='live' ORDER BY path",
+            (old.identity.qualified, old_digest),
+        ).fetchall()
+        accepted = {str(row[0]): projection.typed.member_bytes(str(row[0])) for row in rows}
+    carried: dict[str, bytes] = {}
+    for path, accepted_bytes in accepted.items():
+        if tree.get(path) != accepted_bytes:
+            continue  # authored in this change; its own law judges it
+        successor, _row = carry_mandate(path, accepted_bytes, {old_digest: new_digest})
+        if successor is not None:
+            carried[path] = successor
+    return carried
 
 
 def _render_line_member(
     payload: LineAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
-    light: bool = False,
-    resolve_provider: Callable[[str], str] | None = None,
+    light: bool = True,
+    resolve_provider: Callable[[Mapping[str, Any], Mapping[str, str]], dict[str, Any]]
+    | None = None,
 ) -> tuple[str, bytes, str]:
-    """Lower one Line decision into the exact LineSpec its accepted closure pins.
+    """Lower one Line decision into the exact Line its accepted closure pins.
 
-    The Procedure and the acquisition policy are named; both must be present in
-    the staged tree -- accepted at the base or authored earlier in the same
-    set -- and lowering pins their exact digests. A Line embeds no trigger; a
-    ``trigger_input`` Line declares the exact event its Source input accepts,
-    read from that Source's pinned CaptureContract.
+    The Procedure is named; it must be present in the staged tree -- accepted at
+    the base or authored earlier in the same set -- and lowering pins its exact
+    version. Every slot (an invoked child's included) is bound to one exact
+    ``{build, operation}``: as the author names it, or fitted. A Line embeds no
+    trigger; a ``trigger_input`` Line declares the exact event its Source input
+    accepts, read from that Source's CaptureContract.
     """
+
+    del light
+    from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+    from cruxible_core.providers.operation_index import line_slot_map
 
     procedure_target = procedure_path(payload.procedure_name)
     procedure_content = tree.get(procedure_target)
@@ -3537,31 +3468,6 @@ def _render_line_member(
             repair_description="Use a Procedure name present at the authoring coordinate.",
         )
     procedure = parse_procedure(procedure_content, path=procedure_target)
-    policy_pin: ArtifactPin | None = None
-    if payload.acquisition_policy_name is None:
-        # Line law resolves the reserved default at the candidate coordinate.
-        pass
-    else:
-        policy_target = acquisition_policy_path(payload.acquisition_policy_name)
-        policy_content = tree.get(policy_target)
-        if policy_content is None:
-            _refuse(
-                "cruxible.authoring.line_acquisition_policy_missing",
-                "acquisition_policy_name",
-                "Line authoring requires the named accepted or same-ChangeSet "
-                "SourceAcquisitionPolicy.",
-                repair_kind="replace_acquisition_policy_name",
-                repair_description=(
-                    "Use a SourceAcquisitionPolicy name present at the authoring coordinate, "
-                    "or omit it when the Procedure has no Source nodes."
-                ),
-            )
-        policy = parse_acquisition_policy(policy_content, path=policy_target)
-        policy_pin = ArtifactPin(
-            role=ACQUISITION_POLICY_PIN_ROLE,
-            target=policy.identity,
-            artifact_digest=acquisition_policy_digest(policy).tagged,
-        )
     exhaust_taps = sorted(
         node.node_id for node in procedure.definition.nodes if isinstance(node, ExhaustTapNode)
     )
@@ -3580,6 +3486,41 @@ def _render_line_member(
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
+    aliases = {node.as_ for node in procedure.definition.nodes if isinstance(node, SourceNode)}
+    unknown = sorted(set(payload.acquisition) - aliases)
+    if unknown:
+        _refuse(
+            "cruxible.authoring.line_acquisition_unknown_source",
+            "acquisition",
+            f"Line acquisition names no Source alias of {payload.procedure_name!r}: {unknown}.",
+            repair_kind="replace_acquisition",
+            repair_description=f"Key acquisition rules by Source alias: {sorted(aliases)}.",
+        )
+
+    def child(identity: ArtifactIdentity) -> Any:
+        target = procedure_path(identity.name)
+        content = tree.get(target)
+        return None if content is None else parse_procedure(content, path=target).definition
+
+    try:
+        slots = line_slot_map(procedure.definition, child)
+    except ValueError as exc:
+        _refuse(
+            "cruxible.authoring.line_procedure_missing",
+            "procedure_name",
+            str(exc),
+            repair_kind="replace_procedure_name",
+            repair_description="Name a Procedure whose invoked children are accepted.",
+        )
+    if slots and resolve_provider is None:
+        _refuse(
+            "cruxible.line.compiler_unsupported",
+            "bindings",
+            "Line slot bindings need the accepted signature index.",
+            repair_kind="upgrade_compiler",
+            repair_description="Author the Line through an instance.",
+        )
+    bindings = {} if not slots else cast(Any, resolve_provider)(slots, dict(payload.bindings))
     caps = procedure.definition.hard_caps
     budgets = (
         {
@@ -3594,11 +3535,11 @@ def _render_line_member(
     path = line_spec_path(payload.name)
     previous_content = tree.get(path)
     predecessor_digest = None
+    previous = None
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    trigger_event: CaptureEventSelector | None = None
-    trigger_pins: tuple[ArtifactPin, ...] = ()
+    trigger_event: NamedCaptureEventSelector | None = None
     if payload.trigger_input is not None:
         sources = [
             node
@@ -3610,90 +3551,45 @@ def _render_line_member(
             if len(sources) == 1 and isinstance(sources[0], SourceNode)
             else None
         )
-        if isinstance(contract, ArtifactNameRef):
-            contract_path = capture_contract_path(contract.target.name)
-            accepted_contract = parse_capture_contract(tree[contract_path], path=contract_path)
-            contract = ArtifactPin(
-                role="capture-contract",
-                target=contract.target,
-                artifact_digest=capture_contract_digest(accepted_contract).tagged,
-            )
-        if not isinstance(contract, ArtifactPin):
+        if not isinstance(contract, ArtifactPin | ArtifactNameRef):
             _refuse(
                 "cruxible.authoring.line_trigger_input_invalid",
                 "trigger_input",
                 f"trigger_input {payload.trigger_input!r} must name exactly one "
-                "Source input of the Procedure that pins its CaptureContract exactly.",
+                "Source input of the Procedure that names its CaptureContract.",
                 repair_kind="replace_trigger_input",
                 repair_description="Name the `as` alias of one Source node, or omit it.",
             )
-        assert isinstance(contract, ArtifactPin)
-        trigger_event = CaptureEventSelector(
-            capture_contract_identity=contract.target,
-            capture_contract_digest=contract.artifact_digest,
+        assert isinstance(contract, ArtifactPin | ArtifactNameRef)
+        trigger_event = NamedCaptureEventSelector.model_validate(
+            {"capture_contract_identity": contract.target}
         )
-        trigger_pins = (
-            ArtifactPin(
-                role="trigger-capture-contract",
-                target=contract.target,
-                artifact_digest=contract.artifact_digest,
+    line = LineSpec.model_validate(
+        dict(
+            identity=ArtifactIdentity(kind="Line", name=payload.name),
+            occurrence_epoch=payload.occurrence_epoch,
+            procedure=procedure_pin,
+            parameters=payload.parameters,
+            bindings=bindings,
+            acquisition=payload.acquisition,
+            max_authority=(
+                payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
+            ),
+            trigger_input=payload.trigger_input,
+            trigger_event=trigger_event,
+            budgets=budgets,
+            epsilon=payload.epsilon,
+            lifecycle=ArtifactLifecycle(
+                state="retired" if payload.retire else "live",
+                predecessor_digest=predecessor_digest,
             ),
         )
-    line_fields = dict(
-        identity=ArtifactIdentity(kind="Line", name=payload.name),
-        occurrence_epoch=payload.occurrence_epoch,
-        procedure=procedure_pin,
-        parameters=payload.parameters,
-        acquisition_policy=policy_pin,
-        max_authority=(
-            payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
-        ),
-        trigger_input=payload.trigger_input,
-        trigger_event=trigger_event,
-        budgets=budgets,
-        epsilon=payload.epsilon,
-        pins=tuple(
-            sorted(
-                (
-                    procedure_pin,
-                    *(() if policy_pin is None else (policy_pin,)),
-                    *trigger_pins,
-                ),
-                key=lambda pin: (
-                    pin.role.encode("utf-8"),
-                    pin.target.qualified.encode("utf-8"),
-                    pin.artifact_digest.encode("ascii"),
-                ),
-            )
-        ),
-        lifecycle=ArtifactLifecycle(
-            state="retired" if payload.retire else "live",
-            predecessor_digest=predecessor_digest,
-        ),
     )
-    line = LineSpec.model_validate(line_fields)
-    if light:
-        line = name_line(line)
-        bindings = {}
-        for slot, name in payload.bindings.items():
-            selected = (
-                name.removeprefix("Provider:")
-                if resolve_provider is None
-                else resolve_provider(name)
-            )
-            bindings[slot] = ArtifactNameRef(
-                target=ArtifactIdentity(kind="Provider", name=selected)
-            )
-        line = line.model_copy(update={"bindings": bindings})
-    elif payload.bindings:
-        _refuse(
-            "cruxible.line.compiler_unsupported",
-            "bindings",
-            "Line slot bindings require compiler revision 36.",
-            repair_kind="upgrade_compiler",
-            repair_description="Upgrade the compiler.",
-        )
-    if previous_content is not None and _same_revision_content(line, previous):
+    if (
+        previous is not None
+        and previous_content is not None
+        and _same_revision_content(line, previous)
+    ):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
 
@@ -4042,17 +3938,17 @@ def _render_procedure_mandate_member(
                     "let the run settle within that scope."
                 ),
             )
-    target_path = procedure_path(payload.procedure_name)
+    target_path = line_spec_path(payload.line_name)
     target_content = tree.get(target_path)
     if target_content is None:
         _refuse(
-            "cruxible.authoring.procedure_mandate_procedure_missing",
-            "procedure_name",
-            "ProcedureMandate authoring requires the named accepted or same-ChangeSet Procedure.",
-            repair_kind="replace_procedure_name",
-            repair_description="Use a Procedure name present at the authoring coordinate.",
+            "cruxible.authoring.procedure_mandate_line_missing",
+            "line_name",
+            "Mandate authoring requires the named accepted or same-ChangeSet Line.",
+            repair_kind="replace_line_name",
+            repair_description="Use a Line name present at the authoring coordinate.",
         )
-    procedure = parse_procedure(target_content, path=target_path)
+    granted_line = parse_line_spec(target_content, path=target_path)
     path = procedure_mandate_path(payload.name)
     previous_content = tree.get(path)
     predecessor_digest = None
@@ -4122,10 +4018,10 @@ def _render_procedure_mandate_member(
     try:
         mandate = ProcedureMandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
-            procedure=ArtifactPin(
-                role="procedure",
-                target=procedure.identity,
-                artifact_digest=procedure_artifact_digest(procedure).tagged,
+            line=ArtifactPin(
+                role="line",
+                target=granted_line.identity,
+                artifact_digest=line_spec_digest(granted_line).tagged,
             ),
             grants=payload.grants,
             resource_ceiling=payload.resource_ceiling,
@@ -4202,8 +4098,7 @@ def _lower_non_procedure(
     | QueryDefinitionAuthoringPayload
     | ApprovalPolicyAuthoringPayload
     | ProcedureRuntimePolicyAuthoringPayload
-    | CaptureContractAuthoringPayload
-    | SourceAcquisitionPolicyAuthoringPayload,
+    | CaptureContractAuthoringPayload,
     base_tree: Mapping[str, bytes],
     base: AcceptedProjectionCoordinate,
     instance: PlaybillInstance,
@@ -5831,6 +5726,10 @@ def _stage_change_set_member(
         )
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
+        for mandate_path, mandate in _carried_line_mandates(
+            instance, base, staged_tree, line_path, content
+        ).items():
+            candidate_tree[mandate_path] = mandate
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     if isinstance(member, TriggerAuthoringPayload):
         trigger_member_path, content, digest = _render_trigger_member(
@@ -6676,6 +6575,11 @@ def _lower_authoring(
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content
         changed = () if base_tree.get(path) == content else ((path, content),)
+        if isinstance(intent.payload, LineAuthoringPayload):
+            carried = _carried_line_mandates(instance, base, base_tree, path, content)
+            for mandate_path, mandate in carried.items():
+                candidate_tree[mandate_path] = mandate
+            changed = (*changed, *sorted(carried.items()))
         return LoweredAuthoring(
             proposed_tree=candidate_tree,
             resolved_authoring={

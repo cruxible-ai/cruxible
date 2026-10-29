@@ -36,16 +36,12 @@ FIELD_ROLES = {
     "query": "query",
     "reducer_or_query": "query",
     "provider": "provider",
-    "interface": "provider-interface",
     "capture_contract": "capture-contract",
     "claim_type": "claim-type",
     "claim_types": "claim-type",
     "procedure": "procedure",
     "effect_policy": "effect-policy",
-    "acquisition_policy": "acquisition-policy",
-    "interfaces": "provider-interface",
     "capture_contracts": "capture-contract",
-    "blueprint": "blueprint",
     "line": "line",
     "coordinate_schemas": "coordinate-schema",
     "selector_schemas": "selector-schema",
@@ -60,11 +56,9 @@ FIELD_ROLES = {
 NAME_REFERENCE_FAMILIES = frozenset(
     {
         "procedure",
-        "blueprint",
         "query-definition",
         "trigger",
         "line",
-        "source-acquisition-policy",
         "capture-contract",
         "provider",
     }
@@ -93,23 +87,20 @@ def dependency_pins(
     pins: list[ArtifactPin | ArtifactRef] = list(getattr(artifact, "pins", ()))
     if not by_name and getattr(artifact, "artifact_format", "") not in {
         "cruxible-procedure-v3",
-        "cruxible-blueprint-v2",
         "cruxible-query-definition-v3",
         "cruxible-trigger-v2",
-        "cruxible-line-v7",
-        "cruxible-provider-v5",
-        "cruxible-provider-identity-v2",
+        "cruxible-line-v8",
+        "cruxible-provider-v6",
+        "cruxible-provider-identity-v3",
         "cruxible-capture-contract-v3",
     }:
         return tuple(pins)
 
     if by_name and getattr(getattr(artifact, "identity", None), "kind", "").lower() in {
         "procedure",
-        "blueprint",
         "querydefinition",
         "trigger",
         "line",
-        "sourceacquisitionpolicy",
         "capturecontract",
         "provider",
     }:
@@ -126,29 +117,44 @@ def dependency_pins(
         elif isinstance(item, ArtifactRef):
             yield item
         elif isinstance(item, ArtifactPin):
-            if field == "blueprint":
-                yield ArtifactRef(role="blueprint", target=item.target)
             return
         elif isinstance(item, BaseModel):
-            # Retained source/Blueprint origin describe provenance. Actual
-            # graph fields already contain their governed dependencies.
+            # Retained source describes provenance. Actual graph fields already
+            # contain their governed dependencies.
             for name in type(item).model_fields:
-                if name not in {"source", "owned_contracts", "pins"} and not (
-                    by_name
-                    and name == "blueprint"
-                    and getattr(getattr(item, "identity", None), "kind", None) == "Procedure"
-                ):
+                if name not in {"source", "owned_contracts", "pins", "bindings"}:
                     yield from visit(getattr(item, name), name)
         elif isinstance(item, tuple | list):
             for member in item:
                 yield from visit(member, field)
 
     pins.extend(visit(artifact))
-    if getattr(getattr(artifact, "identity", None), "kind", None) == "Line":
+    kind = getattr(getattr(artifact, "identity", None), "kind", None)
+    if kind == "Line":
+        # A Line pins its exact Procedure version and each bound build; the
+        # dependency index follows them by identity (a build identity names one
+        # build) so a retire or move finds the Lines that bind it.
+        pins.append(ArtifactRef(role="procedure", target=artifact.procedure.target))
         pins.extend(
-            ArtifactRef(role="provider", target=ref.target)
-            for ref in getattr(artifact, "bindings", {}).values()
+            ArtifactRef(role="provider", target=binding.build.target)
+            for binding in getattr(artifact, "bindings", {}).values()
         )
+    if kind == "Procedure":
+        for slot in getattr(getattr(artifact, "definition", None), "slots", {}).values():
+            for ref in (slot.in_, slot.out):
+                pins.append(
+                    ArtifactRef(
+                        role=CONTRACT_PIN_ROLE, target=contract_identity(ref.name, ref.version)
+                    )
+                )
+    if kind == "Provider":
+        for operation in getattr(artifact, "operations", ()):
+            for ref in operation.contract_refs():
+                pins.append(
+                    ArtifactRef(
+                        role=CONTRACT_PIN_ROLE, target=contract_identity(ref.name, ref.version)
+                    )
+                )
     if getattr(artifact, "identity", None) is not None:
         if artifact.identity.kind == "QueryDefinition":
             if not getattr(artifact, "pins", ()):
@@ -172,14 +178,6 @@ def dependency_pins(
                             target=contract_identity(contract_ref.name, contract_ref.version),
                         )
                     )
-        policy = getattr(artifact, "acquisition_policy", None)
-        if isinstance(policy, str):
-            pins.append(
-                ArtifactRef(
-                    role="acquisition-policy",
-                    target=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=policy),
-                )
-            )
     identity = getattr(artifact, "identity", None)
     if identity is not None and identity.kind in {"Trigger", "Line"}:
         from cruxible_client.contracts.triggers import schedule_capture_selector

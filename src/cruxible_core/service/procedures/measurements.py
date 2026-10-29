@@ -122,8 +122,8 @@ from cruxible_core.procedures.readings import (
     reading_replay_key,
 )
 from cruxible_core.procedures.reference_binding import (
+    recorded_slot_bindings,
     replay_procedure_references,
-    supplied_source_provider_bindings,
 )
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
@@ -1311,45 +1311,20 @@ def _replay_measured_run(
 ) -> AcceptedProcedure:
     """Credit the authenticated plan, with no new Provider selection.
 
-    Direct V3 receipts retain full pins but not per-node choices; those come
-    from the same authenticated admission the grain loader already reads.
-    Replay resolves exact material at admission. A retired Provider cannot
-    receive new credit at the observation coordinate.
+    The admission records each slot's exact build and operation; replay
+    resolves exact material at admission. A retired build cannot receive new
+    credit at the observation coordinate.
     """
     from cruxible_core.service.procedures.procedure_runs import _resolve_coordinate
 
     receipt = grain.state.receipt
     assert receipt is not None
-    provider_pins = {
-        pin.artifact_digest: pin.target
-        for pin in receipt.validated_pins
-        if pin.target.kind == "Provider"
-    }
-    providers: dict[str, ArtifactIdentity] = {}
-    for binding in grain.provider_bindings:
-        identity = provider_pins.get(binding.provider_artifact_digest)
-        if identity is None:
-            raise _refuse(
-                "measurement_run_mismatch",
-                "The run's Provider binding has no matching receipt pin.",
-                node_id=binding.node_id,
-                provider_artifact_digest=binding.provider_artifact_digest,
-            )
-        providers[binding.node_id] = identity
-    receipt_pins = set(receipt.validated_pins)
     try:
-        providers.update(
-            supplied_source_provider_bindings(
-                node_pin_sets={item.node_id: item.pins for item in grain.node_pin_sets},
-                landed_capture_input_names=grain.landed_capture_input_names,
-                nodes=accepted.procedure.definition.nodes,
-                contains_pin=receipt_pins.__contains__,
-            )
-        )
+        bindings = recorded_slot_bindings(grain.provider_bindings, receipt.validated_pins)
     except ExecutionError as exc:
         raise _refuse("measurement_run_mismatch", str(exc)) from exc
     with instance.bind_accepted_projection(observation) as projection:
-        for identity in dict.fromkeys(providers.values()):
+        for identity in dict.fromkeys(item.build.target for item in bindings.values()):
             provider = indexed_exact_provider(projection.typed.connection, identity.qualified)
             if provider is None or not provider.live:
                 raise _refuse(
@@ -1372,11 +1347,7 @@ def _replay_measured_run(
                 accepted,
                 pins=receipt.validated_pins,
                 lookup_exact=exact,
-                providers=providers,
-                implementations={
-                    binding.node_id: binding.implementation_digest
-                    for binding in grain.provider_bindings
-                },
+                bindings=bindings,
             )
             if replayed.procedure.pins != receipt.validated_pins:
                 raise ExecutionError("Recorded admission pins do not reproduce the receipt")

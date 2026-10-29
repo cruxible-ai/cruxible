@@ -12,12 +12,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.closure import (
-    ProcedurePinClosureError,
-    ProcedureSlotBinding,
-    ProcedureSlotInterface,
-    close_procedure_pin_slots,
-)
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
     ProcedureContractValidationError,
@@ -50,8 +44,7 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
+    ProcedureSlot,
 )
 from cruxible_core.procedures.calibration import (
     CalibrationWitnessRefusalCode,
@@ -184,7 +177,6 @@ __all__ = [
     "ClaimAttestationProcedureMeasurement",
     "ClaimStatementProcedureMeasurement",
     "classify_settled_outcome_history",
-    "close_procedure_pin_slots",
     "compute_procedure_definition_digest",
     "compute_procedure_node_digests",
     "ContractValidatorProtocol",
@@ -243,9 +235,7 @@ __all__ = [
     "ProcedureNodeDigests",
     "ProcedureNodePinSetV1",
     "ProcedureOwnedContract",
-    "ProcedurePinClosureError",
-    "ProcedurePinSlot",
-    "ProcedurePinSlotRef",
+    "ProcedureSlot",
     "ProcedureProofReferenceV1",
     "ProcedureReadingGradeV1",
     "ProcedureReadingLawResultV1",
@@ -263,8 +253,6 @@ __all__ = [
     "ProcedureRunReceiptV1",
     "ProcedureRunRefusalV1",
     "ProcedureRunResultV1",
-    "ProcedureSlotBinding",
-    "ProcedureSlotInterface",
     "produce_procedure_calibration_reading",
     "ProviderInvocationResultV1",
     "query_settled_outcomes",

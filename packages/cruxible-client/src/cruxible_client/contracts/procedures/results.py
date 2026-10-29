@@ -9,7 +9,6 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ProposalDigest,
@@ -18,6 +17,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     EffectiveAuthority,
@@ -55,7 +55,6 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "procedure_runtime_policy_absent",
     "provider_replay_receipt_required",
     "exhaust_binding_carrier_required",
-    "source_acquisition_policy_required",
     "source_acquisition_refused",
     "evaluation_instant_skewed",
     "line_identity_mismatch",
@@ -74,8 +73,8 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "trigger_event_precedes_acceptance",
     "line_binding_superseded",
     "line_trigger_mismatch",
-    "cruxible.procedure.slot_binding_missing",
-    "cruxible.procedure.slot_binding_ambiguous",
+    "cruxible.line.slot_unfilled",
+    "cruxible.line.slot_ambiguous",
     "cruxible.procedure.slot_undeclared",
 ]
 #: Codes retained runs were refused with before authority was served as verbs.
@@ -840,37 +839,30 @@ class ProcedureProviderBinding(_StrictResultModel):
 
 
 class ProcedureProviderBindingV3(_StrictResultModel):
-    """What one Provider node binds at admission: the interface, by identity and
-    contract digest, and the exact Provider implementation that serves it.
+    """What one slotted node binds at admission: its slot's exact build and operation.
 
-    No classification plan: core classifies no input, so a run binds no bucket
-    vocabulary, classifier or admitted selectors. Binding v1 and v2 stay readable
-    for the runs admitted under them.
+    The binding is the Line's (or, for a direct run, the request's ephemeral
+    spec), never chosen at run time. Binding v1 and v2 stay readable for the
+    runs admitted under them.
     """
 
-    tag: Literal["playbill-procedure-provider-binding-v3"] = (
-        "playbill-procedure-provider-binding-v3"
+    tag: Literal["cruxible-procedure-provider-binding-v4"] = (
+        "cruxible-procedure-provider-binding-v4"
     )
     node_id: str
-    interface: ArtifactIdentity
-    interface_digest: str
+    slot: str
+    operation: str
+    operation_signature_digest: str
     provider_artifact_digest: str
     implementation_digest: str
-    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
+    effect_class: Literal["pure", "external_read", "external_mutation"]
     secret_binding_identity_digests: tuple[str, ...]
 
     _binding_digests = field_validator(
-        "interface_digest",
+        "operation_signature_digest",
         "provider_artifact_digest",
         "implementation_digest",
     )(_digest)
-
-    @field_validator("interface")
-    @classmethod
-    def _interface(cls, value: ArtifactIdentity) -> ArtifactIdentity:
-        if value.kind != "ProviderInterface":
-            raise ValueError("Provider binding names its interface by ProviderInterface identity")
-        return value
 
     @field_validator("secret_binding_identity_digests")
     @classmethod
@@ -885,7 +877,7 @@ class ProcedureProviderBindingV3(_StrictResultModel):
 def procedure_provider_bindings(
     occurrences: Sequence[ProviderExternalOccurrencePlan],
 ) -> tuple[ProcedureProviderBindingV3, ...]:
-    """One v3 binding per planned occurrence, in the node-id order admission requires.
+    """One binding per planned occurrence, in the node-id order admission requires.
 
     Occurrences are planned in occurrence-path order (``call/...`` before
     ``source/...``), which is not node-id order once a Source node's id sorts
@@ -896,8 +888,9 @@ def procedure_provider_bindings(
     return tuple(
         ProcedureProviderBindingV3(
             node_id=item.node_id,
-            interface=ArtifactIdentity(kind="ProviderInterface", name=item.interface_id),
-            interface_digest=item.interface_digest,
+            slot=item.slot,
+            operation=item.operation.name,
+            operation_signature_digest=item.operation_signature_digest,
             provider_artifact_digest=item.provider_artifact_digest,
             implementation_digest=item.implementation_digest,
             effect_class=item.effect_class,
@@ -1052,9 +1045,13 @@ class ProcedureAcquisitionPlan(_StrictResultModel):
     has_exhaust_occurrences: bool = False
     exhaust_access_binding_digest: str | None = None
     external_occurrences: tuple[ProviderExternalOccurrencePlan, ...] = ()
+    #: A direct run's ephemeral Line spec (its Procedure, parameters, bindings
+    #: and acquisition) by digest; absent on a Line occurrence's plan.
+    ephemeral_spec_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _digests = field_validator(
         "line_spec_digest",
+        "ephemeral_spec_digest",
         "acquisition_policy_digest",
         "selection_receipt_digest",
         "selection_decision_digest",
@@ -1088,6 +1085,8 @@ class ProcedureAcquisitionPlan(_StrictResultModel):
             )
         if self.line_identity is not None and self.line_identity.kind != "Line":
             raise ValueError("acquisition plan requires a Line identity")
+        if self.line_identity is not None and self.ephemeral_spec_digest is not None:
+            raise ValueError("a Line occurrence's plan carries the Line, not an ephemeral spec")
         if self.selection_decision.policy_digest != self.acquisition_policy_digest:
             raise ValueError("acquisition plan selection names another policy")
         if self.selection_decision_digest != procedure_selection_decision_digest(

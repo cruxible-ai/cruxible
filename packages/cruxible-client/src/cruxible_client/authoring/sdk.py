@@ -37,8 +37,8 @@ from cruxible_client.authoring.context import (
 )
 from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.principal_settings import remembered_principal_settings
-from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
+from cruxible_client.authoring.procedures import procedure_record_constructor
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     CallSite,
@@ -93,9 +93,6 @@ from cruxible_client.authoring.workspace import (
     workspace_floor_freshness,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, rebind_evidence
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -138,7 +135,6 @@ from cruxible_client.contracts.authoring.models import (
     ResolutionContractAuthoringPayload,
     ResolvedTriggerCaptureContract,
     SelfSourceBody,
-    SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
@@ -229,6 +225,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
@@ -443,7 +440,6 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "subject": RefKind.SUBJECT,
     "claim_type": RefKind.CLAIM_TYPE,
     "procedure": RefKind.PROCEDURE,
-    "blueprint": RefKind.BLUEPRINT,
     "query": RefKind.QUERY,
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
@@ -457,8 +453,6 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "principal": RefKind.PRINCIPAL,
     "approval_policy": RefKind.APPROVAL_POLICY,
     "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
-    "source_acquisition_policy": RefKind.SOURCE_ACQUISITION_POLICY,
-    "provider_interface": RefKind.PROVIDER_INTERFACE,
     "provider": RefKind.PROVIDER,
     "subject_kind": RefKind.SUBJECT_KIND,
 }
@@ -1170,22 +1164,6 @@ class ChangeSetDraft:
         )
         return self
 
-    def acquisition_policy(self, policy: SourceAcquisitionPolicy) -> ChangeSetDraft:
-        """Define one SourceAcquisitionPolicy inside this changeset.
-
-        Next: ``.line(..., acquisition_policy=name)``, then ``.submit()``.
-        """
-
-        self._members.append(
-            _ChangeSetMember(
-                payload=SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=policy),
-                expectations=(),
-                source_map=DiagnosticSourceMap(()),
-                decisions={"kind": "acquisition_policy", "name": policy.identity.name},
-            )
-        )
-        return self
-
     def procedure(
         self,
         *,
@@ -1230,7 +1208,7 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         bindings: Mapping[str, str] | None = None,
-        acquisition_policy: str | None = None,
+        acquisition: Mapping[str, Mapping[str, object]] | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
@@ -1238,10 +1216,13 @@ class ChangeSetDraft:
         occurrence_epoch: int = 1,
         retire: bool = False,
     ) -> ChangeSetDraft:
-        """Define one Line inside this changeset, naming its Procedure and policy.
+        """Define one Line inside this changeset, naming its Procedure and slot bindings.
 
-        Lowering resolves both names -- accepted at the base or defined earlier
-        in this same set -- into the exact pins the LineSpec carries. A Line
+        Lowering pins the Procedure's exact version (accepted at the base or
+        defined earlier in this same set) and binds every slot to one exact
+        ``{build, operation}``: ``bindings`` maps a slot (or
+        ``<invoke node>.<slot>``) to ``provider[/build]#operation``; a slot left
+        out is fitted, and exactly one live operation must serve its signature. A Line
         runs when run explicitly, or, once it is enabled, when a Trigger aimed
         at it fires (:meth:`trigger`; a Trigger does nothing until then), and
         inherits the Procedure's hard caps as its budget unless one is given.
@@ -1253,7 +1234,8 @@ class ChangeSetDraft:
 
         Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
         admits one, so the Line could never run.
-        ``acquisition_policy`` overrides the instance default when supplied.
+        ``acquisition`` maps a Source alias to ``{max_age, on_unavailable}`` and
+        replaces the Procedure's default for it.
         ``parameters`` is the Procedure's input record; lowering checks it
         against the Procedure's input contract. ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability
@@ -1270,7 +1252,10 @@ class ChangeSetDraft:
                     name=name,
                     procedure_name=procedure,
                     bindings={} if bindings is None else dict(bindings),
-                    acquisition_policy_name=acquisition_policy,
+                    acquisition={
+                        alias: AcquisitionDefault.model_validate(rule)
+                        for alias, rule in (acquisition or {}).items()
+                    },
                     max_authority=max_authority,
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
@@ -4149,32 +4134,6 @@ class Cruxible:
             DiagnosticSourceMap(()),
         )
 
-    def provider_interface(self, interface: str, *, provider: str | None = None) -> ProviderBinding:
-        """Select a registered interface through existing accepted-state discovery.
-
-        Discovery never installs a provider or authorizes its execution. Multiple
-        implementations require an explicit selection rather than an arbitrary default.
-
-        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
-        """
-        identity = (
-            interface
-            if interface.startswith("ProviderInterface:")
-            else "ProviderInterface:" + interface
-        )
-        read = self._get(identity, "proof", None, None)
-        if read.proof is None or read.accepted_coordinate is None:
-            raise ValueError(f"No accepted provider interface {identity!r}")
-        entry = api.ProviderInterfaceEntry.model_validate(read.proof["entry"])
-        return ProviderBinding.from_interface(entry, provider=provider).model_copy(
-            update={
-                "coordinate": AcceptedCoordinate.model_validate(
-                    read.accepted_coordinate.model_dump(mode="json")
-                )
-            },
-            deep=True,
-        )
-
     def procedure(
         self,
         *,
@@ -4187,12 +4146,12 @@ class Cruxible:
 
         Declare owned input/output schemas in ``definition.contracts`` and use
         ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base. Provider slots stay open in a Procedure and
-        bind by fit at run admission, or through a Line's explicit bindings.
+        resolve at the intent base. A Procedure declares each slot's signature
+        ``{in, out, effect}`` and names no provider: a Line binds every slot to
+        one exact build and operation when it is accepted.
 
-        Activation, retirement, and the optional acquisition-policy name are
-        also carried by this input. The daemon resolves the policy at the same
-        base as the graph's other dependencies.
+        Activation, retirement, and per-Source ``acquisition_defaults`` are also
+        carried by this input.
 
         Next: ``draft.submit()``, then ``cx.accepted_procedure(name).run(...)`` once
         accepted.
@@ -4236,7 +4195,7 @@ class Cruxible:
                             "definition",
                             "owned_contracts",
                             "activation_policy",
-                            "acquisition_policy",
+                            "acquisition_defaults",
                             "retire",
                         ),
                     },
@@ -4779,8 +4738,8 @@ class Cruxible:
         ``kind`` reads one kind in full with sample Subject IDs and the
         predicates that point at it (``incoming``: follow one with
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
-        pages documents, procedures, claim_types, queries or interfaces (the
-        provider interfaces a Procedure can call), generations (the ledger
+        pages documents, procedures, claim_types, queries or operations (the
+        provider operations a Line can bind a slot to), generations (the ledger
         timeline, newest first, paged by sequence), graph (``graph.nodes``: each
         live Subject as ``{subject, kind}``, then ``graph.edges``: each live
         Subject-valued Claim as ``{claim, source, predicate, qualifier, target}``,

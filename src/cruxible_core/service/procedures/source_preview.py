@@ -9,10 +9,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreview,
     ProcedureSourcePreviewRequest,
 )
-from cruxible_core.authoring.procedure_source import (
-    accepted_build_resolver,
-    resolve_indexed_source,
-)
+from cruxible_core.authoring.procedure_source import resolve_indexed_source
 from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -27,8 +24,7 @@ def service_preview_procedure_source(
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
             rows = EvaluationRows(projection)
-            builds = accepted_build_resolver(instance, coordinate, rows)
-            compiled = resolve_indexed_source(request.source, rows, builds=builds)
+            compiled = resolve_indexed_source(request.source, rows)
         definition = compiled.definition
         contracts = compiled.contracts
         if coordinate.compiler == LIGHT_ARTIFACTS_COMPILER:
@@ -47,7 +43,6 @@ def service_preview_procedure_source(
             definition=definition,
             contracts=contracts,
             source_map=compiled.source_map,
-            provider_builds=tuple(builds.resolutions),
         )
     except SourceCompileError as exc:
         return ProcedureSourcePreview(

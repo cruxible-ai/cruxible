@@ -16,19 +16,6 @@ from typing import Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from cruxible_client.contracts.acquisition_policies import (
-    ACQUISITION_POLICY_PIN_ROLE,
-    DEFAULT_ACQUISITION_POLICY_NAME,
-    AcquisitionInputDecision,
-    IndependentCoherence,
-    InputAcquisitionRule,
-    SourceAcquisitionPolicyV1,
-    acquisition_policy_digest,
-    acquisition_rule,
-)
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -44,7 +31,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
-from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.dependencies import dependency_pins
 from cruxible_client.contracts.errors import (
     CruxibleError,
@@ -56,7 +42,6 @@ from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
     ProcedureMandate,
     ProcedureMandateAny,
-    ProcedureMandateV1,
 )
 from cruxible_client.contracts.procedure_mandates import mandate_rung as procedure_mandate_rung
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -65,13 +50,19 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
     procedure_runtime_policy_digest,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    ACQUISITION_RULES_DIGEST_DOMAIN,
+    AcquisitionDefault,
+    AcquisitionInputDecision,
+    AcquisitionRule,
+    acquisition_rules_digest,
+    resolve_acquisition_rules,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
-    ProcedureArtifact,
     ProcedureArtifactAny,
     ProcedureNodeSupport,
     ProcedureRunnable,
-    check_provider_node_contract,
     procedure_path,
     procedure_runnability,
 )
@@ -91,7 +82,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlotRef,
     RepeatBodyNode,
     RepeatNode,
     SourceNode,
@@ -168,11 +158,7 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_digest,
-    provider_effect_class,
-)
+from cruxible_client.contracts.provider_operations import LineBinding, ProviderOperation
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderV2,
@@ -510,7 +496,13 @@ def require_line_mandate(
     )
     if line_authority_rung(accepted_line, accepted) <= 1:
         return
-    if not _accepted_line_mandates(instance, accepted, coordinate=coordinate, evaluation_time=now):
+    if not _accepted_line_mandates(
+        instance,
+        accepted_line.line.identity,
+        accepted_line.artifact_digest,
+        coordinate=coordinate,
+        evaluation_time=now,
+    ):
         raise LineMandateRequired(
             accepted_line.line.identity.name, accepted.procedure.identity.name
         )
@@ -524,17 +516,6 @@ class LineRunIdentityMismatch(ProcedureSurfaceError):
 class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
     code = "cruxible.line.run.evaluation_instant_skewed"
     error_code = "evaluation_instant_skewed"
-
-
-class SourceAcquisitionPolicyRequired(ProcedureSurfaceError):
-    """A Source run found no single accepted policy governing its inputs."""
-
-    code = "cruxible.procedure.run.source_acquisition_policy_required"
-    error_code = "source_acquisition_policy_required"
-
-    def __init__(self, message: str, *, details: object | None = None) -> None:
-        super().__init__(message)
-        self.details = {} if details is None else details
 
 
 class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
@@ -571,7 +552,7 @@ class ProviderRuntimeOperatorProtocol(Protocol):
     def admit_line_provider(
         self,
         accepted_provider: AcceptedProvider,
-        accepted_interface: AcceptedProviderInterfaceRegistration,
+        operation: ProviderOperation,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
@@ -608,7 +589,17 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
-    bindings: ProcedureBindings = Field(default_factory=dict)
+    bindings: ProcedureBindings = Field(
+        default_factory=dict,
+        description=(
+            "Slot -> 'provider[/build][#operation]'; an invoked child's slot is "
+            "'<invoke node>.<slot>'. Omitted slots are fitted when the run is admitted."
+        ),
+    )
+    acquisition: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict,
+        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+    )
     input: object
 
     @field_validator("evaluation_time")
@@ -790,8 +781,18 @@ def _accepted_procedure(
     coordinate: AcceptedProjectionCoordinate,
     allow_retired: bool = False,
     bind_references: bool = False,
-    bindings: Mapping[str, str] | None = None,
+    bindings: Mapping[str, LineBinding] | None = None,
+    requested_bindings: Mapping[str, str] | None = None,
 ) -> AcceptedProcedure:
+    """One accepted Procedure, optionally bound into its execution plan.
+
+    ``bindings`` holds each slot's exact ``{build, operation}`` (a Line's, by
+    its own slot names). ``requested_bindings`` are a direct run's caller
+    choices (``provider[/build][#operation]``), resolved -- and any slot left
+    out fitted -- at this coordinate into the run's ephemeral spec. Run
+    admission never refits a Line's slots.
+    """
+
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
         envelope = projection.typed.envelope(f"Procedure:{name}")
@@ -812,62 +813,68 @@ def _accepted_procedure(
             source = projection.typed.source(identity.qualified)
             return None if row is None or source is None else (source, row.artifact_digest)
 
-        def fitting(interface: ArtifactIdentity) -> tuple[tuple[Any, str], ...]:
-            registration = projection.typed.source(interface.qualified)
-            if registration is None:
-                return ()
-            candidates = projection.typed.connection.execute(
-                "SELECT DISTINCT r.identity,r.artifact_digest FROM pins p JOIN providers r "
-                "ON r.identity=p.source_identity WHERE p.target_identity=? "
-                "AND p.edge_kind='required_pin' AND r.lifecycle='live' ORDER BY r.identity",
-                (interface.qualified,),
+        def contracts(ref: Any) -> Any:
+            from cruxible_client.contracts.shapes import contract_identity
+
+            return projection.typed.source(contract_identity(ref.name, ref.version).qualified)
+
+        selected = dict(bindings or {})
+        if bindings is None:
+            from cruxible_core.providers.operation_index import resolve_slot_bindings
+
+            selected = resolve_slot_bindings(
+                projection.typed.connection,
+                dict(procedure.definition.slots),
+                dict(requested_bindings or {}),
             )
-            result = []
-            for identity, digest in candidates:
-                provider = projection.typed.source(identity)
-                from cruxible_client.contracts.procedures.provider_slots import (
-                    fitting_implementation,
-                )
-
-                if (
-                    isinstance(provider, ProviderV2)
-                    and fitting_implementation(provider, registration) is not None
-                ):
-                    result.append((provider, digest))
-            return tuple(result)
-
-        from cruxible_core.procedures.reference_binding import validate_slot_names
-        from cruxible_core.providers.builds import indexed_exact_provider, indexed_newest_provider
-
-        validate_slot_names(
-            bindings or {}, (slot.slot_name for slot in procedure.definition.pin_slots)
+        return bind_procedure_references(
+            accepted, lookup=lookup, bindings=selected, contracts=contracts
         )
-        selected = {}
-        for slot, name in (bindings or {}).items():
-            bare = name.removeprefix("Provider:")
-            row = indexed_exact_provider(
-                projection.typed.connection, "Provider:" + bare
-            ) or indexed_newest_provider(projection.typed.connection, bare)
-            if row is None or not row.live:
-                from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
-                from cruxible_core.errors import RequestRefusedError
 
-                raise RequestRefusedError(
-                    "cruxible.procedure.slot_binding_missing",
-                    f"Provider {name!r} is not installed and live.",
-                    repair=HandEditRepair(
-                        hand_edit=HandEditInstruction.model_validate(
-                            {
-                                "target": "bindings",
-                                "required_change": "Bind a live installed Provider build.",
-                            }
-                        )
-                    ),
-                )
-            selected[slot] = ArtifactIdentity(
-                kind="Provider", name=row.identity.removeprefix("Provider:")
-            )
-        return bind_procedure_references(accepted, lookup=lookup, slots=fitting, bindings=selected)
+
+def direct_run_slot_bindings(
+    instance: PlaybillInstance,
+    *,
+    name: str,
+    coordinate: AcceptedProjectionCoordinate,
+    requested: Mapping[str, str],
+) -> dict[str, LineBinding]:
+    """A direct run's ephemeral bindings for every slot, its invoked children's included."""
+
+    from cruxible_core.providers.operation_index import line_slot_map, resolve_slot_bindings
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        procedure = projection.typed.source(f"Procedure:{name}")
+        if procedure is None:
+            raise ProcedureNotFound.among(name, projection.typed.procedure_inventory())
+
+        def child(identity: ArtifactIdentity) -> Any:
+            source = projection.typed.source(identity.qualified)
+            return None if source is None else source.definition
+
+        return resolve_slot_bindings(
+            projection.typed.connection,
+            line_slot_map(procedure.definition, child),
+            requested,
+        )
+
+
+def line_slot_map_at(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    accepted: AcceptedProcedure,
+) -> dict[str, Any]:
+    """Every slot a Line over ``accepted`` binds, invoked children's included."""
+
+    from cruxible_core.providers.operation_index import line_slot_map
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+
+        def child(identity: ArtifactIdentity) -> Any:
+            source = projection.typed.source(identity.qualified)
+            return None if source is None else source.definition
+
+        return line_slot_map(authored_procedure(accepted).definition, child)
 
 
 def _accepted_runtime_policy(
@@ -1130,10 +1137,7 @@ def _line_catalogs(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     pins: Sequence[ArtifactPin],
-) -> tuple[
-    dict[str, AcceptedProvider],
-    dict[str, AcceptedProviderInterfaceRegistration],
-]:
+) -> dict[str, AcceptedProvider]:
     from cruxible_core.runtime.provider_runtime import pinned_provider_catalogs
 
     return pinned_provider_catalogs(instance, coordinate, pins)
@@ -1163,12 +1167,12 @@ def _assert_line_closure_complete(
                 )
 
 
-def _exact_pin(value: ArtifactPin | ProcedurePinSlotRef) -> ArtifactPin:
+def _exact_pin(value: ArtifactPin | ArtifactNameRef) -> ArtifactPin:
     """An execution plan resolves every dependency before execution."""
 
     if isinstance(value, ArtifactPin):
         return value
-    raise ExecutionError(f"accepted Procedure has an open slot {value.slot_name!r}")
+    raise ExecutionError(f"accepted Procedure reference {value.target.qualified} is unresolved")
 
 
 @dataclass(frozen=True)
@@ -1466,7 +1470,6 @@ def _plan_external_occurrences(
     accepted_procedure: AcceptedProcedure,
     *,
     providers: Mapping[str, AcceptedProvider],
-    interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     runtime_policy: ProcedureRuntimePolicy,
     budget: ProcedureBudget,
@@ -1474,48 +1477,44 @@ def _plan_external_occurrences(
 ) -> tuple[ProviderExternalOccurrencePlan, ...]:
     """Plan every external Provider occurrence one admitted run will invoke.
 
-    Both served run lanes call THIS function: an accepted Procedure pins its
-    Provider implementation exactly, so nothing about the plan differs between
-    them, and nothing may: two planners would be two admission grammars.
+    Both served run lanes call THIS function. Each occurrence is its node's slot
+    binding exactly as the execution plan holds it (the Line's, or a direct
+    run's ephemeral spec): the bound build, the operation with its exact
+    Contract pins, and that Contract closure. Nothing is fitted here.
     """
 
     definition = accepted_procedure.procedure.definition
+    plan_bindings = {
+        item.slot: item for item in getattr(accepted_procedure.procedure, "slot_bindings", ())
+    }
     occurrences: list[ProviderExternalOccurrencePlan] = []
     for node, repeat_node_id in _provider_nodes(definition):
         if isinstance(node, SourceNode) and node.as_ in supplied_source_inputs:
             continue
-        provider_binding = node.provider
-        assert provider_binding is not None
-        provider_pin = _exact_pin(provider_binding)
-        interface_pin = node.interface
-        assert interface_pin is not None
+        slot = node.slot
+        binding = plan_bindings.get(slot or "")
+        if slot is None or binding is None:
+            raise ExecutionError(f"node {node.node_id!r} has no bound slot in the execution plan")
         try:
-            provider = providers[provider_pin.artifact_digest]
-            interface = interfaces[interface_pin.artifact_digest]
+            provider = providers[binding.build_digest]
         except KeyError as exc:
             raise ExecutionError(
-                f"accepted Line Provider closure is unavailable for node {node.node_id!r}"
+                f"the bound build for node {node.node_id!r} is not live at this coordinate"
             ) from exc
         if not isinstance(provider.provider, ProviderV2):
-            raise ExecutionError(
-                f"accepted Line Provider node {node.node_id!r} requires Provider v2"
-            )
-        implementation_digest = node.implementation_digest
-        if implementation_digest is None:
-            raise ExecutionError(
-                f"accepted Line Provider closure lost implementation for node {node.node_id!r}"
-            )
+            raise ExecutionError(f"node {node.node_id!r} binds a build without a runtime")
+        operation = binding.operation
         implementation = next(
             (
                 item
                 for item in provider.provider.implementations
-                if item.implementation_digest == implementation_digest
+                if item.entrypoint == operation.entrypoint
             ),
             None,
         )
         if implementation is None:
             raise ExecutionError(
-                f"accepted Line Provider implementation is unavailable for node {node.node_id!r}"
+                f"the bound build has no prepared implementation for node {node.node_id!r}"
             )
         eligible = tuple(
             sorted(
@@ -1527,23 +1526,16 @@ def _plan_external_occurrences(
                 key=str.encode,
             )
         )
-        try:
-            operation_contract = check_provider_node_contract(
-                node, interface, accepted_procedure.procedure
-            )
-        except (ValueError, KeyError) as exc:
-            raise ProcedureProviderInterfaceMismatch(str(exc)) from exc
         if provider_runtime_operator is None:
             raise ProviderLocalRuntimeRefused(
                 "provider_unavailable", "No daemon Provider runtime operator is installed."
             )
         local = provider_runtime_operator.admit_line_provider(
             provider,
-            interface,
-            implementation_digest,
+            operation,
+            implementation.implementation_digest,
             eligible_environment_pin_keys=eligible,
         )
-        registration = interface.registration
         produces_capture = isinstance(node, SourceNode)
         call_kind = "call"
         translation = translate_provider_budget(
@@ -1570,15 +1562,15 @@ def _plan_external_occurrences(
                 else f"{'source' if produces_capture else call_kind}/{node.node_id}"
             ),
             "occurrence_kind": "source" if produces_capture else call_kind,
-            "operation_contract": operation_contract,
             "node_id": node.node_id,
             "repeat_node_id": repeat_node_id,
+            "slot": slot,
             "provider_artifact_digest": provider.artifact_digest,
-            "interface_artifact_digest": interface.artifact_digest,
-            "interface_id": registration.interface_id,
-            "interface_digest": interface_definition_digest(registration),
-            "implementation_digest": implementation_digest,
-            "effect_class": provider_effect_class(registration),
+            "operation": operation,
+            "operation_signature_digest": binding.operation_signature_digest,
+            "implementation_digest": implementation.implementation_digest,
+            "effect_class": operation.effect,
+            "contracts": binding.contracts,
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlan(),
             "budget_translation": translation,
@@ -1608,7 +1600,6 @@ def _line_external_occurrences(
     accepted_procedure: AcceptedProcedure,
     *,
     providers: Mapping[str, AcceptedProvider],
-    interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     runtime_policy: ProcedureRuntimePolicy,
     budget: ProcedureBudget,
@@ -1618,7 +1609,6 @@ def _line_external_occurrences(
     return _plan_external_occurrences(
         accepted_procedure,
         providers=providers,
-        interfaces=interfaces,
         provider_runtime_operator=provider_runtime_operator,
         runtime_policy=runtime_policy,
         budget=budget,
@@ -1637,36 +1627,6 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
             (node.as_ for node in definition.nodes if isinstance(node, SourceNode)),
             key=lambda item: item.encode("utf-8"),
         )
-    )
-
-
-def _policy_coverage_refusal(
-    policy: SourceAcquisitionPolicy,
-    input_names: tuple[str, ...],
-) -> SourceAcquisitionPolicyRequired | None:
-    """The refusal when a pinned policy does not COVER a run's Source inputs.
-
-    One law for both lanes: a pinned SourceAcquisitionPolicy governs a run when
-    every Source alias of its Procedure has a rule. Extra rules are allowed, so
-    one policy can serve every Procedure whose aliases it names (a kit ships one
-    policy, not one per alias set). The refusal names each uncovered alias.
-    """
-
-    if not isinstance(policy, SourceAcquisitionPolicyV1):
-        return None
-    declared = tuple(rule.input_name for rule in policy.inputs)
-    uncovered = tuple(name for name in input_names if name not in declared)
-    if not uncovered:
-        return None
-    return SourceAcquisitionPolicyRequired(
-        f"{SourceAcquisitionPolicyRequired.code}: the pinned SourceAcquisitionPolicy "
-        f"{policy.identity.name!r} has no rule for the Source input(s) {list(uncovered)}",
-        details={
-            "required_input_names": list(input_names),
-            "declared_input_names": list(declared),
-            "uncovered_input_names": list(uncovered),
-            "pinned_policy_identity": policy.identity.qualified,
-        },
     )
 
 
@@ -1702,157 +1662,40 @@ def _accepted_capture_contracts(
     return contracts
 
 
-def _accepted_acquisition_policies(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    *,
-    pin: ArtifactPin | ArtifactNameRef | None = None,
-    name: str | None = None,
-) -> tuple[tuple[str, SourceAcquisitionPolicy], ...]:
-    policies: list[tuple[str, SourceAcquisitionPolicy]] = []
-    with instance.bind_accepted_projection(coordinate) as projection:
-        sql = (
-            "SELECT identity,artifact_digest FROM source_acquisition_policies "
-            "WHERE lifecycle='live'"
-        )
-        sql += " AND identity=?"
-        parameters: tuple[str, ...] = (
-            "SourceAcquisitionPolicy:" + (name or DEFAULT_ACQUISITION_POLICY_NAME),
-        )
-        if pin is not None:
-            sql = (
-                "SELECT identity,artifact_digest FROM source_acquisition_policies "
-                "WHERE lifecycle='live' AND identity=?"
-            )
-            parameters = (pin.target.qualified,)
-            if isinstance(pin, ArtifactPin):
-                sql += " AND artifact_digest=?"
-                parameters += (pin.artifact_digest,)
-        for identity, digest in projection.typed.connection.execute(
-            sql + " ORDER BY artifact_digest", parameters
-        ):
-            policy = projection.typed.source(identity)
-            if not isinstance(policy, SourceAcquisitionPolicy):
-                raise ProjectionIntegrityError("accepted SourceAcquisitionPolicy source is invalid")
-            policies.append((digest, policy))
-    return tuple(policies)
+def procedure_acquisition_rules(
+    accepted: AcceptedProcedure,
+    overrides: Mapping[str, AcquisitionDefault] | None = None,
+) -> dict[str, AcquisitionRule]:
+    """The run's acquisition rule per Source alias: the Line's, else the Procedure's."""
 
-
-def _procedure_acquisition_policy_pin(procedure: ProcedureArtifact) -> ArtifactPin | None:
-    """The Procedure envelope's own acquisition-policy pin, if it declares one."""
-
-    return next(
-        (
-            pin
-            for pin in procedure.pins
-            if pin.role == ACQUISITION_POLICY_PIN_ROLE
-            and pin.target.kind == "SourceAcquisitionPolicy"
-        ),
-        None,
+    procedure = authored_procedure(accepted)
+    return resolve_acquisition_rules(
+        _source_input_names(accepted),
+        defaults=getattr(procedure, "acquisition_defaults", {}),
+        overrides=overrides or {},
     )
-
-
-def _direct_acquisition_policy(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    procedure: ProcedureArtifact,
-    input_names: tuple[str, ...],
-) -> tuple[str, SourceAcquisitionPolicy]:
-    """Resolve one named/default policy, retaining exact pins on historical envelopes."""
-
-    pin = _procedure_acquisition_policy_pin(procedure)
-    accepted_policies = _accepted_acquisition_policies(
-        instance, coordinate, pin=pin, name=procedure.acquisition_policy
-    )
-    if pin is not None:
-        pinned = next(
-            (policy for digest, policy in accepted_policies),
-            None,
-        )
-        if pinned is None:
-            raise PinnedAcquisitionPolicyUnresolved(
-                f"{PinnedAcquisitionPolicyUnresolved.code}: the pinned SourceAcquisitionPolicy "
-                "is not live at this accepted coordinate",
-                details={
-                    "pinned_policy_identity": pin.target.qualified,
-                    "pinned_policy_digest": pin.artifact_digest,
-                },
-            )
-        refusal = _policy_coverage_refusal(pinned, input_names)
-        if refusal is not None:
-            raise refusal
-        return acquisition_policy_digest(pinned).tagged, pinned
-    if not accepted_policies:
-        name = procedure.acquisition_policy or DEFAULT_ACQUISITION_POLICY_NAME
-        raise SourceAcquisitionPolicyRequired(
-            f"{SourceAcquisitionPolicyRequired.code}: SourceAcquisitionPolicy:{name} is not live; "
-            "accept the instance default policy or name a live policy.",
-            details={
-                "required_input_names": list(input_names),
-                "policy_identity": f"SourceAcquisitionPolicy:{name}",
-            },
-        )
-    digest, policy = accepted_policies[0]
-    refusal = _policy_coverage_refusal(policy, input_names)
-    if refusal is not None:
-        raise refusal
-    return digest, policy
 
 
 def _plan_selection_decision(
-    policy: SourceAcquisitionPolicy,
+    rules: Mapping[str, AcquisitionRule],
     *,
     policy_digest: str,
     occurrences: tuple[ProviderExternalOccurrencePlan, ...],
     capture_contracts: Mapping[str, CaptureContract],
 ) -> ProcedureSelectionDecision:
-    """Evaluate the accepted policy against this plan, per PLANNED occurrence.
+    """Evaluate the run's acquisition rules against this plan, per PLANNED occurrence.
 
     This is a PLAN-time evaluation and it says only what a plan can say: which
-    declared input each planned Source occurrence serves, whether the accepted
-    policy authorizes that occurrence's classification and byte budget, and what
-    the declared failure behaviour does when it does not. It never invents an
-    acquisition outcome: `on_unavailable`/`on_stale`/`on_oversized` still fire
-    only from a real read, in `apply_acquisition_result` at execution time.
-
-    So a declared input this graph plans NO occurrence for is not scored here at
-    all. "The input never arrived" is an execution-time fact, not a plan-time
-    one, and a policy is free to declare inputs a given Procedure does not
-    serve: the acceptance law never tied a Line's policy to its Procedure's
-    Source aliases, so scoring the miss here would turn accepted, already
-    running Lines -- every Source-free one included -- into run-time refusals.
-    A Source alias with NO rule is the opposite miss, and both lanes refuse it
-    where it belongs, at admission (`_policy_coverage_refusal`).
+    Source alias each planned occurrence serves, and whether its CaptureContract
+    is accepted and fits the run's output budget (an oversized contract refuses).
+    It never invents an acquisition outcome: staleness and unavailability fire
+    only from a real read, in ``apply_acquisition_result`` at execution time.
     """
 
-    sources = {
-        occurrence.input_name: occurrence
-        for occurrence in occurrences
-        if occurrence.occurrence_kind == "source" and occurrence.input_name is not None
-    }
-    # Produced Source captures have no cross-source proof/vector reducer yet.
-    # Do not silently treat an accepted coherence requirement as independent.
-    if (
-        sources
-        and isinstance(policy, SourceAcquisitionPolicyV1)
-        and not isinstance(policy.coherence, IndependentCoherence)
-    ):
-        return ProcedureSelectionDecision(
-            policy_digest=policy_digest,
-            verdict="refused",
-            decisions=(
-                AcquisitionInputDecision(
-                    input_name="coherence",
-                    disposition="refused",
-                    reason_codes=("cruxible.acquisition.coherence_unsupported",),
-                ),
-            ),
-        )
     decisions: list[AcquisitionInputDecision] = []
-    for alias, occurrence in sources.items():
-        rule = acquisition_rule(policy, alias)
-        if rule is None:
+    for occurrence in occurrences:
+        alias = occurrence.input_name
+        if occurrence.occurrence_kind != "source" or alias is None or alias not in rules:
             continue
         contract = capture_contracts.get(occurrence.capture_contract_digest or "")
         if contract is None:
@@ -1867,28 +1710,13 @@ def _plan_selection_decision(
         ):
             decisions.append(
                 AcquisitionInputDecision(
-                    input_name=rule.input_name,
-                    disposition=(
-                        "omitted"
-                        if isinstance(rule, InputAcquisitionRule)
-                        and rule.requirement == "optional"
-                        and rule.on_oversized == "omit_optional"
-                        else "defaulted"
-                        if isinstance(rule, InputAcquisitionRule)
-                        and rule.on_oversized == "declared_conservative_default"
-                        else "refused"
-                    ),
-                    default_value=rule.conservative_default
-                    if isinstance(rule, InputAcquisitionRule)
-                    and rule.on_oversized == "declared_conservative_default"
-                    else None,
+                    input_name=alias,
+                    disposition="refused",
                     reason_codes=(ACQUISITION_OVERSIZED,),
                 )
             )
             continue
-        decisions.append(
-            AcquisitionInputDecision(input_name=rule.input_name, disposition="selected")
-        )
+        decisions.append(AcquisitionInputDecision(input_name=alias, disposition="selected"))
     ordered = tuple(
         sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
     )
@@ -3086,10 +2914,12 @@ def _plan_direct_external_run(
     evaluation_time: datetime,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     budget: ProcedureBudget,
+    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    ephemeral_spec_digest: str | None = None,
 ) -> (
     tuple[
         ProcedureAcquisitionPlan,
-        SourceAcquisitionPolicy | None,
+        Mapping[str, AcquisitionRule] | None,
         Mapping[str, CaptureContract],
         ProcedureRuntimePolicy,
     ]
@@ -3112,55 +2942,23 @@ def _plan_direct_external_run(
             message="Served external execution requires an accepted ProcedureRuntimePolicy.",
             details={"reason": str(exc), "repair": "Seed the instance ProcedureRuntimePolicy."},
         )
-    policy: SourceAcquisitionPolicy | None = None
+    rules: dict[str, AcquisitionRule] | None = None
     source_names = _source_input_names(accepted)
-    # Calls bind the accepted runtime output cap, with no
-    # evidence-selection policy. Source occurrences additionally bind their
-    # accepted acquisition policy through the same external plan.
+    # Calls bind the accepted runtime output cap, with no evidence selection.
+    # Source occurrences additionally bind the run's acquisition rules (the
+    # Procedure's defaults under the request's overrides) through the same plan.
     policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
     policy_format: str = runtime_policy.tag
     if source_names:
-        try:
-            policy_digest, policy = _direct_acquisition_policy(
-                instance,
-                coordinate=coordinate,
-                procedure=accepted.procedure,
-                input_names=_source_input_names(accepted),
-            )
-        except PinnedAcquisitionPolicyUnresolved as exc:
-            return refuse(
-                code="artifact_binding_mismatch",
-                message=(
-                    "The Procedure's pinned acquisition policy is not accepted at this coordinate."
-                ),
-                details={
-                    **cast(dict[str, object], exc.details),
-                    "repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Procedure.",
-                },
-            )
-        except SourceAcquisitionPolicyRequired as exc:
-            return refuse(
-                code="source_acquisition_policy_required",
-                message=(
-                    "A direct Source run requires an accepted SourceAcquisitionPolicy with a "
-                    "rule for each of this Procedure's Source inputs."
-                ),
-                details={
-                    **cast(dict[str, object], exc.details),
-                    "repair": (
-                        "Accept SourceAcquisitionPolicy:default or name a live policy "
-                        "on the Procedure."
-                    ),
-                },
-            )
-        policy_format = policy.artifact_format
-    providers, interfaces = _line_catalogs(instance, coordinate, accepted.procedure.pins)
+        rules = procedure_acquisition_rules(accepted, acquisition)
+        policy_digest = acquisition_rules_digest(rules)
+        policy_format = ACQUISITION_RULES_DIGEST_DOMAIN
+    providers = _line_catalogs(instance, coordinate, accepted.procedure.pins)
     capture_contracts = _accepted_capture_contracts(instance, coordinate, accepted.procedure.pins)
     try:
         external_occurrences = _plan_external_occurrences(
             accepted,
             providers=providers,
-            interfaces=interfaces,
             provider_runtime_operator=provider_runtime_operator,
             runtime_policy=runtime_policy,
             budget=budget,
@@ -3193,9 +2991,9 @@ def _plan_direct_external_run(
         )
     selection = (
         ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
-        if policy is None
+        if rules is None
         else _plan_selection_decision(
-            policy,
+            rules,
             policy_digest=policy_digest,
             occurrences=external_occurrences,
             capture_contracts=capture_contracts,
@@ -3204,19 +3002,10 @@ def _plan_direct_external_run(
     if selection.verdict == "refused":
         return refuse(
             code="source_acquisition_refused",
-            message="The accepted acquisition policy refuses a declared Source input.",
+            message="The run's acquisition rules refuse a declared Source input.",
             details={
                 "decisions": [item.model_dump(mode="json") for item in selection.decisions],
-                "repair": (
-                    "Served Source runs support independent coherence only; use a compatible "
-                    "runtime or deliberately accept an independent policy."
-                    if any(
-                        "cruxible.acquisition.coherence_unsupported"
-                        in {normalize_code(code) for code in item.reason_codes}
-                        for item in selection.decisions
-                    )
-                    else "Widen the accepted policy rule or repair the Source binding."
-                ),
+                "repair": "Fit the CaptureContract budget or repair the Source binding.",
             },
         )
     selection_digest = procedure_selection_decision_digest(selection)
@@ -3229,8 +3018,9 @@ def _plan_direct_external_run(
         selection_decision=selection,
         selection_decision_digest=selection_digest,
         external_occurrences=external_occurrences,
+        ephemeral_spec_digest=ephemeral_spec_digest,
     )
-    return plan, policy, capture_contracts, runtime_policy
+    return plan, rules, capture_contracts, runtime_policy
 
 
 def _prepare_direct_external_run(
@@ -3248,8 +3038,14 @@ def _prepare_direct_external_run(
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
     effective_budget: ProcedureBudget | None = None,
     effective_caps: ProcedureHardCaps | None = None,
+    acquisition: Mapping[str, AcquisitionDefault] | None = None,
+    ephemeral_spec_digest: str | None = None,
 ) -> (
-    tuple[PreparedProcedureRunV9, SourceAcquisitionPolicy | None, Mapping[str, CaptureContract]]
+    tuple[
+        PreparedProcedureRunV9,
+        Mapping[str, AcquisitionRule] | None,
+        Mapping[str, CaptureContract],
+    ]
     | ProcedureRunStateV2
 ):
     """Bind state and external inputs through the same planner for root and child runs."""
@@ -3264,10 +3060,12 @@ def _prepare_direct_external_run(
         evaluation_time=evaluation_time,
         provider_runtime_operator=provider_runtime_operator,
         budget=budget,
+        acquisition=acquisition,
+        ephemeral_spec_digest=ephemeral_spec_digest,
     )
     if isinstance(planned, ProcedureRunStateV2):
         return planned
-    plan, policy, capture_contracts, runtime_policy = planned
+    plan, rules, capture_contracts, runtime_policy = planned
     accepted_coordinate = plan.accepted_coordinate
     external_occurrences = plan.external_occurrences
     policy_digest = plan.acquisition_policy_digest
@@ -3365,7 +3163,7 @@ def _prepare_direct_external_run(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    return prepared, policy, capture_contracts
+    return prepared, rules, capture_contracts
 
 
 def service_run_playbill_procedure(
@@ -3401,8 +3199,34 @@ def service_run_playbill_procedure(
     # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
     # addressed only by run_id through service_get_playbill_procedure_run.
     lane: Literal["current", "replay"] = "current"
+    # A direct run has no accepted Line: it instantiates an ephemeral one, its
+    # bindings named or fitted now and recorded with the run by digest.
+    spec_bindings = direct_run_slot_bindings(
+        instance, name=name, coordinate=coordinate, requested=request.bindings
+    )
     accepted = _accepted_procedure(
-        instance, name=name, coordinate=coordinate, bind_references=True, bindings=request.bindings
+        instance,
+        name=name,
+        coordinate=coordinate,
+        bind_references=True,
+        bindings={key: value for key, value in spec_bindings.items() if "." not in key},
+    )
+    from cruxible_client.contracts.procedures.line_specs import (
+        EphemeralLineSpec,
+        ephemeral_line_spec_digest,
+    )
+
+    ephemeral_spec_digest = ephemeral_line_spec_digest(
+        EphemeralLineSpec(
+            procedure=ArtifactPin(
+                role="procedure",
+                target=accepted.procedure.identity,
+                artifact_digest=accepted.artifact_digest,
+            ),
+            parameters=request.input,
+            bindings=spec_bindings,
+            acquisition=request.acquisition,
+        )
     )
     if caller_rung is not None:
         require_run_permission(
@@ -3465,7 +3289,7 @@ def service_run_playbill_procedure(
         evaluation_time=evaluation_time,
     )
     prepared: PreparedProcedureRunV2 | PreparedProcedureRunV9
-    acquisition_policy: SourceAcquisitionPolicy | None = None
+    acquisition_rules: Mapping[str, AcquisitionRule] | None = None
     capture_contracts: Mapping[str, CaptureContract] = {}
     if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
         planned = _prepare_direct_external_run(
@@ -3480,10 +3304,12 @@ def service_run_playbill_procedure(
             journal_stream=stream,
             lane=lane,
             provider_runtime_operator=provider_runtime_operator,
+            acquisition=request.acquisition,
+            ephemeral_spec_digest=ephemeral_spec_digest,
         )
         if isinstance(planned, ProcedureRunStateV2):
             return planned
-        prepared, acquisition_policy, capture_contracts = planned
+        prepared, acquisition_rules, capture_contracts = planned
     else:
         try:
             direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
@@ -3537,7 +3363,7 @@ def service_run_playbill_procedure(
                     pins=accepted.procedure.pins,
                 )
             ),
-            acquisition_policy=acquisition_policy,
+            acquisition_rules=acquisition_rules,
             capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
             clock=_DeterministicClock(evaluation_time),
@@ -3549,6 +3375,7 @@ def service_run_playbill_procedure(
                 provider_runtime_operator,
                 workspace_file_reader,
                 _DeterministicClock(evaluation_time),
+                bindings=spec_bindings,
             ),
         )
     except ProcedureBoundaryRefused as exc:
@@ -3626,22 +3453,30 @@ def line_authority_rung(accepted_line: AcceptedLineSpec, accepted: AcceptedProce
 
 def _accepted_line_mandates(
     instance: PlaybillInstance,
-    accepted: AcceptedProcedure,
+    line_identity: ArtifactIdentity | None,
+    line_digest: str | None,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
 ) -> tuple[tuple[str, ProcedureMandateAny], ...]:
+    """The live Mandates granting this exact Line version (looked up by Line digest).
+
+    A direct run has no Line, so no Mandate grants it anything.
+    """
+
+    if line_identity is None or line_digest is None:
+        return ()
     instant = utc_microseconds(evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
         result = []
         for identity, digest in projection.typed.connection.execute(
             "SELECT identity,artifact_digest FROM procedure_mandates "
-            "WHERE procedure_identity=? AND procedure_digest=? AND lifecycle='live' "
+            "WHERE line_identity=? AND line_digest=? AND lifecycle='live' "
             "AND valid_from_us<=? AND expires_at_us>? ORDER BY artifact_digest",
-            (accepted.procedure.identity.qualified, accepted.artifact_digest, instant, instant),
+            (line_identity.qualified, line_digest, instant, instant),
         ):
             mandate = projection.typed.source(identity)
-            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate):
+            if not isinstance(mandate, ProcedureMandate):
                 raise ProjectionIntegrityError(
                     "accepted ProcedureMandate source is absent or invalid"
                 )
@@ -3796,8 +3631,7 @@ def _run_playbill_line(
         coordinate=coordinate,
         bind_references=True,
         bindings={
-            slot: ref.target.name
-            for slot, ref in getattr(accepted_line.line, "bindings", {}).items()
+            key: value for key, value in accepted_line.line.bindings.items() if "." not in key
         },
     )
     require_run_permission(
@@ -3822,7 +3656,10 @@ def _run_playbill_line(
                 "current_line_artifact_digest": accepted_line.artifact_digest,
             },
         )
-    if accepted.procedure.identity != accepted_line.line.procedure.target:
+    if (
+        accepted.procedure.identity != accepted_line.line.procedure.target
+        or accepted.artifact_digest != accepted_line.line.procedure.artifact_digest
+    ):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3830,9 +3667,14 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="line_closure_incomplete",
-            message="The accepted Line binds another Procedure artifact.",
+            message=(
+                "The accepted Line pins another version of its Procedure; a Line runs the "
+                "exact version it pins."
+            ),
             details={
-                "repair": "Author and accept a Line successor with the current Procedure pin."
+                "line_procedure_digest": accepted_line.line.procedure.artifact_digest,
+                "current_procedure_digest": accepted.artifact_digest,
+                "repair": "Author and accept a Line successor with the current Procedure pin.",
             },
         )
     try:
@@ -3848,22 +3690,20 @@ def _run_playbill_line(
             message=str(exc),
             details={"repair": "Restore or succeed the missing accepted closure member."},
         )
-    providers, interfaces = _line_catalogs(
+    providers = _line_catalogs(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
-    )
-    default_policies = (
-        _accepted_acquisition_policies(instance, coordinate)
-        if accepted_line.line.acquisition_policy is None and _source_input_names(accepted)
-        else ()
     )
     law = evaluate_line_spec_law(
         accepted_line.line,
         path=accepted_line.path,
-        procedure=accepted,
+        procedure=AcceptedProcedure(
+            path=accepted.path,
+            procedure=authored_procedure(accepted),
+            artifact_digest=accepted.artifact_digest,
+        ),
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
-        default_acquisition_policy=default_policies[0][1] if default_policies else None,
-        providers=providers,
-        provider_interfaces=interfaces,
+        slots=line_slot_map_at(instance, coordinate, accepted),
+        providers={item.provider.identity.qualified: item for item in providers.values()},
     )
     if law.verdict != "accepted":
         return _line_refusal_state(
@@ -3881,7 +3721,8 @@ def _run_playbill_line(
         )
     mandates = _accepted_line_mandates(
         instance,
-        accepted,
+        accepted_line.line.identity,
+        accepted_line.artifact_digest,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
@@ -4202,76 +4043,26 @@ def _run_playbill_line(
             message="This Line requires an opaque Exhaust access-binding carrier.",
             details={"repair": "Trigger through a carrier-aware Line scheduler."},
         )
-    line_policy_pin = accepted_line.line.acquisition_policy
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
-    # A Source-free Line acquires nothing, so it pins no acquisition policy.
-    # Its plan binds the accepted runtime policy instead, exactly as a direct
-    # run of a Source-free Procedure does.
-    line_policy: SourceAcquisitionPolicy | None = None
-    if line_policy_pin is None and not _source_input_names(accepted):
+    # A Source-free Line acquires nothing. Its plan binds the accepted runtime
+    # policy instead, exactly as a direct run of a Source-free Procedure does.
+    line_rules: dict[str, AcquisitionRule] | None = None
+    if not _source_input_names(accepted):
         policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
         policy_format: str = runtime_policy.tag
     else:
-        try:
-            policies = (
-                default_policies
-                if line_policy_pin is None
-                else _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
-            )
-            if not policies:
-                raise SourceAcquisitionPolicyRequired(
-                    "The Line's named policy or SourceAcquisitionPolicy:default is not live."
-                )
-            policy_digest, line_policy = policies[0]
-            policy_format = line_policy.artifact_format
-        except (SourceAcquisitionPolicyRequired, PinnedAcquisitionPolicyUnresolved) as exc:
-            return _line_refusal_state(
-                accepted,
-                accepted_line,
-                coordinate=coordinate,
-                head_at_admission=head_at_admission,
-                evaluation_time=evaluation_time,
-                code="source_acquisition_policy_required",
-                message=str(exc),
-                details={
-                    "repair": "Accept SourceAcquisitionPolicy:default or name a live "
-                    "policy on the Line."
-                },
-            )
-    uncovered = (
-        None
-        if line_policy is None
-        else _policy_coverage_refusal(line_policy, _source_input_names(accepted))
-    )
-    if uncovered is not None:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="source_acquisition_policy_required",
-            message=(
-                "A Line's Source run requires its pinned SourceAcquisitionPolicy to have a "
-                "rule for each of this Procedure's Source inputs."
-            ),
-            details={
-                **cast(dict[str, object], uncovered.details),
-                "repair": (
-                    "Succeed the Line with a SourceAcquisitionPolicy that has a rule for each "
-                    "Source alias."
-                ),
-            },
-        )
+        line_rules = procedure_acquisition_rules(accepted, accepted_line.line.acquisition)
+        policy_digest = acquisition_rules_digest(line_rules)
+        policy_format = ACQUISITION_RULES_DIGEST_DOMAIN
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
     if isinstance(accepted_line.line, LineSpec) and accepted_line.line.trigger_input is not None:
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
-        assert line_policy is not None  # a trigger input is a Source input
+        assert line_rules is not None  # a trigger input is a Source input
 
         try:
             landed_materials = (
@@ -4281,7 +4072,7 @@ def _run_playbill_line(
                     procedure=accepted,
                     event=event,
                     contracts=capture_contracts,
-                    policy=line_policy,
+                    rules=line_rules,
                     evaluation_time=evaluation_time,
                     max_bytes=budget.max_capture_bytes,
                 ),
@@ -4314,7 +4105,6 @@ def _run_playbill_line(
             accepted_line,
             accepted,
             providers=providers,
-            interfaces=interfaces,
             provider_runtime_operator=provider_runtime_operator,
             runtime_policy=runtime_policy,
             budget=budget,
@@ -4341,9 +4131,9 @@ def _run_playbill_line(
         )
     selection = (
         ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
-        if line_policy is None
+        if line_rules is None
         else _plan_selection_decision(
-            line_policy,
+            line_rules,
             policy_digest=policy_digest,
             occurrences=external_occurrences,
             capture_contracts=capture_contracts,
@@ -4357,19 +4147,10 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="source_acquisition_refused",
-            message="The accepted acquisition policy refuses a declared Source input.",
+            message="The Line's acquisition rules refuse a declared Source input.",
             details={
                 "decisions": [item.model_dump(mode="json") for item in selection.decisions],
-                "repair": (
-                    "Served Source runs support independent coherence only; use a compatible "
-                    "runtime or deliberately accept an independent policy."
-                    if any(
-                        "cruxible.acquisition.coherence_unsupported"
-                        in {normalize_code(code) for code in item.reason_codes}
-                        for item in selection.decisions
-                    )
-                    else "Widen the accepted policy rule or repair the Source binding."
-                ),
+                "repair": "Fit the CaptureContract budget or repair the Source binding.",
             },
         )
     if landed_materials:
@@ -4677,7 +4458,7 @@ def _run_playbill_line(
                         pins=accepted.procedure.pins,
                     )
                 ),
-                acquisition_policy=line_policy,
+                acquisition_rules=line_rules,
                 capture_contracts=capture_contracts,
                 workspace_file_reader=workspace_file_reader,
                 effective_rung=effective_rung,
@@ -4692,6 +4473,7 @@ def _run_playbill_line(
                     workspace_file_reader,
                     _DeterministicClock(evaluation_time),
                     mandates=dict(mandates),
+                    bindings=dict(accepted_line.line.bindings),
                 ),
             )
         except ProcedureBoundaryRefused as exc:
@@ -5029,8 +4811,10 @@ def service_recover_provider_invocations(
                     implementation_digest=occurrence.local_execution.implementation_digest,
                     materialization_digest=occurrence.local_execution.materialization_digest,
                     deployment_digest=occurrence.local_execution.deployment_digest,
-                    interface_id=occurrence.local_execution.interface_id,
-                    interface_digest=occurrence.local_execution.interface_digest,
+                    operation=occurrence.local_execution.operation,
+                    operation_signature_digest=(
+                        occurrence.local_execution.operation_signature_digest
+                    ),
                     protocol_version=occurrence.local_execution.protocol_version,
                     input_bucket=started.input_bucket,
                     capture_contract_digest=occurrence.capture_contract_digest,
@@ -5210,32 +4994,25 @@ def service_prepare_playbill_line_admission(
         )
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
-        procedure_binding = None
-        if isinstance(accepted_line.line.procedure, ArtifactNameRef):
-            procedure = _accepted_procedure(
-                instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+        procedure = _accepted_procedure(
+            instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+        )
+        rules_digest = (
+            acquisition_rules_digest(
+                procedure_acquisition_rules(procedure, accepted_line.line.acquisition)
             )
-            procedure_binding = ArtifactPin(
-                role="procedure",
-                target=procedure.procedure.identity,
-                artifact_digest=procedure.artifact_digest,
-            )
-        policy_binding = None
-        if isinstance(accepted_line.line.acquisition_policy, ArtifactNameRef):
-            policies = _accepted_acquisition_policies(
-                instance, coordinate, pin=accepted_line.line.acquisition_policy
-            )
-            if not policies:
-                raise ExecutionError("Line acquisition policy is unavailable at admission")
-            digest, acquisition = policies[0]
-            policy_binding = ArtifactPin(
-                role="acquisition-policy", target=acquisition.identity, artifact_digest=digest
-            )
+            if _source_input_names(procedure)
+            else None
+        )
         verify_line_admission_spec(
             bound,
             accepted_line,
-            procedure_binding=procedure_binding,
-            acquisition_policy_binding=policy_binding,
+            procedure_binding=ArtifactPin(
+                role="procedure",
+                target=procedure.procedure.identity,
+                artifact_digest=procedure.artifact_digest,
+            ),
+            acquisition_rules_digest=rules_digest,
         )
     except ExecutionError as exc:
         return ProcedureAdmissionRefusal(

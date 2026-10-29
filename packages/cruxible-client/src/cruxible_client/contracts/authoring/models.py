@@ -21,7 +21,6 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.accepted_attestations import attestation_identity
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     ApprovalPolicy,
@@ -64,6 +63,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     ProcedureRuntimePolicy,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
@@ -985,11 +985,11 @@ class MandateConditionAuthoring(_StrictAuthoringModel):
 class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     """Decision-only grant input; lowering owns every exact digest it pins."""
 
-    tag: Literal["playbill-procedure-mandate-authoring-payload-v1"] = (
-        "playbill-procedure-mandate-authoring-payload-v1"
+    tag: Literal["cruxible-procedure-mandate-authoring-payload-v2"] = (
+        "cruxible-procedure-mandate-authoring-payload-v2"
     )
     name: str
-    procedure_name: str
+    line_name: str
     grants: Literal["propose", "settle"]
     resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
@@ -1013,35 +1013,28 @@ class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     capture_contract: CaptureContract | NamedCaptureContract | CaptureContractInputRecord
 
 
-class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
-    """One whole SourceAcquisitionPolicy authored as a change-set definition member."""
-
-    tag: Literal["playbill-source-acquisition-policy-authoring-payload-v1"] = (
-        "playbill-source-acquisition-policy-authoring-payload-v1"
-    )
-    acquisition_policy: SourceAcquisitionPolicy
-
-
 class LineAuthoringPayload(_StrictAuthoringModel):
-    """Decision-only Line input; lowering owns the exact Procedure and policy pins.
+    """Decision-only Line input; lowering owns the exact Procedure and binding pins.
 
-    An author names the accepted or same-set Procedure and acquisition policy
-    by name, the way a ProcedureMandate member names its Procedure, and
-    lowering resolves both into the exact digest pins the LineSpec carries. A
-    budget left unset lowers to the Procedure's own hard caps. The acquisition
-    policy is required only when the Procedure acquires (has Source
-    nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
-    input record, checked against its input Contract when the Line lowers.
-    When the Line runs is not its own: Triggers aim at it. ``trigger_input``
-    binds the triggering Capture to one Source input, and lowering declares the
-    exact event that input accepts from its CaptureContract.
+    An author names the accepted or same-set Procedure by name; lowering pins
+    its exact version. ``bindings`` names a ``provider[/build]#operation`` (or
+    a ``provider[/build]`` whose one fitting operation is meant) per slot, keyed
+    by slot, or ``<invoke node path>.<slot>`` for an invoked child; a slot left
+    out is fitted through the signature index (exactly one live operation must
+    serve its signature). Lowering records the exact ``{build, operation}``.
+    ``acquisition`` replaces the Procedure's acquisition defaults per Source
+    alias. A budget left unset lowers to the Procedure's own hard caps.
+    ``parameters`` is the Procedure's input record, checked against its input
+    Contract when the Line lowers. When the Line runs is not its own: Triggers
+    aim at it. ``trigger_input`` binds the triggering Capture to one Source
+    input, and lowering declares the exact event that input accepts.
     """
 
-    tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
+    tag: Literal["cruxible-line-authoring-payload-v2"] = "cruxible-line-authoring-payload-v2"
     name: str
     procedure_name: str
     bindings: ProcedureBindings = Field(default_factory=dict)
-    acquisition_policy_name: str | None = None
+    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -1051,7 +1044,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     occurrence_epoch: int = Field(default=1, ge=1)
     retire: bool = False
 
-    @field_validator("name", "procedure_name", "acquisition_policy_name")
+    @field_validator("name", "procedure_name")
     @classmethod
     def _names(cls, value: str | None) -> str | None:
         if value is not None and (not value or value.strip() != value):
@@ -1201,20 +1194,19 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure input with an optional acquisition policy name.
+    """A Procedure input with its acquisition defaults per Source alias.
 
-    Omitted names inherit SourceAcquisitionPolicy:default. An explicit name is
-    checked at authoring and resolved at run admission; the envelope does not
-    pin policy bytes. The admission records the resolved digest for replay.
+    A Line's ``acquisition`` replaces a default for any alias it names; the run
+    admission records the resolved rules' digest for replay.
     """
 
-    tag: Literal["playbill-procedure-authoring-payload-v2"] = (
-        "playbill-procedure-authoring-payload-v2"
+    tag: Literal["cruxible-procedure-authoring-payload-v3"] = (
+        "cruxible-procedure-authoring-payload-v3"
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     owned_contracts: tuple[ProcedureOwnedContract, ...]
-    acquisition_policy: str | None = None
+    acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
     retire: bool = False
 
     @field_validator("definition", mode="before")
@@ -1226,13 +1218,6 @@ class ProcedureAuthoringPayload(_StrictAuthoringModel):
         if "name" not in normalized:
             raise ValueError("Procedure authoring definition requires a semantic name")
         return cast(dict[str, object], normalized)
-
-    @field_validator("acquisition_policy")
-    @classmethod
-    def _acquisition_policy(cls, value: str | None) -> str | None:
-        if value is not None and not _CANONICAL_NAME_RE.fullmatch(value):
-            raise ValueError("acquisition policy name is not canonical")
-        return value
 
 
 class ClaimTypeAuthoringPayload(_StrictAuthoringModel):
@@ -1465,7 +1450,6 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
     | ProcedureRuntimePolicyAuthoringPayload
     | ProcedureMandateAuthoringPayload
     | CaptureContractAuthoringPayload
-    | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
     | SubjectKindAuthoringPayload
@@ -1534,8 +1518,6 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
             else payload.capture_contract.identity.name
         )
         return f"CaptureContract:{name}"
-    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
-        return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
     if isinstance(payload, LineAuthoringPayload):
         return f"Line:{payload.name}"
     if isinstance(payload, TriggerAuthoringPayload):
@@ -1629,7 +1611,6 @@ AuthoringPayload = Annotated[
     | ProcedureRuntimePolicyAuthoringPayload
     | ProcedureMandateAuthoringPayload
     | CaptureContractAuthoringPayload
-    | SourceAcquisitionPolicyAuthoringPayload
     | LineAuthoringPayload
     | TriggerAuthoringPayload
     | SubjectKindAuthoringPayload

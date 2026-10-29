@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureHardCaps,
 )
+from cruxible_client.contracts.provider_operations import LineBinding
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_inbox import LineInboxStore
@@ -47,8 +48,8 @@ from cruxible_core.procedures.nested import (
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 from cruxible_core.procedures.reference_binding import (
+    recorded_slot_bindings,
     replay_procedure_references,
-    supplied_source_provider_bindings,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.material_reservations import (
@@ -140,37 +141,13 @@ def retained_delegation(
             return owner.parse(body, path=member_path), digest
 
         try:
-            provider_pins = {
-                pin.artifact_digest: pin.target
-                for pin in run.full_pins
-                if pin.target.kind == "Provider"
-            }
-            providers: dict[str, ArtifactIdentity] = {}
-            for item in getattr(run, "resolved_provider_bindings", ()):
-                identity = provider_pins.get(item.provider_artifact_digest)
-                if identity is None:
-                    raise ExecutionError("Recorded Provider binding has no matching admission pin")
-                providers[item.node_id] = identity
-            full_pins = set(run.full_pins)
-            providers.update(
-                supplied_source_provider_bindings(
-                    node_pin_sets={item.node_id: item.pins for item in run.node_pin_sets},
-                    landed_capture_input_names=frozenset(
-                        item.input_name for item in run.landed_capture_inputs
-                    ),
-                    nodes=authored.procedure.definition.nodes,
-                    contains_pin=full_pins.__contains__,
-                )
-            )
             replayed = replay_procedure_references(
                 authored,
                 pins=run.full_pins,
                 lookup_exact=exact,
-                providers=providers,
-                implementations={
-                    item.node_id: item.implementation_digest
-                    for item in getattr(run, "resolved_provider_bindings", ())
-                },
+                bindings=recorded_slot_bindings(
+                    getattr(run, "resolved_provider_bindings", ()), run.full_pins
+                ),
             )
             if (
                 replayed.procedure.pins != run.full_pins
@@ -233,21 +210,30 @@ class ServedNestedProcedureRunner:
     workspace_file_reader: WorkspaceFileReader | None
     clock: ProcedureClockProtocol
     mandates: Mapping[str, ProcedureMandateAny] = field(default_factory=dict)
+    #: The root run's bindings (its Line's, or a direct run's ephemeral spec),
+    #: keyed by slot or ``<invoke node path>.<slot>``; a child binds through it.
+    bindings: Mapping[str, LineBinding] = field(default_factory=dict)
+    #: The invoke node path of the Procedure this runner runs children for.
+    prefix: str = ""
 
-    def _accepted(self, pin: ArtifactPin) -> AcceptedProcedure:
+    def _child_prefix(self, node: InvokeNode) -> str:
+        return self.prefix + node.node_id + "."
+
+    def _accepted(self, pin: ArtifactPin, *, prefix: str) -> AcceptedProcedure:
+        from cruxible_core.providers.operation_index import child_bindings
         from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
         accepted = _accepted_procedure(
-            self.instance, name=pin.target.name, coordinate=self.coordinate, bind_references=True
+            self.instance,
+            name=pin.target.name,
+            coordinate=self.coordinate,
+            bind_references=True,
+            bindings=child_bindings(self.bindings, prefix),
         )
         if accepted.artifact_digest != pin.artifact_digest:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
                 "An exact child Procedure is not accepted at the parent coordinate.",
-            )
-        if accepted.procedure.definition.open_slots or accepted.procedure.definition.pin_slots:
-            raise ProcedureBoundaryRefused(
-                "pin_binding_mismatch", "A child must be a closed runnable Procedure."
             )
         return accepted
 
@@ -267,6 +253,7 @@ class ServedNestedProcedureRunner:
             budget: ProcedureBudget,
             caps: ProcedureHardCaps,
             lineage: tuple[ArtifactIdentity, ...],
+            prefix: str,
         ) -> None:
             graph = parent.procedure.definition
             for node in graph.nodes:
@@ -276,7 +263,8 @@ class ServedNestedProcedureRunner:
                     raise ProcedureBoundaryRefused(
                         "pin_binding_mismatch", "Recursive Procedure invocation is unsupported."
                     )
-                child = self._accepted(node.procedure)
+                child_prefix = prefix + node.node_id + "."
+                child = self._accepted(node.procedure, prefix=child_prefix)
                 definition = child.procedure.definition
                 supported = set(DIRECT_NODE_KINDS)
                 if admission.invocation_origin == "line":
@@ -313,13 +301,20 @@ class ServedNestedProcedureRunner:
                         "Child external admission was refused.",
                         details=plan.model_dump(mode="json"),
                     )
-                visit(child, child_budget, child_caps, (*lineage, child.procedure.identity))
+                visit(
+                    child,
+                    child_budget,
+                    child_caps,
+                    (*lineage, child.procedure.identity),
+                    child_prefix,
+                )
 
         visit(
             accepted,
             admission.budget,
             admission.hard_caps,
             (*ancestors, accepted.procedure.identity),
+            self.prefix,
         )
 
     def run(self, context: ParentInvocationContext, value: object) -> ProcedureRunResultV1:
@@ -342,7 +337,8 @@ class ServedNestedProcedureRunner:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch", "Nested runner names another accepted state."
             )
-        accepted = self._accepted(context.node.procedure)
+        child_prefix = self._child_prefix(context.node)
+        accepted = self._accepted(context.node.procedure, prefix=child_prefix)
         caps = constrained_caps(accepted.procedure.definition.hard_caps, parent.hard_caps)
         budget = constrained_budget(accepted.procedure.definition.budget, context.remaining, caps)
         planned = _prepare_direct_external_run(
@@ -368,7 +364,7 @@ class ServedNestedProcedureRunner:
                 "Child admission was refused.",
                 details=planned.model_dump(mode="json"),
             )
-        base, policy, contracts = planned
+        base, rules, contracts = planned
         prepared = context.bind(base)
         context.verify(prepared.admission, accepted)
         sink = None
@@ -421,13 +417,13 @@ class ServedNestedProcedureRunner:
                     pins=accepted.procedure.pins,
                 )
             ),
-            acquisition_policy=policy,
+            acquisition_rules=rules,
             capture_contracts=contracts,
             workspace_file_reader=self.workspace_file_reader,
             effective_rung=context.child_rung(accepted),
             egress_sink=sink,
             clock=self.clock,
-            nested_runner=self,
+            nested_runner=replace(self, prefix=child_prefix),
             parent_context=context,
         )
         if result.status == "succeeded" and capture_store is not None:

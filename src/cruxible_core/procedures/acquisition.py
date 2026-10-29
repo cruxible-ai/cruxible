@@ -14,11 +14,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionInputDecision,
-    AcquisitionRuleAny,
-    InputAcquisitionRule,
-)
 from cruxible_client.contracts.canonical import (
     Sha256Value,
     normalize_canonical,
@@ -34,6 +29,10 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_verdicts import (
     EvidenceEpistemicGrade,
     EvidenceProvenanceGrade,
+)
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionInputDecision,
+    AcquisitionRule,
 )
 from cruxible_core.evidence.source_readers import ExternalCaptureAcquisitionV1
 
@@ -144,17 +143,12 @@ def _refusal(
 
 
 def capture_selection_failure(
-    rule: AcquisitionRuleAny,
+    rule: AcquisitionRule,
     envelope: CaptureEnvelopeAny,
     *,
     evaluation_time: datetime,
 ) -> str | None:
     """Eligibility shared by newly acquired and retained Capture inputs."""
-    if (
-        isinstance(rule, InputAcquisitionRule)
-        and getattr(envelope.source, "replayability", "exact") not in rule.permitted_replayability
-    ):
-        return ACQUISITION_UNAVAILABLE
     if rule.max_age is not None and (
         evaluation_time - envelope.observed_at > timedelta(microseconds=rule.max_age.microseconds)
     ):
@@ -163,14 +157,20 @@ def capture_selection_failure(
 
 
 def apply_acquisition_result(
-    rule: AcquisitionRuleAny,
+    rule: AcquisitionRule,
     result: ProcedureSourceAcquisitionResultV1,
     *,
     default_authorized: bool = False,
     evaluation_time: datetime,
 ) -> AcquisitionInputDecision:
-    """Apply the declared failure behaviour to a real typed acquisition result only."""
+    """Apply the declared behaviour to a real typed acquisition result only.
 
+    A stale or oversized result refuses. An unavailable result (an absorbable
+    typed refusal of the bound operation) is omitted when the rule says
+    ``on_unavailable: omit``, and refuses otherwise.
+    """
+
+    del default_authorized
     if result.input_name != rule.input_name:
         raise ValueError("acquisition result names a different declared input")
     considered: tuple[str, ...] = ()
@@ -184,54 +184,23 @@ def apply_acquisition_result(
         )
         # Producing bytes is not admission: apply the same eligibility rules as
         # accepted Capture selection before those bytes enter the run context.
-        if failure == ACQUISITION_UNAVAILABLE:
-            behavior, reason = "refuse", ACQUISITION_UNAVAILABLE
-            if isinstance(rule, InputAcquisitionRule):
-                behavior = rule.on_unavailable
-        elif failure == ACQUISITION_STALE:
-            behavior, reason = "refuse", ACQUISITION_STALE
-            if isinstance(rule, InputAcquisitionRule):
-                behavior = rule.on_stale
-        else:
+        if failure is None:
             return AcquisitionInputDecision(
                 input_name=rule.input_name,
                 disposition="selected",
                 considered_capture_digests=considered,
                 selected_capture_digests=considered,
             )
+        reason = failure
     else:
-        behavior = "refuse"
-        if isinstance(rule, InputAcquisitionRule):
-            behavior = {
-                "unavailable": rule.on_unavailable,
-                "stale": rule.on_stale,
-                "oversized": rule.on_oversized,
-                "refused": "refuse",
-            }[result.outcome]
         reason = _OUTCOME_REASONS[result.outcome]
-    if (
-        isinstance(rule, InputAcquisitionRule)
-        and behavior == "omit_optional"
-        and rule.requirement == "optional"
-    ):
-        return AcquisitionInputDecision(
-            input_name=rule.input_name,
-            disposition="omitted",
-            considered_capture_digests=considered,
-            reason_codes=(reason,),
-        )
-    if (
-        isinstance(rule, InputAcquisitionRule)
-        and behavior == "declared_conservative_default"
-        and default_authorized
-    ):
-        return AcquisitionInputDecision(
-            input_name=rule.input_name,
-            disposition="defaulted",
-            considered_capture_digests=considered,
-            default_value=rule.conservative_default,
-            reason_codes=(reason,),
-        )
+        if result.outcome == "unavailable" and rule.on_unavailable == "omit":
+            return AcquisitionInputDecision(
+                input_name=rule.input_name,
+                disposition="omitted",
+                considered_capture_digests=considered,
+                reason_codes=(reason,),
+            )
     return AcquisitionInputDecision(
         input_name=rule.input_name,
         disposition="refused",

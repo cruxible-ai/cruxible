@@ -20,7 +20,6 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -51,7 +50,6 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
     SelfSourceBody,
-    SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
     SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
@@ -69,6 +67,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.authored import (
     ProcedureSpec,
@@ -264,8 +263,8 @@ class ProcedureInput(_StrictInputModel):
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
-    #: Optional policy name; omitted uses SourceAcquisitionPolicy:default at admission.
-    acquisition_policy: str | None = None
+    #: Default acquisition rule per Source alias; a Line's acquisition overrides it.
+    acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -383,15 +382,18 @@ class ClaimRetirementInput(_StrictInputModel):
 class ProcedureMandateInput(_StrictInputModel):
     """A propose grant, or a settle grant with its Claim scope and condition query.
 
-    ``grants`` is the verb the mandate delegates. A settle grant names the
-    ClaimTypes (by predicate) and change kinds it covers and the accepted query
-    that decides each target; lowering pins every exact digest.
+    ``line_name`` names the Line the grant authorizes (accepted, or defined in
+    the same set); lowering pins its exact digest, so changing the Line's
+    Procedure version, parameters or bindings renews the grant. ``grants`` is
+    the verb the mandate delegates. A settle grant names the ClaimTypes (by
+    predicate) and change kinds it covers and the accepted query that decides
+    each target; lowering pins every exact digest.
     """
 
-    tag: Literal["playbill-procedure-mandate-input-v1"] = "playbill-procedure-mandate-input-v1"
+    tag: Literal["cruxible-procedure-mandate-input-v2"] = "cruxible-procedure-mandate-input-v2"
     kind: Literal["procedure_mandate"]
     name: str
-    procedure_name: str
+    line_name: str
     grants: Literal["propose", "settle"]
     resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
@@ -412,32 +414,34 @@ class ProcedureMandateInput(_StrictInputModel):
     retire: bool = False
 
 
-class AcquisitionPolicyInput(_StrictInputModel):
-    """One SourceAcquisitionPolicy: how a Line's Source inputs may be acquired."""
-
-    kind: Literal["acquisition_policy"]
-    acquisition_policy: SourceAcquisitionPolicy
-
-
 class LineInput(_StrictInputModel):
     """One Line: a stable instantiation of an accepted or same-set Procedure.
 
-    Lowering resolves the named Procedure and acquisition policy into exact
-    pins. A Line runs when run explicitly (`line run`, one manual occurrence),
+    Lowering pins the named Procedure's exact version and binds every slot to
+    one exact ``{build, operation}``: ``bindings`` names
+    ``provider[/build]#operation`` (or ``provider[/build]``) per slot, and a
+    slot left out is fitted (exactly one live operation must serve its
+    signature). A Line runs when run explicitly (`line run`, one manual occurrence),
     or, once it is enabled (`line enable`), when a Trigger aimed at it fires; a
     Trigger aimed at a Line that is not enabled does nothing. Enabling needs
     governed write even for an observe-only Line. A Line that proposes or
-    settles also needs a live ProcedureMandate covering its Procedure before it
+    settles also needs a live ProcedureMandate pinning this exact Line before it
     can run or be enabled; an observe-only Line needs none.
     """
 
     kind: Literal["line"]
     name: str
     procedure_name: str
-    bindings: ProcedureBindings = Field(default_factory=dict)
-    acquisition_policy_name: str | None = Field(
-        default=None,
-        description=("SourceAcquisitionPolicy name; omitted uses the instance default."),
+    bindings: ProcedureBindings = Field(
+        default_factory=dict,
+        description=(
+            "Slot -> 'provider[/build]#operation' (or 'provider[/build]'); an invoked "
+            "child's slot is '<invoke node>.<slot>'. Omitted slots are fitted."
+        ),
+    )
+    acquisition: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict,
+        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,
@@ -553,7 +557,6 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
     | ProcedureMandateInput
-    | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
     | SubjectKindInput
@@ -588,7 +591,6 @@ AuthoringInput: TypeAlias = Annotated[
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
     | ProcedureMandateInput
-    | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
     | SubjectKindInput
@@ -653,7 +655,7 @@ def refuse_unserved_procedure_nodes(
                 raise AuthoringInputError(
                     "cruxible.authoring.call_contract_from_interface",
                     location,
-                    "Call input and output contracts come from its ProviderInterface.",
+                    "Call input and output contracts come from its slot's signature.",
                     "Remove the Call's contract_in/contract_out and any unused owned Contracts.",
                 )
 
@@ -920,7 +922,7 @@ def _procedure_payload(
             },
             owned_contracts=(),
             activation_policy=value.spec.activation,
-            acquisition_policy=value.spec.acquisition_policy,
+            acquisition_defaults=value.spec.acquisition_defaults,
             retire=value.retire,
         )
     contracts = tuple(
@@ -962,7 +964,7 @@ def _procedure_payload(
         definition=definition,
         activation_policy=value.activation_policy,
         owned_contracts=contracts,
-        acquisition_policy=value.acquisition_policy,
+        acquisition_defaults=value.acquisition_defaults,
         retire=value.retire,
     )
 
@@ -978,7 +980,7 @@ def _line_payload(value: LineInput) -> LineAuthoringPayload:
         name=value.name,
         procedure_name=value.procedure_name,
         bindings=value.bindings,
-        acquisition_policy_name=value.acquisition_policy_name,
+        acquisition=value.acquisition,
         max_authority=value.max_authority,
         trigger_input=value.trigger_input,
         parameters=value.parameters,
@@ -1115,8 +1117,6 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
         return ProcedureRuntimePolicyAuthoringPayload(
             procedure_runtime_policy=member.procedure_runtime_policy
         )
-    if isinstance(member, AcquisitionPolicyInput):
-        return SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=member.acquisition_policy)
     if isinstance(member, LineInput):
         return _line_payload(member)
     if isinstance(member, TriggerInput):
@@ -1178,8 +1178,6 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         )
     if isinstance(value, ProcedureMandateInput):
         return _mandate_payload(value)
-    if isinstance(value, AcquisitionPolicyInput):
-        return SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=value.acquisition_policy)
     if isinstance(value, LineInput):
         return _line_payload(value)
     if isinstance(value, TriggerInput):
@@ -1231,7 +1229,6 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
 
 __all__ = [
     "AcceptedReferenceInput",
-    "AcquisitionPolicyInput",
     "ApprovalPolicyInput",
     "ProcedureRuntimePolicyInput",
     "AuthoringChangeSetMemberInput",

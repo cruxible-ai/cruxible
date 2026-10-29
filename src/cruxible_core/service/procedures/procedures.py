@@ -7,13 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
 from cruxible_client.contracts.errors import ExecutionError, JournalError
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.query.grammar import QueryBudgets
@@ -47,7 +45,7 @@ from cruxible_core.procedures.execution import (
     StateTapReadResultV1,
 )
 from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
-from cruxible_core.procedures.ports import policy_acquisition_rules
+from cruxible_core.procedures.ports import ResolvedAcquisitionRules
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import service_run_playbill_query
@@ -307,7 +305,7 @@ def service_execute_direct_procedure(
     contract_validator: ContractValidatorProtocol | None = None,
     provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
-    acquisition_policy: SourceAcquisitionPolicy | None = None,
+    acquisition_rules: Mapping[str, AcquisitionRule] | None = None,
     capture_contracts: Mapping[str, CaptureContract] | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
     effective_rung: EffectiveRungV1 | None = None,
@@ -330,7 +328,9 @@ def service_execute_direct_procedure(
             contract_validator=validator,
             provider_runtime_invoker=provider_runtime_invoker,
             provider_runtime_invoker_factory=provider_runtime_invoker_factory,
-            acquisition_rules=policy_acquisition_rules(acquisition_policy),
+            acquisition_rules=(
+                None if acquisition_rules is None else ResolvedAcquisitionRules(acquisition_rules)
+            ),
             capture_contracts=capture_contracts,
             workspace_file_reader=workspace_file_reader,
             effective_rung=effective_rung,

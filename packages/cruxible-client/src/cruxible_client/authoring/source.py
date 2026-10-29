@@ -26,7 +26,6 @@ from cruxible_client.authoring.procedures import (
     ProcedurePreview,
     ProcedureReturnPath,
     ProcedureStateDependency,
-    ProviderBinding,
 )
 from cruxible_client.authoring.sdk_types import ProcedureRef, QueryRef
 from cruxible_client.contracts.canonical import normalize_canonical
@@ -36,12 +35,12 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     derived_terminal_capability,
 )
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.procedures.source_program import SourceContract
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequest,
     ProcedureSourceRequest,
     SourceProcedureSelection,
-    SourceProviderSelection,
     SourceQuerySelection,
     SourceSelection,
     SourceSlotSelection,
@@ -64,24 +63,17 @@ def _contract(value: CarriedContractInput) -> SourceContract:
 class ProcedureSource:
     """Retained Procedure source and its binding selections.
 
-    ``slots`` (slot name -> ProviderInterface name) are open Provider slots: bind
-    each with ``bind(slot=cx.provider_interface(...))`` to select a Provider
-    explicitly, or leave them open for run admission to bind by fit.
+    ``slots`` (slot name -> ``{in, out, effect}``) are the signatures the
+    source calls through ``bindings.<slot>``. A Procedure never names a
+    provider: a Line binds each slot to one exact build and operation.
     """
 
     _request: ProcedureSourceRequest
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    acquisition_policy: str | None = None
-    _bindings: Mapping[str, ProviderBinding | QueryRef | ProcedureRef] = field(
+    _bindings: Mapping[str, QueryRef | ProcedureRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    slots: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
-
-    @property
-    def open_slots(self) -> tuple[str, ...]:
-        """Declared slots no Provider is bound to yet."""
-
-        return tuple(sorted(set(self.slots) - set(self._bindings)))
+    slots: Mapping[str, ProcedureSlot] = field(default_factory=lambda: MappingProxyType({}))
 
     @property
     def name(self) -> str:
@@ -122,7 +114,7 @@ class ProcedureSource:
         return self._request.description
 
     @property
-    def bindings(self) -> Mapping[str, ProviderBinding | QueryRef | ProcedureRef]:
+    def bindings(self) -> Mapping[str, QueryRef | ProcedureRef]:
         return self._bindings
 
     def __call__(self, *args: object, **kwargs: object) -> None:
@@ -131,48 +123,34 @@ class ProcedureSource:
             "Use preview/build or run its accepted Procedure."
         )
 
-    def bind(self, **bindings: ProviderBinding | QueryRef | ProcedureRef) -> ProcedureSource:
+    def bind(self, **bindings: QueryRef | ProcedureRef) -> ProcedureSource:
+        """Bind query and child-Procedure names; slots are bound by a Line, not here."""
+
         unknown = set(bindings) - _binding_slots(self.source)
         if unknown:
-            raise ValueError(f"Unknown Procedure binding slots: {sorted(unknown)}")
+            raise ValueError(f"Unknown Procedure binding names: {sorted(unknown)}")
         for name, value in bindings.items():
-            if not name.isidentifier() or not isinstance(
-                value, (ProviderBinding, QueryRef, ProcedureRef)
-            ):
-                raise TypeError("Bindings require named accepted provider/query/Procedure handles")
-            if name in self.slots and not isinstance(value, ProviderBinding):
-                raise TypeError(f"Slot {name!r} binds a Provider (cx.provider_interface(...))")
-            # Discovery names the interface qualified (``ProviderInterface:<name>``);
-            # a slot declares its bare name.
-            if name in self.slots and isinstance(value, ProviderBinding):
-                # A registration names its interface id and, for a contract
-                # registration, its contract key (``<id>/<key>``).
-                served = value.interface.removeprefix("ProviderInterface:").partition("/")[0]
-                if served != self.slots[name].partition("/")[0]:
-                    raise ValueError(
-                        f"Slot {name!r} declares interface {self.slots[name]!r}; "
-                        f"the binding serves {served!r}"
-                    )
+            if not name.isidentifier() or not isinstance(value, (QueryRef, ProcedureRef)):
+                raise TypeError("Bindings require named accepted query/Procedure handles")
+            if name in self.slots:
+                raise TypeError(
+                    f"{name!r} is a slot: a Line binds it to a provider operation, not the source"
+                )
         return replace(self, _bindings=MappingProxyType(dict(self._bindings, **bindings)))
 
     def _at(self, world: World) -> ProcedureSourceRequest:
         selections: dict[str, SourceSelection] = {}
         for name, value in self._bindings.items():
-            if isinstance(value, ProviderBinding):
-                if value.coordinate is None:
-                    raise ValueError("Select source providers through cx.provider_interface()")
-                world._playbill._assert_coordinate(value.coordinate)
-                selections[name] = SourceProviderSelection(
-                    provider=value.provider, interface=value.interface
-                )
-            elif isinstance(value, QueryRef):
+            if isinstance(value, QueryRef):
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceQuerySelection(name=value.address)
             else:
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceProcedureSelection(name=value.address)
-        for name in self.open_slots:
-            selections[name] = SourceSlotSelection(interface=self.slots[name])
+        for name, slot in self.slots.items():
+            selections[name] = SourceSlotSelection.model_validate(
+                {"in": slot.in_.spelling, "out": slot.out.spelling, "effect": slot.effect}
+            )
         return self._request.model_copy(update={"bindings": selections}, deep=True)
 
     def preview(self, *, world: World | None = None) -> ProcedurePreview:
@@ -186,7 +164,6 @@ class ProcedureSource:
                 contract_in=self._request.input.schema_.model_dump(),
                 contract_out=self._request.output.schema_.model_dump(),
                 authority="observe",
-                acquisition_policy=self.acquisition_policy,
                 nodes=(),
                 returns="",
                 budget=self.budget,
@@ -248,10 +225,9 @@ class ProcedureSource:
                 if definition
                 else derived_terminal_capability(compiled.nodes)
             ],
-            acquisition_policy=self.acquisition_policy,
             nodes=compiled.nodes,
             edges=edges,
-            providers={k: v for k, v in self._bindings.items() if isinstance(v, ProviderBinding)},
+            slots=dict(self.slots),
             terminals=tuple(n.node_id for n in compiled.nodes if n.kind in terminal_kinds),
             returns=definition.returns if definition else "",
             budget=self._request.budget,
@@ -320,7 +296,7 @@ class ProcedureSource:
         )
 
     def build(self, *, world: World | None = None) -> ProcedureInput:
-        """The shared Procedure authoring input, with any open Provider slots."""
+        """The shared Procedure authoring input; its slots are bound by a Line."""
 
         preview = self.preview(world=world)
         if not preview.ready_for_prepare:
@@ -343,7 +319,6 @@ class ProcedureSource:
             kind="procedure",
             definition=definition,
             activation_policy=self.activation_policy,
-            acquisition_policy=self.acquisition_policy,
             contracts=contracts,
         )
 
@@ -370,18 +345,21 @@ def procedure(
     budget: ProcedureBudget,
     hard_caps: ProcedureHardCaps,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
-    acquisition_policy: str | None = None,
     description: str | None = None,
-    slots: Mapping[str, str] | None = None,
+    slots: Mapping[str, ProcedureSlot | Mapping[str, object]] | None = None,
 ) -> Callable[[Callable[..., Any]], ProcedureSource]:
-    """Declare Procedure source. ``slots`` maps open Provider slots to their interfaces.
+    """Declare Procedure source. ``slots`` maps each slot to ``{in, out, effect}``.
 
     Every declared slot must be used in the source as ``bindings.<slot>`` passed
-    to ``source(...)`` or ``call(...)``. With every slot bound the source builds
-    a Procedure; with any left open it builds a Blueprint.
+    to ``source(...)`` or ``call(...)``. A Line binds each slot to one exact
+    provider build and operation (or core fits it: exactly one live operation
+    must serve its signature).
     """
 
-    declared = dict(slots or {})
+    declared = {
+        key: value if isinstance(value, ProcedureSlot) else ProcedureSlot.model_validate(value)
+        for key, value in (slots or {}).items()
+    }
 
     def decorate(function: Callable[..., Any]) -> ProcedureSource:
         try:
@@ -413,9 +391,9 @@ def procedure(
         unused = sorted(set(declared) - used)
         if unused:
             raise ValueError(f"Declared slots the source never uses: {unused}")
-        for slot, interface in declared.items():
-            if not slot.isidentifier() or not isinstance(interface, str) or not interface:
-                raise ValueError("slots map a binding name to a ProviderInterface name")
+        for slot in declared:
+            if not slot.isidentifier():
+                raise ValueError("slots map a binding name to its {in, out, effect} signature")
         # Only schema data crosses the boundary. No functions, closures or module objects.
         return ProcedureSource(
             ProcedureSourceRequest(
@@ -432,13 +410,7 @@ def procedure(
                 description=description,
             ),
             activation_policy=activation_policy,
-            acquisition_policy=acquisition_policy,
-            slots=MappingProxyType(
-                {
-                    key: interface.removeprefix("ProviderInterface:")
-                    for key, interface in declared.items()
-                }
-            ),
+            slots=MappingProxyType(declared),
         )
 
     return decorate

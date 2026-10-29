@@ -4,22 +4,15 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
-from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    SourceAcquisitionPolicyV1,
-    acquisition_rule,
-)
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
 from cruxible_client.contracts.captures import capture_retention_policy
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -50,7 +43,7 @@ def bind_trigger_capture(
     procedure: AcceptedProcedure,
     event: TriggerEventReference | None,
     contracts: MutableMapping[str, CaptureContract],
-    policy: SourceAcquisitionPolicy,
+    rules: Mapping[str, AcquisitionRule],
     evaluation_time: datetime,
     max_bytes: int,
 ) -> LandedCaptureRunMaterialV1:
@@ -67,14 +60,11 @@ def bind_trigger_capture(
             "trigger_capture_input: an exact retained event is required "
             "(a manual run passes it as the event input)",
         )
-    rule = acquisition_rule(policy, node.as_)
-    if rule is None or (
-        isinstance(policy, SourceAcquisitionPolicyV1)
-        and not isinstance(policy.coherence, IndependentCoherence)
-    ):
+    rule = rules.get(node.as_)
+    if rule is None:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
-            "trigger_capture_input: named independent acquisition rule required",
+            "trigger_capture_input: the Source input has no acquisition rule",
         )
     assert isinstance(node.capture_contract, ArtifactPin)
     contract = contracts.get(node.capture_contract.artifact_digest)
@@ -159,7 +149,7 @@ def bind_trigger_capture(
             f"{(evaluation_time - envelope.observed_at).total_seconds()}s, exceeding max_age; "
             f"repair: supply a fresh Capture for {node.as_!r}."
             if failure == ACQUISITION_STALE
-            else "The acquisition policy forbids this Capture replayability.",
+            else "The acquisition rule forbids this Capture.",
         )
     if material.material_kind == "bytes":
         body = material.body_access

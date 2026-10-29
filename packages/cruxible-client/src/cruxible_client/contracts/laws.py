@@ -24,8 +24,6 @@ CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
-PROVIDER_INTERFACE_LAW_IDENTIFIER = "playbill.provider-interface.v1"
-SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
 PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
 QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
@@ -346,16 +344,6 @@ PROVIDER_LAW_V2 = _artifact_law_coordinate(
     "playbill-provider-v2",
     semantic_revision=1,
 )
-PROVIDER_INTERFACE_LAW = _artifact_law_coordinate(
-    PROVIDER_INTERFACE_LAW_IDENTIFIER,
-    "playbill-provider-interface-v1",
-    semantic_revision=1,
-)
-SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
-    SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
-    "playbill-source-acquisition-policy-v1",
-    semantic_revision=3,
-)
 PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
     PROCEDURE_MANDATE_LAW_IDENTIFIER,
     "playbill-procedure-mandate-v1",
@@ -628,31 +616,20 @@ PROVIDER_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider",
     artifact_tag="playbill-provider-v2",
 )
-PROVIDER_INTERFACE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=PROVIDER_INTERFACE_LAW,
-    artifact_kind="provider-interface",
-    artifact_tag="playbill-provider-interface-v1",
-)
-LIGHT_ACQUISITION_POLICY_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.source-acquisition-policy.v2",
-        "playbill-source-acquisition-policy-v2",
-        semantic_revision=1,
-    ),
-    artifact_kind="source-acquisition-policy",
-    artifact_tag="playbill-source-acquisition-policy-v2",
-)
-SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=SOURCE_ACQUISITION_POLICY_LAW,
-    artifact_kind="source-acquisition-policy",
-    artifact_tag="playbill-source-acquisition-policy-v1",
-)
 PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.procedure-mandate.v2", "playbill-procedure-mandate-v2", semantic_revision=1
     ),
     artifact_kind="procedure-mandate",
     artifact_tag="playbill-procedure-mandate-v2",
+)
+#: A Mandate pins one exact Line (ruling C3).
+PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.procedure-mandate.v3", "cruxible-procedure-mandate-v3", semantic_revision=1
+    ),
+    artifact_kind="procedure-mandate",
+    artifact_tag="cruxible-procedure-mandate-v3",
 )
 PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_MANDATE_LAW,
@@ -706,15 +683,6 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     ),
     artifact_kind="line",
     artifact_tag="playbill-line-v6",
-)
-# A Blueprint keeps stable identity and types every open slot by an accepted
-# ProviderInterface; it never runs, so it needs no runtime closure.
-BLUEPRINT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible.blueprint.v1", "cruxible-blueprint-v1", semantic_revision=1
-    ),
-    artifact_kind="blueprint",
-    artifact_tag="cruxible-blueprint-v1",
 )
 # A SubjectKind declares how Subjects of one kind are identified: by key
 # ClaimTypes (live, v8, literal, one-valued, about that kind only) or by minted
@@ -883,13 +851,6 @@ PROVIDER_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider",
     artifact_tag="playbill-provider-v3",
 )
-PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.provider-interface.v2", "playbill-provider-interface-v2", semantic_revision=1
-    ),
-    artifact_kind="provider-interface",
-    artifact_tag="playbill-provider-interface-v2",
-)
 # One provider build per artifact (compiler revision 34): a build is added beside
 # the other builds of its name and never replaced; a contract registration is
 # added beside the other contracts of its interface id and never replaced.
@@ -899,20 +860,6 @@ PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     ),
     artifact_kind="provider",
     artifact_tag="cruxible-provider-v4",
-)
-PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible.provider-interface.v3", "cruxible-provider-interface-v3", semantic_revision=1
-    ),
-    artifact_kind="provider-interface",
-    artifact_tag="cruxible-provider-interface-v3",
-)
-PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "cruxible.provider-interface.v4", "cruxible-provider-interface-v4", semantic_revision=1
-    ),
-    artifact_kind="provider-interface",
-    artifact_tag="cruxible-provider-interface-v4",
 )
 PROVIDER_PACKAGE_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -953,11 +900,10 @@ LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
 NAMED_REFERENCE_FORMATS = {
     "capture-contract": "cruxible-capture-contract-v3",
     "procedure": "cruxible-procedure-v3",
-    "blueprint": "cruxible-blueprint-v2",
     "query-definition": "cruxible-query-definition-v3",
     "trigger": "cruxible-trigger-v2",
-    "line": "cruxible-line-v7",
-    "provider": "cruxible-provider-v5",
+    "line": "cruxible-line-v8",
+    "provider": "cruxible-provider-v6",
 }
 NAMED_REFERENCE_LAWS = tuple(
     InstalledAcceptanceLaw(
@@ -976,10 +922,10 @@ QUERY_DEFINITION_V3_ACCEPTANCE_LAW = next(
 
 NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
-        "cruxible.provider-identity.v2", "cruxible-provider-identity-v2", semantic_revision=1
+        "cruxible.provider-identity.v3", "cruxible-provider-identity-v3", semantic_revision=1
     ),
     artifact_kind="provider",
-    artifact_tag="cruxible-provider-identity-v2",
+    artifact_tag="cruxible-provider-identity-v3",
 )
 
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
@@ -987,13 +933,9 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         *NAMED_REFERENCE_LAWS,
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
-        LIGHT_ACQUISITION_POLICY_LAW,
         LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
-        PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         PROVIDER_BUILD_ACCEPTANCE_LAW,
-        PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
-        PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW,
         CLAIM_REBIND_UPGRADE_LAW,
         PROVIDER_BUILDS_UPGRADE_LAW,
         PROVIDER_PACKAGE_UPGRADE_LAW,
@@ -1043,19 +985,17 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         PROCEDURE_V2_ACCEPTANCE_LAW,
         LINE_V6_ACCEPTANCE_LAW,
-        BLUEPRINT_ACCEPTANCE_LAW,
         TRIGGER_ACCEPTANCE_LAW,
         SUBJECT_KIND_ACCEPTANCE_LAW,
         CONTRACT_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
-        PROVIDER_INTERFACE_ACCEPTANCE_LAW,
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
-        SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
+        PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )

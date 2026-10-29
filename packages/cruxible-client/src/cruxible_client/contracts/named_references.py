@@ -28,13 +28,10 @@ def name_provider(provider: ProviderBuild) -> NamedProviderBuild:
     return NamedProviderBuild.model_validate(
         {
             **provider.model_dump(
-                mode="json", exclude={"pins", "artifact_format", "capture_contract_digests"}
+                mode="json",
+                by_alias=True,
+                exclude={"pins", "artifact_format", "capture_contract_digests"},
             ),
-            "interfaces": [
-                {"target": p.target.model_dump(mode="json")}
-                for p in provider.pins
-                if p.role == "provider-interface"
-            ],
             "capture_contracts": _capture_names(provider),
         }
     )
@@ -58,25 +55,15 @@ def name_signing_provider(provider: ProviderV1) -> NamedProviderIdentity:
             **provider.model_dump(
                 mode="json", exclude={"pins", "artifact_format", "capture_contract_digests"}
             ),
-            "interfaces": [
-                {"target": pin.target.model_dump(mode="json")}
-                for pin in provider.pins
-                if pin.role == "provider-interface"
-            ],
             "capture_contracts": _capture_names(provider),
         }
     )
 
 
 def name_line(line: LineSpec) -> NamedLineSpec:
-    data = line.model_dump(mode="json", exclude={"pins"})
-    data["artifact_format"] = "cruxible-line-v7"
-    for field in ("procedure", "acquisition_policy"):
-        if data.get(field) is not None:
-            data[field] = {"target": data[field]["target"]}
-    if data.get("trigger_event") is not None:
-        data["trigger_event"].pop("capture_contract_digest", None)
-    return NamedLineSpec.model_validate(data)
+    """A Line already pins exactly what it runs: there is one format, unchanged here."""
+
+    return line
 
 
 def name_trigger(trigger: Trigger) -> NamedTrigger:

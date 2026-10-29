@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Callable, Final
 
 from cruxible_client.authoring.inputs import (
-    AcquisitionPolicyInput,
     ApprovalPolicyInput,
     AuthoringInput,
     CarriedContractInput,
@@ -31,14 +30,10 @@ from cruxible_client.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts import AuthoringExampleName as AuthoringExampleName
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
@@ -282,7 +277,7 @@ _EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
 
 
 def procedure_mandate_example() -> ProcedureMandateInput:
-    """A propose grant over the `--example procedure` Procedure, within its caps.
+    """A propose grant over the `--example line` Line, within its Procedure's caps.
 
     Only a Line that proposes or settles needs a mandate; an observe-only Line
     (like the example Procedure's) runs without one.
@@ -291,7 +286,7 @@ def procedure_mandate_example() -> ProcedureMandateInput:
     return ProcedureMandateInput(
         kind="procedure_mandate",
         name="replace-me",
-        procedure_name="replace-me",
+        line_name="replace-me",
         grants="propose",
         resource_ceiling=ProcedureHardCaps.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
         namespace=("claims",),
@@ -335,22 +330,6 @@ def trigger_example() -> TriggerInput:
         name="replace-me",
         schedule=CronSchedule(expression="0 * * * *"),
         line_name="replace-me",
-    )
-
-
-def acquisition_policy_example() -> AcquisitionPolicyInput:
-    """An instance default age bound, with optional per-Source alias overrides.
-
-    Name it ``default`` to govern Lines and Procedures that omit a policy name.
-    Every input is required; unavailable, stale and oversized reads refuse.
-    """
-
-    return AcquisitionPolicyInput(
-        kind="acquisition_policy",
-        acquisition_policy=SourceAcquisitionPolicy(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="default"),
-            max_age=CanonicalDuration(microseconds=86_400_000_000),
-        ),
     )
 
 
@@ -583,7 +562,6 @@ def procedure_example() -> ProcedureInput:
                 },
             ],
             "returns": "result",
-            "pin_slots": [],
             "budget": {
                 "wall_clock": {"microseconds": 600_000_000},
                 "max_provider_calls": 0,
@@ -765,7 +743,6 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "procedure-mandate": procedure_mandate_example,
     "line": line_example,
     "trigger": trigger_example,
-    "acquisition-policy": acquisition_policy_example,
     "change-set": change_set_example,
     "claim-type-succession": claim_type_succession_example,
 }
@@ -815,7 +792,6 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "procedure-mandate",
     "line",
     "trigger",
-    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 )
@@ -872,7 +848,6 @@ __all__ = [
     "AUTHORING_EXAMPLE_NAMES",
     "AUTHORING_EXAMPLE_NOTES",
     "AuthoringExampleName",
-    "acquisition_policy_example",
     "authoring_example",
     "authoring_example_note",
     "change_set_example",

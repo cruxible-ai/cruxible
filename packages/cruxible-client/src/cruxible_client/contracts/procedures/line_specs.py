@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, ClassVar, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -17,10 +17,6 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts.acquisition_policies import (
-    ACQUISITION_POLICY_PIN_ROLE,
-    SourceAcquisitionPolicyAny,
-)
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -40,6 +36,10 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionDefault,
+    validate_acquisition_keys,
+)
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
@@ -49,10 +49,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     SourceNode,
 )
-from cruxible_client.contracts.procedures.pin_expectations import (
-    TRIGGER_CAPTURE_CONTRACT,
-    validate_exact_pin_expectation,
-)
 from cruxible_client.contracts.procedures.trigger_rules import (
     trigger_capture_source,
     validate_trigger_input,
@@ -61,12 +57,12 @@ from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
     NamedCaptureEventSelector,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
+from cruxible_client.contracts.provider_operations import (
+    LineBinding,
+    OperationSignature,
+    ProviderOperation,
 )
-from cruxible_client.contracts.providers import (
-    AcceptedProvider,
-)
+from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -133,101 +129,141 @@ def _sorted_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
 
 LineAuthority = AuthorityVerb
 
+_BINDING_KEY_RE = re.compile(r"^(?:[a-z][a-z0-9_.-]{0,127}\.)*[a-z][a-z0-9_]{0,63}$")
+
+
+def _binding_keys(value: dict[str, LineBinding]) -> dict[str, LineBinding]:
+    for key in value:
+        if not _BINDING_KEY_RE.fullmatch(key):
+            raise ValueError(
+                f"Line binding key {key!r} is a slot, or <invoke node path>.<slot> for a child"
+            )
+    return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
+
 
 class LineSpec(_StrictLineModel):
-    """A Line with no embedded trigger: Trigger artifacts aim at it by identity.
+    """One instantiation of an exact Procedure version, with every slot bound.
+
+    ``procedure`` pins the exact Procedure version the Line runs. ``bindings``
+    holds one exact ``{build, operation}`` per slot, including the slots of
+    invoked children (keyed ``<invoke node path>.<slot>``); core records them
+    when the Line is accepted, and runs never rebind. ``acquisition`` replaces
+    the Procedure's ``acquisition_defaults`` per Source alias.
 
     When it runs is not the Line's to say: every Trigger aimed at it is its own
     governed artifact, and Triggers drive it only while the Line is enabled.
-    ``line run`` runs one manual occurrence at any time. What stays with the
-    Line is what it accepts: ``trigger_input`` binds the
-    triggering Capture to one named Source input, and ``trigger_event`` declares
-    the exact Capture event that input accepts, so a Trigger aimed at the Line
-    must fire on that event. ``occurrence_epoch`` advances exactly when that
-    acceptance changes. Compiler revision 32.
+    ``trigger_input`` binds the triggering Capture to one named Source input,
+    and ``trigger_event`` declares the exact Capture event that input accepts.
+    ``occurrence_epoch`` advances exactly when that acceptance changes.
+
+    A Mandate pins the Line's exact digest, so changing the Procedure version,
+    the parameters or any binding is a new Line digest and renews the grant.
     """
 
-    artifact_format: Literal["playbill-line-v6"] = "playbill-line-v6"
+    artifact_format: Literal["cruxible-line-v8"] = "cruxible-line-v8"
     identity: ArtifactIdentity
     occurrence_epoch: int = Field(ge=1, le=2**63 - 1)
     procedure: ArtifactPin
     parameters: object
-    acquisition_policy: ArtifactPin | None = None
+    bindings: dict[str, LineBinding] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    acquisition: dict[str, AcquisitionDefault] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    trigger_event: CaptureEventSelector | None = None
+    trigger_event: NamedCaptureEventSelector | None = None
     budgets: object
     epsilon: object
-    pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
     _epsilon = field_validator("epsilon", mode="before")(_decimal_wrapper)
-    _pins = field_validator("pins", check_fields=False)(_sorted_pins)
+    _bindings = field_validator("bindings")(_binding_keys)
+    _acquisition = field_validator("acquisition")(validate_acquisition_keys)
 
     @model_validator(mode="after")
     def _shape(self) -> "LineSpec":
         if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Line identity must be path-addressable and kind Line")
         if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
-            raise ValueError("LineSpec procedure must be an exact role=procedure Procedure pin")
-        if self.acquisition_policy is not None and (
-            self.acquisition_policy.role != ACQUISITION_POLICY_PIN_ROLE
-            or self.acquisition_policy.target.kind != "SourceAcquisitionPolicy"
-        ):
-            raise ValueError("LineSpec acquisition_policy pin has the wrong role or kind")
-        required = {self.procedure}
-        if self.acquisition_policy is not None:
-            required.add(self.acquisition_policy)
-        if not required.issubset(set(self.pins)):
-            raise ValueError("LineSpec envelope pins do not contain its exact dependencies")
+            raise ValueError("a Line pins one exact Procedure version with role procedure")
         if (self.trigger_input is None) != (self.trigger_event is None):
             raise ValueError("a trigger input and its accepted trigger_event come together")
-        event_pins = tuple(pin for pin in self.pins if pin.role == "trigger-capture-contract")
-        expected = (
-            ()
-            if self.trigger_event is None
-            else (
-                ArtifactPin(
-                    role="trigger-capture-contract",
-                    target=self.trigger_event.capture_contract_identity,
-                    artifact_digest=self.trigger_event.capture_contract_digest,
-                ),
-            )
-        )
-        if event_pins != expected:
-            raise ValueError("a Line pins exactly the CaptureContract its trigger_event names")
-        for pin in event_pins:
-            validate_exact_pin_expectation(
-                pin, TRIGGER_CAPTURE_CONTRACT, location="LineSpec trigger_event pin"
-            )
         return self
 
+    @property
+    def pins(self) -> tuple[ArtifactPin, ...]:
+        """The exact versions this Line runs: its Procedure and every bound build."""
 
-class NamedLineSpec(LineSpec):
-    artifact_format: Literal["cruxible-line-v7"] = "cruxible-line-v7"  # type: ignore[assignment]
-    procedure: ArtifactNameRef  # type: ignore[assignment]
-    bindings: dict[str, ArtifactNameRef] = Field(default_factory=dict, exclude_if=lambda v: not v)
-    acquisition_policy: ArtifactNameRef | None = None  # type: ignore[assignment]
-    trigger_event: NamedCaptureEventSelector | None = None
-    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
+        found = {self.procedure, *(binding.build for binding in self.bindings.values())}
+        return tuple(sorted(found, key=_pin_key))
 
-    @model_validator(mode="after")
-    def _shape(self) -> NamedLineSpec:
-        if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
-            raise ValueError("Line identity must be path-addressable and kind Line")
-        if any(ref.target.kind != "Provider" for ref in self.bindings.values()):
-            raise ValueError("Line bindings name Providers")
-        if self.procedure.target.kind != "Procedure":
-            raise ValueError("a Line names a Procedure")
-        if (
-            self.acquisition_policy is not None
-            and self.acquisition_policy.target.kind != "SourceAcquisitionPolicy"
-        ):
-            raise ValueError("a Line names an acquisition policy")
-        if (self.trigger_input is None) != (self.trigger_event is None):
-            raise ValueError("a trigger input and its accepted event come together")
-        return self
+
+#: The one Line model; the name survives for callers written against format 7.
+NamedLineSpec = LineSpec
+
+
+class EphemeralLineSpec(_StrictLineModel):
+    """What a direct run instantiates, recorded with the run by digest.
+
+    A direct ``procedure run`` has no accepted Line: its exact Procedure
+    version, parameters, every slot's binding (named or fitted when the request
+    is admitted) and its acquisition overrides form this spec. A direct run never
+    egresses (its lane runs no outward terminal), so it can act at most as
+    propose would allow and in practice observes.
+    """
+
+    tag: Literal["cruxible-ephemeral-line-spec-v1"] = "cruxible-ephemeral-line-spec-v1"
+    procedure: ArtifactPin
+    parameters: object
+    bindings: dict[str, LineBinding] = Field(default_factory=dict)
+    acquisition: dict[str, AcquisitionDefault] = Field(default_factory=dict)
+
+    _canonical_parameters = field_validator("parameters", mode="before")(normalize_canonical)
+    _bindings = field_validator("bindings")(_binding_keys)
+    _acquisition = field_validator("acquisition")(validate_acquisition_keys)
+
+
+def ephemeral_line_spec_digest(spec: EphemeralLineSpec) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "cruxible-ephemeral-line-spec-v1",
+        spec.model_dump(mode="json", exclude={"tag"}),
+    ).tagged
+
+
+def line_slot_signatures(
+    definition: ProcedureDefinition,
+    *,
+    child: Mapping[str, ProcedureDefinition] | None = None,
+    prefix: str = "",
+    depth: int = 0,
+) -> dict[str, OperationSignature]:
+    """Every slot a Line must bind: this Procedure's, then each invoked child's.
+
+    ``child`` maps an invoke node path (``a``, ``a.b``) to the definition it
+    invokes. A child's slots are keyed ``<invoke node path>.<slot>``.
+    """
+
+    from cruxible_client.contracts.procedures.nodes import InvokeNode
+
+    if depth > 16:
+        raise ValueError("invoked Procedures nest too deeply to bind")
+    found: dict[str, OperationSignature] = {
+        prefix + name: slot for name, slot in definition.slots.items()
+    }
+    for node in definition.nodes:
+        if isinstance(node, InvokeNode):
+            path = prefix + node.node_id
+            nested = (child or {}).get(path)
+            if nested is None:
+                raise ValueError(f"invoked Procedure at {path!r} is unavailable for binding")
+            found.update(
+                line_slot_signatures(nested, child=child, prefix=path + ".", depth=depth + 1)
+            )
+    return found
 
 
 def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
@@ -236,7 +272,7 @@ def line_requested_rung(line: LineSpec) -> Literal[1, 2, 3]:
     return AUTHORITY_RUNG[line.max_authority]
 
 
-_LINE_SPEC_ADAPTER: TypeAdapter[LineSpec | NamedLineSpec] = TypeAdapter(LineSpec | NamedLineSpec)
+_LINE_SPEC_ADAPTER: TypeAdapter[LineSpec] = TypeAdapter(LineSpec)
 
 
 def line_spec_path(name: str) -> str:
@@ -291,7 +327,7 @@ def line_identity_digest(identity: ArtifactIdentity) -> str:
 
 class AcceptedLineSpec(_StrictLineModel):
     path: str
-    line: Annotated[LineSpec | NamedLineSpec, Field(discriminator="artifact_format")]
+    line: LineSpec
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -338,36 +374,32 @@ def evaluate_line_spec_law(
     path: str,
     procedure: AcceptedProcedure,
     predecessor: AcceptedLineSpec | None,
-    default_acquisition_policy: SourceAcquisitionPolicyAny | None = None,
-    by_name: bool = False,
+    slots: Mapping[str, OperationSignature] | None = None,
     providers: Mapping[str, AcceptedProvider] | None = None,
-    provider_interfaces: Mapping[
-        str,
-        AcceptedProviderInterfaceRegistration,
-    ]
-    | None = None,
+    by_name: bool = True,
 ) -> LineSpecLawResult:
+    """The Line law.
+
+    ``procedure`` is the exact accepted version the Line pins. ``slots`` is
+    every slot the Line must bind (:func:`line_slot_signatures`), and
+    ``providers`` the accepted builds by qualified identity.
+    """
+
+    del by_name
     if path != line_spec_path(line.identity.name):
         return _refusal(
             "cruxible.line.path_mismatch", "Line identity/path disagreement.", path=path
         )
-    if line.procedure.target != procedure.procedure.identity or (
-        not by_name
-        and not isinstance(line, NamedLineSpec)
-        and line.procedure.artifact_digest != procedure.artifact_digest
+    if (
+        line.procedure.target != procedure.procedure.identity
+        or line.procedure.artifact_digest != procedure.artifact_digest
     ):
         return _refusal(
             "cruxible.line.procedure_pin_mismatch",
-            "LineSpec does not pin the supplied accepted Procedure.",
+            "The Line does not pin the supplied accepted Procedure version.",
             path=path,
         )
     definition = procedure.procedure.definition
-    if (definition.open_slots or definition.pin_slots) and definition.graph_format == 6:
-        return _refusal(
-            "cruxible.line.procedure_open_slots",
-            "A Line runs an exact Procedure; instantiate the Blueprint first.",
-            path=path,
-        )
     exhaust_taps = tuple(
         node.node_id for node in definition.nodes if isinstance(node, ExhaustTapNode)
     )
@@ -378,36 +410,38 @@ def evaluate_line_spec_law(
             f"({', '.join(exhaust_taps)}); a Line over it could never run.",
             path=path,
         )
-    trigger_problem = validate_trigger_input(
-        line, procedure, by_name=by_name or isinstance(line, NamedLineSpec)
-    )
+    trigger_problem = validate_trigger_input(line, procedure, by_name=True)
     if trigger_problem is not None:
         return _refusal("cruxible.line.trigger_input_mismatch", trigger_problem, path=path)
-    if by_name or isinstance(line, NamedLineSpec):
-        from cruxible_client.contracts.procedures.contracts import (
-            OwnedProcedureContractValidator,
-            ProcedureContractValidationError,
-        )
-
-        if isinstance(definition.contract_in, ArtifactPin | ArtifactNameRef):
-            try:
-                OwnedProcedureContractValidator(procedure).validate_contract(
-                    contract=definition.contract_in,
-                    payload=normalize_canonical(line.parameters),
-                    direction="input",
-                )
-            except ProcedureContractValidationError as exc:
-                return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
-    provider_result = _verify_provider_pins(
-        definition,
-        providers={} if providers is None else providers,
-        provider_interfaces={} if provider_interfaces is None else provider_interfaces,
-        by_name=by_name or isinstance(line, NamedLineSpec),
-        bindings=getattr(line, "bindings", {}),
+    from cruxible_client.contracts.procedures.contracts import (
+        OwnedProcedureContractValidator,
+        ProcedureContractValidationError,
     )
-    if provider_result is not None:
-        code, message = provider_result
-        return _refusal(code, message, path=path)
+
+    if isinstance(definition.contract_in, ArtifactPin | ArtifactNameRef):
+        try:
+            OwnedProcedureContractValidator(procedure).validate_contract(
+                contract=definition.contract_in,
+                payload=normalize_canonical(line.parameters),
+                direction="input",
+            )
+        except ProcedureContractValidationError as exc:
+            return _refusal("cruxible.line.parameters_invalid", str(exc), path=path)
+    binding_problem = line_binding_problem(
+        line.bindings,
+        slots=slots if slots is not None else dict(definition.slots),
+        providers=providers or {},
+    )
+    if binding_problem is not None:
+        return _refusal(binding_problem[0], binding_problem[1], path=path)
+    aliases = {node.as_ for node in definition.nodes if isinstance(node, SourceNode)}
+    unknown_aliases = sorted(set(line.acquisition) - aliases)
+    if unknown_aliases:
+        return _refusal(
+            "cruxible.line.acquisition_unknown_source",
+            f"Line acquisition names no Source alias of its Procedure: {unknown_aliases}.",
+            path=path,
+        )
     if line_requested_rung(line) > definition.terminal_capability:
         return _refusal(
             "cruxible.line.rung_exceeds_procedure_cap",
@@ -431,23 +465,6 @@ def evaluate_line_spec_law(
                 f"LineSpec budget {key!r} is missing, invalid, or exceeds the Procedure cap.",
                 path=path,
             )
-    needs_acquisition = any(isinstance(node, SourceNode) for node in definition.nodes)
-    if (
-        needs_acquisition
-        and line.acquisition_policy is None
-        and (
-            default_acquisition_policy is None
-            or default_acquisition_policy.lifecycle.state != "live"
-            or default_acquisition_policy.identity.name != "default"
-        )
-    ):
-        return _refusal(
-            "cruxible.line.acquisition_policy_missing",
-            "Source paths require SourceAcquisitionPolicy:default or an explicitly named "
-            "live policy; "
-            "accept the default or name one.",
-            path=path,
-        )
     if predecessor is None:
         if line.lifecycle.predecessor_digest is not None or line.occurrence_epoch != 1:
             return _refusal(
@@ -470,8 +487,6 @@ def evaluate_line_spec_law(
             )
 
         def event_key(value: CaptureEventSelector | None) -> object:
-            if not by_name and not isinstance(line, NamedLineSpec):
-                return value
             return (
                 None if value is None else (value.capture_contract_identity, value.logical_sources)
             )
@@ -495,38 +510,73 @@ def evaluate_line_spec_law(
     )
 
 
-def _verify_provider_pins(
-    definition: ProcedureDefinition,
-    *,
-    providers: Mapping[str, AcceptedProvider],
-    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
-    by_name: bool = False,
-    bindings: Mapping[str, ArtifactNameRef] | None = None,
-) -> tuple[str, str] | None:
-    from cruxible_client.contracts.procedures.artifacts import _evaluate_provider_pins
+def bound_operation_of(
+    binding: LineBinding, providers: Mapping[str, AcceptedProvider]
+) -> ProviderOperation | None:
+    """The exact operation a binding names, or ``None`` if its build is not accepted live."""
 
-    declared = {
-        slot.slot_name: slot for slot in getattr(definition, "_authored", definition).pin_slots
-    }
-    if set(bindings or {}) - set(declared):
+    accepted = providers.get(binding.build.target.qualified)
+    if (
+        accepted is None
+        or accepted.artifact_digest != binding.build.artifact_digest
+        or not isinstance(accepted.provider, ProviderV2)
+        or accepted.provider.lifecycle.state != "live"
+    ):
+        return None
+    return next(
+        (item for item in accepted.provider.operations if item.name == binding.operation), None
+    )
+
+
+def line_binding_problem(
+    bindings: Mapping[str, LineBinding],
+    *,
+    slots: Mapping[str, OperationSignature],
+    providers: Mapping[str, AcceptedProvider],
+) -> tuple[str, str] | None:
+    """Every slot is bound to a live build's operation serving its exact signature."""
+
+    missing = sorted(set(slots) - set(bindings))
+    if missing:
+        return (
+            "cruxible.line.slot_unbound",
+            f"Line leaves slots unbound: {missing}; bind each to a build#operation.",
+        )
+    extra = sorted(set(bindings) - set(slots))
+    if extra:
         return (
             "cruxible.procedure.slot_undeclared",
-            f"Unknown Provider slots: {sorted(set(bindings or {}) - set(declared))}; "
-            f"declared slots: {sorted(declared)}.",
+            f"Unknown slots: {extra}; declared slots: {sorted(slots)}.",
         )
-    # The occurrence law reads only graph, interface and provider metadata.
-    return _evaluate_provider_pins(
-        definition,
-        procedure=None,
-        providers=providers,
-        provider_interfaces=provider_interfaces,
-        by_name=by_name,
-        bindings=bindings,
-    )
+    for key, binding in bindings.items():
+        operation = bound_operation_of(binding, providers)
+        if operation is None:
+            return (
+                "cruxible.line.binding_unavailable",
+                f"Slot {key!r} binds {binding.spelling}, which is not a live accepted "
+                "build operation at that exact digest.",
+            )
+        try:
+            fits = operation.signature().same_as(slots[key])
+        except ValueError:
+            fits = False
+        if not fits:
+            return (
+                "cruxible.line.binding_signature_mismatch",
+                f"Slot {key!r} needs {slots[key].spelling()}; {binding.spelling} serves "
+                f"{operation.signature().spelling()}.",
+            )
+    return None
 
 
 __all__ = [
     "AUTHORITY_RUNG",
+    "EphemeralLineSpec",
+    "NamedLineSpec",
+    "bound_operation_of",
+    "ephemeral_line_spec_digest",
+    "line_binding_problem",
+    "line_slot_signatures",
     "AcceptedLineSpec",
     "LineAuthority",
     "LineSpec",

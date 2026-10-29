@@ -28,7 +28,6 @@ from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNode,
     InvokeNode,
-    ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.procedures.source_compiler import (
     CompiledSource,
@@ -41,7 +40,6 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceClaimType,
     SourceDiagnostic,
     SourceProcedureBinding,
-    SourceProviderBinding,
     SourceQueryBinding,
     SourceSlotBinding,
     SourceSpan,
@@ -49,24 +47,10 @@ from cruxible_client.contracts.procedures.source_program import (
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourceRequest,
     SourceProcedureSelection,
-    SourceProviderSelection,
     SourceQuerySelection,
     SourceSlotSelection,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    PROVIDER_INTERFACE_REGISTRATION_TYPES,
-    ProviderInterfaceContract,
-    ProviderInterfaceContractV3,
-    ProviderInterfaceRegistrationV1,
-    interface_definition_digest,
-    provider_effect_class,
-    provider_interface_digest,
-    provider_operation_contract,
-)
-from cruxible_client.contracts.providers import ProviderV2, provider_digest
 from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
-from cruxible_core.errors import RequestRefusedError
-from cruxible_core.providers.builds import BuildResolver, pinned_interface
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -97,11 +81,8 @@ def source_ontology_names(text: str) -> frozenset[str]:
 def resolve_indexed_source(
     request: ProcedureSourceRequest,
     rows: EvaluationRows,
-    *,
-    builds: BuildResolver | None = None,
 ) -> CompiledSource:
-    """``builds`` resolves a bare provider name (or interface id) a selection names
-    to the most recently registered live build; without it names are exact."""
+    """Resolve the source's named artifacts at the indexed rows."""
 
     identities, kinds = rows.claim_type_names(source_ontology_names(request.text))
     sources: dict[str, Any] = {}
@@ -116,29 +97,6 @@ def resolve_indexed_source(
         lookup=lookup,
         claim_types=(lookup(identity) for identity in identities),
         subject_kinds=kinds,
-        resolve_name=None if builds is None else builds.resolve,
-    )
-
-
-def accepted_build_resolver(instance: Any, coordinate: Any, rows: EvaluationRows) -> BuildResolver:
-    """A resolver over the accepted rows at one authoring coordinate."""
-
-    from cruxible_client.contracts.projection import AcceptedCoordinate
-    from cruxible_core.providers.builds import (
-        BuildResolver,
-        indexed_exact_provider,
-        indexed_interface_registrations,
-        indexed_provider_builds,
-    )
-
-    served = AcceptedCoordinate.from_internal(coordinate)
-    return BuildResolver(
-        provider_rows=lambda name: indexed_provider_builds(rows.connection, name),
-        interface_rows=lambda interface_id: indexed_interface_registrations(
-            rows.connection, interface_id
-        ),
-        exact_provider=lambda identity: indexed_exact_provider(rows.connection, identity),
-        coordinate=served,
     )
 
 
@@ -152,13 +110,12 @@ def resolve_source(
         "cruxible.procedure-source.v1", "cruxible.procedure-source.v2"
     ] = "cruxible.procedure-source.v2",
     retained_terminal_capability: Literal[1, 2, 3] | None = None,
-    resolve_name: Callable[[str, str], str] | None = None,
 ) -> CompiledSource:
     """Resolve and compile source; capability is derived unless reproducing a retained one.
 
-    ``resolve_name(kind, name)`` turns a bare provider name or interface id into
-    the exact identity it names (new authoring); a retained Procedure's names
-    are already exact, so verification passes none.
+    A slot selection is a signature ``{in, out, effect}``: its Contracts are
+    pinned to the accepted versions here, and the compiler types the slot by
+    their views. A Procedure names no provider; a Line binds each slot.
     """
 
     def fail(message: str) -> NoReturn:
@@ -178,11 +135,6 @@ def resolve_source(
 
     def accepted(kind: str, name: str, types: tuple[type, ...]) -> Any:
         identity = name if name.startswith(kind + ":") else kind + ":" + name
-        if resolve_name is not None and kind in {"Provider", "ProviderInterface"}:
-            try:
-                identity = resolve_name(kind, identity.partition(":")[2])
-            except RequestRefusedError as exc:
-                fail(str(exc))
         artifact = lookup(identity)
         if not isinstance(artifact, types):
             fail(f"{identity} is not uniquely accepted at the selected authoring base")
@@ -194,15 +146,16 @@ def resolve_source(
         artifact: T = accepted(kind, name, (type_,))
         return artifact
 
-    def require_interface(
-        name: str,
-    ) -> ProviderInterfaceRegistrationV1 | ProviderInterfaceContractV3 | ProviderInterfaceContract:
-        registration: (
-            ProviderInterfaceRegistrationV1
-            | ProviderInterfaceContractV3
-            | ProviderInterfaceContract
-        ) = accepted("ProviderInterface", name, PROVIDER_INTERFACE_REGISTRATION_TYPES)
-        return registration
+    def contract_of(spelling: str) -> Any:
+        from cruxible_client.contracts.shapes import (
+            Contract,
+            contract_identity,
+            parse_contract_ref,
+        )
+
+        ref = parse_contract_ref(spelling)
+        artifact = accepted("Contract", contract_identity(ref.name, ref.version).name, (Contract,))
+        return ref, artifact
 
     child_shapes: dict[str, tuple[bool, int]] = {}
 
@@ -214,8 +167,6 @@ def resolve_source(
             )
         if identity in child_shapes:
             return child_shapes[identity]
-        if child.definition.open_slots or child.definition.pin_slots:
-            fail(f"{identity} must have exact bindings and explicit operation contracts")
         graph = analyze_procedure(child.definition)
         leaves = [
             node
@@ -238,42 +189,27 @@ def resolve_source(
 
     bindings: dict[str, SourceBinding] = {}
     for name, selected in request.bindings.items():
-        if isinstance(selected, SourceProviderSelection):
-            provider = require("Provider", selected.provider, ProviderV2)
-            # A selected Provider binds one registration per interface id: the
-            # interface it names is that one, whichever contract it is.
-            interface_name = selected.interface.removeprefix("ProviderInterface:")
-            if "/" not in interface_name:
-                interface_name = pinned_interface(provider, interface_name) or interface_name
-            interface = require_interface(interface_name)
-            implementations = [
-                item
-                for item in provider.implementations
-                if item.interface_digest == interface_definition_digest(interface)
-            ]
-            if len(implementations) != 1:
-                fail(
-                    f"{selected.provider} does not expose exactly one matching "
-                    f"{selected.interface} implementation"
-                )
-            bindings[name] = SourceProviderBinding(
-                provider=provider.identity.name,
-                provider_version=provider_digest(provider).tagged,
-                interface=interface.identity.name,
-                interface_version=provider_interface_digest(interface).tagged,
-                interface_digest=interface_definition_digest(interface),
-                implementation_digest=implementations[0].implementation_digest,
-                effect_class=provider_effect_class(interface),
-                operation=provider_operation_contract(interface),
-            )
-        elif isinstance(selected, SourceSlotSelection):
-            interface = require_interface(selected.interface)
-            bindings[name] = SourceSlotBinding(
-                interface=interface.identity.name,
-                interface_version=provider_interface_digest(interface).tagged,
-                interface_digest=interface_definition_digest(interface),
-                effect_class=provider_effect_class(interface),
-                operation=provider_operation_contract(interface),
+        if isinstance(selected, SourceSlotSelection):
+            from cruxible_client.contracts.provider_operations import contract_schema_view
+            from cruxible_client.contracts.shapes import contract_digest
+
+            def resolve_ref(ref: Any) -> Any:
+                from cruxible_client.contracts.shapes import contract_identity
+
+                return lookup(contract_identity(ref.name, ref.version).qualified)
+
+            in_ref, in_contract = contract_of(selected.in_)
+            out_ref, out_contract = contract_of(selected.out)
+            bindings[name] = SourceSlotBinding.model_validate(
+                {
+                    "in": in_ref.model_copy(update={"digest": contract_digest(in_contract).tagged}),
+                    "out": out_ref.model_copy(
+                        update={"digest": contract_digest(out_contract).tagged}
+                    ),
+                    "effect": selected.effect,
+                    "input": contract_schema_view(in_contract, resolve_ref),
+                    "output": contract_schema_view(out_contract, resolve_ref),
+                }
             )
         elif isinstance(selected, SourceQuerySelection):
             query = require("QueryDefinition", selected.name, QueryDefinition)
@@ -286,7 +222,7 @@ def resolve_source(
             child = require("Procedure", selected.name, ProcedureArtifact)
 
             def contract(
-                pin: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef,
+                pin: ArtifactPin | ArtifactNameRef,
             ) -> ContractSchema:
                 if isinstance(pin, ArtifactPin | ArtifactNameRef):
                     for contract in child.owned_contracts:
@@ -298,8 +234,6 @@ def resolve_source(
                             return contract.contract_schema
                 fail(f"{selected.name} has no exact owned input/output Contract")
 
-            if child.definition.open_slots or child.definition.pin_slots:
-                fail(f"{selected.name} has unresolved slots")
             capture_terminal, required_rung = child_shape(
                 child, (request.name.removeprefix("Procedure:"),)
             )
@@ -422,19 +356,17 @@ def verify_source_bindings(
     program = definition.source
     selections: dict[str, SourceSelection] = {}
     for name, binding in program.bindings.items():
-        if isinstance(binding, SourceProviderBinding):
-            selections[name] = SourceProviderSelection(
-                provider=binding.provider, interface=binding.interface
+        if isinstance(binding, SourceSlotBinding):
+            selections[name] = SourceSlotSelection.model_validate(
+                {"in": binding.in_.spelling, "out": binding.out.spelling, "effect": binding.effect}
             )
-        elif isinstance(binding, SourceSlotBinding):
-            selections[name] = SourceSlotSelection(interface=binding.interface)
         elif isinstance(binding, SourceQueryBinding):
             selections[name] = SourceQuerySelection(name=binding.name)
         else:
             selections[name] = SourceProcedureSelection(name=binding.name)
     owned = {c.identity.qualified: c for c in procedure.owned_contracts}
 
-    def root(pin: ArtifactPin | ProcedurePinSlotRef) -> SourceContract:
+    def root(pin: ArtifactPin | ArtifactNameRef) -> SourceContract:
         if not isinstance(pin, ArtifactPin | ArtifactNameRef) or pin.target.qualified not in owned:
             raise ValueError("Source Procedure root requires an owned Contract")
         contract = owned[pin.target.qualified]

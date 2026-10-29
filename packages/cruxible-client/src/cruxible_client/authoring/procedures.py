@@ -14,12 +14,12 @@ shared graph validator check topology without pretending to resolve those refs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactNameRef,
@@ -57,7 +57,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureHardCaps,
     ProcedureNode,
-    ProcedurePinSlotRef,
     ProcedureTransformSpec,
     TransformKind,
     derived_terminal_capability,
@@ -71,23 +70,16 @@ from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureSubjectProposalItem,
     SubjectKeyClaimObject,
 )
+from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceProgram,
     SourceBinding,
     SourceMapEntry,
     SourceSpan,
 )
-from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContract,
-    validate_provider_value,
-)
 from cruxible_client.contracts.records import RecordConstructor
 from cruxible_client.contracts.subject_kinds import SubjectKeyReference
 from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
-
-if TYPE_CHECKING:
-    from cruxible_client.contracts import ProviderInterfaceEntry
 
 Contract: TypeAlias = CarriedContractInput
 
@@ -139,83 +131,6 @@ def Item(path: str = "") -> str:  # noqa: N802 - reads as a reference, like Outp
     return "$item" + (f".{path}" if path else "")
 
 
-class ProviderSelectionError(ValueError):
-    """A bare name cannot select a unique newest build for this contract."""
-
-    code = "cruxible.provider.newest_does_not_fit"
-
-    def __init__(
-        self, provider: str, *, newest_builds: tuple[str, ...], fitting_builds: tuple[str, ...]
-    ) -> None:
-        self.provider = provider
-        self.newest_builds = newest_builds
-        self.fitting_builds = fitting_builds
-        super().__init__(
-            f"Bare provider {provider!r} requires its unique newest build "
-            f"({', '.join(newest_builds) or 'no unique newest build'}); "
-            f"select an exact fitting build explicitly: {', '.join(fitting_builds) or 'none'}"
-        )
-
-
-class ProviderBinding(BaseModel):
-    """Names and exact interface/implementation identifiers from provider discovery.
-
-    These are authoring selections, not installation or execution permission.
-    The daemon verifies them against the accepted authoring base.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    provider: str
-    interface: str
-    effect_class: Literal["pure", "external_read", "external_mutation"] | None = None
-    operation_contract: ProviderOperationContract | None = None
-    coordinate: AcceptedCoordinate | None = None
-
-    @property
-    def input(self) -> RecordConstructor:
-        if self.operation_contract is None:
-            raise ValueError("This interface has no declared operation contract")
-        return RecordConstructor(self.operation_contract.input)
-
-    @classmethod
-    def from_interface(
-        cls, entry: ProviderInterfaceEntry, *, provider: str | None = None
-    ) -> ProviderBinding:
-        identity = (
-            None if provider is None else _accepted(provider, "Provider", "provider")["target"]
-        )
-        # A bare provider name selects any build of that name; an exact build
-        # (``name/<build key>``) selects itself.
-        matches = [
-            p
-            for p in entry.providers
-            if identity is None
-            or p.provider_identity == identity
-            or ("/" not in identity and p.provider_identity.partition("/")[0] == identity)
-        ]
-        names = {p.provider_identity.partition("/")[0] for p in matches}
-        if (identity is not None and "/" not in identity) or (len(matches) > 1 and len(names) == 1):
-            newest = [p for p in matches if p.newest]
-            if len(newest) != 1:
-                raise ProviderSelectionError(
-                    identity or next(iter(names)),
-                    newest_builds=tuple(
-                        sorted({head for p in matches for head in p.newest_builds})
-                    ),
-                    fitting_builds=tuple(sorted(p.provider_identity for p in matches)),
-                )
-            matches = newest
-        if len(matches) != 1:
-            raise ValueError("Select exactly one registered provider for this interface")
-        selected = matches[0]
-        return cls(
-            provider=selected.provider_identity,
-            interface=entry.identity,
-            effect_class=entry.effect_class,
-            operation_contract=entry.operation_contract,
-        )
-
-
 @dataclass(frozen=True)
 class Step:
     """Name is the output alias and binding key; edges target the node identity.
@@ -237,15 +152,19 @@ class StateTap(Step):
 
 @dataclass(frozen=True)
 class Source(Step):
+    """An acquisition through ``slot``; a Line binds the slot to an exact operation."""
+
     capture_contract: str = ""
     request: object = Previous()
-    provider: ProviderBinding | None = None
+    slot: str = ""
 
 
 @dataclass(frozen=True, kw_only=True)
 class Call(Step):
+    """A typed call through ``slot``; a Line binds the slot to an exact operation."""
+
     input: object = Previous()
-    provider: ProviderBinding | None = None
+    slot: str
     effect_policy: str | None = None
 
 
@@ -348,7 +267,7 @@ class CompositionDiagnostic(BaseModel):
 class ProcedureStateDependency(BaseModel):
     node_id: str
     kind: Literal["claim", "query"]
-    selection: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
+    selection: ArtifactPin | ArtifactNameRef
     cardinality: Literal["one", "all", "query"]
     limit: int | None = None
     admitted_context: bool = True
@@ -368,14 +287,14 @@ class ProcedureBranchValue(BaseModel):
     kind: Literal["guard", "select"]
     producers: tuple[str, ...] = ()
     predicate: GuardPredicate | None = None
-    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | None = None
+    contract: ArtifactPin | ArtifactNameRef | None = None
     successors: dict[str, str] = Field(default_factory=dict)
 
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
     kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
-    contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
+    contract: ArtifactPin | ArtifactNameRef
     # The authority the path's terminal needs; a pure or halting path needs none.
     required_authority: AuthorityVerb | None
 
@@ -393,14 +312,13 @@ class ProcedurePreview(BaseModel):
     name: str
     ready_for_prepare: bool
     contracts: tuple[CarriedContractInput, ...]
-    contract_in: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
-    contract_out: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | dict[str, Any]
+    contract_in: ArtifactPin | ArtifactNameRef | dict[str, Any]
+    contract_out: ArtifactPin | ArtifactNameRef | dict[str, Any]
     # The most this Procedure's terminals can do: observe, propose or settle.
     authority: AuthorityVerb
-    acquisition_policy: str | None
     nodes: tuple[ProcedureNode | dict[str, Any], ...]
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
-    providers: dict[str, ProviderBinding] = Field(default_factory=dict)
+    slots: dict[str, ProcedureSlot] = Field(default_factory=dict)
     terminals: tuple[str, ...] = ()
     returns: str | None
     budget: ProcedureBudget
@@ -414,7 +332,7 @@ class ProcedurePreview(BaseModel):
     return_paths: tuple[ProcedureReturnPath, ...] = ()
     children: tuple[ProcedureChildCall, ...] = ()
     pending_checks: tuple[str, ...] = (
-        "Resolve accepted references at the intent base and verify provider interfaces.",
+        "Resolve accepted references and pin slot Contracts at the intent base.",
         "Validate runtime values against contracts; preview does not execute any path.",
         "Check authority, installation availability and effective policy budgets at admission.",
     )
@@ -474,8 +392,9 @@ def _schema(contract: CarriedContractInput) -> ContractSchema:
 class Sequence:
     """Compose forward steps; guards may name explicit forward branch targets.
 
-    ``bind(fetch=selection)`` returns a new bound Sequence. ``preview()`` is local;
-    ``build()`` produces the shared ProcedureInput consumed by every surface.
+    Source and Call steps name a slot of ``slots``; a Line binds each slot to an
+    exact operation. ``preview()`` is local; ``build()`` produces the shared
+    ProcedureInput consumed by every surface.
     """
 
     steps: tuple[Step, ...] | list[Step]
@@ -486,25 +405,8 @@ class Sequence:
     hard_caps: ProcedureHardCaps
     returns: str | None = None
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    acquisition_policy: str | None = None
     description: str | None = None
-
-    def bind(self, **providers: ProviderBinding) -> Sequence:
-        by_name = {step.name: step for step in self.steps}
-        for name, provider in providers.items():
-            if not isinstance(by_name.get(name), (Source, Call)):
-                raise ValueError(f"{name!r} is not a provider-backed step")
-            if not isinstance(provider, ProviderBinding):
-                raise TypeError("bind requires a ProviderBinding from accepted interface discovery")
-        return replace(
-            self,
-            steps=tuple(
-                replace(step, provider=providers[step.name])
-                if step.name in providers and isinstance(step, (Source, Call))
-                else step
-                for step in self.steps
-            ),
-        )
+    slots: dict[str, ProcedureSlot] = dataclass_field(default_factory=dict)
 
     def _compile(self) -> tuple[ProcedureInput, ProcedurePreview]:
         contracts: dict[str, CarriedContractInput] = {}
@@ -540,7 +442,7 @@ class Sequence:
                 "node_id": step.name if step.node_id is None else step.node_id,
             }
             for field in fields(step):
-                if field.name in {"name", "node_id", "next", "provider"}:
+                if field.name in {"name", "node_id", "next"}:
                     continue
                 value = getattr(step, field.name)
                 if field.name in {"contract_in", "contract_out"}:
@@ -549,32 +451,22 @@ class Sequence:
                     node[field.name] = _accepted(value, "CaptureContract", "capture-contract")
                 elif field.name == "query":
                     node[field.name] = _accepted(value, "QueryDefinition", "query")
-                elif field.name == "effect_policy" and value is not None:
-                    node[field.name] = _accepted(value, "EffectPolicy", "effect-policy")
+                elif field.name == "effect_policy":
+                    if value is not None:
+                        node[field.name] = _accepted(value, "EffectPolicy", "effect-policy")
+                elif field.name == "slot":
+                    node["slot"] = value
                 else:
                     node[field.name] = _template(value, previous)
             if isinstance(step, StateTap) and step.parameters is None:
                 node["parameters"] = {}
             if isinstance(step, PostInbox) and step.max_items is None:
                 del node["max_items"]  # absent takes the core default cap
-            if isinstance(step, (Source, Call)):
-                binding = step.provider
-                if binding is None:
-                    error(
-                        step.name,
-                        "provider_unbound",
-                        "Bind an accepted provider interface before prepare.",
-                    )
-                    # Shape-check the rest of the graph, including all branches.
-                    binding = ProviderBinding(
-                        provider="unbound",
-                        interface="unbound",
-                    )
-                node.update(
-                    provider=_accepted(binding.provider, "Provider", "provider"),
-                    interface=_accepted(
-                        binding.interface, "ProviderInterface", "provider-interface"
-                    ),
+            if isinstance(step, (Source, Call)) and step.slot not in self.slots:
+                error(
+                    step.name,
+                    "slot_undeclared",
+                    f"Declare slot {step.slot!r} in slots with its {{in, out, effect}} signature.",
                 )
             if isinstance(
                 step, (Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet, Halt)
@@ -589,38 +481,6 @@ class Sequence:
                 node["as"] = step.name
                 if step.next is not None:
                     node["next"] = step.next
-            if (
-                isinstance(step, Call)
-                and step.provider is not None
-                and step.provider.operation_contract is not None
-            ):
-                operation = step.provider.operation_contract
-                if isinstance(operation.output, str):
-                    error(step.name, "binding_kind", "Use Source for an acquisition interface.")
-                if isinstance(step.input, (Previous, Output)) and not step.input.path:
-                    upstream = (
-                        _schema(self.contract_in)
-                        if previous is None and isinstance(step.input, Previous)
-                        else output_contracts.get(
-                            (previous or "")
-                            if isinstance(step.input, Previous)
-                            else step.input.step
-                        )
-                    )
-                    if upstream is not None and upstream != operation.input:
-                        error(
-                            step.name,
-                            "contract_mismatch",
-                            "Automatic whole-output wiring requires matching interface schemas; "
-                            "use an explicit field mapping or adapter.",
-                        )
-                elif not _has_reference(node["input"]):
-                    try:
-                        validate_provider_value(
-                            operation, node["input"], direction="input", normalize_call=True
-                        )
-                    except ValueError as exc:
-                        error(step.name, "contract_value_invalid", str(exc))
             for field_name in ("input", "fields", "spec"):
                 if field_name not in node:
                     continue
@@ -645,17 +505,8 @@ class Sequence:
             if "as" in node:
                 previous = step.name
                 carried = getattr(step, "contract_out", None)
-                output_operation = (
-                    step.provider.operation_contract
-                    if isinstance(step, Call) and step.provider
-                    else None
-                )
                 output_contracts[step.name] = (
-                    output_operation.output
-                    if output_operation and isinstance(output_operation.output, ContractSchema)
-                    else _schema(carried)
-                    if isinstance(carried, CarriedContractInput)
-                    else None
+                    _schema(carried) if isinstance(carried, CarriedContractInput) else None
                 )
         returns = self.returns or previous or "result"
         returned_contract = output_contracts.get(returns)
@@ -677,6 +528,11 @@ class Sequence:
             hard_caps=self.hard_caps.model_dump(mode="json"),
             terminal_capability=derived_terminal_capability(nodes),
         )
+        if self.slots:
+            definition["slots"] = {
+                name: slot.model_dump(mode="json", by_alias=True)
+                for name, slot in sorted(self.slots.items())
+            }
         edges: dict[str, dict[str, str]] = {}
         try:
             checked = NamedProcedureDefinition.model_validate(
@@ -689,7 +545,6 @@ class Sequence:
             kind="procedure",
             definition=definition,
             activation_policy=self.activation_policy,
-            acquisition_policy=self.acquisition_policy,
             contracts=tuple(contracts[name] for name in sorted(contracts)),
         )
         lower_authoring_input(input_)  # Same pure payload lowering used by SDK/CLI/HTTP.
@@ -710,17 +565,7 @@ class Sequence:
                     exc.code.removeprefix("cruxible.authoring."),
                     str(exc),
                 )
-        # Do not expose internal unbound stand-ins as if they were selections.
-        visible_nodes = tuple(
-            {
-                k: v
-                for k, v in node.items()
-                if k not in {"provider", "interface", "interface_digest", "implementation_digest"}
-            }
-            if isinstance(step, (Source, Call)) and step.provider is None
-            else node
-            for step, node in zip(self.steps, nodes, strict=True)
-        )
+        visible_nodes = tuple(nodes)
         preview = ProcedurePreview(
             name=self.name,
             ready_for_prepare=not errors,
@@ -728,12 +573,7 @@ class Sequence:
             contract_in=root_in,
             contract_out=root_out,
             authority=RUNG_AUTHORITY[derived_terminal_capability(nodes)],
-            acquisition_policy=self.acquisition_policy,
-            providers={
-                step.name: step.provider
-                for step in self.steps
-                if isinstance(step, (Source, Call)) and step.provider is not None
-            },
+            slots=dict(self.slots),
             nodes=visible_nodes,
             edges=edges,
             terminals=tuple(
@@ -777,7 +617,7 @@ def _authored_input(input_: ProcedureInput) -> ProcedureInput:
             for c in input_.contracts
         ),
         activation_policy=input_.activation_policy,
-        acquisition_policy=input_.acquisition_policy,
+        acquisition_defaults=input_.acquisition_defaults,
     )
     return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
 
@@ -813,8 +653,6 @@ __all__ = [
     "Project",
     "ProposeChangeSet",
     "SettleChangeSet",
-    "ProviderBinding",
-    "ProviderSelectionError",
     "Sequence",
     "ProcedureSpec",
     "lower_procedure_spec",
