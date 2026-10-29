@@ -252,3 +252,74 @@ def test_query_parameters_must_be_the_fields_of_their_contract() -> None:
     )
     with pytest.raises(ValueError, match="requires declared parameters"):
         query()
+
+
+def accept_contract_world(tmp_path: Path) -> PlaybillInstance:
+    """An instance holding security.epss-row@1 and @2 and security.epss-page@1."""
+
+    instance, owner = initialize_local(tmp_path)
+    _accept(instance, owner, _contract())
+    _accept(
+        instance,
+        owner,
+        _contract(2, cve_id="string", epss="decimal{0..1}", percentile="decimal{0..1}?"),
+    )
+    _accept(
+        instance,
+        owner,
+        _row_contract("security.epss-page", rows="list<security.epss-row@2>{max_items: 1000}"),
+    )
+    return instance
+
+
+def test_get_reads_a_contract_card_by_version_or_newest(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import GetContractCard, GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = accept_contract_world(tmp_path)
+    access = BodyAccessContext(principal_id="reader", can_read_body=False)
+
+    def card(ref: str) -> GetContractCard:
+        result = service_playbill_get(instance, request=GetRequest(ref=ref), access=access)
+        assert result.kind == "contract"
+        assert isinstance(result.card, GetContractCard)
+        return result.card
+
+    first = card("Contract:security.epss-row@1")
+    assert first.contract == "Contract:security.epss-row@1"
+    assert first.predecessor is None
+    assert [(item.name, item.type, item.optional) for item in first.fields] == [
+        ("cve_id", "string", False),
+        ("epss", "decimal{0..1}", False),
+        ("percentile", "decimal", True),
+    ]
+    newest = card("Contract:security.epss-row")
+    assert (newest.contract, newest.predecessor) == (
+        "Contract:security.epss-row@2",
+        "security.epss-row@1",
+    )
+    assert card("Contract:security.epss-page/v1").pins == ("security.epss-row@2",)
+    for detail in ("history", "proof"):
+        answered = service_playbill_get(
+            instance,
+            request=GetRequest(ref="Contract:security.epss-row@1", detail=detail),
+            access=access,
+        )
+        assert (answered.kind, answered.detail) == ("contract", detail)
+
+
+def test_orient_pages_the_contracts_section(tmp_path: Path) -> None:
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    instance = accept_contract_world(tmp_path)
+    first = service_playbill_orient(instance, section="contracts", limit=2)
+    assert first.contracts is not None
+    assert [row.contract for row in first.contracts] == [
+        "security.epss-page@1",
+        "security.epss-row@1",
+    ]
+    assert first.contracts[0].pins == ("security.epss-row@2",)
+    assert first.truncated and first.next_cursor is not None
+    rest = service_playbill_orient(instance, section="contracts", cursor=first.next_cursor)
+    assert [row.contract for row in rest.contracts or ()] == ["security.epss-row@2"]

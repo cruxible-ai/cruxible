@@ -68,6 +68,7 @@ OrientSection: TypeAlias = Literal[
     "pins",
     "activity",
     "sources",
+    "contracts",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -179,6 +180,19 @@ class OrientSubjectKind(_StrictOrientModel):
     keys: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
     kit: str | None = Field(default=None, exclude_if=_is_none)
+
+
+class OrientContract(_StrictOrientModel):
+    """One accepted Contract version: a data shape every edge is checked against.
+
+    ``contract`` is ``<name>@<version>``; ``get("Contract:<name>@<version>")``
+    reads its fields. ``pins`` names the Contract versions it nests.
+    """
+
+    contract: str
+    fields: int = Field(ge=1)
+    description: str | None = Field(default=None, exclude_if=_is_none)
+    pins: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
 
 
 #: A kind no accepted SubjectKind declares: its Subjects are grandfathered.
@@ -753,6 +767,8 @@ class OrientResult(_StrictOrientModel):
     procedures: tuple[OrientProcedure, ...] | None = Field(default=None, exclude_if=_is_none)
     claim_types: tuple[OrientPredicate, ...] | None = Field(default=None, exclude_if=_is_none)
     subject_kinds: tuple[OrientSubjectKind, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Accepted Contract versions by name then version (section "contracts").
+    contracts: tuple[OrientContract, ...] | None = Field(default=None, exclude_if=_is_none)
     queries: tuple[OrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
     interfaces: tuple[OrientInterface, ...] | None = Field(default=None, exclude_if=_is_none)
     # Procedure runs, newest admission first (section "runs"), or only the runs
@@ -846,6 +862,7 @@ __all__ = [
     "OrientQuery",
     "OrientResult",
     "OrientSection",
+    "OrientContract",
     "OrientSubjectKind",
     "OrientSurface",
     "OrientYou",

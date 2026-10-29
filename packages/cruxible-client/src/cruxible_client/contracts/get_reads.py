@@ -65,6 +65,7 @@ GetRefKind = Literal[
     "source_acquisition_policy",
     "provider_interface",
     "provider",
+    "contract",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -111,6 +112,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "source_acquisition_policy": ("summary", "history", "proof"),
     "provider_interface": ("summary", "history", "proof"),
     "provider": ("summary", "history", "proof"),
+    "contract": ("summary", "history", "proof"),
 }
 
 
@@ -487,6 +489,31 @@ class GetSubjectKindCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetContractField(_StrictGetModel):
+    """One Contract field: its type as authors spell it, and what it means."""
+
+    name: str
+    #: The field type in the Contract grammar, e.g. ``decimal{0..1}`` or ``name@N``.
+    type: str
+    optional: bool = Field(default=False, exclude_if=lambda value: value is False)
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class GetContractCard(_StrictGetModel):
+    """One Contract version: an immutable data shape, field by field."""
+
+    #: ``Contract:<name>@<version>``
+    contract: str
+    version: int
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    fields: tuple[GetContractField, ...]
+    #: The version this one succeeds (``<name>@<N-1>``); absent for version 1.
+    predecessor: str | None = Field(default=None, exclude_if=_omit_none)
+    #: The Contract versions this one pins (``<name>@<N>``), in field order.
+    pins: tuple[str, ...] = ()
+    next: tuple[str, ...] = ()
+
+
 class GetProposalChange(_StrictGetModel):
     path: str
     change: str
@@ -626,6 +653,7 @@ GetCard = (
     | GetSourceAcquisitionPolicyCard
     | GetProviderInterfaceCard
     | GetProviderCard
+    | GetContractCard
 )
 
 
@@ -965,6 +993,8 @@ __all__ = [
     "GET_BODY_RANGE_MAX_BYTES",
     "GET_REASON_MAX_CHARS",
     "GET_DETAILS_BY_KIND",
+    "GetContractCard",
+    "GetContractField",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
     "GET_PAGED_DETAILS",

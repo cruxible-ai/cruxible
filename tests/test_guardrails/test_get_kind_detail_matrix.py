@@ -100,7 +100,7 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
 
 
 # Read over its own world below: accepting an interface needs a patched fixture.
-_OWN_WORLD = frozenset({"provider_interface", "blueprint", "subject_kind"})
+_OWN_WORLD = frozenset({"provider_interface", "blueprint", "subject_kind", "contract"})
 
 
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
@@ -176,6 +176,27 @@ def test_every_subject_kind_detail_answers_or_refuses_coded(  # type: ignore[no-
         except (CoreError, ClientCoreError):
             continue
         assert (result.kind, result.detail) == ("subject_kind", detail)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_contract_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, historical
+) -> None:
+    from tests.test_authoring.test_contract_authoring import accept_contract_world
+
+    instance = accept_contract_world(tmp_path)
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["contract"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=GetRequest(ref="Contract:security.epss-row@1", detail=detail, at=at),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("contract", detail)
 
 
 @pytest.mark.parametrize(

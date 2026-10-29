@@ -28,7 +28,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cruxible_client import contracts
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
@@ -51,6 +51,7 @@ from cruxible_client.contracts.orient import (
     OrientArtifactCounts,
     OrientAttention,
     OrientClaimCounts,
+    OrientContract,
     OrientDocument,
     OrientEnablements,
     OrientInterface,
@@ -76,6 +77,7 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.shapes import Contract
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
@@ -797,6 +799,60 @@ def _continuation(
     return continuation, pinned
 
 
+def _contracts_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """Accepted Contract versions by name then version; only the page's artifacts are read."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = tuple(
+            projection.typed.connection.execute(
+                "SELECT identity,contract_name,contract_version FROM contracts "
+                "ORDER BY contract_name,contract_version"
+            )
+        )
+        keys = [f"{name}@{version}" for _identity, name, version in rows]
+        page, next_cursor = _page(
+            rows,
+            keys,
+            view="contracts",
+            served=served,
+            continuation=continuation,
+            limit=limit,
+        )
+        listed = []
+        for identity, name, version in page:
+            declared = cast(Contract, projection.typed.source(identity))
+            listed.append(
+                OrientContract(
+                    contract=f"{name}@{version}",
+                    fields=len(declared.fields),
+                    description=declared.description,
+                    pins=tuple(ref.spelling for ref in declared.refs()),
+                )
+            )
+    calls: list[_Call] = []
+    if listed:
+        calls.append(_Call("get", (("ref", f"Contract:{listed[0].contract}"),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "contracts"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="contracts",
+        contracts=tuple(listed),
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
 def _page(
     rows: Sequence[Any],
     keys: Sequence[str],
@@ -931,6 +987,16 @@ def service_playbill_orient(
             truncated=next_cursor is not None,
             next_cursor=next_cursor,
             next=tuple(render_orient_call(call, surface) for call in calls),
+        )
+    if section == "contracts":
+        return _contracts_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
         )
     # The Subject graph reads two projection indexes, never the vocabulary.
     if section == "graph":

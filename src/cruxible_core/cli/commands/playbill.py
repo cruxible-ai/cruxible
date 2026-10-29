@@ -9178,6 +9178,15 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             )
             if row.get("because"):
                 lines.append(f"  because: {printable(row['because'])}")
+    if section == "contracts":
+        for row in result["contracts"]:
+            pins = row.get("pins", ())
+            lines.append(
+                f"{row['contract']}  fields={row['fields']}"
+                + (f"  pins={','.join(pins)}" if pins else "")
+            )
+            if row.get("description"):
+                lines.append(f"  {row['description']}")
     if section == "subject_kinds":
         for row in result["subject_kinds"]:
             rule = (

@@ -32,7 +32,7 @@ from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
@@ -87,6 +87,8 @@ from cruxible_client.contracts.get_reads import (
     GetClaimCard,
     GetClaimTypeCard,
     GetContender,
+    GetContractCard,
+    GetContractField,
     GetCoordinate,
     GetDocumentCard,
     GetEvidence,
@@ -139,6 +141,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
+from cruxible_client.contracts.shapes import Contract, contract_ref_for_identity, render_type
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
@@ -229,6 +232,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "CaptureContract": "capture_contract",
     "Trigger": "trigger",
     "SubjectKind": "subject_kind",
+    "Contract": "contract",
     "Proposal": "proposal",
     "Line": "line",
     "Capture": "capture",
@@ -263,6 +267,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "source_acquisition_policy": "source-acquisition-policy",
     "provider_interface": "provider-interface",
     "provider": "provider",
+    "contract": "contract",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[GetRefKind, str] = {
@@ -284,6 +289,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
     "provider": "Provider",
+    "contract": "Contract",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
@@ -318,6 +324,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
     "provider": "Provider",
+    "contract": "Contract",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -327,6 +334,7 @@ _ORIENT_SECTION: Mapping[GetRefKind, str] = {
     "resolution_contract": "predictions",
     "mandate": "mandates",
     "capture_contract": "capture_contracts",
+    "contract": "contracts",
     "procedure_run": "runs",
     "principal": "principals",
     "approval_policy": "policies",
@@ -361,6 +369,8 @@ def _display(kind: GetRefKind, identity: str) -> str:
     name = _name(identity) if kind != "proposal" else identity
     if kind in {"claim", "subject"}:
         return name
+    if kind == "contract":
+        return "Contract:" + contract_ref_for_identity(parse_artifact_identity(identity)).spelling
     return f"{_DISPLAY_PREFIX[kind]}:{name}"
 
 
@@ -695,6 +705,8 @@ def _resolve_typed(
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
     if kind == "provider":
         return _resolve_provider(projection, name, ref=ref)
+    if kind == "contract":
+        return _resolve_contract(projection, name, ref=ref, surface=surface)
     if kind == "subject":
         name = name.removeprefix("Subject:")
         # A Subject reference resolves in the common order -- exact live id,
@@ -755,6 +767,36 @@ def _resolve_typed(
         for item in nearest(name, names)
     )
     raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
+
+
+def _resolve_contract(projection: Any, name: str, *, ref: str, surface: ReadSurface) -> ResolvedRef:
+    """``Contract:<name>@<N>`` (or ``/v<N>``) names one version; a bare name its newest."""
+
+    text = name.removeprefix("Contract:")
+    identity: str | None = None
+    base, at, version = text.partition("@")
+    if at and version.isdigit():
+        identity = f"Contract:{base}/v{version}"
+    elif "/v" in text:
+        identity = f"Contract:{text}"
+    else:
+        newest = projection.typed.connection.execute(
+            "SELECT identity FROM contracts WHERE contract_name=? "
+            "ORDER BY contract_version DESC LIMIT 1",
+            (text,),
+        ).fetchone()
+        identity = None if newest is None else str(newest[0])
+    row = None if identity is None else _envelope(projection, identity)
+    if row is not None:
+        return ResolvedRef("contract", row.identity, _display("contract", row.identity), row.path)
+    names = sorted(
+        {
+            str(item[0])
+            for item in projection.typed.connection.execute("SELECT contract_name FROM contracts")
+        }
+    )
+    candidates = tuple(f"Contract:{item}" for item in nearest(base or text, names))
+    raise _not_found("Contract", ref, candidates, surface=surface, section="contracts")
 
 
 def _resolve_provider(projection: Any, name: str, *, ref: str) -> ResolvedRef:
@@ -1899,6 +1941,36 @@ def _subject_kind_card(
     )
 
 
+def _contract_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetContractCard:
+    """One Contract version, field by field, as authors spell the types."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        declared = cast(Contract, projection.typed.source(resolved.identity))
+    return GetContractCard(
+        contract=resolved.display,
+        version=declared.version,
+        description=declared.description,
+        fields=tuple(
+            GetContractField(
+                name=name,
+                type=render_type(field.type),
+                optional=field.optional,
+                description=field.description,
+            )
+            for name, field in declared.fields.items()
+        ),
+        predecessor=None if declared.version == 1 else f"{declared.name}@{declared.version - 1}",
+        pins=tuple(ref.spelling for ref in declared.refs()),
+        next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
 def _capture_contract_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -3036,6 +3108,7 @@ def _proof(
         "procedure_runtime_policy",
         "source_acquisition_policy",
         "provider",
+        "contract",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
@@ -3207,6 +3280,8 @@ def service_playbill_get(
             )
         elif resolved.kind == "subject_kind":
             card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "contract":
+            card = _contract_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":
             card = line_card(
                 instance,
