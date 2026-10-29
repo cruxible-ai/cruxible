@@ -883,12 +883,14 @@ def resolve_query_parameters(
     bindings: list[QueryParameterBinding] = []
     for name in sorted(declared, key=lambda item: item.encode("utf-8")):
         declaration = declared[name]
-        if name in supplied:
-            value = supplied[name]
-        elif declaration.required:
+        value = supplied[name] if name in supplied else declaration.default
+        if value is None and declaration.required:
+            # An omitted key and an explicit null both leave a required
+            # parameter without a value: binding evaluation drops a None
+            # value the same way it drops an absent one, so a required
+            # parameter supplied as null must refuse here, not complete with
+            # the row field it feeds silently absent.
             raise _refuse(PARAMETER_MISSING, f"The query requires the parameter {name!r}.")
-        else:
-            value = declaration.default
         if value is not None:
             value = bind_reference_form(definition, name, declaration.value_type, value)
         if (

@@ -45,6 +45,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryMembershipFilter,
     QueryNegationFilter,
     QueryOrdering,
+    QueryParameterRef,
     QueryProjection,
     QueryProjectionField,
     QuerySubjectFieldRef,
@@ -1200,6 +1201,43 @@ def test_a_refusal_before_binding_never_borrows_the_empty_binding_digest() -> No
         ),
     }
     assert query_execution_receipt(unbound).parameter_digest == unbound.parameter_digest
+
+
+def test_an_explicit_null_for_a_required_parameter_refuses_like_an_omitted_one() -> None:
+    """F3c: a required parameter explicitly supplied as null must not resolve as absent.
+
+    ``"item_id" in supplied`` was true even when the value was null, so the
+    "required" branch never ran, no type check ran on the null value, and
+    evaluation later dropped the null binding. Projected into a required row
+    field (not the entry's own subject pin, which independently guards
+    itself), this let an accepted-and-executed query complete with the
+    field simply absent instead of refusing.
+    """
+
+    fact_rows = facts((status_claim(1, "wi-1", "ready"),))
+    query = single_status_query(
+        entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
+        result_cardinality="many",
+        evaluation_policy=QueryEvaluationPolicy(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        ),
+        default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+        projection=QueryProjection(
+            fields=(
+                QueryProjectionField(name="item_id", value=QueryParameterRef(parameter="item_id")),
+                QueryProjectionField(
+                    name="status",
+                    value=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                ),
+            )
+        ),
+    )
+    result = run(query, fact_rows, parameters={"item_id": None})
+    assert result.refusal is not None
+    assert result.refusal.code == PARAMETER_MISSING
 
 
 def test_an_attempted_parameter_outside_the_canonical_value_set_still_refuses() -> None:
