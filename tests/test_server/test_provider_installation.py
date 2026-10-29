@@ -895,7 +895,7 @@ def test_installing_a_package_for_a_built_in_interface_refuses_by_name(
 
 
 def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_index(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    provider_checkout, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A transferred wheel (plain or a kit's) falls back to PyPI when the operator
     configured no index, as an install by name does; configured indexes take

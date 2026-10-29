@@ -21,40 +21,6 @@ class CoreDraft:
         self.members.append(definition)
         return self
 
-    def acquisition_policy(self, policy):
-        from cruxible_client.contracts.acquisition_policies import (
-            IndependentCoherence,
-            InputAcquisitionRule,
-            SourceAcquisitionPolicyV1,
-        )
-
-        frozen = SourceAcquisitionPolicyV1(
-            identity=policy.identity,
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="result",
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    max_age=policy.max_age,
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="preserve",
-                ),
-            ),
-            coherence=IndependentCoherence(),
-        )
-        from cruxible_client.contracts.acquisition_policies import (
-            acquisition_policy_path,
-            render_acquisition_policy,
-        )
-
-        self.world.accept_members(
-            {acquisition_policy_path(frozen.identity.name): render_acquisition_policy(frozen)},
-            timestamp=AT,
-        )
-        return self
-
     def line(self, *, name, procedure, **kwargs):
         self.members.append(LineInput(kind="line", name=name, procedure_name=procedure, **kwargs))
         return self

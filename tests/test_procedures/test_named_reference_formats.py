@@ -102,47 +102,6 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
     assert instance.blob_at(before.git_oid, path) == original
 
 
-def test_named_provider_keeps_install_code_identity_and_resolves_registration_by_name():
-    from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
-        provider_interface_digest,
-        provider_interface_path,
-    )
-
-    from cruxible_client.contracts.named_references import name_provider
-    from cruxible_client.contracts.providers import (
-        evaluate_provider_law,
-        parse_provider,
-        provider_path,
-        render_provider,
-    )
-    from tests.core_support._p2b1_support import interface_registration, provider_v2
-    from tests.support.provider_builds import as_build
-
-    old = as_build(provider_v2())
-    named = name_provider(old)
-    registration = interface_registration()
-    accepted = AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.identity.name),
-        registration=registration,
-        artifact_digest=provider_interface_digest(registration).tagged,
-    )
-    assert named.implementations == old.implementations
-    assert "pins" not in named.model_dump()
-    assert "capture_contract_digests" not in named.model_dump()
-    assert "artifact_digest" not in json.dumps(named.model_dump(mode="json")["interfaces"])
-    assert parse_provider(render_provider(named), path=provider_path(named.identity.name)) == named
-    assert (
-        evaluate_provider_law(
-            named,
-            path=provider_path(named.identity.name),
-            predecessor=None,
-            interface_registrations={registration.identity.qualified: accepted},
-        ).verdict
-        == "accepted"
-    )
-
-
 def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path):
     from datetime import UTC, datetime, timedelta
 
@@ -285,76 +244,6 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
             parse_provider(render_provider(named), path=provider_path(named.identity.name)) == named
         )
         assert render_provider(original) == before
-
-
-def test_named_blueprint_instantiates_names_and_admission_refuses_ambiguous_slots():
-    from cruxible_client.contracts.procedures.blueprints import (
-        AcceptedBlueprint,
-        blueprint_digest,
-        blueprint_path,
-        instantiate_blueprint,
-    )
-
-    from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedure,
-        procedure_artifact_digest,
-        procedure_path,
-    )
-    from cruxible_client.contracts.procedures.names import name_procedure
-    from cruxible_core.procedures.reference_binding import bind_procedure_references
-    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
-    from tests.test_procedures.test_blueprints import _blueprint
-
-    old = _blueprint()
-    named = name_procedure(old)
-    accepted_blueprint = AcceptedBlueprint(
-        path=blueprint_path(named.identity.name),
-        blueprint=named,
-        artifact_digest=blueprint_digest(named).tagged,
-    )
-    assert type(accepted_blueprint.blueprint) is type(named)
-    interface = accepted_interface()
-    provider = accepted_provider()
-    registrations = {interface.registration.identity.qualified: interface}
-    instance = instantiate_blueprint(
-        named,
-        blueprint_artifact_digest=blueprint_digest(named).tagged,
-        name="named-instance",
-        providers={"lookup": provider},
-        interface_registrations=registrations,
-    )
-    wire = instance.model_dump(mode="json")
-    assert wire["definition"]["nodes"][0]["provider"] == {
-        "target": provider.provider.identity.model_dump()
-    }
-    assert "artifact_digest" not in json.dumps(wire["blueprint"])
-    assert "pins" not in wire
-    artifact = type(instance).model_validate(
-        {
-            **named.model_dump(exclude={"artifact_format", "identity"}),
-            "identity": {"kind": "Procedure", "name": named.identity.name},
-        }
-    )
-    slotted = AcceptedProcedure(
-        path=procedure_path(named.identity.name),
-        procedure=artifact,
-        artifact_digest=procedure_artifact_digest(artifact).tagged,
-    )
-
-    def lookup(identity):
-        return interface.registration, interface.artifact_digest
-
-    from cruxible_core.errors import RequestRefusedError
-
-    with pytest.raises(RequestRefusedError, match="one fitting build"):
-        bind_procedure_references(
-            slotted,
-            lookup=lookup,
-            slots=lambda identity: (
-                (provider.provider, provider.artifact_digest),
-                (provider.provider, provider.artifact_digest),
-            ),
-        )
 
 
 @pytest.mark.parametrize(

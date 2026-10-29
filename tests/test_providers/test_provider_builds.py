@@ -3,11 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_path,
-    render_provider_interface,
-)
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
@@ -22,19 +17,21 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
+from cruxible_client.contracts.shapes import contract_digest
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.providers.builds import BuildRow, resolve_provider_build
-from tests.core_support._p2b1_support import accepted_interface, provider_v2
-from tests.support.provider_builds import legacy_interface_contract
+from tests.core_support._p2b1_support import provider_v2
+from tests.support.operation_world import REFUSAL, VALUE
+from tests.support.provider_builds import as_build
+
+_OPERATION_CONTRACTS = {
+    (contract.name, contract.version): contract_digest(contract).tagged
+    for contract in (VALUE, REFUSAL)
+}
 
 
 def build() -> ProviderBuild:
-    original = provider_v2()
-    payload = original.model_dump(mode="json")
-    payload["artifact_format"] = "cruxible-provider-v4"
-    payload["runtime_artifact"]["schema_version"] = 2
-    payload["identity"]["name"] += "/" + provider_build_key(original.runtime_artifact).value
-    return ProviderBuild.model_validate(payload)
+    return as_build(provider_v2())
 
 
 def test_build_key_excludes_host_materialization_and_normalizes_distribution() -> None:
@@ -60,10 +57,9 @@ def test_build_key_excludes_host_materialization_and_normalizes_distribution() -
 
 def test_build_law_accepts_add_and_retire_but_refuses_mutation_and_domain_takeover() -> None:
     provider = build()
-    interface = accepted_interface()
     kw = {
         "path": provider_path(provider.identity.name),
-        "interface_registrations": {interface.registration.identity.qualified: interface},
+        "contracts": _OPERATION_CONTRACTS,
     }
     assert evaluate_provider_law(provider, predecessor=None, **kw).verdict == "accepted"
     previous = AcceptedProvider(
@@ -93,38 +89,6 @@ def test_build_law_accepts_add_and_retire_but_refuses_mutation_and_domain_takeov
     )
 
 
-def test_contract_registration_has_no_classifier_and_legacy_registration_still_reads() -> None:
-    old = accepted_interface().registration
-    registration = legacy_interface_contract(
-        interface_id=old.interface_id,
-        interface_bytes_hex=old.interface_bytes_hex,
-        interface_digest_domain=old.interface_digest_domain,
-        interface_digest=old.interface_digest,
-        effect_class=old.effect_class,
-    )
-    assert not any(
-        "classifier" in name or "vocabulary" in name for name in registration.model_dump()
-    )
-    assert (
-        parse_provider_interface(
-            render_provider_interface(registration),
-            path=provider_interface_path(registration.identity.name),
-        )
-        == registration
-    )
-    assert (
-        parse_provider_interface(
-            render_provider_interface(old), path=provider_interface_path(old.identity.name)
-        )
-        == old
-    )
-    original = provider_v2()
-    assert (
-        parse_provider(render_provider(original), path=provider_path(original.identity.name))
-        == original
-    )
-
-
 def test_newest_means_last_registered_even_for_a_lower_version_and_excludes_retired() -> None:
     coordinate = AcceptedCoordinate(
         git_oid="a" * 40,
@@ -151,75 +115,3 @@ def test_newest_means_last_registered_even_for_a_lower_version_and_excludes_reti
         resolve_provider_build(
             rows[2].identity, rows=rows, sequences=sequences, coordinate=coordinate
         )
-
-
-def test_legacy_bytes_project_unchanged_under_the_build_compiler() -> None:
-    from cruxible_core.compiler.compiler import (
-        PROVIDER_BUILDS_COMPILER,
-        SUBJECT_IDENTITY_COMPILER,
-        artifact_kinds_for_compiler,
-        projection_registry_for_compiler,
-    )
-    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-
-    legacy = provider_v2()
-    interface = accepted_interface()
-    tree = {
-        provider_path(legacy.identity.name): render_provider(legacy),
-        interface.path: render_provider_interface(interface.registration),
-    }
-    projections = [
-        parse_projection_tree(
-            tree,
-            registry=projection_registry_for_compiler(compiler),
-            artifact_kinds=artifact_kinds_for_compiler(compiler),
-        )
-        for compiler in (SUBJECT_IDENTITY_COMPILER, PROVIDER_BUILDS_COMPILER)
-    ]
-    assert projections[0].envelopes == projections[1].envelopes
-
-
-def test_new_single_path_provider_is_closed_at_the_build_compiler(tmp_path) -> None:
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-    from tests.core_support._support import initialize_local
-
-    instance, _owner = initialize_local(tmp_path)
-    head = instance.accepted_coordinate()
-    tree = instance.immutable_tree_at(head.git_oid).fork()
-    legacy = provider_v2()
-    interface = accepted_interface()
-    tree[provider_path(legacy.identity.name)] = render_provider(legacy)
-    tree[interface.path] = render_provider_interface(interface.registration)
-    result = instance.proposal_service().preview(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/single-path", proposed_base_oid=head.git_oid
-        ),
-        candidate_tree=tree,
-        timestamp="2026-10-15T00:00:00.000000Z",
-    )
-    assert "cruxible.provider.single_path_closed" in {
-        item.code for item in result.evaluation.diagnostics
-    }
-
-
-def test_discovery_lists_builds_under_the_registration_they_actually_pin() -> None:
-    from cruxible_core.service.discovery.discovery import _provider_interfaces
-
-    old = accepted_interface().registration
-    contract = legacy_interface_contract(
-        interface_id=old.interface_id,
-        interface_bytes_hex=old.interface_bytes_hex,
-        interface_digest_domain=old.interface_digest_domain,
-        interface_digest=old.interface_digest,
-        effect_class=old.effect_class,
-    )
-    entries = _provider_interfaces(
-        (provider_v2(),),
-        (old, contract),
-        newest={old.interface_id: contract.identity.qualified},
-        newest_builds=frozenset({provider_v2().identity.qualified}),
-    )
-    by_identity = {entry.entry.identity: entry.entry for entry in entries}
-    assert len(by_identity[old.identity.qualified].providers) == 1
-    assert by_identity[contract.identity.qualified].providers == ()

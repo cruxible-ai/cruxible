@@ -862,8 +862,6 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
 def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> tuple[Any, Any]:
     """Accept an external record contract and its provider; answer (contract, provider)."""
 
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
-
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.captures import (
         capture_contract_path,
@@ -878,12 +876,11 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.core_support._light_capture_support import record_contract
+    from tests.support.operation_world import contract_files
     from tests.support.provider_builds import capture_provider_build
-    from tests.support.provider_builds import capture_provider_interface as accepted_interface
 
     contract = record_contract() if contract is None else contract
     provider_artifact = capture_provider_build(contract)
-    interface = accepted_interface()
     # A field whose evidence is the record, bound to its Subject by the source.
     predicate = f"{KIND}.recorded_status"
     recorded = CLAIM_TYPES[2].model_copy(
@@ -921,9 +918,9 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
         ),
         candidate_tree={
             **instance.tree_at(base.git_oid),
+            **contract_files(),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
-            interface.path: render_provider_interface(interface.registration),
             claim_type_path(predicate): render_claim_type(recorded),
         },
         timestamp="2026-09-30T11:00:00.000000Z",

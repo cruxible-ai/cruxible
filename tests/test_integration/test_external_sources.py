@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
@@ -32,7 +31,6 @@ from cruxible_core.evidence.source_readers import (
     ProducerBindingV1,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from tests.core_support._p2b1_support import accepted_interface
 from tests.core_support._pc_c_support import (
     NOW,
     body_store,
@@ -43,7 +41,7 @@ from tests.core_support._pc_c_support import (
 )
 from tests.core_support._subject_kind_support import core_assigned
 from tests.support.capture_receipts import admit_legacy_v1_citations
-from tests.support.provider_builds import capture_provider_build, capture_provider_interface
+from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject
 
 
@@ -199,7 +197,6 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     contract = record_contract() if light else capture_contract()
     coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"
     provider_artifact = capture_provider_build(contract)
-    interface = capture_provider_interface() if light else accepted_interface()
     shell = _subject()
     subject_address = SemanticAddress.whole_artifact(
         subject_path(shell.subject_kind, shell.subject_id)
@@ -336,14 +333,16 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
             ),
         }
     )
+    from tests.support.operation_world import contract_files
+
     candidate_tree = core_assigned(
         instance,
         {
             **instance.tree_at(base.git_oid),
+            **contract_files(),
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
             "claim-types/project.work_item/status.json": render_claim_type(claim_type),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
-            interface.path: render_provider_interface(interface.registration),
             provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
             claim_path(claim.identity.name): render_claim(claim),
         },
