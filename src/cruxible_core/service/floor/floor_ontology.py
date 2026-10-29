@@ -1099,7 +1099,14 @@ class _Renderer:
                 if isinstance(mandate, ProcedureMandate)
                 else ("settle" if mandate.rung == 3 else "propose")
             )
-            mandates.setdefault(mandate.procedure.target.name, []).append(
+            # A Mandate pins one exact Line (ruling C3); an older grant names
+            # the Procedure it covers.
+            covered = (
+                ("line", mandate.line.target.name)
+                if isinstance(mandate, ProcedureMandate)
+                else ("procedure", mandate.procedure.target.name)
+            )
+            mandates.setdefault("/".join(covered), []).append(
                 f"{mandate.identity.name} {grants} "
                 f"valid {_time(mandate.valid_from)}..{_time(mandate.expires_at)}"
                 + (" suspended" if getattr(mandate, "suspended", False) else "")
@@ -1121,7 +1128,15 @@ class _Renderer:
                         line.max_authority,
                         " ".join(accepts) or "-",
                         ", ".join(_byte_sorted(triggers.get(name, ()))) or "-",
-                        "; ".join(_byte_sorted(mandates.get(procedure, ()))) or "-",
+                        "; ".join(
+                            _byte_sorted(
+                                (
+                                    *mandates.get(f"line/{name}", ()),
+                                    *mandates.get(f"procedure/{procedure}", ()),
+                                )
+                            )
+                        )
+                        or "-",
                     )
                 )
             )

@@ -47,6 +47,7 @@ from cruxible_core.claims.claim_type_migrations import (
     service_migrate_claim_type,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -151,7 +152,13 @@ def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
 
 
 def _mandate(
-    name: str, procedure: Any, fields: tuple[str, ...], *, previous: Any = None, **update: Any
+    name: str,
+    procedure: Any,
+    fields: tuple[str, ...],
+    *,
+    line: Any,
+    previous: Any = None,
+    **update: Any,
 ) -> Any:
     """A settle Mandate on ``procedure`` scoped to the seeded ClaimTypes ``fields``."""
 
@@ -168,7 +175,7 @@ def _mandate(
     condition = _worlds._condition()
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
-        procedure=_worlds._pin(procedure),
+        line=_worlds._line_pin(line),
         grants="settle",
         resource_ceiling=procedure.procedure.definition.hard_caps,
         namespace=("claims",),
@@ -269,12 +276,12 @@ def _ontology_history(instance: PlaybillInstance) -> None:
     procedure = _worlds._procedure("onto-tick", terminal=None, capability=3)
     line = _worlds._line("onto-tick-line", procedure, authority="observe")
     condition = _worlds._condition()
-    first = _mandate("onto-mandate", procedure, ("labels", "status"))
+    first = _mandate("onto-mandate", procedure, ("labels", "status"), line=line)
     accept_edit(
         instance,
         "onto-line",
         {
-            procedure.path: render_procedure(procedure.procedure),
+            procedure.path: render_procedure(authored_procedure(procedure)),
             line_spec_path(line.identity.name): render_line_spec(line),
             query_definition_path(condition.identity.name): render_query_definition(condition),
             procedure_mandate_path(first.identity.name): render_procedure_mandate(first),
@@ -288,7 +295,7 @@ def _ontology_history(instance: PlaybillInstance) -> None:
         },
     )
     install_receipt(instance, version="1.1.0", fields=("status",), revision=2)
-    narrowed = _mandate("onto-mandate", procedure, ("status",), previous=first)
+    narrowed = _mandate("onto-mandate", procedure, ("status",), line=line, previous=first)
     accept_edit(
         instance,
         "onto-mandate-narrowed",
@@ -304,7 +311,9 @@ def _ontology_history(instance: PlaybillInstance) -> None:
     accept_edit(
         instance, "onto-tag-retired", {claim_type_path(tag.predicate): render_claim_type(retired)}
     )
-    suspended = _mandate("onto-mandate", procedure, ("status",), previous=narrowed, suspended=True)
+    suspended = _mandate(
+        "onto-mandate", procedure, ("status",), line=line, previous=narrowed, suspended=True
+    )
     accept_edit(
         instance,
         "onto-mandate-suspended",
