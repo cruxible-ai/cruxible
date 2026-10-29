@@ -1933,9 +1933,8 @@ declares none) and a Procedure mandate needs no namespace entry for it. Only
 those key Claims, only at creation: a later revision of a key Claim is judged by
 its ClaimType's evidence rules like any Claim. The creation itself stays
 governed as before (a declared kind, core's id, unique keys). The acceptance law
-is `playbill.claim.v2` revision 9, adopted with compiler revision 33; an
-instance on an earlier compiler judges new Claims by revision 8, and every
-accepted generation is verified by the revision it recorded.
+is `playbill.claim.v2` (revision 10), and every accepted generation is verified
+by the exact law it recorded.
 Creating by key is one rule on every create-by-key route (a `subject` member,
 the write verbs' `kind/<text>` on a one-key kind, a Procedure Subject item, a
 settle): no live Subject holds the canonical key -- create it; exactly one does
@@ -2083,9 +2082,8 @@ Subject or on its own, keeps the digest, backing and pins it was accepted with:
 it names the version of that Subject's lineage it was accepted about, which
 accepted history verifies at that Subject's path. A Claim retired this way
 keeps naming the Subject version it was accepted about; the Claim acceptance law that admits that is `playbill.claim.v3`
-revision 11, adopted with compiler revision 33. An instance on an earlier
-compiler judges new Claims by revision 10, and every accepted generation is
-verified by the exact revision it recorded.
+(revision 11), and every accepted generation is verified by the exact law it
+recorded.
 
 Kits carry SubjectKinds (`subject-kinds/`) like the other definitions: `kit
 add`, `kit upgrade` and `kit status` plan them, and a SubjectKind brings its key

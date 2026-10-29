@@ -241,9 +241,7 @@ def test_builtin_migration_is_one_successor_and_old_capture_bytes_stay_pinned():
         artifact_digest=capture_contract_digest(old).tagged,
     )
     assert (
-        evaluate_capture_contract_law(
-            successor, path=accepted.path, predecessor=accepted, compatible_succession=True
-        ).verdict
+        evaluate_capture_contract_law(successor, path=accepted.path, predecessor=accepted).verdict
         == "accepted"
     )
     assert render_capture_contract(old) == render_capture_contract(

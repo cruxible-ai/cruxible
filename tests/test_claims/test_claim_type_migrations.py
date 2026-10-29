@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,11 +40,6 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.laws import (
-    ACCEPTANCE_LAWS,
-    CLAIM_LAW_V3_REVISION_7,
-    AcceptanceLawRegistry,
-)
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -70,10 +64,7 @@ from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
-    claim_type_expansions_from_candidate,
-    evaluate_proposal_tree,
 )
-from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -543,77 +534,6 @@ def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Pat
             ),
             actor=AuthenticatedActor(actor_id="owner"),
         )
-
-
-def test_revision_7_claim_candidate_settles_and_reopens_under_its_recorded_law(
-    tmp_path: Path,
-) -> None:
-    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    result = service_migrate_claim_type(
-        instance,
-        request=ClaimTypeMigrationRequest(
-            mode="submit",
-            successor=_successor(instance),
-            dependents=(
-                ClaimTypeDependentDisposition(
-                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
-                    disposition="retire",
-                    claim_retirement_reason="was-rescinded",
-                ),
-            ),
-        ),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
-    current_candidate = result.proposal.proposal.candidate
-    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
-    assert current_candidate is not None
-    assert tree_oid is not None
-    candidate_tree = instance.proposal_tree(tree_oid)
-    base = instance.accepted_coordinate()
-    installed = tuple(ACCEPTANCE_LAWS._by_coordinate.values())
-    revision_7_registry = AcceptanceLawRegistry(
-        tuple(
-            replace(law, current=True) if law.coordinate == CLAIM_LAW_V3_REVISION_7 else law
-            for law in installed
-            if law.artifact_tag != "playbill-claim-v3" or law.coordinate == CLAIM_LAW_V3_REVISION_7
-        )
-    )
-    reevaluated = evaluate_proposal_tree(
-        base_tree=instance.tree_at(base.git_oid),
-        current_tree=instance.tree_at(base.git_oid),
-        proposed_tree=candidate_tree,
-        current=base,
-        bodies=instance.body_store(),
-        timestamp=current_candidate.candidate.timestamp,
-        rebased=False,
-        actor_id="owner",
-        claim_type_expansions=claim_type_expansions_from_candidate(current_candidate),
-        acceptance_laws=revision_7_registry,
-    )
-    candidate = reevaluated.candidate
-    assert candidate is not None, reevaluated.diagnostics
-    claim_member = next(member for member in candidate.members if member.artifact_kind == "claim")
-    assert claim_member.law_digest == CLAIM_LAW_V3_REVISION_7.digest
-
-    bundle = instance.prepare_generation(
-        base=base,
-        candidate_tree=candidate_tree,
-        candidate=candidate,
-        approvals=(),
-        actor_binding=ChangeActorBinding(actor_id="owner"),
-        proposal_actor_id="owner",
-        sequence=instance.accepted_history()[-1].sequence + 1,
-    )
-    publisher = instance.activation_publisher()
-    projection = publisher.prebuild(bundle, base=base)
-    assert publisher.activate(bundle, projection, base=base).status == "accepted"
-    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
-    assert reopened.accepted_coordinate().git_oid == bundle.oid
-    assert (
-        reopened.accepted_history()[-1].record.law_digests[CLAIM_LAW_V3_REVISION_7.identifier]
-        == CLAIM_LAW_V3_REVISION_7.digest
-    )
 
 
 @pytest.mark.parametrize("request_version", ["v1", "v2"])

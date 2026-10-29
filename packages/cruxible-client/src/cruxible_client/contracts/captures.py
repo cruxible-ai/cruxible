@@ -1229,13 +1229,12 @@ def evaluate_capture_contract_law(
     *,
     path: str,
     predecessor: AcceptedCaptureContract | None,
-    compatible_succession: bool = False,
 ) -> CaptureContractLawResult:
-    """Evaluate the complete v1 contract without granting source or Claim authority.
+    """Evaluate the complete contract without granting source or Claim authority.
 
-    `compatible_succession` is the revision-4 law: a live successor must be
-    compatible with its predecessor and a retired contract cannot be revived.
-    Retirement is its own transition and is never judged for compatibility.
+    A live successor must be compatible with its predecessor and a retired
+    contract cannot be revived. Retirement is its own transition and is never
+    judged for compatibility.
     """
 
     try:
@@ -1296,7 +1295,7 @@ def evaluate_capture_contract_law(
                     ),
                 ),
             )
-        if compatible_succession and contract.lifecycle.state == "live":
+        if contract.lifecycle.state == "live":
             if predecessor.contract.lifecycle.state == "retired":
                 return CaptureContractLawResult(
                     verdict="refused",

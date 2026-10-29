@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import os
 import shutil
-import subprocess
-import sys
-import textwrap
 from pathlib import Path
 
 from cruxible_client.contracts import laws as laws_module
@@ -93,87 +88,6 @@ def _accept(instance: PlaybillInstance, result: ClaimTypeMigrationResultV3) -> N
             activated_by="owner",
         ).status
         == "accepted"
-    )
-
-
-def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
-    tmp_path: Path,
-) -> None:
-    instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
-    _accept(instance, _migration(instance, claim_id))
-    clone = tmp_path / "fresh-rev9-clone"
-    instance.settled_workspace_advertisement()
-    shutil.copytree(instance.root, clone)
-    checkpoint = PlaybillInstance._checkpoint_directory(clone)
-    if checkpoint.exists():
-        shutil.rmtree(checkpoint)
-    expected = instance.accepted_coordinate().git_oid
-    trust_root = json.dumps(instance.trust_root.model_dump(mode="json"))
-    script = textwrap.dedent(
-        """
-        from __future__ import annotations
-
-        from dataclasses import replace
-        import json
-        from pathlib import Path
-        import sys
-
-        from cruxible_client.contracts import laws
-        from cruxible_client.contracts.laws import InstalledAcceptanceLaw
-
-        # The next release bumps the current Claim v3 law; every installed
-        # revision, including today's current one, stays for replay.
-        next_revision = laws._artifact_law_coordinate(
-            laws.CLAIM_LAW_V3_IDENTIFIER,
-            "playbill-claim-v3",
-            semantic_revision=99,
-        )
-        installed = tuple(laws.ACCEPTANCE_LAWS._by_coordinate.values())
-        v3 = tuple(
-            replace(item, current=False)
-            for item in installed
-            if item.artifact_tag == "playbill-claim-v3"
-        )
-        non_v3 = tuple(item for item in installed if item.artifact_tag != "playbill-claim-v3")
-        laws.CLAIM_LAW_V3 = next_revision
-        laws.ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
-            (
-                *non_v3,
-                InstalledAcceptanceLaw(
-                    coordinate=next_revision,
-                    artifact_kind="claim",
-                    artifact_tag="playbill-claim-v3",
-                ),
-                *v3,
-            )
-        )
-
-        from cruxible_core.proposals import proposals
-        from cruxible_client.contracts.types import TrustRoot
-        from cruxible_core.runtime.instance import PlaybillInstance
-
-        assert proposals.CLAIM_LAW_V3_REVISION_8.digest == (
-            "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9"
-        )
-        assert proposals.CLAIM_LAW_V3_REVISION_8 != laws.CLAIM_LAW_V3
-        reopened = PlaybillInstance.open(
-            Path(sys.argv[1]),
-            trust_root=TrustRoot.model_validate(json.loads(sys.argv[2])),
-        )
-        assert reopened.accepted_coordinate().git_oid == sys.argv[3]
-        """
-    )
-    environment = os.environ.copy()
-    environment["PYTHONPATH"] = os.pathsep.join(
-        (str(ROOT / "src"), str(ROOT / "packages" / "cruxible-client" / "src"))
-    )
-    subprocess.run(
-        [sys.executable, "-c", script, str(clone), trust_root, expected],
-        cwd=ROOT,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
     )
 
 

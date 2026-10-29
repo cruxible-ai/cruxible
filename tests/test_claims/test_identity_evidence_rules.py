@@ -186,15 +186,13 @@ def test_a_successor_may_only_widen_what_it_accepts() -> None:
     assert capture_contract_successor_break(ORIGINAL, smaller) == "selection_budget.max_bytes"
 
 
-def test_the_revision_4_law_refuses_breaking_successors_and_revival_but_not_retirement() -> None:
+def test_the_law_refuses_breaking_successors_and_revival_but_not_retirement() -> None:
     accepted = AcceptedCaptureContract(
         path=CONTRACT_PATH, contract=ORIGINAL, artifact_digest=_digest(ORIGINAL)
     )
 
     def law(contract: CaptureContract, previous: AcceptedCaptureContract) -> str | None:
-        result = evaluate_capture_contract_law(
-            contract, path=CONTRACT_PATH, predecessor=previous, compatible_succession=True
-        )
+        result = evaluate_capture_contract_law(contract, path=CONTRACT_PATH, predecessor=previous)
         return None if result.verdict == "accepted" else result.diagnostics[0].code
 
     assert law(_successor(ORIGINAL), accepted) is None
@@ -216,15 +214,6 @@ def test_the_revision_4_law_refuses_breaking_successors_and_revival_but_not_reti
         path=CONTRACT_PATH, contract=retired, artifact_digest=_digest(retired)
     )
     assert law(revived, retired_version) == "cruxible.capture_contract.revival_refused"
-    # The historical revision-3 law keeps accepting what it always accepted.
-    assert (
-        evaluate_capture_contract_law(
-            _successor(ORIGINAL, epistemic_grade="predicted"),
-            path=CONTRACT_PATH,
-            predecessor=accepted,
-        ).verdict
-        == "accepted"
-    )
 
 
 def test_a_v6_claim_type_names_contracts_only_through_its_rules() -> None:

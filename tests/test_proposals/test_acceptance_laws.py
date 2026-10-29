@@ -1,4 +1,4 @@
-"""Family-neutral, historical acceptance-law registry tests."""
+"""Family-neutral acceptance-law registry tests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_LAW,
     CLAIM_LAW_V2,
     CLAIM_LAW_V3,
-    CLAIM_LAW_V3_REVISION_7,
     CLAIM_TYPE_LAW,
     CLAIM_TYPE_LAW_V3,
     CLAIM_TYPE_LAW_V4,
@@ -19,6 +18,7 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_LAW_V2,
     PROCEDURE_RUNTIME_POLICY_LAW,
     PROVIDER_LAW_V2,
+    _artifact_law_coordinate,
 )
 from cruxible_core.proposals.proposals import ROLE_DEMOTED_MEMBER_FAMILIES
 
@@ -90,7 +90,7 @@ def test_p2_b1_provider_and_line_successor_laws_are_current() -> None:
     )
 
 
-def test_claim_v2_and_v3_laws_remain_independently_replayable() -> None:
+def test_claim_v2_and_v3_laws_are_the_installed_revisions_only() -> None:
     assert (
         ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v2").coordinate == CLAIM_LAW_V2
     )
@@ -99,13 +99,12 @@ def test_claim_v2_and_v3_laws_remain_independently_replayable() -> None:
     )
     assert CLAIM_LAW_V2.identifier == "playbill.claim.v2"
     assert CLAIM_LAW_V3.identifier == "playbill.claim.v3"
-    assert (
-        ACCEPTANCE_LAWS.require_historical(
-            identifier=CLAIM_LAW_V3_REVISION_7.identifier,
-            digest=CLAIM_LAW_V3_REVISION_7.digest,
-        ).coordinate
-        == CLAIM_LAW_V3_REVISION_7
+    # A recorded earlier revision is not installed: replay refuses it.
+    earlier = _artifact_law_coordinate(
+        CLAIM_LAW_V3.identifier, "playbill-claim-v3", semantic_revision=7
     )
+    with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
+        ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)
 
 
 def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() -> None:

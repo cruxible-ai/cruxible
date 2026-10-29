@@ -225,7 +225,7 @@ def _grandfathered(instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, 
 
     kind, _, subject_id = path.removeprefix("subjects/").removesuffix(".json").partition("/")
     with monkeypatch.context() as patched:
-        patched.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+        patched.setattr(proposals_module, "candidate_identity_issues", lambda *_a, **_k: ())
         raw = _submit_raw(instance, {path: render_subject(shell(subject_id, kind))}, "pre-d1")
         assert raw.candidate is not None, raw.evaluation.diagnostics
         service_activate_playbill_proposal(
@@ -1433,20 +1433,14 @@ def _judged(
 
 
 @pytest.mark.parametrize("role", ["slug", "title"])
-def test_only_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
+def test_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
     instance: PlaybillInstance, role: str
 ) -> None:
-    """Differential: identical inputs; revisions 9 and 10 refuse, revision 11 admits.
-
-    ``slug`` is the key Claim core retires with the Subject; ``title`` an ordinary
-    Claim the change retires itself. Earlier revisions keep their meaning exactly.
+    """``slug`` is the key Claim core retires with the Subject; ``title`` an ordinary
+    Claim the change retires itself. Both admit under the installed revision.
     """
 
-    from cruxible_client.contracts.laws import (
-        CLAIM_LAW_V3_REVISION_9,
-        CLAIM_LAW_V3_REVISION_10,
-        CLAIM_LAW_V3_REVISION_11,
-    )
+    from cruxible_client.contracts.laws import CLAIM_LAW_V3_REVISION_11
 
     trees, claims = _retirement_candidate(instance, "epsilon")
     current = _judged(instance, trees, None)
@@ -1465,12 +1459,6 @@ def test_only_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
         return {**recorded, claims[role]: (revision.identifier, revision.digest)}
 
     assert _judged(instance, trees, at(CLAIM_LAW_V3_REVISION_11)).candidate is not None
-    for old in (CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10):
-        refused = _judged(instance, trees, at(old))
-        assert refused.candidate is None
-        assert {item.code for item in refused.diagnostics} == {
-            "cruxible.claim.subject_context_mismatch"
-        }
 
 
 # E-b delta-4 F-002: a carried key Claim composes with later lifecycle changes.

@@ -1706,7 +1706,7 @@ def _subject_kind_undeclared(root: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
     instance, _owner = initialize_local(root)
     # A Subject accepted before Subject identity existed (an older build).
-    monkeypatch.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+    monkeypatch.setattr(proposals_module, "candidate_identity_issues", lambda *_a, **_k: ())
     base = instance.accepted_coordinate()
     raw = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),

@@ -675,7 +675,7 @@ def test_next_names_the_subject_kind_a_kind_with_subjects_but_no_declaration_nee
 
     # History accepted before Subject identity existed (an older build): no rule
     # judged its Subjects.
-    monkeypatch.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+    monkeypatch.setattr(proposals_module, "candidate_identity_issues", lambda *_a, **_k: ())
     base = instance.accepted_coordinate()
     raw = instance.proposal_service().submit(
         actor=OWNER,

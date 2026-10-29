@@ -1,10 +1,8 @@
-"""The vocabulary reuse law is gone from current ClaimType laws, not from history.
+"""The ClaimType laws run no vocabulary reuse law.
 
-Maintainer ruling ``dev.decision/reuse-removal-laws-0929``: the current ClaimType
-law revisions accept adjacent vocabulary without any ``semantic.*`` Claim and
-record no reuse evidence. The previous revisions stay installed as historical
-laws so that generations and pending proposals judged under them still settle
-and replay byte for byte.
+Maintainer ruling ``dev.decision/reuse-removal-laws-0929``: the ClaimType law
+revisions accept adjacent vocabulary without any ``semantic.*`` Claim and record
+no reuse evidence. The earlier revisions that ran it are not installed.
 """
 
 from __future__ import annotations
@@ -30,25 +28,20 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
-    CLAIM_TYPE_LAW_V5_REVISION_4,
     CLAIM_TYPE_LAW_V5_REVISION_5,
     CLAIM_TYPE_V5_ACCEPTANCE_LAW,
-    CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
 )
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.proposals.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
     evaluate_proposal_tree,
 )
-from cruxible_core.proposals.settlement import ChangeActorBinding, parse_change_set_record
+from cruxible_core.proposals.settlement import parse_change_set_record
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._claim_type_support import defaulted_claim_type_input_example
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-09-29T12:00:00.000000Z"
 TAG = "playbill-claim-type-v5"
@@ -192,87 +185,6 @@ def test_simultaneous_adjacent_types_are_accepted_together(tmp_path: Path) -> No
     assert evaluation.candidate is not None
 
 
-def test_historical_reuse_law_generation_replays_byte_identically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    # Judge the first generation under the pre-removal law, as deployed history was.
-    monkeypatch.setitem(
-        ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
-    )
-    _accept_tree(instance, owner, _with(instance, *_BATCH), timestamp=TIMESTAMP, proposal_name="b")
-    monkeypatch.setitem(ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
-
-    historical = _claim_type_evidence(instance)
-    assert len(historical) == 2
-    for law_digest, result in historical.values():
-        assert law_digest == CLAIM_TYPE_LAW_V5_REVISION_4.digest
-        reuse = result["reuse"]
-        assert isinstance(reuse, dict)
-        assert reuse["tag"] == "playbill-vocabulary-reuse-law-evidence-v1"
-        assert reuse["verdict"] == "satisfied"
-
-    _replay_from_genesis(instance)
-    _accept_tree(
-        instance, owner, _with(instance, *_ADJACENT), timestamp=TIMESTAMP, proposal_name="adj"
-    )
-    for law_digest, result in _claim_type_evidence(instance).values():
-        assert law_digest == CLAIM_TYPE_LAW_V5_REVISION_5.digest
-        assert "reuse" not in result
-    # Both the historical and the current generation reproduce from genesis.
-    _replay_from_genesis(instance)
-
-
-def test_pending_proposal_judged_under_the_historical_law_still_settles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    _accept_tree(instance, owner, _with(instance, *_BATCH), timestamp=TIMESTAMP, proposal_name="b")
-    base = instance.accepted_coordinate()
-    tree = _with(instance, ("dev.track.owner", "dev.track", None))
-
-    monkeypatch.setitem(
-        ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
-    )
-    proposed = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/pending-historical",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree=tree,
-        timestamp=TIMESTAMP,
-    )
-    # The upgrade lands between submission and settlement.
-    monkeypatch.setitem(ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
-    assert proposed.candidate is not None
-    assert proposed.evaluation.evaluated_tree_oid is not None
-    bundle = instance.prepare_generation(
-        base=base,
-        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
-        candidate=proposed.candidate,
-        approvals=(
-            _sign(
-                client_material(instance.root.parent, instance),
-                proposed.candidate.candidate_digest,
-                base.semantic_root,
-            ),
-        ),
-        actor_binding=ChangeActorBinding(actor_id="owner"),
-        proposal_actor_id="owner",
-        sequence=len(instance.accepted_history()),
-    )
-    publisher = instance.activation_publisher()
-    projection = publisher.prebuild(bundle, base=base)
-    assert publisher.activate(bundle, projection, base=base).status == "accepted"
-
-    _replay_from_genesis(instance)
-
-    ((law_digest, result),) = _claim_type_evidence(instance).values()
-    assert law_digest == CLAIM_TYPE_LAW_V5_REVISION_4.digest
-    assert isinstance(result["reuse"], dict)
-
-
 def test_a_registry_without_the_current_law_refuses_its_generations(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     parent = instance.accepted_coordinate()
@@ -282,17 +194,11 @@ def test_a_registry_without_the_current_law_refuses_its_generations(tmp_path: Pa
     record_path = max(path for path in tree if path.startswith("changesets/"))
     record = parse_change_set_record(tree[record_path], path=record_path)
 
-    # A registry as a pre-removal daemon installs it: the old revision is current
-    # and the new digest is unknown.
+    # A registry that does not install the recorded law (another release's):
+    # the recorded digest is unknown, so its generations refuse.
     previous = AcceptanceLawRegistry(
         tuple(
-            CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW.__class__(
-                coordinate=law.coordinate,
-                artifact_kind=law.artifact_kind,
-                artifact_tag=law.artifact_tag,
-                current=law is CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
-                or (law.current and law.artifact_tag != TAG),
-            )
+            law
             for law in ACCEPTANCE_LAWS._by_coordinate.values()
             if law is not CLAIM_TYPE_V5_ACCEPTANCE_LAW
         )

@@ -2,10 +2,8 @@
 
 Moving aliases may choose production defaults, but equality and identity tests
 must select semantics by an exact retained coordinate/enum member or by
-membership in an explicit installed lineage. Examples of allowed forms are
-``installed.coordinate == CLAIM_LAW_V3_REVISION_8``,
-``codec is ArtifactCodec.CURRENT_PRETTY_JSON``, and
-``compiler in PC_HR_ARTIFACT_CODEC_COMPILERS``.
+membership in an explicit installed set. An example of an allowed form is
+``installed.coordinate == CLAIM_LAW_V3_REVISION_11``.
 """
 
 from __future__ import annotations

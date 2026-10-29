@@ -1,4 +1,9 @@
-"""Digest-pinned historical acceptance-law registry for Cruxible candidates."""
+"""Digest-pinned acceptance-law registry for Cruxible candidates.
+
+One installed law per artifact tag: the revision this release judges with.
+A generation that recorded any other law coordinate cannot be reproduced and
+refuses (``require_historical``), as does a forged coordinate.
+"""
 
 from __future__ import annotations
 
@@ -110,14 +115,6 @@ def _claim_type_law_coordinate(semantic_revision: int) -> AcceptanceLawCoordinat
     )
 
 
-# Every ClaimType law revision before the one named current below ran the
-# vocabulary reuse law: a new ClaimType whose canonical tokens or structural
-# signature matched an accepted one was refused unless a same-change-set
-# ``semantic.distinct_from`` Claim declared them distinct, and each member result
-# recorded the reuse evidence. Those revisions stay installed only so accepted
-# history and pending proposals replay and settle under them. The current
-# revisions drop the reuse law and record no reuse evidence.
-CLAIM_TYPE_LAW_REVISION_4 = _claim_type_law_coordinate(4)
 CLAIM_TYPE_LAW_REVISION_5 = _claim_type_law_coordinate(5)
 CLAIM_TYPE_LAW = CLAIM_TYPE_LAW_REVISION_5
 
@@ -137,7 +134,6 @@ def _capture_contract_law_coordinate(semantic_revision: int) -> AcceptanceLawCoo
     )
 
 
-CAPTURE_CONTRACT_LAW_REVISION_3 = _capture_contract_law_coordinate(3)
 # Revision 4: a live successor must be compatible with its predecessor (a
 # breaking change is a new contract identity), revival is refused, retirement is
 # its own transition, and a contract that live ClaimType evidence rules or
@@ -183,128 +179,40 @@ PROCEDURE_RUNTIME_POLICY_LAW = _artifact_law_coordinate(
     "playbill-procedure-runtime-policy-v1",
     semantic_revision=1,
 )
-CLAIM_LAW_V2_REVISION_6 = _artifact_law_coordinate(
-    CLAIM_LAW_V2_IDENTIFIER,
-    "playbill-claim-v2",
-    semantic_revision=6,
-)
-# Revision 7: capture-contract pins are provenance, as in Claim law v3 revision 9.
-CLAIM_LAW_V2_REVISION_7 = _artifact_law_coordinate(
-    CLAIM_LAW_V2_IDENTIFIER,
-    "playbill-claim-v2",
-    semantic_revision=7,
-)
-# Revision 8: a v7 ClaimType's revision-evidence rule and evidence requirement
-# apply. A revision that changes its statement under `replace` carries exactly
-# the evidence it cites; `captured` refuses a new, non-carry Claim with no
-# Capture under a declared contract; `none` records the origin as support. A
-# carry (byte-identical backing) keeps every check it had. For every ClaimType
-# before v7 it judges exactly as revision 7 did.
-CLAIM_LAW_V2_REVISION_8 = _artifact_law_coordinate(
-    CLAIM_LAW_V2_IDENTIFIER,
-    "playbill-claim-v2",
-    semantic_revision=8,
-)
-# Revision 9 (with compiler revision 33, subject identity): a key Claim core
-# writes as part of creating its Subject -- new in the change, about a Subject
-# the change creates, its predicate a key of that Subject's keyed kind -- is
-# covered by the creation itself: judged as evidence requirement ``none`` (its
-# origin supports it), so its key ClaimType needs no evidence rule admitting
-# what it cites. A later revision of it, and every other Claim, is judged
-# exactly as under revision 8; an instance on an earlier compiler keeps
-# revision 8.
-CLAIM_LAW_V2_REVISION_9 = _artifact_law_coordinate(
-    CLAIM_LAW_V2_IDENTIFIER,
-    "playbill-claim-v2",
-    semantic_revision=9,
-)
-# Revision 10 (with compiler revision 35, claim re-bind): a revision that keeps
-# its statement may drop a citation by replacing it -- the same revision cites
-# new text in the same role and origin under the same CaptureContract identity
-# -- and then, as under ``replace``, every capture-contract pin names the
-# version of a Capture it cites. Every other check is revision 9's; an instance
-# on an earlier compiler keeps revision 9, and accepted generations replay
-# under the revision they recorded.
+# Revision 10: a key Claim core writes with its Subject's creation is covered by
+# the creation, and a revision that keeps its statement may replace a citation
+# with one of the text it rests on now (same role, origin and CaptureContract).
 CLAIM_LAW_V2_REVISION_10 = _artifact_law_coordinate(
     CLAIM_LAW_V2_IDENTIFIER,
     "playbill-claim-v2",
     semantic_revision=10,
 )
 CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_10
-CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
-    CLAIM_LAW_V3_IDENTIFIER,
-    "playbill-claim-v3",
-    semantic_revision=7,
-)
-CLAIM_LAW_V3_REVISION_8 = _artifact_law_coordinate(
-    CLAIM_LAW_V3_IDENTIFIER,
-    "playbill-claim-v3",
-    semantic_revision=8,
-)
-# Revision 9: a Claim's capture-contract pins are provenance. They resolve to
-# any accepted historical version, several versions of one contract may back one
-# Claim, and a contract successor never strands the Claims that cite it.
-CLAIM_LAW_V3_REVISION_9 = _artifact_law_coordinate(
-    CLAIM_LAW_V3_IDENTIFIER,
-    "playbill-claim-v3",
-    semantic_revision=9,
-)
-# Revision 10: the ClaimType v7 semantics of Claim law v2 revision 8.
-CLAIM_LAW_V3_REVISION_10 = _artifact_law_coordinate(
-    CLAIM_LAW_V3_IDENTIFIER,
-    "playbill-claim-v3",
-    semantic_revision=10,
-)
-# Revision 11 (with compiler revision 33, subject identity): an attributed
-# retirement of a Claim may name the Subject version it was accepted about while
-# that Subject is retired or succeeded -- a keyed Subject's key Claims retire
-# with it, and a successor carries them unchanged. Every other check is
-# revision 10's; an instance on an earlier compiler keeps revision 10.
+# Revision 11: capture-contract pins are provenance, ClaimType v7 semantics
+# apply, and an attributed retirement may name the Subject version it was
+# accepted about while that Subject is retired or succeeded.
 CLAIM_LAW_V3_REVISION_11 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
     semantic_revision=11,
 )
-# Current is an operational alias only. Historical replay and shape-law
-# selection must name the exact revision directly.
 CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_11
-# Current revisions drop the vocabulary reuse law (see CLAIM_TYPE_LAW above).
-CLAIM_TYPE_LAW_V3_REVISION_4 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V3_IDENTIFIER,
-    "playbill-claim-type-v3",
-    semantic_revision=4,
-)
 CLAIM_TYPE_LAW_V3_REVISION_5 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
     "playbill-claim-type-v3",
     semantic_revision=5,
 )
 CLAIM_TYPE_LAW_V3 = CLAIM_TYPE_LAW_V3_REVISION_5
-CLAIM_TYPE_LAW_V4_REVISION_4 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V4_IDENTIFIER,
-    "playbill-claim-type-v4",
-    semantic_revision=4,
-)
 CLAIM_TYPE_LAW_V4_REVISION_5 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V4_IDENTIFIER,
     "playbill-claim-type-v4",
     semantic_revision=5,
 )
 CLAIM_TYPE_LAW_V4 = CLAIM_TYPE_LAW_V4_REVISION_5
-CLAIM_TYPE_LAW_V5_REVISION_4 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V5_IDENTIFIER,
-    "playbill-claim-type-v5",
-    semantic_revision=4,
-)
 CLAIM_TYPE_LAW_V5_REVISION_5 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V5_IDENTIFIER,
     "playbill-claim-type-v5",
     semantic_revision=5,
-)
-CLAIM_TYPE_LAW_V6_REVISION_1 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V6_IDENTIFIER,
-    "playbill-claim-type-v6",
-    semantic_revision=1,
 )
 CLAIM_TYPE_LAW_V6_REVISION_2 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V6_IDENTIFIER,
@@ -312,7 +220,7 @@ CLAIM_TYPE_LAW_V6_REVISION_2 = _artifact_law_coordinate(
     semantic_revision=2,
 )
 # ClaimType v7: descriptions, a default role, an evidence requirement and a
-# revision-evidence rule, under compiler revision 31.
+# revision-evidence rule.
 CLAIM_TYPE_LAW_V7_REVISION_1 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V7_IDENTIFIER,
     "playbill-claim-type-v7",
@@ -326,7 +234,7 @@ CLAIM_TYPE_LAW_V8_REVISION_1 = _artifact_law_coordinate(
     semantic_revision=1,
 )
 # ClaimType v9: v8 plus an inverse (how a Claim states that a unit holds
-# nothing), admitted with compiler revision 35. The v8 law applies, and an
+# nothing). The v8 law applies, and an
 # inverse must name a unit (never exact content), evidence rules the type
 # declares and, keyed by object_key, a key of every object SubjectKind.
 CLAIM_TYPE_LAW_V9_REVISION_1 = _artifact_law_coordinate(
@@ -354,13 +262,7 @@ PROCEDURE_LAW_V2 = _artifact_law_coordinate(
     "playbill-procedure-v2",
     semantic_revision=6,
 )
-# Revision 4 retains the relation-traversal refusal and removes dormant role authority.
-QUERY_DEFINITION_LAW_REVISION_4 = _artifact_law_coordinate(
-    QUERY_DEFINITION_LAW_IDENTIFIER,
-    "playbill-query-definition-v1",
-    semantic_revision=4,
-)
-# Revision 5 also refuses moving a query that live ClaimTypes corroborate
+# Revision 5 refuses moving a query that live ClaimTypes corroborate
 # through by exact digest unless those ClaimTypes move with it.
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
     QUERY_DEFINITION_LAW_IDENTIFIER,
@@ -376,16 +278,15 @@ EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
 
 @dataclass(frozen=True)
 class InstalledAcceptanceLaw:
-    """One retained evaluator coordinate available for candidate/replay use."""
+    """The one installed evaluator coordinate for an artifact tag."""
 
     coordinate: AcceptanceLawCoordinate
     artifact_kind: str
     artifact_tag: str
-    current: bool = True
 
 
 class AcceptanceLawRegistry:
-    """Closed historical registry; callers cannot substitute a law by label."""
+    """Closed registry; callers cannot substitute a law by label."""
 
     def __init__(self, laws: tuple[InstalledAcceptanceLaw, ...]) -> None:
         self._by_coordinate: dict[tuple[str, str], InstalledAcceptanceLaw] = {}
@@ -394,11 +295,10 @@ class AcceptanceLawRegistry:
             key = (law.coordinate.identifier, law.coordinate.digest)
             if key in self._by_coordinate:
                 raise ValueError("duplicate installed acceptance-law coordinate")
+            if law.artifact_tag in self._current_by_tag:
+                raise ValueError("multiple acceptance laws for one artifact tag")
             self._by_coordinate[key] = law
-            if law.current:
-                if law.artifact_tag in self._current_by_tag:
-                    raise ValueError("multiple current acceptance laws for one artifact tag")
-                self._current_by_tag[law.artifact_tag] = law
+            self._current_by_tag[law.artifact_tag] = law
 
     def resolve_member(self, *, artifact_tag: str) -> InstalledAcceptanceLaw:
         """Resolve from accepted/candidate artifact state, never caller selection."""
@@ -416,7 +316,7 @@ class AcceptanceLawRegistry:
         identifier: str,
         digest: str,
     ) -> InstalledAcceptanceLaw:
-        """Require an exact retained evaluator during settlement or recovery."""
+        """Require the exact recorded evaluator during settlement or recovery."""
 
         try:
             return self._by_coordinate[(identifier, digest)]
@@ -456,55 +356,25 @@ CLAIM_TYPE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v1",
 )
-CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_REVISION_4,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v1",
-    current=False,
-)
 CLAIM_TYPE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V3_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v3",
-)
-CLAIM_TYPE_V3_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V3_REVISION_4,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v3",
-    current=False,
 )
 CLAIM_TYPE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V4_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v4",
 )
-CLAIM_TYPE_V4_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V4_REVISION_4,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v4",
-    current=False,
-)
 CLAIM_TYPE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V5_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v5",
 )
-CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V5_REVISION_4,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v5",
-    current=False,
-)
 CLAIM_TYPE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V6_REVISION_2,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v6",
-)
-CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V6_REVISION_1,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v6",
-    current=False,
 )
 CLAIM_TYPE_V7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V7_REVISION_1,
@@ -542,69 +412,15 @@ LIGHT_CAPTURE_CONTRACT_LAW = InstalledAcceptanceLaw(
     artifact_kind="capture-contract",
     artifact_tag="cruxible-capture-contract-v2",
 )
-CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CAPTURE_CONTRACT_LAW_REVISION_3,
-    artifact_kind="capture-contract",
-    artifact_tag="playbill-capture-contract-v1",
-    current=False,
-)
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_10,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v2",
 )
-CLAIM_V2_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2_REVISION_9,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v2",
-    current=False,
-)
-CLAIM_V2_REVISION_8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2_REVISION_8,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v2",
-    current=False,
-)
-CLAIM_V2_REVISION_7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2_REVISION_7,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v2",
-    current=False,
-)
-CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2_REVISION_6,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v2",
-    current=False,
-)
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_11,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
-)
-CLAIM_V3_REVISION_10_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3_REVISION_10,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v3",
-    current=False,
-)
-CLAIM_V3_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3_REVISION_9,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v3",
-    current=False,
-)
-CLAIM_V3_REVISION_8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3_REVISION_8,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v3",
-    current=False,
-)
-CLAIM_V3_REVISION_7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3_REVISION_7,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v3",
-    current=False,
 )
 PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROVIDER_LAW,
@@ -645,12 +461,6 @@ QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=QUERY_DEFINITION_LAW,
     artifact_kind="query-definition",
     artifact_tag="playbill-query-definition-v1",
-)
-QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=QUERY_DEFINITION_LAW_REVISION_4,
-    artifact_kind="query-definition",
-    artifact_tag="playbill-query-definition-v1",
-    current=False,
 )
 QUERY_DEFINITION_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -712,62 +522,6 @@ TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="trigger",
     artifact_tag="playbill-trigger-v1",
 )
-# Revision 10 (to compiler revision 32) also refuses an instance that still
-# holds a Line which embeds its trigger: revision 32 admits none.
-GOVERNED_TRIGGERS_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=10
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-# Revision 11 (to compiler revision 33, subject identity). Existing Subjects of
-# kinds no SubjectKind declares are grandfathered; nothing held is refused.
-SUBJECT_IDENTITY_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=11
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-# Revision 12 (to compiler revision 34, provider builds). Existing single-path
-# Providers and registrations stay readable as builds; nothing held is refused.
-PROVIDER_BUILDS_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=12
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-# Revision 13 (to compiler revision 35, claim re-bind). Claim law v2 revision 10
-# judges new Claim revisions; nothing held is refused.
-CLAIM_REBIND_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=13
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=9
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-TRIGGER_CAPTURE_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=8
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
 
 RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -777,72 +531,6 @@ RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-resolution-contract-v1",
 )
 
-COMPILER_UPGRADE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=AcceptanceLawCoordinate(
-        identifier="playbill.compiler-upgrade.v1",
-        digest=typed_digest(
-            AcceptanceLawDigest,
-            "playbill-law-v1",
-            {
-                "identifier": "playbill.compiler-upgrade.v1",
-                "artifact_tag": "playbill-compiler-upgrade-v1",
-                "semantic_revision": 1,
-            },
-        ).tagged,
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-)
-
-
-SDK_SOURCE_PROCEDURE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=8
-    ),
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v2",
-    current=False,
-)
-SOURCE_CHECKED_PROCEDURE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        PROCEDURE_LAW_V2_IDENTIFIER, "playbill-procedure-v2", semantic_revision=9
-    ),
-    artifact_kind="procedure",
-    artifact_tag="playbill-procedure-v2",
-    current=False,
-)
-SOURCE_CHECKED_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=7
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-SDK_SOURCE_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=5
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-CLAIM_EVIDENCE_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=6
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-PROVIDER_CONTRACT_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=2
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
 
 PROVIDER_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -851,7 +539,7 @@ PROVIDER_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider",
     artifact_tag="playbill-provider-v3",
 )
-# One provider build per artifact (compiler revision 34): a build is added beside
+# One provider build per artifact: a build is added beside
 # the other builds of its name and never replaced; a contract registration is
 # added beside the other contracts of its interface id and never replaced.
 PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
@@ -861,41 +549,7 @@ PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider",
     artifact_tag="cruxible-provider-v4",
 )
-PROVIDER_PACKAGE_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=3
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
 
-RESOURCE_BUDGET_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=4
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
-
-LIGHT_ARTIFACTS_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=AcceptanceLawCoordinate(
-        identifier=COMPILER_UPGRADE_ACCEPTANCE_LAW.coordinate.identifier,
-        digest=typed_digest(
-            AcceptanceLawDigest,
-            "playbill-law-v1",
-            {
-                "identifier": COMPILER_UPGRADE_ACCEPTANCE_LAW.coordinate.identifier,
-                "artifact_tag": "playbill-compiler-upgrade-v1",
-                "semantic_revision": 14,
-            },
-        ).tagged,
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
-)
 
 NAMED_REFERENCE_FORMATS = {
     "capture-contract": "cruxible-capture-contract-v3",
@@ -933,50 +587,20 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         *NAMED_REFERENCE_LAWS,
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
-        LIGHT_ARTIFACTS_UPGRADE_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_BUILD_ACCEPTANCE_LAW,
-        CLAIM_REBIND_UPGRADE_LAW,
-        PROVIDER_BUILDS_UPGRADE_LAW,
-        PROVIDER_PACKAGE_UPGRADE_LAW,
-        RESOURCE_BUDGET_UPGRADE_LAW,
-        SDK_SOURCE_UPGRADE_LAW,
-        CLAIM_EVIDENCE_UPGRADE_LAW,
-        SDK_SOURCE_PROCEDURE_LAW,
-        SOURCE_CHECKED_PROCEDURE_LAW,
-        SOURCE_CHECKED_UPGRADE_LAW,
-        TRIGGER_CAPTURE_UPGRADE_LAW,
-        AUTHORITY_VERBS_UPGRADE_LAW,
-        GOVERNED_TRIGGERS_UPGRADE_LAW,
-        SUBJECT_IDENTITY_UPGRADE_LAW,
-        PROVIDER_CONTRACT_UPGRADE_LAW,
-        COMPILER_UPGRADE_ACCEPTANCE_LAW,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
         PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
-        CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
-        CLAIM_V2_REVISION_9_ACCEPTANCE_LAW,
-        CLAIM_V2_REVISION_8_ACCEPTANCE_LAW,
-        CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
-        CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
-        CLAIM_V3_REVISION_10_ACCEPTANCE_LAW,
-        CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
-        CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
-        CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
-        CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V3_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V3_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V4_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V4_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V6_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW,
         CLAIM_TYPE_V7_ACCEPTANCE_LAW,
         CLAIM_TYPE_V8_ACCEPTANCE_LAW,
         CLAIM_TYPE_V9_ACCEPTANCE_LAW,
@@ -991,7 +615,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         QUERY_DEFINITION_ACCEPTANCE_LAW,
-        QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
         QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,

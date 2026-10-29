@@ -775,11 +775,10 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
     text an interface carries. It is maintained incrementally at accept: a
     changed owner's rows are replaced (``replace_rows``), never the table.
 
-    Two readers (maintainer ruling identity-design-1009, D3): the live alias
+    One reader (maintainer ruling identity-design-1009, D3): the live alias
     resolver (``indexes.subject_aliases``) reads the ``alias`` rows at every
-    Subject-reference entry point, and replay or settlement under the
-    historical ClaimType law revisions reads the rest
-    (``proposals.historical_reuse``).
+    Subject-reference entry point. The other rows had no reader once the
+    historical ClaimType law revisions were removed.
     """
     from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
     from cruxible_client.contracts.claims import (

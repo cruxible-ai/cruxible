@@ -217,30 +217,15 @@ def _judged_verdicts(
     return found
 
 
-def test_only_revisions_9_and_10_cover_a_key_claim_by_its_subjects_creation(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+def test_the_claim_law_covers_a_key_claim_by_its_subjects_creation(
+    instance: PlaybillInstance,
 ) -> None:
-    """Differential over identical inputs: revision 8 keeps its meaning (uncovered).
-
-    Revision 10 (re-bind, compiler revision 35) is the current Claim law v2 and
-    keeps revision 9's creation coverage; an instance on compiler 33 or 34 judges
-    a new Claim by revision 9, and one on an earlier compiler by revision 8.
-    """
-
-    from cruxible_client.contracts.laws import (
-        CLAIM_LAW_V2_REVISION_8,
-        CLAIM_LAW_V2_REVISION_9,
-        CLAIM_LAW_V2_REVISION_10,
-    )
+    from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_10
 
     trees = _creation_candidate(instance)
 
     (current,) = _judged_verdicts(instance, trees, None).values()
     assert current == (CLAIM_LAW_V2_REVISION_10.digest, "supported")
-    (nine,) = _judged_verdicts(instance, trees, CLAIM_LAW_V2_REVISION_9).values()
-    assert nine == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
-    (eight,) = _judged_verdicts(instance, trees, CLAIM_LAW_V2_REVISION_8).values()
-    assert eight == (CLAIM_LAW_V2_REVISION_8.digest, "uncovered")
 
 
 def test_a_key_claim_about_an_existing_subject_is_not_covered(

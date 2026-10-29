@@ -1181,7 +1181,7 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
     instance, owner = initialize_local(tmp_path)
     # A Subject accepted before Subject identity existed (an older build).
     with monkeypatch.context() as patched:
-        patched.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+        patched.setattr(proposals_module, "candidate_identity_issues", lambda *_a, **_k: ())
         base = instance.accepted_coordinate()
         raw = instance.proposal_service().submit(
             actor=AuthenticatedActor(actor_id="owner"),

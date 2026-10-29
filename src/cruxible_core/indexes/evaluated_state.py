@@ -585,48 +585,6 @@ class EvaluationRows:
             is not None
         )
 
-    def vocabulary_matches(
-        self, *, terms: Iterable[str], identity: str, signature_term: str
-    ) -> tuple[str, ...]:
-        """Target paths whose indexed vocabulary could match: a superset, by term.
-
-        Read only by the historical reuse reproducer (``proposals.historical_reuse``).
-        """
-        table = self.table("vocabulary_terms")
-        keys = sorted(set(terms))
-        found = {
-            row[0]
-            for row in self.connection.execute(
-                f"SELECT target_path FROM {table} WHERE basis='identity' AND term=? "
-                f"UNION SELECT target_path FROM {table} "
-                "WHERE basis='structural_signature' AND term=?",
-                (identity, signature_term),
-            )
-        }
-        for start in range(0, len(keys), 500):
-            chunk = keys[start : start + 500]
-            found.update(
-                row[0]
-                for row in self.connection.execute(
-                    f"SELECT target_path FROM {table} WHERE term IN "
-                    f"({','.join('?' for _ in chunk)}) "
-                    "AND basis IN ('canonical_token','alias','tag','relation')",
-                    chunk,
-                )
-            )
-        return tuple(sorted(found, key=lambda item: item.encode("utf-8")))
-
-    def vocabulary_descriptors(self, target_path: str) -> dict[str, set[str]]:
-        """The raw alias, tag and relation values live descriptors state about a path."""
-        descriptors: dict[str, set[str]] = {"alias": set(), "tag": set(), "relation": set()}
-        for basis, value in self.connection.execute(
-            f"SELECT basis,value FROM {self.table('vocabulary_terms')} "
-            "WHERE target_path=? AND basis IN ('alias','tag','relation')",
-            (target_path,),
-        ):
-            descriptors[basis].add(value)
-        return descriptors
-
     def resolve_claim_digest(self, digest: str) -> tuple[str, ...]:
         identities = {
             row[0]

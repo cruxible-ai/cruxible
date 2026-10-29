@@ -110,7 +110,7 @@ from cruxible_client.contracts.claims import (
     evaluate_claim_law,
     parse_claim,
 )
-from cruxible_client.contracts.codes import CurrentCode, normalize_code
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.content_memo import seal, sealed_derive
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
@@ -140,16 +140,8 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
-    CAPTURE_CONTRACT_LAW_REVISION_4,
-    CLAIM_LAW_V2_REVISION_7,
-    CLAIM_LAW_V2_REVISION_8,
-    CLAIM_LAW_V2_REVISION_9,
     CLAIM_LAW_V2_REVISION_10,
-    CLAIM_LAW_V3_REVISION_8,
-    CLAIM_LAW_V3_REVISION_9,
-    CLAIM_LAW_V3_REVISION_10,
     CLAIM_LAW_V3_REVISION_11,
-    LIGHT_CAPTURE_CONTRACT_LAW,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
@@ -334,10 +326,6 @@ from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
     is_candidate_card_path,
-)
-from cruxible_core.proposals.historical_reuse import (
-    HISTORICAL_REUSE_CLAIM_TYPE_LAWS,
-    historical_claim_type_reuse_evidence,
 )
 from cruxible_core.proposals.prepared_evaluation import (
     PreparedEvaluationAdapter,
@@ -2086,25 +2074,6 @@ def _candidate_contract_digests(
 def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
     installed = _installed(context, procedure.artifact_format)
-    from cruxible_client.contracts.laws import (
-        SDK_SOURCE_PROCEDURE_LAW,
-        SOURCE_CHECKED_PROCEDURE_LAW,
-    )
-
-    source_law = (
-        SOURCE_CHECKED_PROCEDURE_LAW
-        if procedure.definition.source is not None
-        and procedure.definition.source.rules == "cruxible.procedure-source.v2"
-        else SDK_SOURCE_PROCEDURE_LAW
-    )
-    if (
-        procedure.definition.graph_format == 6
-        and context.historical_law_coordinate is not None
-        and installed != source_law
-    ):
-        raise ProposalIntegrityError("graph-v6 requires its exact source-compilation law")
-    if procedure.definition.graph_format == 6:
-        installed = source_law
 
     _verify_source(context, procedure)
     predecessor: AcceptedProcedure | None = None
@@ -3178,25 +3147,16 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             artifact_digest=capture_contract_digest(previous).tagged,
         )
     installed = _installed(context, contract.artifact_format)
-    revision_4 = (
-        contract.artifact_format == "cruxible-capture-contract-v3"
-        or installed.coordinate
-        in {
-            CAPTURE_CONTRACT_LAW_REVISION_4,
-            LIGHT_CAPTURE_CONTRACT_LAW.coordinate,
-        }
-    )
     law = evaluate_capture_contract_law(
         contract,
         path=context.path,
         predecessor=predecessor,
-        compatible_succession=revision_4,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
-    if revision_4 and predecessor is not None:
+    if predecessor is not None:
         stranded = _capture_contract_dependents(
             context,
             identity=contract.identity.qualified,
@@ -3348,40 +3308,12 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
-            installed.coordinate
-            in {
-                CLAIM_LAW_V3_REVISION_8,
-                CLAIM_LAW_V3_REVISION_9,
-                CLAIM_LAW_V3_REVISION_10,
-                CLAIM_LAW_V3_REVISION_11,
-            }
+            installed.coordinate == CLAIM_LAW_V3_REVISION_11
         ),
-        historical_capture_contract=(
-            historical_capture_contract_resolver(
-                context.historical_artifact_provider, context.accepted_coordinate()
-            )
-            if installed.coordinate
-            in {
-                CLAIM_LAW_V2_REVISION_7,
-                CLAIM_LAW_V2_REVISION_8,
-                CLAIM_LAW_V2_REVISION_9,
-                CLAIM_LAW_V2_REVISION_10,
-                CLAIM_LAW_V3_REVISION_9,
-                CLAIM_LAW_V3_REVISION_10,
-                CLAIM_LAW_V3_REVISION_11,
-            }
-            else None
+        historical_capture_contract=historical_capture_contract_resolver(
+            context.historical_artifact_provider, context.accepted_coordinate()
         ),
-        claim_type_v7_semantics=(
-            installed.coordinate
-            in {
-                CLAIM_LAW_V2_REVISION_8,
-                CLAIM_LAW_V2_REVISION_9,
-                CLAIM_LAW_V2_REVISION_10,
-                CLAIM_LAW_V3_REVISION_10,
-                CLAIM_LAW_V3_REVISION_11,
-            }
-        ),
+        claim_type_v7_semantics=True,
         # Revision 11 alone: a Claim retired with its Subject, or after a
         # successor carried it, names a version of that Subject's lineage.
         subject_lifecycle_retirement=installed.coordinate == CLAIM_LAW_V3_REVISION_11,
@@ -3395,10 +3327,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             if installed.coordinate == CLAIM_LAW_V3_REVISION_11
             else None
         ),
-        # Claim law v2 revisions 9 and 10: a key Claim written with its Subject's
-        # creation is covered by the creation (no evidence rule must admit it).
+        # Claim law v2: a key Claim written with its Subject's creation is
+        # covered by the creation (no evidence rule must admit it).
         subject_creation_key=(
-            installed.coordinate in {CLAIM_LAW_V2_REVISION_9, CLAIM_LAW_V2_REVISION_10}
+            installed.coordinate == CLAIM_LAW_V2_REVISION_10
             and is_subject_creation_key_claim(
                 context.current_tree,
                 context.candidate_tree,
@@ -3411,13 +3343,13 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # an earlier law is not an accepted citation. Only recovery of a
         # generation main already holds re-derives it without the proof.
         require_new_citation_proof=not context.replaying_accepted,
-        # Claim law v2 revision 10 alone: a same-statement revision may replace
-        # a citation with one of the text it rests on now.
+        # Claim law v2: a same-statement revision may replace a citation with
+        # one of the text it rests on now.
         claim_rebind=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
-        # Revision 10 alone: a `none` type's origin-only evidence needs no current
+        # Claim law v2: a `none` type's origin-only evidence needs no current
         # replay (adjudication rule v3).
         origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
-        erasure_records=_erasure_records(context, installed),
+        erasure_records=_erasure_records(context),
         erasure_contract=_erasure_authority(context),
     )
     if law.verdict == "refused":
@@ -3552,23 +3484,15 @@ def _erasure_authority(
 
 
 def _erasure_records(
-    context: _MemberContext, installed: InstalledAcceptanceLaw
+    context: _MemberContext,
 ) -> Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]] | None:
-    """The erasure lookup the Claim law consults, when it may consult one.
+    """The erasure lookup the Claim law consults, when the context can answer it.
 
-    Under compiler 35's Claim laws (v2 revision 10, v3 revision 11) a retirement
-    or revision of a Claim whose inherited evidence was erased verifies.
-    Replaying accepted history under any law also verifies storage through it:
-    what an earlier law recorded reproduces exactly, though the bytes it read
-    are gone. The verification context answers it, when it can.
+    A retirement or revision of a Claim whose inherited evidence was erased
+    verifies, and replay verifies storage through it: what was recorded
+    reproduces exactly, though the bytes it read are gone.
     """
 
-    compiler_35 = installed.coordinate in {
-        CLAIM_LAW_V2_REVISION_10,
-        CLAIM_LAW_V3_REVISION_11,
-    }
-    if not (compiler_35 or context.replaying_accepted):
-        return None
     resolver = context.producer_receipt_resolver
     if isinstance(resolver, CaptureErasureLookupProtocol):
         return resolver.body_erasures
@@ -3671,35 +3595,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                 )
             )
     installed = _installed(context, claim_type.artifact_format)
-    # Only the historical ClaimType law revisions ran the vocabulary reuse law;
-    # they are reachable solely by replaying or settling under their recorded
-    # coordinate, and they must reproduce their recorded evidence exactly.
-    reuse_law = (
-        installed.coordinate.identifier,
-        installed.coordinate.digest,
-    ) in HISTORICAL_REUSE_CLAIM_TYPE_LAWS
-    reuse: dict[str, object] | None = None
-    if reuse_law and predecessor is None:
-        reuse = historical_claim_type_reuse_evidence(
-            claim_type=claim_type,
-            path=context.path,
-            lookup_tree=context.candidate_tree,
-            candidate_scope=context.scope,
-            current=context.current,
-            candidate_states=context.candidate_states,
-        )
-        if reuse["verdict"] == "refused":
-            return _MemberVerdict(
-                diagnostics=(
-                    _diagnostic(
-                        # The reproducer keeps the recorded spelling; a new
-                        # diagnostic carries the current one.
-                        normalize_code(str(reuse["refusal_code"])),
-                        "ClaimType vocabulary reuse disposition was refused.",
-                        context.path,
-                    ),
-                )
-            )
     expansion = next(
         (
             item
@@ -3740,7 +3635,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                 None if expansion is None else expansion.model_dump(mode="json")
             ),
             "expanded_claim_type": claim_type.model_dump(mode="json"),
-            **({"reuse": reuse} if reuse_law else {}),
             "verdict": "accepted",
         },
         policy_digests=tuple(
