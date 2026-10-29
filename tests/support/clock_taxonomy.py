@@ -619,6 +619,8 @@ NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         ("QueryEvaluationPolicy", "requires_explicit_evaluation_time"),
         ("ProviderProcessLeaseV1", "process_start_time"),
         ("ProviderDescendantProcessV1", "process_start_time"),
+        # The Contract grammar's type tag naming a datetime field type; it holds no time.
+        ("DateTimeType", "kind"),
     }
 )
 

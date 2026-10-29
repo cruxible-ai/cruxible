@@ -253,7 +253,8 @@
         "graph",
         "pins",
         "activity",
-        "sources"
+        "sources",
+        "contracts"
       ]
     },
     "OrientSurface": {
@@ -4661,6 +4662,7 @@
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
+                "contract": "#/$defs/ContractInput",
                 "line": "#/$defs/LineInput",
                 "procedure": "#/$defs/ProcedureInput",
                 "procedure_mandate": "#/$defs/ProcedureMandateInput",
@@ -4709,6 +4711,9 @@
               },
               {
                 "$ref": "#/$defs/SubjectKindInput"
+              },
+              {
+                "$ref": "#/$defs/ContractInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -5203,6 +5208,7 @@
                       "claim_retirement": "#/$defs/ClaimRetirementInput",
                       "claim_type": "#/$defs/ClaimTypeInput",
                       "claim_type_succession": "#/$defs/ClaimTypeSuccessionInput",
+                      "contract": "#/$defs/ContractInput",
                       "line": "#/$defs/LineInput",
                       "procedure": "#/$defs/ProcedureInput",
                       "procedure_mandate": "#/$defs/ProcedureMandateInput",
@@ -5257,6 +5263,9 @@
                     },
                     {
                       "$ref": "#/$defs/SubjectKindInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ContractInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -7029,6 +7038,126 @@
             "title": "ClaimTypeSuccessionInput",
             "type": "object"
           },
+          "ContractFieldInput": {
+            "additionalProperties": false,
+            "description": "One Contract field with its meaning: a type spelling and an optional description.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "type": {
+                "description": "The field type, e.g. 'string', 'int{0..9}', 'decimal{0..1}', 'date', 'enum[open, fixed]', 'list<string>{max_items: 50}', 'key<security.vulnerability>', 'capture<security.kev>', or another Contract as 'name@N'. A trailing '?' makes the key optional (absent, never null).",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "ContractFieldInput",
+            "type": "object"
+          },
+          "ContractInput": {
+            "additionalProperties": false,
+            "description": "One Contract version: a named, immutable data shape every edge is checked against.\n\nEach field has a type from the closed grammar: there is no ``json`` type and\nno untyped map (keep opaque bytes as a Capture), and every list states\n``max_items``. Nested Contracts are written ``name@N`` and pinned to the\naccepted version. Version 1 starts a Contract; version N names version N-1\nas its predecessor. An accepted version never changes: author the next.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/ContractFieldInput"
+                    }
+                  ]
+                },
+                "description": "Field name to its type spelling, or to {type, description}.",
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "kind": {
+                "const": "contract",
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "description": "The Contract name, e.g. 'security.epss-row'.",
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "description": "The version this declares, starting at 1.",
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "version",
+              "fields"
+            ],
+            "title": "ContractInput",
+            "type": "object"
+          },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
           "ContractSchema": {
             "description": "Typed input or output schema carried inside one Procedure-v2 envelope.",
             "properties": {
@@ -8758,6 +8887,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -8798,6 +8938,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -8942,6 +9093,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -8982,6 +9144,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -11933,6 +12106,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -11981,6 +12165,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -12164,6 +12359,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -12212,6 +12418,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -13142,6 +13359,19 @@
                 "title": "Params",
                 "type": "object"
               },
+              "params_contract": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Contract (name@N) the params satisfy; each param is one of its fields.",
+                "title": "Params Contract"
+              },
               "paths_per_result": {
                 "default": 100,
                 "minimum": 1,
@@ -13151,6 +13381,19 @@
               "query": {
                 "title": "Query",
                 "type": "string"
+              },
+              "row": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Contract (name@N) every row satisfies; the fields are its fields.",
+                "title": "Row"
               },
               "visible": {
                 "default": "current",
@@ -14881,6 +15124,7 @@
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
+                "contract": "#/$defs/ContractInput",
                 "line": "#/$defs/LineInput",
                 "procedure": "#/$defs/ProcedureInput",
                 "procedure_mandate": "#/$defs/ProcedureMandateInput",
@@ -14929,6 +15173,9 @@
               },
               {
                 "$ref": "#/$defs/SubjectKindInput"
+              },
+              {
+                "$ref": "#/$defs/ContractInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -43335,6 +43582,29 @@
             "title": "Claim Types"
           }
         },
+        "contracts": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "contracts",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientContract"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contracts"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -43837,7 +44107,8 @@
                   "graph",
                   "pins",
                   "activity",
-                  "sources"
+                  "sources",
+                  "contracts"
                 ],
                 "type": "string"
               },
@@ -45267,6 +45538,47 @@
               }
             },
             "title": "OrientClaimCounts",
+            "type": "object"
+          },
+          "OrientContract": {
+            "additionalProperties": false,
+            "description": "One accepted Contract version: a data shape every edge is checked against.\n\n``contract`` is ``<name>@<version>``; ``get(\"Contract:<name>@<version>\")``\nreads its fields. ``pins`` names the Contract versions it nests.",
+            "properties": {
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "minimum": 1,
+                "title": "Fields",
+                "type": "integer"
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "contract",
+              "fields"
+            ],
+            "title": "OrientContract",
             "type": "object"
           },
           "OrientDocument": {
@@ -47174,6 +47486,21 @@
             "default": null,
             "title": "Claim Types"
           },
+          "contracts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientContract"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contracts"
+          },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
           },
@@ -47485,7 +47812,8 @@
                   "graph",
                   "pins",
                   "activity",
-                  "sources"
+                  "sources",
+                  "contracts"
                 ],
                 "type": "string"
               },
@@ -54424,6 +54752,40 @@
             "title": "ConstantNode",
             "type": "object"
           },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
           "ContractSchema": {
             "description": "Typed input or output schema carried inside one Procedure-v2 envelope.",
             "properties": {
@@ -55788,6 +56150,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -55828,6 +56201,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -58456,6 +58840,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -58504,6 +58899,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -94897,6 +95303,40 @@
             "title": "ConstantNode",
             "type": "object"
           },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
           "ContractSchema": {
             "description": "Typed input or output schema carried inside one Procedure-v2 envelope.",
             "properties": {
@@ -97302,6 +97742,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -97350,6 +97801,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -100530,6 +100992,40 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
           "NamedQueryDefinitionSpec": {
             "additionalProperties": false,
             "description": "The pin-less typed authoring form with the same stated defaults.",
@@ -100608,6 +101104,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -100648,6 +101155,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -101187,6 +101705,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -101235,6 +101764,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
@@ -104888,6 +105428,40 @@
             "title": "ConstantNode",
             "type": "object"
           },
+          "ContractRef": {
+            "additionalProperties": false,
+            "description": "A pin to one Contract version. Authors write ``name@N``; acceptance adds the digest.",
+            "properties": {
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Digest"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "maximum": 999999999,
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "title": "ContractRef",
+            "type": "object"
+          },
           "ContractSchema": {
             "description": "Typed input or output schema carried inside one Procedure-v2 envelope.",
             "properties": {
@@ -107497,6 +108071,17 @@
                 "title": "Orderings",
                 "type": "array"
               },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "parameters": {
                 "default": [],
                 "items": {
@@ -107545,6 +108130,17 @@
                 ],
                 "title": "Result Shape",
                 "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "traversal": {
                 "default": [],
