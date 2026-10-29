@@ -8,8 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.providers import (
+    ProviderDistributionRef,
+    ProviderImplementationManifest,
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,
+    ProviderRuntimeManifest,
     provider_path,
     render_provider,
 )
@@ -19,50 +22,57 @@ from cruxible_core.indexes.provider_heads import refresh_provider_heads
 from cruxible_core.indexes.typed_sqlite import insert_members, parse_static_owners, replace_rows
 from cruxible_core.indexes.typed_state import insert_owners, schema_sql
 from cruxible_core.providers.builds import indexed_newest_provider
-from cruxible_core.providers.package_metadata import read_wheel_registration
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.service.procedures.provider_installation import _definition_changes
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
-from tests.test_providers.test_package_metadata_inert import (
-    CASES,
-    MODULE,
-    NAME,
-    VERSION,
-    build_inert_wheel,
-)
+from tests.support.operation_world import _digests as _operation_digests
+from tests.support.operation_world import contract_files
+from tests.support.operation_world import operation as _operation
 
-pytestmark = pytest.mark.skip(
-    reason=(
-        "needs the provider package fixture rebuilt on PackageRegistrationDocumentV1 "
-        "schema 2 (the operations model): this file's `package` fixture and the "
-        "standalone unrelated-population test build a hand-rolled registration.json "
-        "with schema_version=1 via test_package_metadata_inert.build_inert_wheel(), "
-        "which read_package_registration() now hard-refuses ('schema 1 exports "
-        "ProviderInterfaces, which core no longer reads'). Beyond the fixture "
-        "plumbing (document.interface_registrations()/interfaces= -> "
-        "document.pinned_operations()/operations=, following "
-        "tests/support/operation_world.py's operation_build()), "
-        "test_accepted_head_preserves_registration_order_and_reconstructs and the "
-        "'interface'/'discovery' routes of test_read_work_is_flat_with_metadata_history "
-        "exercise accepting/reading a separately-registered ProviderInterface artifact "
-        "directly -- a mechanism with no surviving equivalent (operations live inline "
-        "on a provider build now, with no parallel acceptance step to measure). Needs "
-        "a dedicated pass: rebuild the fixture, and either retarget or drop the "
-        "interface-registration-specific assertions/parametrize cases."
+#: The fixture provider's single build-independent entrypoint.
+NAME = "scale-demo-provider"
+_ENTRYPOINT = "demo.runtime:Provider"
+
+
+def _registration_document() -> PackageRegistrationDocumentV1:
+    """A schema-2 package registering one pure ``compute`` operation.
+
+    Replaces the historical schema-1 wheel-registration fixture this file
+    used (``test_package_metadata_inert.build_inert_wheel()``, schema 1, a
+    ProviderInterface-era shape ``read_package_registration()`` now hard-
+    refuses). Operations live inline on a provider build now (B2 noun
+    removal), with no separate registration artifact to accept beside it.
+    """
+
+    served = (_operation(entrypoint=_ENTRYPOINT),)
+    manifest = ProviderRuntimeManifest(
+        provider_id=NAME,
+        distribution=ProviderDistributionRef(name=NAME, version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifest(
+                interface_id="compute",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint=_ENTRYPOINT,
+                backends=("local_env",),
+                declared_input_buckets=(),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
     )
-)
+    return PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
 
 
 def test_install_work_is_flat_with_unrelated_build_population(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    document = read_wheel_registration(
-        build_inert_wheel(tmp_path, CASES["a claim naming a fixture the package does not ship"])
-    )
+    document = _registration_document()
     provider = document.provider_definition(
         distribution=ProviderLocalDistributionPin(
             name=NAME,
-            version=VERSION,
-            filename=f"{MODULE}-{VERSION}-py3-none-any.whl",
+            version="1.0.0",
+            filename=f"{NAME}-1.0.0-py3-none-any.whl",
             sha256="sha256:" + "a" * 64,
         ),
         local_env=ProviderLocalEnvBackendPin(
@@ -70,12 +80,17 @@ def test_install_work_is_flat_with_unrelated_build_population(
             materialization_digests={"linux-cp313": "sha256:" + "c" * 64},
         ),
         control_domain="operator",
-        interfaces=document.interface_registrations(),
+        operations=document.pinned_operations(_operation_digests),
     )
     work = []
     for size in (20, 200):
         # Invalid bytes deliberately fail if installation parses another name's build.
-        tree = SnapshotTree({f"providers/other/{i:064x}.json": b"unrelated" for i in range(size)})
+        tree = SnapshotTree(
+            {
+                **contract_files(),
+                **{f"providers/other/{i:064x}.json": b"unrelated" for i in range(size)},
+            }
+        )
         instance = _instance(tmp_path / str(size), tree)
         count = 0
         original = SnapshotTree.__getitem__
@@ -91,7 +106,9 @@ def test_install_work_is_flat_with_unrelated_build_population(
                 instance, document, provider, "a" * 40
             )
         assert installed.identity == provider.identity
-        assert len(paths) == 2
+        # The build's own path only: no separate ProviderInterface registration
+        # path exists anymore (B2 noun removal; operations live inline).
+        assert len(paths) == 1
         work.append(count)
     print("work at 20/200 builds:", work)
     assert work[0] == work[1], work
@@ -118,16 +135,14 @@ def _instance(tmp_path, tree):
 
 @pytest.fixture
 def package(tmp_path):
-    document = read_wheel_registration(
-        build_inert_wheel(tmp_path, CASES["a claim naming a fixture the package does not ship"])
-    )
+    document = _registration_document()
 
     def build(number):
         return document.provider_definition(
             distribution=ProviderLocalDistributionPin(
                 name=NAME,
-                version=VERSION,
-                filename=f"{MODULE}-{VERSION}-py3-none-any.whl",
+                version="1.0.0",
+                filename=f"{NAME}-1.0.0-py3-none-any.whl",
                 sha256=f"sha256:{number:064x}",
             ),
             local_env=ProviderLocalEnvBackendPin(
@@ -135,7 +150,7 @@ def package(tmp_path):
                 materialization_digests={"linux-cp313": "sha256:" + "c" * 64},
             ),
             control_domain="operator",
-            interfaces=document.interface_registrations(),
+            operations=document.pinned_operations(_operation_digests),
         )
 
     return document, build
@@ -144,7 +159,12 @@ def package(tmp_path):
 def _population(tmp_path, package, size):
     document, build = package
     providers = tuple(build(i + 1) for i in range(size))
-    tree = SnapshotTree({provider_path(p.identity.name): render_provider(p) for p in providers})
+    tree = SnapshotTree(
+        {
+            **contract_files(),
+            **{provider_path(p.identity.name): render_provider(p) for p in providers},
+        }
+    )
     instance = _instance(tmp_path / str(size), tree)
     connection = instance.connection
     codec = artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER)
@@ -198,7 +218,7 @@ def test_install_work_is_flat_with_same_name_build_population(tmp_path, monkeypa
             _candidate, paths, installed = _definition_changes(
                 instance, document, build(1000), "a" * 40
             )
-            assert len(paths) == 2
+            assert len(paths) == 1
             assert installed.identity == build(1000).identity
             assert (
                 indexed_newest_provider(instance.connection, NAME).identity
@@ -222,29 +242,32 @@ def test_move_work_is_flat_with_same_name_build_population(tmp_path, monkeypatch
         instance, providers = _population(tmp_path, package, size)
         old, newest = providers[0], providers[-1]
         if pinners:
-            # Selection needs only the source directory row. Full Procedure
-            # rewriting and admission run in the server multibuild tests.
+            # Selection needs only the source directory row: indexed_move_pinners
+            # joins provider_pinners against `lines` (a Line binds a build, B2 --
+            # a Procedure no longer does). Full Line rewriting and admission run
+            # in the server multibuild tests.
             instance.connection.execute(
-                "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO lines VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    "Procedure:one",
-                    "procedures/one.json",
+                    "Line:one",
+                    "lines/one.json",
                     "fixture",
                     "sha256:" + "1" * 64,
                     None,
                     1,
                     "live",
+                    "sha256:" + "4" * 64,
+                    1,
+                    "Procedure:one",
                     "sha256:" + "2" * 64,
-                    "fixture",
-                    "drain",
-                    "direct",
+                    1,
                 ),
             )
             from cruxible_client.contracts.providers import provider_digest
 
             instance.connection.execute(
                 "INSERT INTO provider_pinners VALUES (?,?,?,?)",
-                ("Procedure:one", old.identity.qualified, provider_digest(old).tagged, NAME),
+                ("Line:one", old.identity.qualified, provider_digest(old).tagged, NAME),
             )
         seen = []
 
@@ -331,10 +354,14 @@ def test_head_updates_are_flat_and_retirement_falls_back(tmp_path, monkeypatch, 
 
 
 def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, package):
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_interface_path,
-        render_provider_interface,
-    )
+    """A later build's metadata-only re-accept never re-registers an older head.
+
+    The historical "interfaces=True" first-accept step (a separately
+    registered ProviderInterface artifact beside the build) has no surviving
+    equivalent -- operations live inline on a provider build now, with no
+    parallel acceptance step -- so it is dropped; registration order and head
+    reconstruction over plain provider builds are otherwise unchanged.
+    """
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.providers import provider_digest
@@ -355,16 +382,14 @@ def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, p
 
     first, second, third, fourth = (build(i) for i in range(1, 5))
 
-    def accept(label, providers, *, interfaces=False):
+    def accept(label, providers):
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-        tree.update({provider_path(p.identity.name): render_provider(p) for p in providers})
-        if interfaces:
-            tree.update(
-                {
-                    provider_interface_path(r.identity.name): render_provider_interface(r)
-                    for r in document.interface_registrations()
-                }
-            )
+        tree.update(
+            {
+                **contract_files(),
+                **{provider_path(p.identity.name): render_provider(p) for p in providers},
+            }
+        )
         _accept_tree(
             instance, owner, tree, timestamp="2026-10-15T00:00:00.000000Z", proposal_name=label
         )
@@ -374,7 +399,7 @@ def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, p
             authenticate_source_rows(projection, repository=instance._ledger)
             return indexed_newest_provider(projection.typed.connection, NAME)
 
-    accept("first", (first,), interfaces=True)
+    accept("first", (first,))
     first_coordinate = instance.accepted_coordinate()
     assert head().identity == first.identity.qualified
     accept("second", (second,))
@@ -478,25 +503,28 @@ def test_kit_mover_discovery_is_flat_with_retained_builds(
         instance, providers = _population(tmp_path, package, size)
         old, target = providers[0], providers[-1]
         if pinners:
+            # indexed_move_pinners joins provider_pinners against `lines` (a
+            # Line binds a build, B2 -- a Procedure no longer does).
             instance.connection.execute(
-                "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO lines VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    "Procedure:one",
-                    "procedures/one.json",
+                    "Line:one",
+                    "lines/one.json",
                     "fixture",
                     "sha256:" + "1" * 64,
                     None,
                     1,
                     "live",
+                    "sha256:" + "4" * 64,
+                    1,
+                    "Procedure:one",
                     "sha256:" + "2" * 64,
-                    "fixture",
-                    "drain",
-                    "direct",
+                    1,
                 ),
             )
             instance.connection.execute(
                 "INSERT INTO provider_pinners VALUES (?,?,?,?)",
-                ("Procedure:one", old.identity.qualified, provider_digest(old).tagged, NAME),
+                ("Line:one", old.identity.qualified, provider_digest(old).tagged, NAME),
             )
         shipped = SimpleNamespace(provider_id=NAME, build=target.identity.name)
 
@@ -516,36 +544,21 @@ def test_kit_mover_discovery_is_flat_with_retained_builds(
     assert work[0] == work[1], work
 
 
-@pytest.mark.parametrize("route", ["authoring", "interface", "discovery", "catalog", "blueprint"])
+# "authoring"/"interface"/"discovery" routes are dropped: they exercised
+# `cruxible_core.authoring.procedure_source.accepted_build_resolver` and
+# `cruxible_core.service.discovery.discovery.accepted_provider_interfaces`,
+# both removed with ProviderInterface (B2 noun removal); no replacement
+# resolver with this "resolved + considered candidates" shape exists. The
+# remaining routes exercise mechanisms that are still live.
+@pytest.mark.parametrize("route", ["catalog", "blueprint"])
 def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package, route):
-    from cruxible_core.authoring.procedure_source import accepted_build_resolver
     from cruxible_core.indexes.history.history_index import _MEMBER_SCHEMA
-    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
     from cruxible_core.service.discovery.get import _fitting_names
     from cruxible_core.service.procedures.provider_installation import installed_providers
 
     work = []
     for size in (20, 200):
         instance, providers = _population(tmp_path / str(size), package, 2)
-        document, _build = package
-        from cruxible_client.contracts.provider_interfaces import (
-            provider_interface_path,
-            render_provider_interface,
-        )
-
-        registrations = {
-            provider_interface_path(r.identity.name): render_provider_interface(r)
-            for r in document.interface_registrations()
-        }
-        instance.tree = instance.tree.fork()
-        instance.tree.update(registrations)
-        insert_members(instance.connection, registrations, instance.coordinate.git_object_format)
-        insert_owners(
-            instance.connection,
-            parsed=parse_static_owners(registrations, accepted=instance.coordinate),
-            blobs=registrations,
-            codec=artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER),
-        )
         instance.connection.executescript(_MEMBER_SCHEMA)
         for seq in range(1, size + 1):
             row = providers[0]
@@ -567,44 +580,14 @@ def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package,
             prefetch_members=lambda paths: None,
         )
         instance.bind_accepted_projection = lambda _: nullcontext(SimpleNamespace(typed=typed))
-        resolver = accepted_build_resolver(
-            instance, instance.coordinate, SimpleNamespace(connection=instance.connection)
-        )
 
         def read():
-            if route == "authoring":
-                result = resolver.provider(NAME)
-                assert result.resolved == providers[-1].identity.name
-                assert len(result.considered) == 2
-            elif route == "interface":
-                assert resolver.interface(document.interface_registrations()[0].interface_id)
-            elif route == "discovery":
-                assert accepted_provider_interfaces(instance, instance.coordinate)
-            elif route == "catalog":
+            if route == "catalog":
                 assert len(installed_providers(instance)) == 2
             else:
                 assert _fitting_names(
                     SimpleNamespace(typed=typed), (providers[-1].identity.name,)
                 ) == (NAME,)
-
-        work.append(_work(instance, monkeypatch, read))
-        instance.connection.close()
-    assert work[0] == work[1], work
-
-
-def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkeypatch, package):
-    from cruxible_core.authoring.procedure_source import accepted_build_resolver
-
-    work = []
-    for size in (20, 200):
-        instance, providers = _population(tmp_path, package, size)
-        resolver = accepted_build_resolver(
-            instance, instance.coordinate, SimpleNamespace(connection=instance.connection)
-        )
-
-        def read():
-            result = resolver.provider(providers[0].identity.name)
-            assert len(result.considered) == 1
 
         work.append(_work(instance, monkeypatch, read))
         instance.connection.close()

@@ -17,15 +17,6 @@ from tests.core_support._p2b1_support import provider_v2
 from tests.test_scale.test_provider_build_install import _instance
 from tests.test_scale.test_provider_build_install import package as package
 
-pytestmark = pytest.mark.skip(
-    reason=(
-        "needs the provider package fixture rebuilt on PackageRegistrationDocumentV1 "
-        "schema 2: this file's `package` fixture is imported directly from "
-        "tests/test_scale/test_provider_build_install.py, which hard-fails for the "
-        "same reason that file is skipped (see its pytestmark). Resolve there first."
-    )
-)
-
 
 @pytest.mark.parametrize("genesis", [False, True])
 def test_legacy_metadata_order_matches_cold_rebuild(tmp_path, monkeypatch, package, genesis):  # noqa: F811
@@ -42,6 +33,13 @@ def test_legacy_metadata_order_matches_cold_rebuild(tmp_path, monkeypatch, packa
         payload["artifact_format"] = "playbill-provider-v2"
         payload["identity"] = {"kind": "Provider", "name": provider.provider_name}
         payload["runtime_artifact"]["schema_version"] = 1
+        # NamedProviderBuild names capture Contracts (capture_contracts,
+        # ArtifactNameRef); ProviderV2 pins them exactly (capture_contract_digests).
+        # This fixture never declares one, so the conversion is just the field
+        # rename -- there is no digest to carry over.
+        names = payload.pop("capture_contracts", ())
+        assert not names, "fixture builds declare no capture contracts to convert"
+        payload["capture_contract_digests"] = ()
         runtime = ProviderRuntimeArtifactPayloadV1.model_validate(payload["runtime_artifact"])
         payload["implementations"] = [
             item.model_dump(mode="json")
