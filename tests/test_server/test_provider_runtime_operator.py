@@ -26,6 +26,7 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
+from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_IDENTITY
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -70,16 +71,17 @@ from cruxible_client.contracts.providers import (
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,
     ProviderRuntimeManifest,
-    ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
-    provider_manifest_digest,
     provider_path,
     render_provider,
 )
-from cruxible_client.contracts.shapes import Contract, contract_digest
-from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
-from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_IDENTITY
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_digest,
+    contract_path,
+    render_contract,
+)
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
 from cruxible_core.procedures.execution import (
@@ -89,13 +91,14 @@ from cruxible_core.procedures.execution import (
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.providers.provider_local_runtime import (
-    LocalProviderDeploymentV1,
-    ProviderSpawnDeadline,
-)
 from cruxible_core.procedures.reference_binding import (
     authored_procedure,
     bind_procedure_references,
+)
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+from cruxible_core.providers.provider_local_runtime import (
+    LocalProviderDeploymentV1,
+    ProviderSpawnDeadline,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderLocalRuntimeRefused,
@@ -115,7 +118,6 @@ from cruxible_core.server.config import get_server_state_root
 from cruxible_core.service.procedures.procedure_runs import ProcedureRunRecoveryRequired
 from cruxible_core.service.procedures.procedures import service_execute_direct_procedure
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
@@ -132,7 +134,6 @@ from tests.test_providers.test_provider_invocation_journal import (
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 from tests.test_server.test_playbill_line_run_refusals import (
     _accept_members,
-    _line_mandate,
 )
 
 
@@ -589,7 +590,9 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     provisional_admission = ProcedureRunAdmissionV9.model_construct(**admission_fields)
     provisional_admission = provisional_admission.model_copy(
         update={
-            "semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional_admission)
+            "semantic_replay_key_digest": procedure_semantic_replay_key_digest(
+                provisional_admission
+            )
         }
     )
     admission_digest = procedure_admission_digest(provisional_admission)
@@ -921,84 +924,33 @@ _SERVED_RUN_INPUT = ProcedureOwnedContract(
     identity=ArtifactIdentity(kind="Contract", name="served-provider-run-input"),
     schema=ContractSchema(fields={"status": PropertySchema(type="string")}),
 )
-_SERVED_PROVIDER_INPUT = ProcedureOwnedContract(
-    identity=ArtifactIdentity(kind="Contract", name="served-provider-input"),
-    schema=ContractSchema(
-        fields={
-            "size": PropertySchema(type="int"),
-            "value": PropertySchema(type="string"),
-        }
-    ),
-)
 _SERVED_PROVIDER_OUTPUT = ProcedureOwnedContract(
     identity=ArtifactIdentity(kind="Contract", name="served-provider-output"),
     schema=ContractSchema(fields={"echo": PropertySchema(type="string")}),
 )
 
 
-def _served_operation_interface() -> AcceptedProviderInterfaceRegistration:
-    """The demo interface declaring the operation contracts a call node is checked against."""
+def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedProcedure:
+    """One accepted Procedure whose single Call slot invokes the demo Provider.
 
-    from cruxible_client.contracts.provider_interfaces import (
-        ProviderInterfaceDefinition,
-        provider_interface_contract,
-    )
-
-    registration = provider_interface_contract(
-        interface=ProviderInterfaceDefinition(
-            interface_id="demo.interface",
-            version=1,
-            effect_class="external_read",
-            contracts={
-                "input": _SERVED_PROVIDER_INPUT.contract_schema,
-                "output": _SERVED_PROVIDER_OUTPUT.contract_schema,
-            },
-        )
-    )
-    return AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.identity.name),
-        registration=registration,
-        artifact_digest=provider_interface_digest(registration).tagged,
-    )
-
-
-def _provider_line_procedure(
-    accepted_provider: AcceptedProvider,
-    interface,  # type: ignore[no-untyped-def]
-) -> AcceptedProcedure:
-    """One accepted Procedure whose single node invokes the demo Provider."""
-
-    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+    A Call is checked against its bound operation's own Contracts now (F02),
+    resolved through the Line's binding at run time -- there is no longer an
+    interface for the node to pin directly.
+    """
 
     run_input = _SERVED_RUN_INPUT
-    provider_input = _SERVED_PROVIDER_INPUT
     provider_output = _SERVED_PROVIDER_OUTPUT
     run_input_pin = ArtifactPin(
         role="contract-in",
         target=run_input.identity,
         artifact_digest=procedure_owned_contract_digest(run_input).tagged,
     )
-    provider_input_pin = ArtifactPin(
-        role="contract-in",
-        target=provider_input.identity,
-        artifact_digest=procedure_owned_contract_digest(provider_input).tagged,
-    )
     provider_output_pin = ArtifactPin(
         role="contract-out",
         target=provider_output.identity,
         artifact_digest=procedure_owned_contract_digest(provider_output).tagged,
     )
-    provider_pin = ArtifactPin(
-        role="provider",
-        target=accepted_provider.provider.identity,
-        artifact_digest=accepted_provider.artifact_digest,
-    )
-    interface_pin = ArtifactPin(
-        role="provider-interface",
-        target=interface.registration.identity,
-        artifact_digest=interface.artifact_digest,
-    )
-    implementation = accepted_provider.provider.implementations[0]
+    operation = accepted_provider.provider.operations[0]
     definition = ProcedureDefinition(
         name="served-provider-triage",
         contract_in=run_input_pin,
@@ -1006,17 +958,15 @@ def _provider_line_procedure(
         nodes=(
             CallNode(
                 node_id="ask",
-                provider=provider_pin,
-                interface=interface_pin,
-                interface_digest=interface_definition_digest(interface.registration),
-                implementation_digest=implementation.implementation_digest,
-                contract_in=provider_input_pin,
-                contract_out=provider_output_pin,
-                input={"size": 3, "value": "line-served"},
+                slot="ask",
+                input={"value": "line-served"},
                 as_="result",
             ),
         ),
         returns="result",
+        slots={
+            "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
+        },
         budget=ProcedureBudget(
             wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=2,
@@ -1038,19 +988,13 @@ def _provider_line_procedure(
         definition_digest=compute_procedure_definition_digest(definition).tagged,
         pins=tuple(
             sorted(
-                (
-                    run_input_pin,
-                    provider_input_pin,
-                    provider_output_pin,
-                    provider_pin,
-                    interface_pin,
-                ),
+                (run_input_pin, provider_output_pin),
                 key=lambda item: (item.role, item.target.qualified, item.artifact_digest),
             )
         ),
         owned_contracts=tuple(
             sorted(
-                (run_input, provider_input, provider_output),
+                (run_input, provider_output),
                 key=lambda contract: canonical_bytes(
                     contract.model_dump(mode="json", by_alias=True)
                 ),
@@ -1098,27 +1042,13 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         lock_digest=_sha256_file(lock),
         materialization_digest=materialization_digest,
     )
-    # A call node is checked against its interface's declared operation
-    # contracts, so the demo Provider implements an interface that declares them.
-    interface = _served_operation_interface()
-    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
-
-    base = provider_v2(registration=interface.registration)
+    # A Call is checked against its bound operation's own declared Contracts
+    # (F02), so the demo Provider's build declares exactly the fake
+    # interpreter's echo wire shape.
+    base = _served_provider_build(provider_id="served-line-provider")
     assert base.runtime_artifact.local_env is not None
-    manifest = base.runtime_artifact.manifest
-    interface_digest = interface_definition_digest(interface.registration)
-    manifest = manifest.model_copy(
-        update={
-            "implementations": tuple(
-                item.model_copy(update={"interface_digest": interface_digest})
-                for item in manifest.implementations
-            )
-        }
-    )
     payload = base.runtime_artifact.model_copy(
         update={
-            "manifest": manifest,
-            "manifest_digest": provider_manifest_digest(manifest),
             "distribution": base.runtime_artifact.distribution.model_copy(
                 update={"sha256": _sha256_file(distribution)}
             ),
@@ -1130,20 +1060,11 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             ),
         }
     )
-    provider = ProviderV2.model_validate(
-        base.model_copy(
-            update={
-                "pins": (
-                    ArtifactPin(
-                        role="provider-interface",
-                        target=interface.registration.identity,
-                        artifact_digest=interface.artifact_digest,
-                    ),
-                ),
-                "runtime_artifact": payload,
-                "implementations": provider_expected_implementation_records(payload),
-            }
-        ).model_dump(mode="python")
+    provider = base.model_copy(
+        update={
+            "runtime_artifact": payload,
+            "implementations": provider_expected_implementation_records(payload),
+        }
     )
     from tests.support.provider_builds import as_build
 
@@ -1216,7 +1137,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     accepted_provider = accepted_provider.model_copy(
         update={"provider": provider, "artifact_digest": provider_digest(provider).tagged}
     )
-    accepted = _provider_line_procedure(accepted_provider, interface)
+    accepted = _provider_line_procedure(accepted_provider)
     procedure = name_procedure(accepted.procedure)
     accepted = accepted.model_copy(
         update={
@@ -1224,25 +1145,27 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             "artifact_digest": procedure_artifact_digest(procedure).tagged,
         }
     )
-    policy = _acquisition_policy("served-provider-inputs")
     procedure_pin = ArtifactPin(
         role="procedure",
         target=accepted.procedure.identity,
         artifact_digest=accepted.artifact_digest,
     )
-    policy_pin = ArtifactPin(
-        role="acquisition-policy",
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
     definition = accepted.procedure.definition
+    operation = accepted_provider.provider.operations[0]
     line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name="served-provider-hourly"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
-        acquisition_policy=policy_pin,
-        max_authority="observe",
+        bindings={
+            "ask": LineBinding(
+                build=binding_pin(
+                    accepted_provider.provider.identity, accepted_provider.artifact_digest
+                ),
+                operation=operation.name,
+            )
+        },
+        max_authority="propose",
         budgets={
             "max_capture_bytes": definition.budget.max_capture_bytes,
             "max_items": definition.budget.max_items,
@@ -1250,19 +1173,15 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
         },
         epsilon={"$decimal": "0"},
-        pins=tuple(
-            sorted(
-                (procedure_pin, policy_pin),
-                key=lambda item: (item.role, item.target.qualified, item.artifact_digest),
-            )
-        ),
     )
     line = name_line(line)
-    mandate = ProcedureMandateV1(
+    mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-provider-mandate"),
-        procedure=procedure_pin,
-        rung=2,
-        authority_ceiling=definition.hard_caps,
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        grants="propose",
+        resource_ceiling=definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1274,8 +1193,12 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         {
             accepted.path: render_procedure(accepted.procedure),
             accepted_provider.path: render_provider(accepted_provider.provider),
-            interface.path: render_provider_interface(interface.registration),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
+            contract_path(_OPERATION_INPUT.name, _OPERATION_INPUT.version): render_contract(
+                _OPERATION_INPUT
+            ),
+            contract_path(_OPERATION_OUTPUT.name, _OPERATION_OUTPUT.version): render_contract(
+                _OPERATION_OUTPUT
+            ),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
