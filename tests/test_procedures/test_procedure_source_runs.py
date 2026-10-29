@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,7 +22,6 @@ from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -38,11 +36,11 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
-    MandateGrant,
     ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import (
     DIRECT_NODE_KINDS,
     LINE_NODE_KINDS,
@@ -71,7 +69,6 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     FAILURE_CAUSE_MESSAGE_LIMIT,
-    ProcedureAdmissionRefusal,
     ProcedureNodeRefusal,
     ProcedureOperationalFailure,
     strip_url_userinfo,
@@ -1308,8 +1305,9 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     patched in src.
     """
 
-    import cruxible_core.service.procedures.procedure_runs as service
     from pydantic import ValidationError
+
+    import cruxible_core.service.procedures.procedure_runs as service
 
     instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
     real_plan = service._plan_external_occurrences  # noqa: SLF001
@@ -1416,9 +1414,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
 
-    instance, _owner, procedure, _root, _policy_artifact = _world(
-        tmp_path, accept_procedure=False
-    )
+    instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path, accept_procedure=False)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
 

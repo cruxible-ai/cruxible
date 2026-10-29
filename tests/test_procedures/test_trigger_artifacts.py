@@ -410,7 +410,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
             ),
             "lifecycle": ArtifactLifecycle(
                 state="retired", predecessor_digest=procedure_mandate_digest(mandate).tagged
-            )
+            ),
         }
     )
     mandate_member = {

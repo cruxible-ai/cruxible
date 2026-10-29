@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts import provider_operations
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
@@ -17,7 +18,6 @@ from cruxible_client.contracts.procedures.results import (
     procedure_admission_material_digest,
     procedure_provider_bindings,
 )
-from cruxible_client.contracts import provider_operations
 from cruxible_client.contracts.provider_execution import (
     ProviderBudgetTranslation,
     ProviderExternalOccurrencePlan,

@@ -350,7 +350,9 @@ def _refusal(state) -> ProcedureNodeRefusal:  # type: ignore[no-untyped-def]
 def test_a_mandate_over_another_namespace_refuses_typed_before_any_ref(tmp_path: Path) -> None:
     instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
     # Accept a live mandate whose namespace is `subjects`, not `claims`.
-    mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
+    mandate = fixtures._line_mandate(line, procedure).model_copy(
+        update={"namespace": ("subjects",)}
+    )
     fixtures._accept_more(
         instance,
         _owner,
@@ -978,7 +980,9 @@ def test_a_crash_after_the_resolving_record_finalizes_the_run_without_redelivery
         instance, _owner, root, line, _procedure = proposal_world(tmp_path)
     else:
         instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
-        mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
+        mandate = fixtures._line_mandate(line, procedure).model_copy(
+            update={"namespace": ("subjects",)}
+        )
         fixtures._accept_more(
             instance,
             _owner,
@@ -1477,7 +1481,9 @@ def test_a_retained_rung_insufficient_mandate_refusal_reads_as_todays_grant_code
     from cruxible_core.procedures import egress as egress_module
 
     instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
-    mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
+    mandate = fixtures._line_mandate(line, procedure).model_copy(
+        update={"namespace": ("subjects",)}
+    )
     fixtures._accept_more(
         instance,
         _owner,
@@ -1588,9 +1594,7 @@ def test_one_item_adds_a_value_to_a_many_valued_slot_that_already_holds_one(
         ),
     )
     (existing,) = _live_slot_claims(instance)
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        b"critical"
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
 
     second = run_line(instance, root, line, at=NOW + timedelta(minutes=5))
 
@@ -1885,9 +1889,7 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
         tmp_path, claim_type=_many_valued_claim_type()
     )
     for minutes, severity in ((0, "high"), (5, "critical")):
-        (root / fixtures.RELATIVE_PATH).write_bytes(
-            severity.encode()
-        )
+        (root / fixtures.RELATIVE_PATH).write_bytes(severity.encode())
         state = run_line(instance, root, line, at=NOW + timedelta(minutes=minutes))
         assert state.status == "succeeded", state.terminal
         accept_proposal(
@@ -1898,9 +1900,7 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
             ),
         )
     first, second = sorted(claim.identity.name for claim in _live_slot_claims(instance))
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        b"low"
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"low")
     return instance, owner, root, procedure, first, second
 
 
@@ -2290,9 +2290,7 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     live = parse_claim(tree[first_child.path], path=first_child.path)
     assert live.statement.object.model_dump(mode="json")["value"] == "HIGH"
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        b" High "
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b" High ")
 
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
 
@@ -2391,9 +2389,7 @@ def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     assert observation.capture_digest in revised.backing.capture_digests
     assert observation.capture_digest not in held.backing.capture_digests
 
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        b"critical"
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
     other = run_line(instance, root, line, at=NOW + timedelta(hours=2))
 
     assert other.status == "succeeded", other.terminal

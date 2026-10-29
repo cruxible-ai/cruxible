@@ -24,6 +24,7 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -46,8 +47,13 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryProjectionField,
 )
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec, line_spec_digest
-from tests.test_procedures.test_procedure_mandates import _accepted_line, _caps, _line, _mandate, _procedure
+from tests.test_procedures.test_procedure_mandates import (
+    _accepted_line,
+    _caps,
+    _line,
+    _mandate,
+    _procedure,
+)
 
 ASSET = "sec.asset"
 EXPOSURE = ArtifactIdentity(kind="ClaimType", name="sec.exposure.status")
