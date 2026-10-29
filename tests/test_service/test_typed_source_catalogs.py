@@ -266,22 +266,6 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
     assert reads == []
 
 
-@pytest.mark.xfail(
-    reason=(
-        "real src bug, not a test-shape issue: "
-        "dependency_pins() "
-        "(packages/cruxible-client/src/cruxible_client/contracts/dependencies.py) "
-        "unconditionally appends a bare ArtifactRef(role='procedure', ...) for a Line's procedure "
-        "dependency (added for the by-identity dependency index), and its final dedup "
-        "(`if key not in unique or isinstance(pin, ArtifactRef): unique[key] = pin`) lets that "
-        "later, digest-less ArtifactRef overwrite the Line's own exact ArtifactPin for the same "
-        "(role, target) key. _assert_line_closure_complete's digest check "
-        "(`isinstance(pin, ArtifactPin) and target.artifact_digest != pin.artifact_digest`) only "
-        "fires for an ArtifactPin, so a Line whose pinned Procedure has silently drifted off its "
-        "exact accepted digest is no longer caught by closure verification."
-    ),
-    strict=True,
-)
 def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
     tmp_path, monkeypatch
 ):
@@ -304,7 +288,12 @@ def test_a_lines_closure_catches_a_procedure_digest_that_no_longer_reproduces(
         instance, coordinate=coordinate, reference=line_identity_digest(selected.identity)
     )
     wrong_pin = pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32})
-    wrong = accepted.model_copy(update={"line": selected.model_copy(update={"pins": (wrong_pin,)})})
+    # LineSpec.pins is a derived @property (procedure + every bound build);
+    # setting "pins" via model_copy is a no-op, so the drifted digest has to
+    # go on "procedure" itself, which pins derives from.
+    wrong = accepted.model_copy(
+        update={"line": selected.model_copy(update={"procedure": wrong_pin})}
+    )
     with pytest.raises(ExecutionError, match="does not reproduce"):
         _assert_line_closure_complete(instance, wrong, coordinate)
 

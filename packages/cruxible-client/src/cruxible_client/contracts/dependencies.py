@@ -196,6 +196,11 @@ def dependency_pins(
     unique: dict[tuple[str, str], ArtifactPin | ArtifactRef] = {}
     for pin in pins:
         key = pin.role, pin.target.qualified
-        if key not in unique or isinstance(pin, ArtifactRef):
+        # An exact ArtifactPin, once recorded for a (role, target) key, is
+        # never displaced by a later digest-less ArtifactRef for the same
+        # key (the by-identity dependency index appends one unconditionally
+        # for a Line's procedure/provider pins); only a key with nothing yet,
+        # or only a Ref so far, takes the new pin.
+        if key not in unique or isinstance(unique[key], ArtifactRef):
             unique[key] = pin
     return tuple(unique.values())
