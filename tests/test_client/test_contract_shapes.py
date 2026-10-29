@@ -338,3 +338,12 @@ def test_unresolved_enum_of_fails_closed() -> None:
     )
     assert isinstance(checked, FieldInvalid)
     assert checked.problem.code == "not_in_enum"
+
+
+# -- F9: a decimal bound keeps its full declared precision -------------------------------
+
+
+def test_a_decimal_bound_keeps_its_full_declared_precision() -> None:
+    long_bound = "0.12345678901234567890123456789"
+    bounded = parse_type(f"decimal{{{long_bound}..}}")
+    assert bounded.min == long_bound

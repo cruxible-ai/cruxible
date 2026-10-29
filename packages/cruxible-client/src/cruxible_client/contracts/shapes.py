@@ -23,7 +23,7 @@ import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
@@ -1115,7 +1115,13 @@ def _invalid(code: ProblemCode, field: str | None, lexeme: object = None) -> Fie
 
 
 def _decimal_text(value: Decimal) -> str:
-    text = format(value.normalize(), "f")
+    # normalize() has unary-plus semantics: under the thread's ambient context
+    # (default precision 28) it can round away digits the author declared. A
+    # context sized to the value's own coefficient strips trailing zeros
+    # without ever rounding a digit the author wrote.
+    _sign, digits, _exponent = value.as_tuple()
+    precision = max(len(digits), 1)
+    text = format(value.normalize(Context(prec=precision)), "f")
     return "0" if text in {"-0", ""} else text
 
 
