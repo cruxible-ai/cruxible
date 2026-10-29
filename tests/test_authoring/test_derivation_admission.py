@@ -3,10 +3,6 @@
 from types import SimpleNamespace
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import claim_candidate, halt, procedure, propose_change_set
@@ -43,7 +39,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRequest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
@@ -56,12 +56,7 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_nested_source_runs import accept_blueprint
 from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
 from tests.test_procedures.test_procedure_proposal_delivery import run_line
-from tests.test_procedures.test_procedure_source_runs import (
-    _accept_more,
-    _line_mandate,
-    _policy,
-    _served_line,
-)
+from tests.test_procedures.test_procedure_source_runs import _accept_more, _line_mandate
 
 TIMESTAMP = "2026-09-12T12:00:00.000000Z"
 REFUSAL = "cruxible.authoring.derivation_requires_execution"
@@ -262,39 +257,42 @@ def test_raw_proposal_cannot_forge_terminal_authority(world):
 
 
 def _install_line(world):
-    policy = _policy()
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+    # `derive` (world.reducer) is a pure derivation: no source/call node, so no
+    # slot to bind and no acquisition override to carry (B2: a Line's
+    # `acquisition` replaces the removed SourceAcquisitionPolicy, and only
+    # applies to Source aliases the Procedure actually declares).
+    procedure = world.reducer
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=procedure.identity,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    caps = procedure.definition.hard_caps
+    line = LineSpec(
+        identity=ArtifactIdentity(kind="Line", name="derive-ready-line"),
+        occurrence_epoch=1,
+        procedure=procedure_pin,
+        parameters={},
+        bindings={},
+        acquisition={},
+        max_authority="propose",
+        budgets={
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+        },
+        epsilon={"$decimal": "0.1"},
+    )
+    if procedure.artifact_format == "cruxible-procedure-v3":
+        from cruxible_client.contracts.named_references import name_line
 
-    if world.instance.accepted_coordinate().compiler != LIGHT_ARTIFACTS_COMPILER:
-        from cruxible_client.contracts.acquisition_policies import (
-            IndependentCoherence,
-            InputAcquisitionRule,
-            SourceAcquisitionPolicyV1,
-        )
-
-        policy = SourceAcquisitionPolicyV1(
-            identity=policy.identity,
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="unused",
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    max_age=policy.max_age,
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="preserve",
-                ),
-            ),
-            coherence=IndependentCoherence(),
-        )
-    line = _served_line(world.reducer, policy).model_copy(update={"max_authority": "propose"})
-    mandate = _line_mandate(world.reducer)
+        line = name_line(line)
+    mandate = _line_mandate(line, procedure)
     _accept_more(
         world.instance,
         world.owner,
         {
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
