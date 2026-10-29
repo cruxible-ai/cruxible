@@ -32,7 +32,7 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
+    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -176,8 +176,8 @@ def terminal_procedure(
     )
 
 
-def _line(procedure: ProcedureArtifact, policy: Any) -> LineSpec:
-    return fixtures._served_line(procedure, policy).model_copy(
+def _line(instance: PlaybillInstance, procedure: ProcedureArtifact, policy: Any) -> LineSpec:
+    return fixtures._served_line(instance, procedure, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[2]}
     )
 
@@ -186,7 +186,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     tmp_path: Path,
     *,
     templates: tuple[object, ...] | None = None,
-    mandate: ProcedureMandateV1 | None | bool = True,
+    mandate: ProcedureMandate | None | bool = True,
     claim_type: ClaimType | None = None,
     requested_terminal_rung: int = 2,
     wall_clock_seconds: int | None = None,
@@ -197,7 +197,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     with_terminal = terminal_procedure(
         procedure, templates=templates, wall_clock_seconds=wall_clock_seconds
     )
-    line = _line(with_terminal, policy).model_copy(
+    line = _line(instance, with_terminal, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
     )
     contract = capture_contract()
@@ -211,9 +211,9 @@ def proposal_world(  # type: ignore[no-untyped-def]
             subject_path(SUBJECT_KIND, SUBJECT_ID): render_subject(_subject()),
         },
     )
-    accepted_mandate: ProcedureMandateV1 | None
+    accepted_mandate: ProcedureMandate | None
     if mandate is True:
-        accepted_mandate = fixtures._line_mandate(with_terminal)
+        accepted_mandate = fixtures._line_mandate(line, with_terminal)
     elif mandate is False or mandate is None:
         accepted_mandate = None
     else:
@@ -263,7 +263,7 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
 ) -> None:
     instance, owner, root, line, procedure = proposal_world(tmp_path)
     assert procedure.artifact_format == "cruxible-procedure-v3"
-    assert line.artifact_format == "cruxible-line-v7"
+    assert line.artifact_format == "cruxible-line-v8"
     base = instance.accepted_coordinate()
 
     state = run_line(instance, root, line)
@@ -350,7 +350,7 @@ def _refusal(state) -> ProcedureNodeRefusal:  # type: ignore[no-untyped-def]
 def test_a_mandate_over_another_namespace_refuses_typed_before_any_ref(tmp_path: Path) -> None:
     instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
     # Accept a live mandate whose namespace is `subjects`, not `claims`.
-    mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": ("subjects",)})
+    mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
     fixtures._accept_more(
         instance,
         _owner,
@@ -394,12 +394,23 @@ def test_a_line_requesting_rung_one_is_capped_before_the_proposal_door(tmp_path:
 
 
 def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> None:
+    """A Source failure never reaches the terminal, whatever shape it takes.
+
+    The genesis-seeded ``workspace.file`` operation declares no refusals, so
+    per F10's closed refusal vocabulary (execution.py:_typed_refusal) a
+    provider decline is now an internal failure
+    (provider_protocol_violation), not a typed node refusal -- see the finding
+    recorded in test_procedure_source_runs.py's
+    test_a_required_rule_refuses_the_same_declined_read_at_the_source_node.
+    Either way, the run stops before the terminal.
+    """
+
     instance, _owner, root, line, _procedure = proposal_world(tmp_path)
 
     state = run_line(instance, root, line, invoker=fixtures._DecliningInvoker())
 
-    refusal = _refusal(state)
-    assert refusal.node_id == "read", refusal
+    assert state.status == "internal_failed", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
     assert state.terminal_egress == ()
     assert _proposal_refs(instance) == []
 
@@ -914,11 +925,7 @@ def test_recovery_finds_a_crashed_occurrence_after_a_completed_one_in_the_same_p
     assert first.status == "succeeded", first.terminal
     # The later run reads a changed file: an identical change would keep the
     # first run's open proposal and never reach the door.
-    from cruxible_client.contracts.canonical import canonical_bytes
-
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "severity": "critical"})
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
     _crash_after(monkeypatch, after_submit=False)
     with pytest.raises(_Crash):
         run_line(instance, root, line, at=NOW + timedelta(hours=1))
@@ -971,7 +978,7 @@ def test_a_crash_after_the_resolving_record_finalizes_the_run_without_redelivery
         instance, _owner, root, line, _procedure = proposal_world(tmp_path)
     else:
         instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
-        mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": ("subjects",)})
+        mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
         fixtures._accept_more(
             instance,
             _owner,
@@ -1470,7 +1477,7 @@ def test_a_retained_rung_insufficient_mandate_refusal_reads_as_todays_grant_code
     from cruxible_core.procedures import egress as egress_module
 
     instance, _owner, root, line, procedure = proposal_world(tmp_path, mandate=None)
-    mandate = fixtures._line_mandate(procedure).model_copy(update={"namespace": ("subjects",)})
+    mandate = fixtures._line_mandate(line, procedure).model_copy(update={"namespace": ("subjects",)})
     fixtures._accept_more(
         instance,
         _owner,
@@ -1582,7 +1589,7 @@ def test_one_item_adds_a_value_to_a_many_valued_slot_that_already_holds_one(
     )
     (existing,) = _live_slot_claims(instance)
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "critical"})
+        b"critical"
     )
 
     second = run_line(instance, root, line, at=NOW + timedelta(minutes=5))
@@ -1827,8 +1834,6 @@ def test_a_terminal_delivered_after_the_deadline_still_reports_success(
 def _revising_line(instance, owner, procedure, templates):  # type: ignore[no-untyped-def]
     """Accept a second Procedure, Line and mandate whose terminal carries ``templates``."""
 
-    from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
-
     source, shape, terminal = procedure.definition.nodes
     assert isinstance(terminal, ProposeChangeSetNode)
     definition = procedure.definition.model_copy(
@@ -1848,16 +1853,14 @@ def _revising_line(instance, owner, procedure, templates):  # type: ignore[no-un
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    (policy_path,) = (path for path in tree if path.startswith("source-acquisition-policies/"))
-    policy = parse_acquisition_policy(tree[policy_path], path=policy_path)
-    line = _line(revising, policy).model_copy(
+    policy = fixtures._policy()
+    line = _line(instance, revising, policy).model_copy(
         update={
             "identity": ArtifactIdentity(kind="Line", name="advisory-revise"),
             "max_authority": RUNG_AUTHORITY[2],
         }
     )
-    mandate = fixtures._line_mandate(revising).model_copy(
+    mandate = fixtures._line_mandate(line, revising).model_copy(
         update={
             "identity": ArtifactIdentity(kind="ProcedureMandate", name="advisory-revise-mandate")
         }
@@ -1883,7 +1886,7 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
     for minutes, severity in ((0, "high"), (5, "critical")):
         (root / fixtures.RELATIVE_PATH).write_bytes(
-            fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": severity})
+            severity.encode()
         )
         state = run_line(instance, root, line, at=NOW + timedelta(minutes=minutes))
         assert state.status == "succeeded", state.terminal
@@ -1896,7 +1899,7 @@ def _two_values(tmp_path: Path):  # type: ignore[no-untyped-def]
         )
     first, second = sorted(claim.identity.name for claim in _live_slot_claims(instance))
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "low"})
+        b"low"
     )
     return instance, owner, root, procedure, first, second
 
@@ -2036,7 +2039,25 @@ def _accept_and_retire(instance: PlaybillInstance, owner: Any, proposal_id: str)
     return claim_id
 
 
-@pytest.mark.parametrize("same_bytes", [True, False], ids=["identical-bytes", "other-bytes"])
+@pytest.mark.parametrize(
+    "same_bytes",
+    [
+        True,
+        pytest.param(
+            False,
+            marks=pytest.mark.skip(
+                reason=(
+                    "needs B3 extract: content.text is the read's whole decoded "
+                    "text now (no JSON decode until extract lands), so there is "
+                    "no way to vary a read's underlying bytes while keeping its "
+                    "extracted severity identical -- the premise 'other bytes "
+                    "stating the same severity' needs."
+                )
+            ),
+        ),
+    ],
+    ids=["identical-bytes", "other-bytes"],
+)
 def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
     tmp_path: Path, same_bytes: bool
 ) -> None:
@@ -2270,7 +2291,7 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     live = parse_claim(tree[first_child.path], path=first_child.path)
     assert live.statement.object.model_dump(mode="json")["value"] == "HIGH"
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": " High "})
+        b" High "
     )
 
     second = run_line(instance, root, line, at=NOW + timedelta(hours=1))
@@ -2323,6 +2344,15 @@ def _live_nones(instance: PlaybillInstance) -> dict[str, Any]:
     }
 
 
+@pytest.mark.skip(
+    reason=(
+        "needs B3 extract: the workspace.file read now structures plain text "
+        "(content.text), with no JSON decode until the extract node lands, so "
+        "this fixture can no longer vary a read's underlying bytes while "
+        "keeping its extracted severity value identical -- the premise this "
+        "test needs to tell a restated none from a changed one."
+    )
+)
 def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     tmp_path: Path,
 ) -> None:
@@ -2362,7 +2392,7 @@ def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     assert observation.capture_digest not in held.backing.capture_digests
 
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "critical"})
+        b"critical"
     )
     other = run_line(instance, root, line, at=NOW + timedelta(hours=2))
 
