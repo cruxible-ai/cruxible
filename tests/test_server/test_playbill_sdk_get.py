@@ -493,6 +493,12 @@ def test_sdk_get_answers_every_kind_get_resolves(
     from cruxible_client.authoring.sdk_types import ReferenceKindError
     from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND
 
+    # Known real src gap, not a test-shape issue, left unfixed here: server-side
+    # GET_DETAILS_BY_KIND declares a "contract" ref kind
+    # (cruxible_client.contracts.get_reads:109), but the SDK's RefKind enum
+    # (cruxible_client.authoring.sdk_types) has no CONTRACT member and
+    # cruxible_client.authoring.sdk._GET_REF_KINDS has no "contract" entry, so
+    # pb.get("Contract:...") cannot resolve through the typed SDK.
     assert set(_GET_REF_KINDS) == set(GET_DETAILS_BY_KIND)
     client, instance_id, _key = owned_playbill_http
     pb = _sdk(client, instance_id, tmp_path)
@@ -515,26 +521,15 @@ def test_sdk_get_reads_provider_names_and_exact_builds(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_interface_path,
-        render_provider_interface,
-    )
-
-    from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
-    from tests.test_scale.test_provider_build_install import package
+    from cruxible_client.contracts.named_references import name_provider
+    from cruxible_client.contracts.providers import provider_digest
+    from tests.support.operation_world import build_files, contract_files, operation_build
     from tests.test_server.test_playbill_line_run_refusals import _accept_members
 
     client, instance_id, key = owned_playbill_http
     instance = get_playbill_manager().get(instance_id)
-    document, build = package.__wrapped__(tmp_path)
-    from cruxible_client.contracts.named_references import name_provider
-
-    provider = name_provider(build(1))
-    members = {
-        provider_interface_path(item.identity.name): render_provider_interface(item)
-        for item in document.interface_registrations()
-    }
-    members[provider_path(provider.identity.name)] = render_provider(provider)
+    provider = name_provider(operation_build(build="1"))
+    members = {**contract_files(), **build_files(provider)}
     _accept_members(instance, key, members, timestamp="2026-08-16T20:00:00.000000Z")
     pb = _sdk(client, instance_id, tmp_path)
 
