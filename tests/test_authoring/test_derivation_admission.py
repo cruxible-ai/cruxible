@@ -284,10 +284,12 @@ def _install_line(world):
         },
         epsilon={"$decimal": "0.1"},
     )
-    if procedure.artifact_format == "cruxible-procedure-v3":
-        from cruxible_client.contracts.named_references import name_line
-
-        line = name_line(line)
+    # No conversion to a "named" Line format: cruxible-line-v8 is the only
+    # Line wire format that has ever existed (unlike Procedure/Trigger/etc,
+    # which do have an older predecessor tag NAMED_REFERENCE_FORMATS governs
+    # alongside the current one). A derivation_world(historical=True) caller
+    # still cannot accept this Line: see the KNOWN SRC BUG note on
+    # _run_and_accept.
     mandate = _line_mandate(line, procedure)
     _accept_more(
         world.instance,
@@ -302,6 +304,26 @@ def _install_line(world):
 
 
 def _run_and_accept(world):
+    # KNOWN SRC BUG (not fixed here): _install_line's Line can only be
+    # accepted when world.instance's compiler is LIGHT_ARTIFACTS_COMPILER
+    # (revision 36). proposals.py's _installed() gates every
+    # NAMED_REFERENCE_FORMATS kind by `(artifact_tag == named) != light`,
+    # which assumes a non-light compiler accepts some OTHER (historical)
+    # tag for the kind -- true for Procedure/Trigger/CaptureContract/
+    # Provider/QueryDefinition, each of which really did have an older
+    # format, but line's NAMED_REFERENCE_FORMATS entry ("cruxible-line-v8")
+    # has always been the only Line tag that ever existed. Under any
+    # pre-36 compiler this makes the check unsatisfiable for "line": no
+    # candidate_artifact_tag passes LineSpec's own validation (artifact_
+    # format: Literal["cruxible-line-v8"]) and also satisfies != named, so
+    # no Line can ever be newly accepted there -- confirmed by
+    # tests/test_procedures/test_upgrade_carry.py's
+    # _NEEDS_HISTORICAL_LINE_FIXTURE skip, which hits the identical
+    # "requires cruxible-line-v8 on compiler revision 36" refusal from a
+    # different fixture. Callers of this helper against a
+    # derivation_world(historical=True) world (whose
+    # _accepted_claim_world pins an older compiler) therefore cannot run a
+    # Line at all; see this function's callers for the resulting skip.
     from tests.test_ledger.test_active_review_publication import _settle
 
     run = run_line(world.instance, world.root, _install_line(world))
