@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 
@@ -18,7 +18,6 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.canonical import (
-    P2_B0_ARTIFACT_CODEC,
     BootstrapRoot,
     ChangeSetDigest,
     GenerationRoot,
@@ -57,8 +56,7 @@ class VerifiedGenesis:
     generation_root: GenerationRoot
     principals: tuple[PrincipalRecord, ...]
     approval_policy: ApprovalPolicy
-    procedure_runtime_policy: ProcedureRuntimePolicy | None
-    seed_set: GenesisSeedSet
+    procedure_runtime_policy: ProcedureRuntimePolicy
 
 
 def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot:
@@ -123,8 +121,8 @@ def genesis_tree(
     principals: Sequence[PrincipalRecord],
     *,
     approval_policy: ApprovalPolicy,
-    procedure_runtime_policy: ProcedureRuntimePolicy | None = None,
-    seeds: Mapping[str, bytes] | None = None,
+    procedure_runtime_policy: ProcedureRuntimePolicy,
+    seeds: Mapping[str, bytes],
 ) -> dict[str, bytes]:
     ordered = sorted(principals, key=lambda record: record.principal_id)
     if [record.principal_id for record in ordered] != sorted(
@@ -133,381 +131,101 @@ def genesis_tree(
         raise BootstrapError("genesis principals must be unique")
     tree = {
         APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
+        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(procedure_runtime_policy),
         **{
             f"principals/{record.principal_id}.json": render_principal(record) for record in ordered
         },
     }
-    if procedure_runtime_policy is not None:
-        tree[PROCEDURE_RUNTIME_POLICY_PATH] = render_procedure_runtime_policy(
-            procedure_runtime_policy
-        )
-    for path, content in (seeds or {}).items():
+    for path, content in seeds.items():
         if not _is_genesis_seed_path(path):
             raise BootstrapError(f"genesis seed collides with a bootstrap path: {path}")
         tree[path] = content
     return tree
 
 
-@dataclass(frozen=True)
-class GenesisSeedSet:
-    """One frozen set of artifacts some Cruxible build seeded at generation zero.
-
-    ``files`` maps each ledger-tree path to the SHA-256 of its exact bytes;
-    the bytes live under ``seed_artifacts/genesis/<set_id>/<path>``.
-    ``artifact_kinds`` are the kinds an instance's compiler must admit for
-    the set to be seeded.
-    """
-
-    set_id: str
-    files: tuple[tuple[str, str], ...]
-    artifact_kinds: frozenset[str]
-
-    @property
-    def paths(self) -> frozenset[str]:
-        return frozenset(path for path, _digest in self.files)
-
-
-#: Every genesis seed set any Cruxible build has written, oldest first.
-#:
-#: Append-only: an instance keeps its generation zero forever, so verification
-#: accepts a genesis whose seeded artifacts equal one of these sets exactly.
-#: Never edit or remove an entry or its checked-in bytes; a change to what new
-#: instances start with is a new entry at the end.
-GENESIS_SEED_SETS: tuple[GenesisSeedSet, ...] = (
-    # Instances from before seeded Triggers, and compilers that admit none.
-    GenesisSeedSet(set_id="empty", files=(), artifact_kinds=frozenset()),
-    # 2026-10-02 (cf3920625): sweep, floor refresh and anchor retry.
-    GenesisSeedSet(
-        set_id="triggers-3",
-        files=(
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger"}),
+#: The artifacts every new instance starts with at generation zero: each
+#: ledger-tree path and the SHA-256 of its exact checked-in bytes, which live
+#: under ``seed_artifacts/genesis/<path>``. They are ordinary governed
+#: artifacts from the first generation on. Verification admits exactly this
+#: set: a genesis seeded with anything else refuses (an instance from an earlier
+#: build is moved aside and re-imported fresh, never converted).
+GENESIS_SEEDS: tuple[tuple[str, str], ...] = (
+    (
+        "claim-types/semantic/alias.json",
+        "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
     ),
-    # 2026-10-07 (11225019f): adds curation detection.
-    GenesisSeedSet(
-        set_id="triggers-4",
-        files=(
-            (
-                "triggers/curation-detect.json",
-                "3d4739fe1f7e1bc2cc2d9769c8e15d87bf3f73820750894e269299b878c753ae",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger"}),
+    (
+        "claim-types/semantic/distinct_from.json",
+        "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
     ),
-    # workspace.file as a core built-in: its compiler-owned ProviderInterface
-    # registration and the cruxible-builtin Provider
-    # (governance/seed_artifacts/workspace_file.py).
-    GenesisSeedSet(
-        set_id="triggers-4-workspace-file",
-        files=(
-            (
-                "provider-interfaces/workspace.file.json",
-                "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "0735895428d89309e507ba0ce4f07292f17c4986a1f8b5a6a35dc548574d6236",
-            ),
-            (
-                "triggers/curation-detect.json",
-                "3d4739fe1f7e1bc2cc2d9769c8e15d87bf3f73820750894e269299b878c753ae",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider-interface", "provider"}),
+    (
+        "contracts/workspace.file.content/v1.json",
+        "a0a8908cbc65d9b5320a3bc34ebabd44356a7580e645509784819f60595ff5be",
     ),
-    # 2026-10-08 (maintainer ruling): curation is beta and takes no time on
-    # the primary action path, so new instances no longer seed curation-detect.
-    # An instance opts in by authoring that Trigger itself.
-    GenesisSeedSet(
-        set_id="triggers-3-workspace-file",
-        files=(
-            (
-                "provider-interfaces/workspace.file.json",
-                "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "0735895428d89309e507ba0ce4f07292f17c4986a1f8b5a6a35dc548574d6236",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider-interface", "provider"}),
+    (
+        "contracts/workspace.file.refusal.invalid_parameter/v1.json",
+        "473440364b8c5c641aa7cd765ad4cb0b897e1fbafc18aad545b59e80b66021a8",
     ),
-    # 2026-10-09 (maintainer ruling identity-design-1009, D3): adds the builtin
-    # semantic.alias ClaimType (contracts/builtin_claim_types.py), so Subject
-    # references resolve through aliases from generation zero on.
-    GenesisSeedSet(
-        set_id="triggers-3-workspace-file-alias",
-        files=(
-            (
-                "claim-types/semantic/alias.json",
-                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
-            ),
-            (
-                "provider-interfaces/workspace.file.json",
-                "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "0735895428d89309e507ba0ce4f07292f17c4986a1f8b5a6a35dc548574d6236",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider-interface", "provider", "claim-type"}),
+    (
+        "contracts/workspace.file.refusal.mismatched_lengths/v1.json",
+        "73646057965632d5fde5208a7d814fb3459057cbdb98488466eab81ea7f12868",
     ),
-    # 2026-10-09 (identity E-b, D1/D4): adds the builtin semantic.distinct_from
-    # ClaimType, so a hint kind's further key holder and the duplicates audit can
-    # name two Subjects as different things from generation zero on.
-    GenesisSeedSet(
-        set_id="triggers-3-workspace-file-alias-distinct",
-        files=(
-            (
-                "claim-types/semantic/alias.json",
-                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
-            ),
-            (
-                "claim-types/semantic/distinct_from.json",
-                "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
-            ),
-            (
-                "provider-interfaces/workspace.file.json",
-                "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "0735895428d89309e507ba0ce4f07292f17c4986a1f8b5a6a35dc548574d6236",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider-interface", "provider", "claim-type"}),
+    (
+        "contracts/workspace.file.refusal.provider_declined/v1.json",
+        "989bc9541520590f0a9425488f477e97e0e515472d3003985667fa5bf54c29c5",
     ),
-    # 2026-10-29 (claim-authority B2): ProviderInterface is gone. The built-in
-    # Provider declares the typed workspace.file operation, and the four
-    # core-owned Contracts its signature pins are seeded beside it.
-    GenesisSeedSet(
-        set_id="triggers-3-workspace-file-operation",
-        files=(
-            (
-                "claim-types/semantic/alias.json",
-                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
-            ),
-            (
-                "claim-types/semantic/distinct_from.json",
-                "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
-            ),
-            (
-                "contracts/workspace.file.content/v1.json",
-                "a0a8908cbc65d9b5320a3bc34ebabd44356a7580e645509784819f60595ff5be",
-            ),
-            (
-                "contracts/workspace.file.request/v1.json",
-                "c9ed78bc1265f0169e6e05c8f1a5cdec8f6dcc0cbff91de3d74f1e4bd43cd70c",
-            ),
-            (
-                "contracts/workspace.file.result/v1.json",
-                "e3966d5a88323a68de2da9e70d2513ab4db9750e239a82b6f4efffdaf1944b5c",
-            ),
-            (
-                "contracts/workspace.file.source/v1.json",
-                "c8508b48cb424fad39a34df454fa403cedece340df708f80c422293ccc663062",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "bbf405ed1158dbd80a0b1e35322f17342bce9912b9151dfb2c33d7583ddbf8a9",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider", "claim-type", "contract"}),
+    (
+        "contracts/workspace.file.request/v1.json",
+        "c9ed78bc1265f0169e6e05c8f1a5cdec8f6dcc0cbff91de3d74f1e4bd43cd70c",
     ),
-    # 2026-10-29 (claim-authority B2 fix round): the built-in's typed refusals
-    # (providers/builtin_workspace_file.py's digest, length and size guards)
-    # are declared on the operation (F10), so they surface as typed node
-    # refusals instead of an undeclared-code protocol violation. Three new
-    # refusal-detail Contracts; everything else is byte-identical to the
-    # prior set.
-    GenesisSeedSet(
-        set_id="triggers-3-workspace-file-refusals",
-        files=(
-            (
-                "claim-types/semantic/alias.json",
-                "0d2449bf47e8375e2c43395099234b09c28391e4ac576ab0bd688e858dd40999",
-            ),
-            (
-                "claim-types/semantic/distinct_from.json",
-                "a66106eaf0827455c61414ccaaaeb60300bf40499a8d59f994fe2d275d70fd95",
-            ),
-            (
-                "contracts/workspace.file.content/v1.json",
-                "a0a8908cbc65d9b5320a3bc34ebabd44356a7580e645509784819f60595ff5be",
-            ),
-            (
-                "contracts/workspace.file.refusal.invalid_parameter/v1.json",
-                "473440364b8c5c641aa7cd765ad4cb0b897e1fbafc18aad545b59e80b66021a8",
-            ),
-            (
-                "contracts/workspace.file.refusal.mismatched_lengths/v1.json",
-                "73646057965632d5fde5208a7d814fb3459057cbdb98488466eab81ea7f12868",
-            ),
-            (
-                "contracts/workspace.file.refusal.provider_declined/v1.json",
-                "989bc9541520590f0a9425488f477e97e0e515472d3003985667fa5bf54c29c5",
-            ),
-            (
-                "contracts/workspace.file.request/v1.json",
-                "c9ed78bc1265f0169e6e05c8f1a5cdec8f6dcc0cbff91de3d74f1e4bd43cd70c",
-            ),
-            (
-                "contracts/workspace.file.result/v1.json",
-                "e3966d5a88323a68de2da9e70d2513ab4db9750e239a82b6f4efffdaf1944b5c",
-            ),
-            (
-                "contracts/workspace.file.source/v1.json",
-                "c8508b48cb424fad39a34df454fa403cedece340df708f80c422293ccc663062",
-            ),
-            (
-                "providers/cruxible-builtin.json",
-                "0ef8007bf03ec92657a0b67f8f7da93be071d185070cb545913c147157d4c392",
-            ),
-            (
-                "triggers/evidence-sweep.json",
-                "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
-            ),
-            (
-                "triggers/floor-refresh.json",
-                "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
-            ),
-            (
-                "triggers/prediction-anchor-retry.json",
-                "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
-            ),
-        ),
-        artifact_kinds=frozenset({"trigger", "provider", "claim-type", "contract"}),
+    (
+        "contracts/workspace.file.result/v1.json",
+        "e3966d5a88323a68de2da9e70d2513ab4db9750e239a82b6f4efffdaf1944b5c",
+    ),
+    (
+        "contracts/workspace.file.source/v1.json",
+        "c8508b48cb424fad39a34df454fa403cedece340df708f80c422293ccc663062",
+    ),
+    (
+        "providers/cruxible-builtin.json",
+        "0ef8007bf03ec92657a0b67f8f7da93be071d185070cb545913c147157d4c392",
+    ),
+    (
+        "triggers/evidence-sweep.json",
+        "6dc35c2d7e6b4a0d028075278e798f6f44980450a169b640e696cc1b22b5218a",
+    ),
+    (
+        "triggers/floor-refresh.json",
+        "fa726264af5e81c6dfcc6dbf4ade34b8c471b2749e4027a9bb4ff3f95169d98a",
+    ),
+    (
+        "triggers/prediction-anchor-retry.json",
+        "2e3c2183b59b6f2025fd8a6351fb6721fc5210d39626527b210302016112fa72",
     ),
 )
 
 
-def genesis_seed_set(set_id: str) -> GenesisSeedSet:
-    for seed_set in GENESIS_SEED_SETS:
-        if seed_set.set_id == set_id:
-            return seed_set
-    raise KeyError(set_id)
+def genesis_seed_files() -> dict[str, bytes]:
+    """Read the checked-in genesis seed bytes, refusing any that drifted from the table."""
 
-
-def current_genesis_seed_set(admitted_kinds: Iterable[str]) -> GenesisSeedSet:
-    """The newest seed set whose artifact kinds the instance's compiler admits."""
-
-    admitted = frozenset(admitted_kinds)
-    return next(
-        seed_set for seed_set in reversed(GENESIS_SEED_SETS) if seed_set.artifact_kinds <= admitted
-    )
-
-
-def genesis_seed_files(seed_set: GenesisSeedSet) -> dict[str, bytes]:
-    """Read one set's checked-in bytes, refusing any that drifted from the table."""
-
-    root = files("cruxible_core.governance.seed_artifacts").joinpath("genesis", seed_set.set_id)
+    root = files("cruxible_core.governance.seed_artifacts").joinpath("genesis")
     loaded: dict[str, bytes] = {}
-    for path, digest in seed_set.files:
+    for path, digest in GENESIS_SEEDS:
         content = root.joinpath(*path.split("/")).read_bytes()
         if hashlib.sha256(content).hexdigest() != digest:
-            raise BootstrapError(f"genesis seed {seed_set.set_id}/{path} differs from its digest")
+            raise BootstrapError(f"genesis seed {path} differs from its digest")
         loaded[path] = content
     return loaded
 
 
-def matching_genesis_seed_set(seeds: Mapping[str, bytes]) -> GenesisSeedSet | None:
-    """The historical set these seeded artifacts equal exactly, if any."""
-
-    for seed_set in GENESIS_SEED_SETS:
-        if set(seeds) == seed_set.paths and all(
-            hashlib.sha256(seeds[path]).hexdigest() == digest for path, digest in seed_set.files
-        ):
-            return seed_set
-    return None
+def _is_current_genesis_seeds(seeds: Mapping[str, bytes]) -> bool:
+    return set(seeds) == {path for path, _digest in GENESIS_SEEDS} and all(
+        hashlib.sha256(seeds[path]).hexdigest() == digest for path, digest in GENESIS_SEEDS
+    )
 
 
 def seeded_triggers() -> tuple[Trigger, ...]:
-    """The Triggers a new instance starts with (those of the newest seed set).
+    """The Triggers a new instance starts with (those of the genesis seeds).
 
     They are ordinary governed Triggers from the first generation on: an
     instance changes or retires them through proposals like any other.
@@ -515,7 +233,7 @@ def seeded_triggers() -> tuple[Trigger, ...]:
 
     return tuple(
         parse_trigger(content, path=path)
-        for path, content in genesis_seed_files(GENESIS_SEED_SETS[-1]).items()
+        for path, content in genesis_seed_files().items()
         if path.startswith("triggers/")
     )
 
@@ -531,10 +249,9 @@ def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicy:
 
     return parse_procedure_runtime_policy(
         files("cruxible_core.governance.seed_artifacts")
-        .joinpath("procedure-runtime-policy.yaml")
+        .joinpath("procedure-runtime-policy.json")
         .read_bytes(),
-        path="governance/procedure-runtime-policy.yaml",
-        codec=P2_B0_ARTIFACT_CODEC,
+        path=PROCEDURE_RUNTIME_POLICY_PATH,
     )
 
 
@@ -561,20 +278,22 @@ def verify_genesis(
         approval_policy = parse_approval_policy(policy_content, path=APPROVAL_POLICY_PATH)
     except ApprovalPolicyFormatError as exc:
         raise BootstrapError("genesis approval policy is invalid") from exc
-    runtime_policy: ProcedureRuntimePolicy | None = None
     runtime_policy_content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
-    if runtime_policy_content is not None:
-        try:
-            runtime_policy = parse_procedure_runtime_policy(
-                runtime_policy_content,
-                path=PROCEDURE_RUNTIME_POLICY_PATH,
-            )
-        except ProcedureRuntimePolicyFormatError as exc:
-            raise BootstrapError("genesis Procedure runtime policy is invalid") from exc
+    if runtime_policy_content is None:
+        raise BootstrapError("genesis Procedure runtime policy is missing")
+    try:
+        runtime_policy = parse_procedure_runtime_policy(
+            runtime_policy_content,
+            path=PROCEDURE_RUNTIME_POLICY_PATH,
+        )
+    except ProcedureRuntimePolicyFormatError as exc:
+        raise BootstrapError("genesis Procedure runtime policy is invalid") from exc
     seeds = {path: content for path, content in tree.items() if _is_genesis_seed_path(path)}
-    seed_set = matching_genesis_seed_set(seeds)
-    if seed_set is None:
-        raise BootstrapError("genesis seeded artifacts match no historical genesis seed set")
+    if not _is_current_genesis_seeds(seeds):
+        raise BootstrapError(
+            "genesis seeded artifacts differ from this release's genesis seeds; an instance "
+            "from an earlier build is moved aside and re-imported into a fresh instance"
+        )
     expected_tree = genesis_tree(
         trust_root.principals,
         approval_policy=approval_policy,
@@ -629,7 +348,6 @@ def verify_genesis(
         principals=tuple(parsed),
         approval_policy=approval_policy,
         procedure_runtime_policy=runtime_policy,
-        seed_set=seed_set,
     )
 
 
@@ -639,14 +357,9 @@ def prepare_genesis(
     trust_root: TrustRoot,
     approval_policy: ApprovalPolicy,
     procedure_runtime_policy: ProcedureRuntimePolicy | None = None,
-    seed_set: GenesisSeedSet | None = None,
     timestamp: str,
 ) -> VerifiedGenesis:
-    """Create, verify, and install the one no-parent genesis commit.
-
-    ``seed_set`` is the historical set the instance starts with, chosen by
-    the artifact kinds its compiler admits (none when omitted).
-    """
+    """Create, verify, and install the one no-parent genesis commit with the genesis seeds."""
 
     tree = genesis_tree(
         trust_root.principals,
@@ -656,7 +369,7 @@ def prepare_genesis(
             if procedure_runtime_policy is None
             else procedure_runtime_policy
         ),
-        seeds=genesis_seed_files(seed_set) if seed_set is not None else None,
+        seeds=genesis_seed_files(),
     )
     oid = ledger.create_signed_genesis(tree, timestamp=timestamp)
     verified = verify_genesis(ledger, oid, trust_root=trust_root)
@@ -667,18 +380,14 @@ def prepare_genesis(
 
 
 __all__ = [
-    "GENESIS_SEED_SETS",
-    "GenesisSeedSet",
+    "GENESIS_SEEDS",
     "VerifiedGenesis",
     "bootstrap_changeset_digest",
     "bootstrap_root",
-    "current_genesis_seed_set",
     "generation_root",
     "genesis_seed_files",
-    "genesis_seed_set",
     "genesis_semantic_root",
     "genesis_tree",
-    "matching_genesis_seed_set",
     "prepare_genesis",
     "render_principal",
     "seeded_procedure_runtime_policy",

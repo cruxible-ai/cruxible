@@ -20,6 +20,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     manifest_root,
 )
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.types import GenerationDescriptor, PrincipalRecord, StorageLayout
 from cruxible_core.ledger.bootstrap import (
     bootstrap_changeset_digest,
@@ -47,7 +48,15 @@ def test_semantic_genesis_has_a_frozen_end_to_end_golden() -> None:
         PrincipalRecord.model_validate(record) for record in golden["input"]["principals"]
     )
     approval_policy = ApprovalPolicy.model_validate(golden["input"]["approval_policy"])
-    tree = genesis_tree(principals, approval_policy=approval_policy)
+    runtime_policy = ProcedureRuntimePolicy.model_validate(
+        golden["input"]["procedure_runtime_policy"]
+    )
+    tree = genesis_tree(
+        principals,
+        approval_policy=approval_policy,
+        procedure_runtime_policy=runtime_policy,
+        seeds={},
+    )
     parent = bootstrap_root(
         instance_id=golden["input"]["instance_id"],
         daemon_public_key=golden["input"]["daemon_public_key"],

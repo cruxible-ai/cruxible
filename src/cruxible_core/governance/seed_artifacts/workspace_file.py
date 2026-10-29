@@ -1,8 +1,7 @@
 """Compiler-owned ``workspace.file`` operation and built-in Provider.
 
-New instances start with these artifacts at genesis (the
-``triggers-3-workspace-file-operation`` genesis seed set in
-``ledger/bootstrap.py``): the four core-owned Contracts the operation's
+New instances start with these artifacts at genesis (``GENESIS_SEEDS`` in
+``ledger/bootstrap.py``): the core-owned Contracts the operation's
 signature pins (``cruxible_client.contracts.workspace_file``), and the
 ``cruxible-builtin`` Provider whose one operation, ``workspace.file``, is core's
 in-process adapter (``cruxible_core.providers.builtin_workspace_file``). Core
@@ -66,8 +65,9 @@ WORKSPACE_FILE_BUILTIN_ENTRYPOINT = "cruxible_core.providers.builtin_workspace_f
 #: A bump never replaces the old revision: every instance seeded under it pins
 #: its implementation digest forever. Freeze the old adapter (its own module or
 #: class), keep its entry in ``providers.builtin_runtime.BUILTIN_IMPLEMENTATIONS``
-#: (append-only, guarded by a frozen-keys test), append the new revision's entry,
-#: and append a new genesis seed set for the new Provider bytes.
+#: (append-only, guarded by a frozen-keys test) and append the new revision's
+#: entry. New Provider bytes change ``GENESIS_SEEDS``, which every instance's
+#: generation zero must match exactly.
 WORKSPACE_FILE_BUILTIN_REVISION = (
     "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
 )

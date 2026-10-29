@@ -132,10 +132,7 @@ TICK = "scale-tick"
 TERMINAL_ITEMS = 10
 _FAR_PAST = datetime(2020, 1, 1, tzinfo=UTC)
 _FAR_FUTURE = datetime(2099, 1, 1, tzinfo=UTC)
-_CURATION_DETECT = (
-    Path(__file__).resolve().parents[2]
-    / "src/cruxible_core/governance/seed_artifacts/genesis/triggers-4/triggers/curation-detect.json"
-)
+_CURATION_DETECT = Path(__file__).resolve().parents[2] / "tests/data/triggers/curation-detect.json"
 
 
 @dataclass(frozen=True)

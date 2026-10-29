@@ -504,7 +504,7 @@ def test_sdk_get_answers_every_kind_get_resolves(
         "Principal:owner": RefKind.PRINCIPAL,
         "Provider:cruxible-builtin": RefKind.PROVIDER,
         # workspace.file.result is core-owned and genesis-seeded (B2's
-        # ledger/bootstrap.py seed set), so it is live on every fresh instance.
+        # ledger/bootstrap.py genesis seeds), so it is live on every fresh instance.
         "Contract:workspace.file.result@1": RefKind.CONTRACT,
     }
     for ref, kind in expected.items():

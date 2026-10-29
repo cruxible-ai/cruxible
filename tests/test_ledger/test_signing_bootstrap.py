@@ -20,7 +20,13 @@ from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
     generate_daemon_key,
 )
-from cruxible_core.ledger.bootstrap import genesis_tree, prepare_genesis, verify_genesis
+from cruxible_core.ledger.bootstrap import (
+    genesis_seed_files,
+    genesis_tree,
+    prepare_genesis,
+    seeded_procedure_runtime_policy,
+    verify_genesis,
+)
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from tests.core_support._support import FIXED_TIMESTAMP, generate_client, initialize_local
@@ -90,10 +96,14 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     legacy_tree = genesis_tree(
         trust.principals,
         approval_policy=ApprovalPolicy(mode="self_approval_allowed"),
+        procedure_runtime_policy=seeded_procedure_runtime_policy(),
+        seeds=genesis_seed_files(),
     )
+    # An earlier build's genesis carried no Procedure runtime policy; it refuses.
+    del legacy_tree["governance/procedure-runtime-policy.json"]
     legacy_oid = legacy_ledger.create_signed_genesis(legacy_tree, timestamp=FIXED_TIMESTAMP)
-    legacy = verify_genesis(legacy_ledger, legacy_oid, trust_root=trust)
-    assert legacy.procedure_runtime_policy is None
+    with pytest.raises(BootstrapError, match="Procedure runtime policy is missing"):
+        verify_genesis(legacy_ledger, legacy_oid, trust_root=trust)
 
 
 def test_git_operations_ignore_ambient_repository_and_config_overrides(

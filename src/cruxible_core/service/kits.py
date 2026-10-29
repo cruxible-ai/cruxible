@@ -103,7 +103,7 @@ from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
+from cruxible_core.ledger.bootstrap import genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
@@ -144,19 +144,17 @@ _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
 @functools.cache
 def _builtin_definitions() -> dict[tuple[str, str], frozenset[str]]:
     """(kind, name) -> the artifact digests of every compiler-seeded Provider and
-    Contract any genesis seed set wrote (``cruxible-builtin`` and the
-    ``workspace.file`` operation's Contracts). They are on every instance seeded
-    with them, so a kit pins them as they are: it never carries, installs or
-    remaps one."""
+    Contract in the genesis seeds (``cruxible-builtin`` and the ``workspace.file``
+    operation's Contracts). They are on every instance, so a kit pins them as they
+    are: it never carries, installs or remaps one."""
 
     found: dict[tuple[str, str], set[str]] = {}
-    for seed_set in GENESIS_SEED_SETS:
-        for path, content in genesis_seed_files(seed_set).items():
-            if path.startswith(("providers/", "contracts/")):
-                state = _artifact_state(path, content)
-                found.setdefault((state.identity.kind, state.identity.name), set()).add(
-                    state.artifact_digest
-                )
+    for path, content in genesis_seed_files().items():
+        if path.startswith(("providers/", "contracts/")):
+            state = _artifact_state(path, content)
+            found.setdefault((state.identity.kind, state.identity.name), set()).add(
+                state.artifact_digest
+            )
     return {key: frozenset(digests) for key, digests in found.items()}
 
 

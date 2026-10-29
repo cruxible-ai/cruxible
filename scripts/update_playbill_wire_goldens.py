@@ -64,7 +64,12 @@ from cruxible_core.claims.closure import (
     build_dependency_edge_tree,
     dependency_edge_members,
 )
-from cruxible_core.ledger.bootstrap import bootstrap_root, genesis_semantic_root, genesis_tree
+from cruxible_core.ledger.bootstrap import (
+    bootstrap_root,
+    genesis_semantic_root,
+    genesis_tree,
+    seeded_procedure_runtime_policy,
+)
 from cruxible_core.proposals.settlement import (
     ChangeSetRecordV3,
     change_set_digest,
@@ -195,7 +200,15 @@ def _update_semantic_genesis_golden() -> None:
         PrincipalRecord(principal_id="reviewer", public_key="03" * 32, kind="ordinary"),
     )
     approval_policy = ApprovalPolicy(mode="self_approval_allowed")
-    tree = genesis_tree(principals, approval_policy=approval_policy)
+    runtime_policy = seeded_procedure_runtime_policy()
+    # The derivation golden: the seeded artifacts enter the manifest like any
+    # other path, so the frozen preimage needs none of them.
+    tree = genesis_tree(
+        principals,
+        approval_policy=approval_policy,
+        procedure_runtime_policy=runtime_policy,
+        seeds={},
+    )
     parent = bootstrap_root(
         instance_id=str(input_payload["instance_id"]),
         daemon_public_key=str(input_payload["daemon_public_key"]),
@@ -203,6 +216,7 @@ def _update_semantic_genesis_golden() -> None:
     changeset, semantic = genesis_semantic_root(tree, parent=parent)
     input_payload["principals"] = [item.model_dump(mode="json") for item in principals]
     input_payload["approval_policy"] = approval_policy.model_dump(mode="json")
+    input_payload["procedure_runtime_policy"] = runtime_policy.model_dump(mode="json")
     fixture["expected"] = {
         "canonical_tree": {
             member_path: content.decode("utf-8") for member_path, content in tree.items()

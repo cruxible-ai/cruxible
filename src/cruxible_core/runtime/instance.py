@@ -84,7 +84,6 @@ from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
-    artifact_kinds_for_compiler,
     current_compiler_coordinate,
 )
 from cruxible_core.compiler.projection_artifacts import (
@@ -152,7 +151,6 @@ from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
-    current_genesis_seed_set,
     prepare_genesis,
     seeded_procedure_runtime_policy,
     verify_genesis,
@@ -389,9 +387,9 @@ class _PendingRestatementEntry:
 
 @functools.lru_cache(maxsize=1)
 def _genesis_seed_digests() -> frozenset[tuple[str, str]]:
-    from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS
+    from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
 
-    return frozenset((path, digest) for seed in GENESIS_SEED_SETS for path, digest in seed.files)
+    return frozenset(GENESIS_SEEDS)
 
 
 def _pending_restatement(path: str, content: bytes) -> str | None:
@@ -708,14 +706,6 @@ class PlaybillInstance:
                     )
                 ),
                 procedure_runtime_policy=seeded_procedure_runtime_policy(),
-                # The instance starts with the newest historical seed set its
-                # compiler admits; the seeded artifacts are governed from here on.
-                seed_set=current_genesis_seed_set(
-                    entry.kind
-                    for entry in artifact_kinds_for_compiler(
-                        current_compiler_coordinate()
-                    ).entries()
-                ),
                 timestamp=commit_timestamp,
             )
             descriptor = Descriptor(
