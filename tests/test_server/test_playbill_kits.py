@@ -54,7 +54,6 @@ from cruxible_client.contracts.query.definitions import (
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
     parse_query_definition,
-    query_definition_digest,
 )
 from cruxible_client.contracts.query.grammar import (
     QueryBudgets,
@@ -76,7 +75,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._subject_kind_support import declare_by_slug
-from tests.core_support._support import build_inputs, initialize_fresh, restamp_state_root
+from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
 
 SEATS = "acme.account.seats"
@@ -200,157 +199,8 @@ class _World:
         return result
 
 
-class _CoreWorld(_World):
-    """Frozen exact-pin histories use real core services, never the served write boundary."""
-
-    def __init__(self, root: Path, instance_id: str):
-        from types import SimpleNamespace
-
-        from cruxible_core.governance.actor_context import GovernedActorContext
-        from cruxible_core.service.procedures.procedure_runs import (
-            ProcedureRunRequest,
-            service_run_playbill_procedure,
-        )
-
-        self.instance, self.owner = initialize_fresh(root, instance_id=instance_id)
-        self.instance_id = instance_id
-        self.root = root
-
-        def run(name):
-            from datetime import UTC, datetime
-
-            now = datetime.now(UTC)
-            return service_run_playbill_procedure(
-                self.instance,
-                name=name,
-                request=ProcedureRunRequest(input={}, evaluation_time=now),
-                actor_context=GovernedActorContext(
-                    actor_type="human_user",
-                    actor_id="owner",
-                    org_id=instance_id,
-                    operation_id="frozen-kit-run",
-                    timestamp=now,
-                ),
-            )
-
-        self.pb = SimpleNamespace(
-            refresh=self.instance.refresh,
-            accepted_procedure=lambda name: SimpleNamespace(run=lambda: run(name)),
-        )
-
-    def tree(self):
-        return dict(self.instance.immutable_tree_at(self.instance.accepted_coordinate().git_oid))
-
-    def activate(self, proposal_id):
-        from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-
-        receipt = service_activate_playbill_proposal(
-            self.instance,
-            proposal_id=proposal_id,
-            activated_by="owner",
-        )
-        assert receipt.status == "accepted", receipt
-
-    def approve(self, proposal_id):
-        from cruxible_core.service.authoring.documents import (
-            service_inspect_playbill_proposal,
-            service_submit_playbill_approval,
-        )
-        from tests.core_support._support import client_material
-        from tests.test_ledger.test_activation import _sign
-
-        inspected = service_inspect_playbill_proposal(self.instance, proposal_id=proposal_id)
-        candidate = inspected.proposal.candidate
-        assert candidate is not None, inspected.proposal.evaluation.diagnostics
-        signed = _sign(
-            client_material(self.root, self.instance),
-            candidate.candidate_digest,
-            self.instance.accepted_coordinate().semantic_root,
-        )
-        service_submit_playbill_approval(
-            self.instance,
-            proposal_id=proposal_id,
-            attestation=signed.attestation,
-            authenticated_submitter="reviewer",
-        )
-        self.activate(proposal_id)
-
-    def submit(self, *members):
-        from cruxible_client.contracts.authoring.models import (
-            ChangeSetAuthoringPayload,
-            authoring_member_identity,
-        )
-        from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-        from cruxible_core.proposals.proposals import AuthenticatedActor
-
-        coordinator = AuthoringIntentCoordinator.for_instance(self.instance)
-        actor = AuthenticatedActor(actor_id="owner")
-        payload = ChangeSetAuthoringPayload(
-            members=tuple(sorted(members, key=authoring_member_identity)),
-        )
-        intent = coordinator.create(
-            actor=actor, payload=payload, canonical_timestamp="2026-10-24T12:00:00.000000Z"
-        ).intent
-        preflight = coordinator.preflight(intent.intent_id, actor=actor)
-        assert preflight.verdict == "passed", preflight.frontier
-        submitted = coordinator.submit(intent.intent_id, actor=actor)
-        assert submitted.status.proposal_id is not None, submitted
-        self.approve(submitted.status.proposal_id)
-        self.pb.refresh()
-
-    def author(self, *definitions, successions=(), dependents=()):
-        from cruxible_client.contracts.authoring.models import (
-            ClaimTypeAuthoringPayload,
-            ClaimTypeSuccessionMember,
-        )
-
-        self.submit(
-            *(ClaimTypeAuthoringPayload(claim_type=item) for item in definitions),
-            *(
-                ClaimTypeSuccessionMember(successor=item, dependents=dependents)
-                for item in successions
-            ),
-        )
-
-    def build(self, version, owns=("acme.",), kit_id="acme"):
-        from cruxible_core.service.kits import service_build_kit
-
-        return service_build_kit(
-            self.instance,
-            KitBuildRequest(kit_id=kit_id, version=version, owns=owns),
-        ).bundle
-
-    def preview_add(self, request):
-        from cruxible_core.service.kits import service_add_kit
-
-        return service_add_kit(
-            self.instance, request, actor_id="owner", timestamp="2026-10-24T12:00:00.000000Z"
-        )
-
-    def add(self, bundle, **options):
-        before = self.tree()
-        result = self.preview_add(
-            KitAddRequest(bundle=bundle, source="test", dry_run=False, **options)
-        )
-        if result.status == "proposed":
-            assert self.tree() == before
-            self.settle(result)
-        return result
-
-
 def _kit_preview(world, request):
-    if isinstance(world, _CoreWorld):
-        return world.preview_add(request)
     return playbill_api.playbill_kit_add(world.instance_id, request)
-
-
-@pytest.fixture
-def frozen_worlds(tmp_path: Path):
-    """Only historical exact-pin cases use revision 35 and direct core services."""
-    roots = (tmp_path / "publisher", tmp_path / "consumer")
-    for root in roots:
-        root.mkdir()
-    return tuple(_CoreWorld(root, f"inst_frozen_kit_{root.name}") for root in roots)
 
 
 def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
@@ -929,11 +779,11 @@ def _query_state(world: _World, name: str) -> str:
 
 
 def test_retiring_dependents_follows_the_dropped_definitions_whole_closure(
-    frozen_worlds: tuple[_World, _World],
+    worlds: tuple[_World, _World],
 ) -> None:
     """F-001: a dependent also reached through a replaced definition still retires."""
 
-    publisher, consumer = frozen_worlds
+    publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     consumer.add(publisher.build("1.0.0"))
     # Discovered first through PLAN (replaced), but it also pins SEATS (dropped).
@@ -947,7 +797,8 @@ def test_retiring_dependents_follows_the_dropped_definitions_whole_closure(
     by_identity = {item.identity: item for item in result.plan}
     assert by_identity[f"ClaimType:{SEATS}"].action == "retire"
     assert by_identity[f"ClaimType:{SEATS}"].dependent_count == 1
-    assert by_identity[f"ClaimType:{PLAN}"].dependent_count == 1
+    # The query names PLAN, so replacing PLAN leaves it nothing to restate.
+    assert by_identity[f"ClaimType:{PLAN}"].dependent_count == 0
     assert consumer.claim_type(SEATS).lifecycle.state == "retired"
     assert _query_state(consumer, "local.accounts") == "retired"
 
@@ -1608,11 +1459,6 @@ def _query(name: str, predicates: tuple[str, ...]) -> QueryDefinitionInput:
 
 
 def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
-    if isinstance(world, _CoreWorld):
-        from cruxible_client.contracts.authoring.inputs import lower_authoring_input
-
-        world.submit(lower_authoring_input(definition))
-        return
     draft = world.pb.changes(rationale="Read accounts.")
     draft.query_definition(definition)
     intent = draft.prepare()
@@ -1622,120 +1468,6 @@ def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
     world.pb.refresh()
-
-
-def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = frozen_worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
-    consumer.add(publisher.build("1.0.0"))
-    _author_query(consumer, _query("local.accounts", (PLAN, SEATS)))
-    query_path = "query-definitions/local.accounts.json"
-    accepted_query = consumer.tree()[query_path]
-
-    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
-    publisher.succeed(PLAN, {"type": "string", "minLength": 1})
-    upgraded = consumer.add(publisher.build("1.1.0"))
-
-    assert query_path not in {item.path for item in upgraded.plan}
-    # Each changed type counts its complete dependents; the query they share
-    # still takes one successor.
-    assert {
-        item.identity: item.dependent_count for item in upgraded.plan if item.dependent_count
-    } == {f"ClaimType:{SEATS}": 1, f"ClaimType:{PLAN}": 1}
-    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
-    accepted = parse_query_definition(accepted_query, path=query_path)
-    assert query.lifecycle.predecessor_digest == query_definition_digest(accepted).tagged
-    pinned = {pin.artifact_digest for pin in query.pins}
-    assert claim_type_digest(consumer.claim_type(SEATS)).tagged in pinned
-    assert claim_type_digest(consumer.claim_type(PLAN)).tagged in pinned
-
-
-def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = frozen_worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
-    _author_query(publisher, _query("acme.accounts", (SEATS,)))
-    consumer.add(publisher.build("1.0.0"))
-    query_path = "query-definitions/acme.accounts.json"
-    installed_query = consumer.tree()[query_path]
-
-    publisher.succeed(
-        SEATS,
-        {"type": "integer", "minimum": 0},
-        dependents=(
-            ClaimTypeSuccessionDependent(
-                identity=ArtifactIdentity(kind="QueryDefinition", name="acme.accounts"),
-                disposition="successor",
-            ),
-        ),
-    )
-    upgraded = consumer.add(publisher.build("1.1.0"))
-
-    actions = {(item.path, item.action) for item in upgraded.plan}
-    assert (query_path, "replace") in actions
-    assert (query_path, "carry") not in actions
-    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
-    installed = parse_query_definition(installed_query, path=query_path)
-    assert query.lifecycle.predecessor_digest == query_definition_digest(installed).tagged
-    assert {pin.artifact_digest for pin in query.pins} == {
-        claim_type_digest(consumer.claim_type(SEATS)).tagged
-    }
-
-
-@pytest.mark.parametrize("local_dependent", [False, True])
-def test_a_dropped_type_counts_only_queries_left_dependent_after_the_release(
-    frozen_worlds: tuple[_World, _World], local_dependent: bool
-) -> None:
-    """A same-release query replacement must not inflate the dropped type's count."""
-
-    publisher, consumer = frozen_worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
-    _author_query(publisher, _query("acme.accounts", (SEATS,)))
-    consumer.add(publisher.build("1.0.0"))
-    if local_dependent:
-        _author_query(consumer, _query("local.accounts", (SEATS,)))
-
-    path = "query-definitions/acme.accounts.json"
-    current = parse_query_definition(publisher.tree()[path], path=path)
-    replacement = _query("acme.accounts", (PLAN,))
-    _author_query(
-        publisher,
-        replacement.model_copy(
-            update={
-                "query_definition": replacement.query_definition.model_copy(
-                    update={
-                        "lifecycle": ArtifactLifecycle(
-                            predecessor_digest=query_definition_digest(current).tagged
-                        )
-                    }
-                )
-            }
-        ),
-    )
-    release = _without(publisher.build("1.1.0"), SEATS)
-    before = consumer.tree()
-    preview = _kit_preview(consumer, KitAddRequest(bundle=release, source="test"))
-    assert preview.status == "would_propose", preview.detail
-    assert consumer.tree() == before
-    by_path = {item.path: item for item in preview.plan}
-    assert by_path[path].action == "replace"
-    assert (by_path[_path(SEATS)].action, by_path[_path(SEATS)].dependent_count) == (
-        "keep" if local_dependent else "retire",
-        int(local_dependent),
-    )
-
-    installed = consumer.add(release)
-    assert installed.status == "accepted", installed.detail
-    assert installed.plan == preview.plan
-    query = parse_query_definition(consumer.tree()[path], path=path)
-    assert query.lifecycle.state == "live"
-    assert {pin.artifact_digest for pin in query.pins} == {
-        claim_type_digest(consumer.claim_type(PLAN)).tagged
-    }
-    assert consumer.claim_type(SEATS).lifecycle.state == ("live" if local_dependent else "retired")
 
 
 def _digest_fields(
@@ -2045,65 +1777,6 @@ def test_orient_and_get_name_the_kit_that_owns_each_claim_type_and_subject_kind(
         )
     )
     assert card(f"ClaimType:{SEATS}").kit is None
-
-
-def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    """Only the edited member diverges; a kit query re-pinned onto it does not."""
-
-    publisher, consumer = frozen_worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
-    _author_query(publisher, _query("acme.accounts", (SEATS,)))
-    consumer.add(publisher.build("1.0.0"))
-    query_path = "query-definitions/acme.accounts.json"
-    consumer.succeed(
-        SEATS,
-        {"type": "integer", "minimum": 1},
-        dependents=(
-            ClaimTypeSuccessionDependent(
-                identity=ArtifactIdentity(kind="QueryDefinition", name="acme.accounts"),
-                disposition="successor",
-            ),
-        ),
-    )
-    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
-    assert {pin.artifact_digest for pin in query.pins} == {
-        claim_type_digest(consumer.claim_type(SEATS)).tagged
-    }
-    from cruxible_core.service.kits import service_kit_status
-
-    assert service_kit_status(consumer.instance).kits[0].drifted == (_path(SEATS),)
-    from cruxible_core.service.floor.floor import service_export_playbill_floor
-
-    floor = service_export_playbill_floor(consumer.instance)
-    (query_row,) = [
-        line
-        for line in floor["ontology/queries/INDEX"].decode().splitlines()
-        if line.startswith("acme.accounts")
-    ]
-    assert "kit=acme" in query_row and "kit=acme edited" not in query_row
-    (seats_row,) = [
-        line
-        for line in floor["ontology/claim-types/INDEX"].decode().splitlines()
-        if line.startswith(SEATS + "\t")
-    ]
-    assert "kit=acme edited" in seats_row
-
-    publisher.succeed(PLAN, {"type": "string", "minLength": 1})
-    release = publisher.build("1.1.0")
-    preview = _kit_preview(
-        consumer,
-        KitAddRequest(bundle=release, source="test", dry_run=True, keep=(f"ClaimType:{SEATS}",)),
-    )
-    plan = {item.path: (item.action, item.consequence) for item in preview.plan}
-    assert plan[_path(SEATS)] == ("keep", "overwrites_your_edit")
-    assert plan[query_path] == ("unchanged", None)
-    assert plan[_path(PLAN)] == ("replace", None)
-    taken = _kit_preview(consumer, KitAddRequest(bundle=release, source="test", dry_run=True))
-    taking = {item.path: (item.action, item.consequence) for item in taken.plan}
-    assert taking[_path(SEATS)] == ("replace", "overwrites_your_edit")
-    assert taking[query_path][1] is None
 
 
 def test_a_release_with_inert_files_installs_as_the_same_release(

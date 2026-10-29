@@ -174,6 +174,48 @@ def threshold_world(
     return instance, owner, claim
 
 
+def accept_signed_threshold_attestations(
+    instance,  # type: ignore[no-untyped-def]
+    owner,  # type: ignore[no-untyped-def]
+    claim,  # type: ignore[no-untyped-def]
+    root: Path,
+    *,
+    attested_at: tuple[datetime, datetime] = (EVALUATION_TIME, EVALUATION_TIME),
+    valid_until: datetime | None = None,
+) -> None:
+    """Accept two independent principals' unsure attestations as signed artifacts."""
+
+    from cruxible_client.contracts.accepted_attestations import (
+        attestation_path,
+        render_accepted_attestation,
+    )
+    from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
+    from tests.core_support._support import client_material
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for signer, at in zip((owner, client_material(root, instance)), attested_at, strict=True):
+        envelope = _request(
+            instance,
+            signer,
+            claim.identity.name,
+            root,
+            stance="unsure",
+            attested_at=at,
+            valid_until=valid_until,
+        ).attestation
+        tree[attestation_path(claim_attestation_v2_envelope_digest(envelope))] = (
+            render_accepted_attestation(envelope)
+        )
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=max(attested_at).isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        proposal_name="threshold-attestations",
+    )
+
+
 def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
     return tuple(
         item

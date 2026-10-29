@@ -51,7 +51,10 @@ from tests.test_authoring.test_derivation_admission import (
     _run_and_accept,
     world,  # noqa: F401
 )
-from tests.test_evidence.test_attestation_consequence_next import threshold_world
+from tests.test_evidence.test_attestation_consequence_next import (
+    accept_signed_threshold_attestations,
+    threshold_world,
+)
 from tests.test_integration.test_next_closed_loop import (
     EVALUATION_TIME,
     _access,
@@ -308,22 +311,14 @@ def test_served_rows_equal_the_fold_across_histories_caught_up_behind_and_at_edg
             )
 
     else:
-        instance, _owner, _claim = threshold_world(
+        instance, owner, claim = threshold_world(tmp_path, monkeypatch)
+        accept_signed_threshold_attestations(
+            instance,
+            owner,
+            claim,
             tmp_path,
-            monkeypatch,
-            attestation_mutator=lambda _i, _c, attestations: tuple(
-                att.model_copy(
-                    update={
-                        "statement": att.statement.model_copy(
-                            update={
-                                "observed_at": at + timedelta(minutes=index),
-                                "valid_until": at + timedelta(minutes=3),
-                            }
-                        )
-                    }
-                )
-                for index, att in enumerate(attestations)
-            ),
+            attested_at=(at, at + timedelta(minutes=1)),
+            valid_until=at + timedelta(minutes=3),
         )
     # Cold: the fold serves; no stored rows exist yet.
     _assert_equivalent(instance, at, served=False)
