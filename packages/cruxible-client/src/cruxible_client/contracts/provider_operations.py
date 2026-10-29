@@ -388,16 +388,21 @@ def _close_member(
                     _closed(body, target, resolve=resolve, path=f"{path}.", problems=problems)
         return
     if isinstance(field_type, FieldResultType):
-        # field_result<T> = variant{present: {value: T, at}, absent: {}, invalid: {problem}};
-        # only the "present" arm carries a value to close, at ``field_type.value``.
-        if isinstance(value, Mapping) and value.get("tag") == "present" and "value" in value:
-            _close_member(
-                value["value"],
-                field_type.value,
-                resolve=resolve,
-                path=f"{path}.value",
-                problems=problems,
-            )
+        # field_result<T> = variant{present: {value: T, at}, absent: {}, invalid: {problem}}.
+        # The envelope's own keys close by its tag's arm (F06); only
+        # "present" also carries a value to close further, at ``field_type.value``.
+        if isinstance(value, Mapping):
+            allowed = _FIELD_RESULT_ENVELOPE_KEYS.get(value.get("tag"))
+            if allowed is not None:
+                _close_envelope_keys(value, allowed, path=path, problems=problems)
+            if value.get("tag") == "present" and "value" in value:
+                _close_member(
+                    value["value"],
+                    field_type.value,
+                    resolve=resolve,
+                    path=f"{path}.value",
+                    problems=problems,
+                )
         return
     if isinstance(field_type, RecordType):
         # record<C> = {record, key, fields: {f: field_result<C.f>}}.
@@ -408,8 +413,10 @@ def _close_member(
         return
     if isinstance(field_type, ResultType):
         # result<C> = variant{record: record<C>, invalid_record, duplicate};
-        # only the "record" arm carries a record<C> envelope to close.
+        # only the "record" arm carries a record<C> envelope to close (the
+        # other two arms are closed strict pydantic models, extra="forbid").
         if isinstance(value, Mapping) and value.get("tag") == "record":
+            _close_envelope_keys(value, _RESULT_RECORD_ARM_KEYS, path=path, problems=problems)
             target = resolve(field_type.contract)
             record_value = value.get("record")
             if target is not None and isinstance(record_value, Mapping):
@@ -425,6 +432,7 @@ def _close_member(
         # refusal<C> = {code, contract, body}; the body is a plain record of C
         # (not field_result-wrapped), exactly like a nested Contract's fields.
         if isinstance(value, Mapping):
+            _close_envelope_keys(value, _REFUSAL_ENVELOPE_KEYS, path=path, problems=problems)
             target = resolve(field_type.contract)
             refusal_body = value.get("body")
             if target is not None and isinstance(refusal_body, Mapping):
@@ -432,6 +440,35 @@ def _close_member(
                     refusal_body, target, resolve=resolve, path=f"{path}.body.", problems=problems
                 )
         return
+
+
+#: field_result<T>'s own wire keys, per arm (F06: the envelope closes too).
+_FIELD_RESULT_ENVELOPE_KEYS: dict[str | None, frozenset[str]] = {
+    "present": frozenset({"tag", "value", "at"}),
+    "absent": frozenset({"tag"}),
+    "invalid": frozenset({"tag", "problem"}),
+}
+#: result<C>'s "record" arm's own wire keys (the record<C> envelope nested at
+#: "record" closes separately, via ``_close_record_envelope``).
+_RESULT_RECORD_ARM_KEYS: frozenset[str] = frozenset({"tag", "record"})
+#: refusal<C>'s own wire keys.
+_REFUSAL_ENVELOPE_KEYS: frozenset[str] = frozenset({"code", "contract", "body"})
+#: record<C>'s own wire keys.
+_RECORD_ENVELOPE_KEYS: frozenset[str] = frozenset({"record", "key", "fields"})
+
+
+def _close_envelope_keys(
+    value: Mapping[str, object],
+    allowed: frozenset[str],
+    *,
+    path: str,
+    problems: list[str],
+) -> None:
+    """Refuse any key of a fixed-shape wrapper envelope outside ``allowed`` (F06)."""
+
+    for key in value:
+        if key not in allowed:
+            problems.append(f"{path}.{key}: undeclared field")
 
 
 def _close_record_envelope(
@@ -442,13 +479,15 @@ def _close_record_envelope(
     path: str,
     problems: list[str],
 ) -> None:
-    """Close a ``record<C>`` envelope's ``fields``: each is ``field_result<C.f>``.
+    """Close a ``record<C>`` envelope: its own keys, and each ``fields`` entry.
 
-    Keys ``fields`` carries outside ``contract``'s own fields refuse; each
-    declared field's present value is closed at its own type, same as any
-    other field_result.
+    The envelope's own keys (``record``, ``key``, ``fields``) are closed
+    first (F06); a ``fields`` entry outside ``contract``'s own fields
+    refuses too, and each declared field's present value is closed at its
+    own type, same as any other field_result.
     """
 
+    _close_envelope_keys(value, _RECORD_ENVELOPE_KEYS, path=path, problems=problems)
     fields_data = value.get("fields")
     if not isinstance(fields_data, Mapping):
         return

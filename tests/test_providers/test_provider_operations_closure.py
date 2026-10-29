@@ -234,3 +234,120 @@ def test_an_undeclared_key_inside_a_refusals_body_is_refused():
         }
     }
     validate_operation_value(good, outer, resolve=resolve)
+
+
+# --- F06 fix round 3: the wrapper envelopes themselves close too -------------
+
+
+def test_an_undeclared_key_beside_a_field_results_envelope_is_refused():
+    """Codex's exact reproduction: ``undeclared: retained`` beside the
+    standard ``present`` members of a valid ``field_result`` envelope."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_field_result_envelope",
+            "version": 1,
+            "fields": {"wrapped": {"type": "field_result<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    good = {"wrapped": {"tag": "present", "at": "/value", "value": {"value": 1}}}
+    validate_operation_value(good, outer, resolve=resolve)
+    bad = {"wrapped": {**good["wrapped"], "undeclared": "retained"}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)
+    # The "absent" and "invalid" arms close to their own (smaller) key sets too.
+    with pytest.raises(OperationValueRefused):
+        validate_operation_value(
+            {"wrapped": {"tag": "absent", "undeclared": "x"}}, outer, resolve=resolve
+        )
+    with pytest.raises(OperationValueRefused):
+        validate_operation_value(
+            {
+                "wrapped": {
+                    "tag": "invalid",
+                    "problem": {"code": "absent_required"},
+                    "undeclared": "x",
+                }
+            },
+            outer,
+            resolve=resolve,
+        )
+
+
+def test_an_undeclared_key_beside_a_records_envelope_is_refused():
+    """``record<C>``'s own envelope (``record``, ``key``, ``fields``) closes,
+    not only the per-field present values inside ``fields``."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_record_envelope",
+            "version": 1,
+            "fields": {"wrapped": {"type": "record<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    good = {
+        "wrapped": {
+            "record": "claims/aa/x.json",
+            "key": {},
+            "fields": {"value": {"tag": "present", "at": "/value", "value": 1}},
+        }
+    }
+    validate_operation_value(good, outer, resolve=resolve)
+    bad = {"wrapped": {**good["wrapped"], "undeclared": "retained"}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)
+
+
+def test_an_undeclared_key_beside_a_results_record_arm_envelope_is_refused():
+    """``result<C>``'s "record" arm envelope (``tag``, ``record``) closes,
+    not only the nested record<C> envelope it carries."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_result_envelope",
+            "version": 1,
+            "fields": {"wrapped": {"type": "result<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    good = {
+        "wrapped": {
+            "tag": "record",
+            "record": {
+                "record": "claims/aa/x.json",
+                "key": {},
+                "fields": {"value": {"tag": "present", "at": "/value", "value": 1}},
+            },
+        }
+    }
+    validate_operation_value(good, outer, resolve=resolve)
+    bad = {"wrapped": {**good["wrapped"], "undeclared": "retained"}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)
+
+
+def test_an_undeclared_key_beside_a_refusals_envelope_is_refused():
+    """``refusal<C>``'s own envelope (``code``, ``contract``, ``body``)
+    closes, not only the body's nested values."""
+
+    outer = Contract.model_validate(
+        {
+            "name": "test.outer_refusal_envelope",
+            "version": 1,
+            "fields": {"wrapped": {"type": "refusal<test.inner@1>"}},
+        }
+    )
+    resolve = closure_lookup((INNER, outer))
+    inner_digest = contract_digest(INNER).tagged
+    contract_ref = {"name": "test.inner", "version": 1, "digest": inner_digest}
+    good = {"wrapped": {"code": "some_code", "contract": contract_ref, "body": {"value": 1}}}
+    validate_operation_value(good, outer, resolve=resolve)
+    bad = {"wrapped": {**good["wrapped"], "undeclared": "retained"}}
+    with pytest.raises(OperationValueRefused) as excinfo:
+        validate_operation_value(bad, outer, resolve=resolve)
+    assert "undeclared" in str(excinfo.value)
