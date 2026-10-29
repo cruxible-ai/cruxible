@@ -5403,6 +5403,7 @@ class ProcedureExecutor:
         outcome: ProviderInvocationOutcome,
         *,
         node_id: str,
+        core_synthesized: bool,
     ) -> None:
         """A refusal code the operation declares carries a detail of its Contract.
 
@@ -5412,15 +5413,19 @@ class ProcedureExecutor:
         protocol violation, never an undeclared pass-through. Core/transport
         failures are a different outcome class and never reach here.
 
-        ``budget_wall_clock`` is the one exception: it is core's own
-        pre-spawn/mid-invoke deadline check (``ProviderSpawnDeadline`` and the
-        executor's ``effective_wall_clock_seconds`` gate), synthesized before
-        or around the Provider call rather than returned by it. Core raises
-        it regardless of what the admitted operation declares, so it never
-        needs operation declaration.
+        ``budget_wall_clock`` is the one exception, and only when
+        ``core_synthesized`` is true: it is core's own pre-spawn/mid-invoke
+        deadline check (``ProviderSpawnDeadline`` and the executor's
+        ``effective_wall_clock_seconds`` gate), synthesized before or around
+        the Provider call rather than returned by it. ``core_synthesized``
+        reflects where the caller built ``outcome`` from -- a
+        ``ProviderLocalRuntimeRefused``/``ProviderRuntimeWireError`` that core
+        raised itself, never a parsed Provider envelope -- so a provider that
+        returns ``budget_wall_clock`` through its own envelope is not
+        exempted and still needs operation declaration.
         """
 
-        if outcome.code in _CORE_SYNTHESIZED_REFUSAL_CODES:
+        if core_synthesized and outcome.code in _CORE_SYNTHESIZED_REFUSAL_CODES:
             return
         declared = occurrence.operation.refusals.get(outcome.code or "")
         if declared is None:
@@ -5682,14 +5687,19 @@ class ProcedureExecutor:
                 deadline=deadline,
             )
             outcome = map_provider_envelope(driver_result.envelope)
+            core_synthesized = False
         except ProviderLocalRuntimeRefused as exc:
+            # Core itself raised this (bind/spawn/deadline failure), never a
+            # parsed Provider envelope: see _typed_refusal's core_synthesized.
             outcome = map_provider_refusal(
                 exc.code,
                 message=str(exc),
                 detail=exc.details,
             )
+            core_synthesized = True
         except ProviderRuntimeWireError as exc:
             outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+            core_synthesized = True
         if driver_result is None:
             egress = ProviderEgressObservation(
                 declared_endpoints=tuple(
@@ -5797,7 +5807,9 @@ class ProcedureExecutor:
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":
             if outcome.outcome_class == "node_refusal":
-                self._typed_refusal(occurrence, outcome, node_id=node_id)
+                self._typed_refusal(
+                    occurrence, outcome, node_id=node_id, core_synthesized=core_synthesized
+                )
                 raise _ProviderNodeRefusal(outcome, node_id=node_id)
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
