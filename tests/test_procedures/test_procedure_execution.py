@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from pydantic import TypeAdapter
 
 import cruxible_client.contracts.procedures.results as procedure_result_contracts
@@ -33,10 +32,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     ProcedureOwnedContract,
+    parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -142,9 +143,8 @@ from cruxible_core.storage.material_reservations import (
     RunMaterialReservationV1,
     reserve_admission_material_body,
 )
-from tests.core_support._p2b1_support import accepted_interface, accepted_provider
-from tests.core_support._p2b1_support import pin as p2b1_pin
 from tests.core_support._support import initialize_local
+from tests.support.operation_world import contract_files
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
@@ -1129,26 +1129,14 @@ def _accepted_line_for_admission(
         target=accepted_procedure.procedure.identity,
         artifact_digest=accepted_procedure.artifact_digest,
     )
-    acquisition_pin = ArtifactPin(
-        role="acquisition-policy",
-        target=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="line-policy"),
-        artifact_digest=admission.acquisition_policy_digest or "",
-    )
     line = LineSpec(
         identity=admission.line_identity,
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        acquisition_policy=acquisition_pin,
         max_authority="observe",
         budgets={},
         epsilon={"$decimal": "0"},
-        pins=tuple(
-            sorted(
-                (procedure_pin, acquisition_pin),
-                key=lambda pin: (pin.role.encode(), pin.target.qualified.encode()),
-            )
-        ),
     )
     return AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
@@ -1202,14 +1190,32 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     tmp_path,
     monkeypatch,
 ) -> None:
+    # `service_prepare_playbill_line_admission` now resolves the Line's
+    # Procedure by name in the instance's accepted projection (B2), so this
+    # test needs a Procedure the compiler actually admits (format v3, via the
+    # real authoring/lowering path), not a hand-built v2 envelope.
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.operation_world import author_procedure, slotted_spec
+
+    instance, _owner = initialize_local(tmp_path)
+    accept_tree(instance, contract_files(), name="slot-contracts")
+    spec = slotted_spec(name="runtime-policy-procedure")
+    author_procedure(instance, spec, name="runtime-policy-procedure")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = procedure_path(spec.procedure)
+    accepted_procedure_artifact = parse_procedure(tree[path], path=path)
+    accepted = AcceptedProcedure(
+        path=path,
+        procedure=accepted_procedure_artifact,
+        artifact_digest=procedure_artifact_digest(accepted_procedure_artifact).tagged,
+    )
+
     fixture = _fixture(tmp_path)
-    accepted = _state_procedure()
     admission = _line_admission(accepted, fixture).model_copy(
         update={"provider_output_bytes_cap": 17}
     )
     accepted_line = _accepted_line_for_admission(admission, accepted)
     admission = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
-    instance, _owner = initialize_local(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     admission = admission.model_copy(
         update={
@@ -1671,23 +1677,11 @@ def test_three_plane_projection_is_stable_and_material_digest_free(tmp_path) -> 
 
 
 def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -> None:
-    provider = accepted_provider()
-    interface = accepted_interface()
-    provider_pin = p2b1_pin("provider", "Provider", "demo-provider", value=provider.artifact_digest)
-    interface_pin = p2b1_pin(
-        "provider-interface",
-        "ProviderInterface",
-        "demo.interface",
-        value=interface.artifact_digest,
-    )
     capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
     source = SourceNode(
         node_id="source",
         capture_contract=capture_contract,
-        provider=provider_pin,
-        interface=interface_pin,
-        interface_digest=interface.registration.interface_digest,
-        implementation_digest=provider.provider.implementations[0].implementation_digest,
+        slot="fetch",
         request={},
         as_="capture",
     )
@@ -1695,6 +1689,7 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         name="source-landed-capture",
         contract_in=_pin("contract-in", "Contract", "provider-input"),
         contract_out=_pin("contract-out", "Contract", "provider-output"),
+        slots={"fetch": {"in": "test.value@1", "out": "test.value@1", "effect": "external_read"}},
         nodes=(source,),
         returns="capture",
         budget=_budget(),
