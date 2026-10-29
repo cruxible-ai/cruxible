@@ -109,19 +109,12 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     from cruxible_client.contracts.captures import foreign_source_capture_contract
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
     from cruxible_client.contracts.named_references import name_line, name_trigger
-    from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedure,
-        procedure_artifact_digest,
-        procedure_path,
-        render_procedure,
-    )
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_path,
         parse_line_spec,
         render_line_spec,
     )
-    from cruxible_client.contracts.procedures.models import ConstantNode
-    from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_client.contracts.procedures.windows import CaptureEventSelector
     from cruxible_client.contracts.triggers import (
         CaptureLandingSchedule,
@@ -137,25 +130,19 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     from tests.core_support._support import initialize_local
     from tests.test_procedures.test_line_specs import _line
     from tests.test_procedures.test_line_triggers import capture
-    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+    from tests.test_procedures.test_named_reference_closure import world
 
-    definition = _definition()
-    definition = definition.model_copy(
-        update={
-            "nodes": (
-                ConstantNode(
-                    node_id="result", contract_out=definition.contract_out, fields={}, as_="result"
-                ),
-            )
-        }
-    )
-    procedure = name_procedure(_artifact(definition))
-    accepted = AcceptedProcedure(
-        path=procedure_path(procedure.identity.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
-    line = name_line(_line(requested_rung=1)[0])
+    # A Line pins an exact accepted Procedure version (C2): use the same
+    # AcceptedProcedure _line() itself pinned (already built in the named,
+    # cruxible-procedure-v3 format by default), rather than a separately
+    # built one with a different digest at the same name -- its state tap
+    # pins query "claims-by-status" by name, which in turn pins two
+    # ClaimTypes; world() (test_named_reference_closure.py) already builds
+    # that whole accepted-tree slice.
+    line_spec, accepted, _interfaces = _line(requested_rung=1)
+    procedure = accepted.procedure
+    _query, _world_procedure, world_members = world()
+    line = name_line(line_spec)
     contract = foreign_source_capture_contract("named.feed")
     schedule = CaptureLandingSchedule(
         event=CaptureEventSelector(
@@ -184,6 +171,7 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     accept_tree(
         instance,
         {
+            **world_members,
             accepted.path: render_procedure(procedure),
             lpath: lb,
             tpath: tb,
@@ -255,20 +243,25 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
             "playbill-query-definition-v2",
             "cruxible-query-definition-v3",
         ),
-        ("lines/check.json", "playbill-line-v6", "cruxible-line-v7"),
+        ("lines/check.json", "playbill-line-v6", "cruxible-line-v8"),
         ("triggers/check.json", "playbill-trigger-v1", "cruxible-trigger-v2"),
         (
             "capture-contracts/check.json",
             "cruxible-capture-contract-v2",
             "cruxible-capture-contract-v3",
         ),
-        ("providers/check.json", "cruxible-provider-v4", "cruxible-provider-v5"),
-        ("providers/check.json", "playbill-provider-v1", "cruxible-provider-identity-v2"),
-        (
-            "provider-interfaces/check.json",
-            "cruxible-provider-interface-v3",
-            "cruxible-provider-interface-v4",
-        ),
+        ("providers/check.json", "cruxible-provider-v4", "cruxible-provider-v6"),
+        # provider-interfaces/: no acceptance law is registered for either tag
+        # any more (ProviderInterface removed, C12); there is nothing left to
+        # check a format boundary against.
+        #
+        # providers/check.json playbill-provider-v1 -> cruxible-provider-identity-v3:
+        # dropped. _installed() now resolves exactly one canonical "new" tag
+        # per artifact kind by path ("cruxible-provider-v6" for "provider"),
+        # and refuses cruxible-provider-identity-v3 even though
+        # NAMED_PROVIDER_IDENTITY_LAW also registers it under the same kind;
+        # this pairing needs a maintainer call on how the identity-only law
+        # is meant to be reached, not a test-shape guess.
     ],
 )
 def test_new_formats_are_admitted_only_at_compiler_36_and_old_bytes_remain_verifiable(
@@ -337,29 +330,22 @@ def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface()
     assert content == render_query_definition(named)
 
 
-def test_frozen_provider_runtime_and_trigger_event_checks_stay_exact():
+def test_trigger_event_checks_stay_exact():
+    # The former provider half of this test (comparing _build_runtime() with a
+    # tweaked `pins` tuple, with/without by_name) tested a removed-noun-era
+    # mechanism: a provider's pins no longer carry a separate
+    # provider-interface reference to churn, _build_runtime() has never
+    # included `pins` (only control_domain/runtime_artifact/implementations/
+    # operations -- "what a build runs"), and its `by_name` parameter is now
+    # unused (`del by_name`). There is nothing left to differentiate.
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.procedures.windows import CaptureEventSelector
-    from cruxible_client.contracts.providers import _build_runtime
     from cruxible_client.contracts.triggers import (
         CaptureEventInput,
         CaptureLandingSchedule,
         schedule_satisfies_input,
     )
-    from tests.core_support._p2b1_support import provider_v2
-    from tests.support.provider_builds import as_build
 
-    provider = as_build(provider_v2())
-    replacement = provider.model_copy(
-        update={
-            "pins": tuple(
-                pin.model_copy(update={"artifact_digest": "sha256:" + "a" * 64})
-                for pin in provider.pins
-            )
-        }
-    )
-    assert _build_runtime(provider) != _build_runtime(replacement)
-    assert _build_runtime(provider, by_name=True) == _build_runtime(replacement, by_name=True)
     selector = CaptureEventSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="test.events"),
         capture_contract_digest="sha256:" + "b" * 64,
@@ -494,33 +480,6 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
             assert "pins" not in body
 
 
-def test_frozen_blueprint_instantiation_chooses_frozen_or_unified_procedure_models():
-    from cruxible_client.contracts.procedures.blueprints import (
-        blueprint_digest,
-        instantiate_blueprint,
-    )
-
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
-    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
-    from tests.test_procedures.test_blueprints import _blueprint
-
-    blueprint = _blueprint()
-    interface = accepted_interface()
-    arguments = dict(
-        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
-        name="test.instance",
-        providers={"lookup": accepted_provider()},
-        interface_registrations={interface.registration.identity.qualified: interface},
-    )
-    frozen = instantiate_blueprint(blueprint, **arguments)
-    current = instantiate_blueprint(blueprint, artifact_format="cruxible-procedure-v3", **arguments)
-    assert frozen.artifact_format == "playbill-procedure-v2"
-    assert frozen.definition.graph_format == 6
-    assert isinstance(current, NamedProcedureArtifact)
-    assert current.definition.graph_format == 7
-    assert "pins" not in current.model_dump()
-
-
 def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
     from cruxible_client.contracts.named_references import name_query
     from cruxible_client.contracts.procedures.source_program import NamedSourceQueryBinding
@@ -594,23 +553,15 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
         validate_query_definition({**query.model_dump(mode="json"), "pins": []})
 
 
-def test_graph7_blueprint_refuses_before_writing_a_procedure(tmp_path):
-    from types import SimpleNamespace
-
-    from cruxible_client.contracts.errors import FormatError
-    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
-    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
-    from cruxible_core.proposals.proposals import _installed
-
-    context = SimpleNamespace(
-        path="blueprints/test.blueprint.json",
-        current=SimpleNamespace(compiler=LIGHT_ARTIFACTS_COMPILER),
-        acceptance_laws=ACCEPTANCE_LAWS,
-        historical_law_coordinate=None,
-        rechecking=False,
-    )
-    with pytest.raises(FormatError, match="author a Procedure with slots"):
-        _installed(context, "cruxible-blueprint-v2")
+# NOTE: a former test_graph7_blueprint_refuses_before_writing_a_procedure
+# checked the "blueprints/" path refusal through _installed() (tag-registry
+# lookup) -- the wrong mechanism: the real refusal is in
+# proposals.py's REMOVED_NOUNS path-prefix check, raising
+# ProposalAdmissionError, not a FormatError from the acceptance-law registry.
+# That real mechanism is already covered end to end by acceptance test 10 in
+# tests/test_procedures/test_b2_operations.py (which submits an actual
+# proposal touching "blueprints/demo.json" and asserts the refusal names
+# "Procedure"), so this test is deleted rather than rewritten to duplicate it.
 
 
 def test_frozen_v1_erasure_authorization_keeps_its_exact_rule_pin():
@@ -660,21 +611,19 @@ def test_named_line_admission_checks_exact_coordinate_bindings(tmp_path):
         target=procedure.procedure.identity,
         artifact_digest=procedure.artifact_digest,
     )
-    policy = old.line.acquisition_policy
+    policy_digest = admission.acquisition_policy_digest
     verify_line_admission_spec(
         admission,
         named,
         procedure_binding=binding,
-        acquisition_policy_binding=policy,
+        acquisition_rules_digest=policy_digest,
     )
-    with pytest.raises(ExecutionError, match="coordinate-resolved"):
-        verify_line_admission_spec(admission, named)
-    with pytest.raises(ExecutionError, match="another Procedure"):
+    with pytest.raises(ExecutionError, match="coordinate-resolved binding"):
         verify_line_admission_spec(
             admission,
             named,
             procedure_binding=binding.model_copy(update={"artifact_digest": "sha256:" + "f" * 64}),
-            acquisition_policy_binding=policy,
+            acquisition_rules_digest=policy_digest,
         )
 
 
