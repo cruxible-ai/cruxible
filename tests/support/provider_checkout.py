@@ -15,7 +15,6 @@ once per test session (shared by xdist workers).
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -110,26 +109,3 @@ def provider_checkout(
     return ProviderCheckout(
         repository=provider_runtime, wheels=_build_wheels(provider_runtime, root)
     )
-
-
-def checkout_predates_embedded_wheel_locks() -> bool:
-    """Wheels built before cruxible-providers 5fcef6d carry no ``uv.lock``."""
-
-    checkout = provider_checkout_path()
-    if checkout is None:
-        return False
-    pyproject = checkout / "packages/cruxible-provider-workspace/pyproject.toml"
-    return "extra-metadata" not in pyproject.read_text(encoding="utf-8")
-
-
-def checkout_predates_web_fetch_material() -> bool:
-    """web.fetch declares its captured material only from cruxible-providers ff0dab1."""
-
-    checkout = provider_checkout_path()
-    if checkout is None:
-        return False
-    contract = (
-        checkout
-        / "packages/cruxible-provider-web/src/cruxible_provider_web/contracts/web.fetch.json"
-    )
-    return "material" not in json.loads(contract.read_text(encoding="utf-8"))["contracts"]
