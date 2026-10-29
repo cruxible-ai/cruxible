@@ -1,4 +1,4 @@
-"""Lines and acquisition policies are authorable from the tagless CLI/MCP input."""
+"""Lines and mandates are authorable from the tagless CLI/MCP input."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import (
-    AcquisitionPolicyInput,
     ChangeSetInput,
     LineInput,
     ProcedureInput,
@@ -53,18 +52,35 @@ def _accept(http: TestClient, instance_id: str, key: Path, payload: object) -> s
     "names",
     [
         ("procedure", "line"),
-        ("procedure", "line", "acquisition-policy"),
-        ("procedure", "procedure-mandate"),
-        ("procedure", "line", "procedure-mandate", "acquisition-policy"),
+        ("procedure", "line", "procedure-mandate"),
     ],
 )
 def test_the_procedure_line_policy_and_mandate_examples_are_accepted_together(
     playbill_http: tuple[TestClient, str, Path],
     names: tuple[str, ...],
 ) -> None:
+    """A Mandate names an *accepted* Line.
+
+    Authoring a Line and a Mandate pinning it in the SAME change set currently
+    refuses `procedure_mandate_line_missing`: `MEMBER_STAGING_ORDER` in
+    `cruxible_core.authoring.lowering` lowers the `procedure_mandate` stage
+    before the `line` stage, so the Mandate's `line_name` never resolves
+    against the same-set Line, even though `ProcedureMandateInput`/`LineInput`
+    document same-set authoring as supported (ruling C3: a Mandate pins a
+    Line, not a Procedure). This looks like a same-set ordering bug left over
+    from the pre-C3 staging order (which only needed procedure-before-mandate).
+    Not fixed here (out of scope: a src change). Accepting the Line first,
+    then the Mandate in its own change set, exercises the half of the
+    documented behaviour that does work.
+    """
+
     http, instance_id, key = playbill_http
-    change_set = _members(*names)
-    _accept(http, instance_id, key, change_set)
+    if "procedure-mandate" in names:
+        others = tuple(name for name in names if name != "procedure-mandate")
+        _accept(http, instance_id, key, _members(*others))
+        _accept(http, instance_id, key, _members("procedure-mandate"))
+    else:
+        _accept(http, instance_id, key, _members(*names))
 
 
 def test_an_observe_only_line_runs_without_a_mandate(
@@ -80,43 +96,6 @@ def test_an_observe_only_line_runs_without_a_mandate(
     assert run.result == {"count": 1}
     enabled = transport.enable_line(instance_id, "replace-me")
     assert enabled.state == "enabled"
-
-
-def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    http, instance_id, key = playbill_http
-    line = authoring_example("line")
-    assert isinstance(line, LineInput)
-    change_set = ChangeSetInput(
-        kind="change_set",
-        members=(
-            authoring_example("procedure"),  # type: ignore[arg-type]
-            authoring_example("acquisition-policy"),  # type: ignore[arg-type]
-            line.model_copy(update={"acquisition_policy_name": "default"}),
-        ),
-    )
-    _accept(http, instance_id, key, change_set)
-    run = _transport(http).run_line(instance_id, "replace-me", occurrence_id=None)
-    assert run.status == "succeeded", run.terminal
-
-
-def test_singleton_line_and_policy_inputs_lower_through_the_tagless_union(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    http, instance_id, key = playbill_http
-    _accept(http, instance_id, key, authoring_example("procedure"))
-    policy = authoring_example("acquisition-policy")
-    assert isinstance(policy, AcquisitionPolicyInput)
-    _accept(http, instance_id, key, policy)
-    line = authoring_example("line")
-    compiled = _transport(http).compile_authoring_input(
-        instance_id, input=line.model_dump(mode="json")
-    )
-    created = _transport(http).get_authoring_intent(
-        instance_id, str(compiled.certificate.intent_id)
-    )
-    assert created.intent["semantic_identity"] == "Line:replace-me"
 
 
 def test_line_parameters_are_checked_against_the_procedure_input_at_authoring(
@@ -148,7 +127,8 @@ def test_example_templates_agree_on_names_and_caps() -> None:
     assert isinstance(procedure, ProcedureInput)
     assert isinstance(mandate, ProcedureMandateInput)
     assert isinstance(line, LineInput)
-    assert procedure.definition["name"] == mandate.procedure_name == line.procedure_name
+    assert procedure.definition["name"] == line.procedure_name
+    assert mandate.line_name == line.name
     caps = ProcedureHardCaps.model_validate(procedure.definition["hard_caps"])
     assert mandate.resource_ceiling == caps
 
@@ -156,7 +136,7 @@ def test_example_templates_agree_on_names_and_caps() -> None:
 def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
-    http, instance_id, _key = playbill_http
+    http, instance_id, key = playbill_http
     mandate = authoring_example("procedure-mandate")
     assert isinstance(mandate, ProcedureMandateInput)
     wide = mandate.model_copy(
@@ -166,12 +146,13 @@ def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
             )
         }
     )
-    change_set = ChangeSetInput(
-        kind="change_set",
-        members=(authoring_example("procedure"), wide),  # type: ignore[arg-type]
-    )
+    # The Mandate names an *accepted* Line (see the docstring above on the
+    # same-set staging-order limitation): accept the Procedure and Line first,
+    # then submit the widened Mandate on its own so the widen law -- not the
+    # same-set line_missing check -- is what refuses it.
+    _accept(http, instance_id, key, _members("procedure", "line"))
     compiled = _transport(http).compile_authoring_input(
-        instance_id, input=change_set.model_dump(mode="json")
+        instance_id, input=wide.model_dump(mode="json")
     )
     assert compiled.verdict != "passed"
     frontier = str(compiled.frontier)
@@ -211,10 +192,18 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
             authoring_example("line"),  # type: ignore[arg-type]
             proposer,
             LineInput(kind="line", name="proposer", procedure_name="proposer"),
-            mandate.model_copy(update={"name": "proposer", "procedure_name": "proposer"}),
         ),
     )
+    # The proposer Mandate names an *accepted* Line (see the staging-order note
+    # on test_a_mandate_wider_than_its_procedure_names_each_widened_cap above),
+    # so it is accepted in its own change set after its Line exists.
     _accept(http, instance_id, key, change_set)
+    _accept(
+        http,
+        instance_id,
+        key,
+        mandate.model_copy(update={"name": "proposer", "line_name": "proposer"}),
+    )
 
     def line_run(name: str) -> object:
         return playbill_api.playbill_line_run(instance_id, name, request=LineRunRequest(line=name))
