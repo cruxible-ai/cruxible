@@ -1262,7 +1262,10 @@ def _fetch_world(
     # before the build that pins them; see test_an_accepted_enum_of_...
     # above for why this cannot go through world()'s default-build path.
     instance, _owner = initialize_local(tmp_path)
-    capture_contract = record_contract(name="test.events-v1", replay="attested")
+    # "exact", matching the only replayability the operation's own out
+    # Contract permits (F02) -- so a wire-valid output can also satisfy the
+    # CaptureContract's own replay promise, not only the operation's.
+    capture_contract = record_contract(name="test.events-v1", replay="exact")
     accept_tree(
         instance,
         {
@@ -1349,7 +1352,7 @@ def test_an_external_read_sources_output_is_checked_against_its_operation_contra
     assert "replayability" in state.terminal.message
 
 
-def _fetch_output(*, byte_length=2, content_base64="e30="):  # type: ignore[no-untyped-def]
+def _fetch_output(*, byte_length=2, content_base64="e30=", coordinate_type="database-snapshot-v1"):  # type: ignore[no-untyped-def]
     import base64
     import hashlib
 
@@ -1359,7 +1362,7 @@ def _fetch_output(*, byte_length=2, content_base64="e30="):  # type: ignore[no-u
     def output(context):  # type: ignore[no-untyped-def]
         return {
             "source_identity": "demo.events",
-            "coordinate_type": "database-snapshot-v1",
+            "coordinate_type": coordinate_type,
             "coordinate": "workspace",
             "selector_type": "relation-primary-key-v1",
             "selector": "orders",
@@ -1406,6 +1409,53 @@ def test_a_real_oversized_read_routes_through_on_oversized_not_a_protocol_violat
     )
     # Absorbed: the oversized Source is omitted, and the run moves past it.
     assert getattr(state.terminal, "node_id", None) != "doc", state.terminal
+
+
+def test_an_oversized_and_schema_invalid_result_reports_the_schema_violation(tmp_path):
+    """F05b fix round 3: classifying a result as oversized must never
+    bypass an independent Capture-contract violation. Codex's reproduction:
+    an external Source naming an unadmitted coordinate schema
+    (``http-request-v1`` against the fixture's ``database-snapshot``
+    CaptureContract) fails on schema admission at a small size; at 5,012
+    bytes with ``on_oversized: omit`` the old code skipped straight to the
+    typed oversized omission instead of reporting that same violation."""
+
+    import base64
+
+    oversized = base64.b64encode(b"x" * 5_012).decode("ascii")
+
+    (tmp_path / "small-bad-schema").mkdir()
+    (tmp_path / "oversized-bad-schema").mkdir()
+
+    # Control: the same bad coordinate schema at two bytes already refuses
+    # on schema admission, never reaching size at all.
+    small = _fetch_world(tmp_path / "small-bad-schema", line_name="test.fetched-small-bad-schema")
+    state, _ = run_line(
+        small,
+        invoker=Invoker(output=_fetch_output(coordinate_type="http-request-v1")),
+        name="test.fetched-small-bad-schema",
+    )
+    assert state.status != "succeeded", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
+
+    # Oversized AND the same bad schema, with on_oversized: omit: the schema
+    # violation must still be reported, not silently omitted as oversized.
+    big = _fetch_world(
+        tmp_path / "oversized-bad-schema",
+        line_name="test.fetched-oversized-bad-schema",
+        acquisition={"doc": {"on_oversized": "omit"}},
+    )
+    state, _ = run_line(
+        big,
+        invoker=Invoker(
+            output=_fetch_output(
+                byte_length=5_012, content_base64=oversized, coordinate_type="http-request-v1"
+            )
+        ),
+        name="test.fetched-oversized-bad-schema",
+    )
+    assert state.status != "succeeded", state.terminal
+    assert state.terminal.code == "provider_protocol_violation"
 
 
 def test_a_line_acquisition_origin_outside_the_permitted_set_refuses(tmp_path):

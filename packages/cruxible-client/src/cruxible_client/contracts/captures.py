@@ -2725,9 +2725,8 @@ def _web_fetch_body_digest(content: bytes) -> str:
     return actual
 
 
-def build_provider_external_capture_v2(
+def validate_provider_external_capture_result(
     *,
-    store: CaptureObjectStoreProtocol,
     contract: CaptureContractAny,
     result: ProviderResultToExternalCapture,
     receipt: ProviderInvocationReceipt,
@@ -2735,8 +2734,18 @@ def build_provider_external_capture_v2(
     producer: ArtifactIdentity,
     bound_generation: str,
     source_read_receipt: SourceReadReceipt | None = None,
-) -> CaptureBuildResult:
-    """Validate one common-driver Source result and commit its v2 Capture."""
+) -> None:
+    """Every Source-result validity check independent of the result's byte length.
+
+    F05b: classifying an over-budget result as a typed ``oversized``
+    acquisition outcome must never bypass these -- an invalid result stays
+    invalid even when it also happens to be over budget, so a Capture
+    schema, replayability or receipt-binding violation is never hidden
+    behind a size omission. ``build_provider_external_capture_v2`` runs
+    this first and then its own byte-length check; a caller that wants to
+    classify a result as oversized before attempting Capture conversion at
+    all (``execution.py``) runs this same check first too.
+    """
 
     if occurrence.occurrence_kind != "source":
         raise CaptureFormatError("Provider Capture conversion requires a Source occurrence")
@@ -2755,7 +2764,7 @@ def build_provider_external_capture_v2(
     ):
         raise CaptureFormatError("Provider Capture conversion differs from its admitted contract")
     try:
-        output_commitment = ProviderInvocationOutputDigest.model_validate(receipt.output)
+        ProviderInvocationOutputDigest.model_validate(receipt.output)
     except ValidationError as exc:
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
     if (
@@ -2769,8 +2778,6 @@ def build_provider_external_capture_v2(
         pin.target.name for pin in capture_components(contract).selector_schema_pins
     }:
         raise CaptureFormatError("Provider Capture source schemas are not admitted")
-    if result.byte_length > contract.selection_budget.max_bytes:
-        raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     if workspace_source != (source_read_receipt is not None):
         raise CaptureFormatError("workspace.file Capture requires exactly one source-read receipt")
@@ -2790,6 +2797,38 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError(
             "Provider replayability differs from the CaptureContract replay promise"
         )
+
+
+def build_provider_external_capture_v2(
+    *,
+    store: CaptureObjectStoreProtocol,
+    contract: CaptureContractAny,
+    result: ProviderResultToExternalCapture,
+    receipt: ProviderInvocationReceipt,
+    occurrence: ProviderExternalOccurrencePlan,
+    producer: ArtifactIdentity,
+    bound_generation: str,
+    source_read_receipt: SourceReadReceipt | None = None,
+) -> CaptureBuildResult:
+    """Validate one common-driver Source result and commit its v2 Capture."""
+
+    validate_provider_external_capture_result(
+        contract=contract,
+        result=result,
+        receipt=receipt,
+        occurrence=occurrence,
+        producer=producer,
+        bound_generation=bound_generation,
+        source_read_receipt=source_read_receipt,
+    )
+    contract_digest_value = capture_contract_digest(contract).tagged
+    try:
+        output_commitment = ProviderInvocationOutputDigest.model_validate(receipt.output)
+    except ValidationError as exc:
+        raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
+    if result.byte_length > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
+    workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
     try:
         provider_output = (
@@ -3900,5 +3939,6 @@ __all__ = [
     "render_capture_contract",
     "render_capture_envelope",
     "validate_capture_contract_path",
+    "validate_provider_external_capture_result",
     "verify_capture",
 ]

@@ -38,6 +38,7 @@ from cruxible_client.contracts.captures import (
     ProviderResultToExternalCapture,
     build_provider_external_capture_v2,
     capture_contract_digest,
+    validate_provider_external_capture_result,
 )
 from cruxible_client.contracts.errors import (
     CasError,
@@ -4225,6 +4226,25 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
+            ) from exc
+        try:
+            # F05b: every check independent of the result's byte length runs
+            # before classifying it as oversized, so a schema, replayability
+            # or receipt-binding violation is never hidden behind on_oversized
+            # just because the same result also happens to be over budget.
+            validate_provider_external_capture_result(
+                contract=contract,
+                result=provider_result,
+                receipt=invocation_receipt,
+                occurrence=occurrence,
+                producer=self.slot_bindings[node.slot].build.target,
+                bound_generation=admission.accepted_coordinate.generation_root,
+                source_read_receipt=source_read_receipt,
+            )
+        except (CaptureFormatError, ValidationError, ValueError) as exc:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node.node_id, "reason": "Capture conversion failed"},
             ) from exc
         if provider_result.byte_length > contract.selection_budget.max_bytes:
             # F05: a real oversized read is the typed acquisition outcome
