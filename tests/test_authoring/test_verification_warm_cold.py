@@ -42,10 +42,7 @@ from tests.core_support._pc_c_support import (
     provider,
     provider_run,
 )
-from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import (
-    ProducedCaptures,
-    acquisition_demo,  # noqa: F401 - the fixture the producer world needs
-)
+from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import ProducedCaptures
 from tests.test_authoring.test_authoring_existing_capture import _activate, _self_asserted
 from tests.test_authoring.test_capture_production_proof import (  # noqa: F401 - fixture
     _envelope,
