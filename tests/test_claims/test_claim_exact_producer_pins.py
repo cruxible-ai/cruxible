@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
@@ -141,10 +143,16 @@ def _claim_type(contract_digest: str) -> ClaimType:
     )
 
 
-def _judge_claim_pinning(tmp_path: Path, *, pinned_procedure_digest: str) -> str:
+def _judge_claim_pinning(
+    tmp_path: Path, *, pinned_procedure_digest: str, providers: object = None
+) -> tuple[str, tuple[str, ...]]:
     """Build a Procedure-produced Capture (recorded at P1), a Claim citing it
     and pinning ``pinned_procedure_digest``, with the producer's head at P2;
-    return the law's verdict ("accepted" or "refused")."""
+    return the law's verdict ("accepted" or "refused") and its diagnostic codes.
+
+    ``providers`` is passed straight through to ``evaluate_claim_law`` (F08):
+    this Claim's producer is a Procedure, never looked up in it, so it proves
+    nothing about ``providers`` is ever read merely by being passed."""
 
     store = body_store(tmp_path)
     contract = build_capture_contract(name="test.events-v1", epistemic_grade="observed")
@@ -275,6 +283,7 @@ def _judge_claim_pinning(tmp_path: Path, *, pinned_procedure_digest: str) -> str
             receipt=receipt, receipt_digest=receipt_digest
         ),
         require_new_citation_proof=False,
+        providers=providers,  # type: ignore[arg-type]
     )
     return result.verdict, tuple(d.code for d in result.diagnostics)
 
@@ -295,3 +304,39 @@ def test_a_claim_pinning_the_producers_head_instead_of_what_ran_is_refused(
     verdict, codes = _judge_claim_pinning(tmp_path, pinned_procedure_digest=P2)
     assert verdict == "refused"
     assert "cruxible.claim.procedure_pin_missing" in codes
+
+
+# --- F08 fix round 2: a lazy ``providers`` view is never enumerated ----------
+
+
+@pytest.mark.parametrize("population", [20, 200])
+def test_claim_law_never_enumerates_unrelated_providers(tmp_path: Path, population: int) -> None:
+    """Codex's reproduction: ``providers or {}`` (claims.py) called
+    ``SelectedRows.__len__``, which walks every key -- an unrestricted
+    owner-table SELECT in production (``indexes/evaluated_state.py``). This
+    Claim's producer is a Procedure, so ``providers`` is never looked up at
+    all; passing the production-shaped ``mapped_values(SelectedRows(...), ...)``
+    view must not even be iterated or measured, at any population size.
+    """
+
+    from cruxible_core.indexes.evaluated_state import SelectedRows, mapped_values
+
+    # A population of this size exists (as production's resolved-Provider
+    # table would), but none of it names this Claim's producer (a Procedure):
+    # a correct point lookup for "Procedure:test.proc" simply misses, exactly
+    # as it would in production.
+    population_keys = tuple(f"Provider:unrelated-{i}" for i in range(population))
+
+    def _trap_keys():  # type: ignore[no-untyped-def]
+        raise AssertionError(f"enumerated the full {population}-Provider population via truthiness")
+
+    def _get(qualified: str) -> object:  # type: ignore[no-untyped-def]
+        if qualified not in population_keys:
+            raise KeyError(qualified)
+        raise AssertionError(f"looked up unrelated Provider {qualified!r}")
+
+    rows: SelectedRows[object] = SelectedRows(get=_get, keys=_trap_keys)
+    providers = mapped_values(rows, lambda accepted: accepted.provider)
+
+    verdict, codes = _judge_claim_pinning(tmp_path, pinned_procedure_digest=P1, providers=providers)
+    assert verdict == "accepted", codes
