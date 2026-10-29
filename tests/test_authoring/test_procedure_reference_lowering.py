@@ -3,16 +3,11 @@
 from dataclasses import asdict
 
 import pytest
-from cruxible_client.contracts.provider_interfaces import (
-    provider_interface_path,
-    render_provider_interface,
-)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
-from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     query_definition_path,
@@ -20,7 +15,6 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_core.authoring import lowering
 from cruxible_core.derived.derived_state import SnapshotTree
-from tests.core_support._p2b1_support import interface_registration, provider_v2
 from tests.core_support._pc_c_support import capture_contract
 from tests.test_authoring.test_authoring_history_reuse import _intent
 from tests.test_authoring.test_authoring_procedures import (
@@ -104,27 +98,35 @@ def test_reference_bytes_pins_and_typed_refusals_match_full_tree(world, monkeypa
         )
 
 
-def test_staged_claim_type_capture_contract_and_provider_match_full_tree(world, monkeypatch):
+def test_staged_claim_type_and_capture_contract_match_full_tree(world, monkeypatch):
+    # B2: a source/call node names a slot (a plain string, validated against the
+    # Procedure's own `slots` declaration, not a candidate artifact reference) —
+    # there is no longer a provider/interface candidate reference to resolve at
+    # authoring time; binding to an exact provider build + operation happens at
+    # Line acceptance (C2), not here. This test keeps the surviving part of its
+    # original point: staged claim-type and capture-contract candidate
+    # references still resolve and pin exactly like the full-tree lowerer.
     instance, base, original = world
     claim_type, contract = _claim_type(), capture_contract()
-    provider, interface = provider_v2(), interface_registration()
-    accepted = SnapshotTree(
-        {
-            **original,
-            provider_interface_path(interface.identity.name): render_provider_interface(interface),
-        }
-    )
+    accepted = SnapshotTree(dict(original))
     staged = accepted.fork()
     staged.update(
         {
             claim_type_path(claim_type.predicate): render_claim_type(claim_type),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
-            provider_path(provider.identity.name): render_provider(provider),
         }
     )
     definition = _triage_definition()
     definition["budget"]["max_provider_calls"] = 1
     definition["hard_caps"]["max_provider_calls"] = 1
+    definition["slots"] = {
+        **definition.get("slots", {}),
+        "fetch": {
+            "in": "workspace.file.request@1",
+            "out": "workspace.file.result@1",
+            "effect": "external_read",
+        },
+    }
     definition["nodes"] = [
         {
             "kind": "source",
@@ -132,10 +134,7 @@ def test_staged_claim_type_capture_contract_and_provider_match_full_tree(world, 
             "capture_contract": _reference(
                 contract.identity, candidate=True, role="capture-contract"
             ),
-            "provider": _reference(provider.identity, candidate=True, role="provider"),
-            "interface": _reference(interface.identity, role="provider-interface"),
-            "interface_digest": interface.interface_digest,
-            "implementation_digest": provider.implementations[0].implementation_digest,
+            "slot": "fetch",
             "request": {},
             "as": "captured",
         },
@@ -150,7 +149,7 @@ def test_staged_claim_type_capture_contract_and_provider_match_full_tree(world, 
         *definition["nodes"],
     ]
     payload = _list_contract_payload().model_copy(update={"definition": definition})
-    candidates = frozenset(item.identity.qualified for item in (claim_type, contract, provider))
+    candidates = frozenset(item.identity.qualified for item in (claim_type, contract))
     kwargs = {"accepted_reference_tree": accepted, "candidate_identities": candidates}
     actual = _outcome(instance, base, staged, payload, **kwargs)
     assert isinstance(actual, tuple), actual
@@ -197,12 +196,12 @@ def test_duplicate_envelopes_remain_unresolved(world, monkeypatch):
         ("ClaimAttestation:sha256:" + "b" * 64, "attestations/bb/" + "b" * 64 + ".json"),
         ("Provider:demo.provider", "providers/demo.provider.json"),
         ("Provider:demo.provider/" + "c" * 64, "providers/demo.provider/" + "c" * 64 + ".json"),
-        ("ProviderInterface:demo.interface", "provider-interfaces/demo.interface.json"),
-        (
-            "ProviderInterface:demo.interface/" + "d" * 64,
-            "provider-interfaces/demo.interface/" + "d" * 64 + ".json",
-        ),
-        ("Blueprint:demo", "blueprints/demo.json"),
+        # ProviderInterface, Blueprint and SourceAcquisitionPolicy are removed
+        # (B2, C12): no envelope kind projects them, so every identity of
+        # these kinds is an unresolved reference regardless of shape.
+        ("ProviderInterface:demo.interface", None),
+        ("ProviderInterface:demo.interface/" + "d" * 64, None),
+        ("Blueprint:demo", None),
         ("Procedure:demo", "procedures/demo.json"),
         ("Line:demo", "lines/demo.json"),
         ("Trigger:demo", "triggers/demo.json"),
@@ -210,7 +209,7 @@ def test_duplicate_envelopes_remain_unresolved(world, monkeypatch):
         ("QueryDefinition:demo", "query-definitions/demo.json"),
         ("CaptureContract:demo", "capture-contracts/demo.json"),
         ("ResolutionContract:demo", "resolution-contracts/demo.json"),
-        ("SourceAcquisitionPolicy:demo", "source-acquisition-policies/demo.json"),
+        ("SourceAcquisitionPolicy:demo", None),
         ("ProcedureMandate:demo", "procedure-mandates/demo.json"),
         ("ExhaustPromotion:demo", "exhaust-promotions/demo.json"),
         ("Contract:carried", None),
