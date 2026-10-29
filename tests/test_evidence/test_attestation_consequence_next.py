@@ -180,10 +180,18 @@ def accept_signed_threshold_attestations(
     claim,  # type: ignore[no-untyped-def]
     root: Path,
     *,
-    attested_at: tuple[datetime, datetime] = (EVALUATION_TIME, EVALUATION_TIME),
+    signer_count: int = 2,
+    attested_at: tuple[datetime, ...] | None = None,
     valid_until: datetime | None = None,
 ) -> None:
-    """Accept two independent principals' unsure attestations as signed artifacts."""
+    """Accept ``signer_count`` independent principals' unsure attestations as signed artifacts.
+
+    The bootstrap client fixture names exactly two principals (``owner`` and
+    ``reviewer``), so ``signer_count`` of 0, 1, or 2 selects a prefix of
+    them: zero accepts nothing, one accepts only the instance owner, and two
+    (the historical default) adds the reviewer as a second independent
+    control component.
+    """
 
     from cruxible_client.contracts.accepted_attestations import (
         attestation_path,
@@ -193,8 +201,15 @@ def accept_signed_threshold_attestations(
     from tests.core_support._support import client_material
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
+    if signer_count == 0:
+        return
+
+    signers = (owner, client_material(root, instance))[:signer_count]
+    if attested_at is None:
+        attested_at = (EVALUATION_TIME,) * signer_count
+
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    for signer, at in zip((owner, client_material(root, instance)), attested_at, strict=True):
+    for signer, at in zip(signers, attested_at, strict=True):
         envelope = _request(
             instance,
             signer,
@@ -228,6 +243,34 @@ def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
         ).items
         if item.reason == "claim_attestation_threshold_met"
     )
+
+
+@pytest.mark.parametrize(
+    ("minimum", "signer_count", "expected_rows"),
+    # A zero threshold disables the rule: it escalates nothing, however many sign.
+    ((0, 0, 0), (0, 2, 0), (1, 1, 1), (2, 1, 0), (2, 2, 1)),
+)
+def test_thresholds_zero_one_and_two_count_distinct_signed_principals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    minimum: int,
+    signer_count: int,
+    expected_rows: int,
+) -> None:
+    instance, owner, claim = threshold_world(
+        tmp_path,
+        monkeypatch,
+        minimum=minimum,
+        attestation_mutator=lambda _instance, _claim, _items: (),
+    )
+    accept_signed_threshold_attestations(
+        instance, owner, claim, tmp_path, signer_count=signer_count
+    )
+
+    rows = _rows(instance)
+    assert len(rows) == expected_rows
+    if rows:
+        assert rows[0].detail["independent_control_component_count"] == signer_count
 
 
 def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(
