@@ -323,3 +323,18 @@ def test_key_type_refuses_untyped_nested_data() -> None:
     assert check_value("CVE-2024-1234", field_type, at="/k") == FieldPresent(
         value="CVE-2024-1234", at="/k"
     )
+
+
+# -- F10: an unresolved enum_of fails closed, never open ---------------------------------
+
+
+def test_unresolved_enum_of_fails_closed() -> None:
+    field_type = parse_type("enum_of security.vulnerability.kev_ransomware_use")
+    checked = check_value("no-such-member", field_type, at="/x")
+    assert isinstance(checked, FieldInvalid)
+    assert checked.problem.code == "not_in_enum"
+    checked = check_value(
+        "no-such-member", field_type, at="/x", enum_members=lambda _claim_type: None
+    )
+    assert isinstance(checked, FieldInvalid)
+    assert checked.problem.code == "not_in_enum"

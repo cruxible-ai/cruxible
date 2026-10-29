@@ -1202,12 +1202,19 @@ def check_value(
     if isinstance(field_type, EnumType | EnumOfType):
         if not isinstance(value, str):
             return _invalid("type_mismatch", field, value)
-        members: tuple[str, ...] | None
         if isinstance(field_type, EnumType):
-            members = field_type.members
+            members: tuple[str, ...] | None = field_type.members
+        elif enum_members is None:
+            # No resolver at all: membership can never be confirmed. Fail
+            # closed rather than letting every string pass unchecked.
+            return _invalid("not_in_enum", field, value)
         else:
-            members = None if enum_members is None else enum_members(field_type.claim_type)
-        if members is not None and value not in members:
+            members = enum_members(field_type.claim_type)
+            if members is None:
+                # The ClaimType did not resolve: membership is unconfirmed,
+                # not "no restriction". Fail closed the same way.
+                return _invalid("not_in_enum", field, value)
+        if value not in members:
             return _invalid("not_in_enum", field, value)
         return FieldPresent(value=value, at=at)
     if isinstance(field_type, ListType):
