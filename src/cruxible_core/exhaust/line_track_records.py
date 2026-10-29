@@ -102,10 +102,9 @@ class LineTrackRecordDimensionsV1(_StrictTrackRecordModel):
     """Three independent axes.  Credit is never aggregated across any of them.
 
     ``implementation_digest`` is the exact accepted Procedure artifact a run
-    executed. ``slot_interface_digest`` is an aggregate surface digest over every
-    slot's exact nominal interface content digest plus its address, role, and kind;
-    it is not another spelling of any one interface identity. Two different
-    implementations may share this closed surface.
+    executed. ``slot_interface_digest`` digests every slot's exact signature
+    ``{in, out, effect}`` (:func:`line_slot_signature_digest`); two different
+    builds serving the same signatures share it.
     ``declared_input_bucket`` commits the declared input planes, so the same
     implementation reading a different declared plane earns separate credit.
     """
@@ -135,41 +134,27 @@ def line_track_record_dimension_key(dimensions: LineTrackRecordDimensionsV1) -> 
     return digest.value[:32]
 
 
-def line_slot_interface_digest(
+def line_slot_signature_digest(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
 ) -> str:
-    """Digest the nominal interface surface this LineSpec closed.
+    """Digest the slot signatures this Line binds: ``{slot: {in, out, effect}}``.
 
-    Only the slots the Procedure's Blueprint bound contribute, and only their
-    role/kind/interface, never the implementation bound into them.
+    Only the signatures contribute, never the build or operation bound to them,
+    so a build move keeps one track record while a changed slot starts another.
     """
 
-    surface: list[dict[str, str]] = []
+    del accepted_line
     authored = getattr(accepted_procedure, "authored", accepted_procedure.procedure)
-    if authored.definition.graph_format == 7:
-        return typed_digest(
-            Sha256Value,
-            "cruxible-line-slot-interface-surface-v2",
-            {"slots": [slot.model_dump(mode="json") for slot in authored.definition.pin_slots]},
-        ).tagged
-    origin = authored.blueprint
-    for binding in () if origin is None else origin.bindings:
-        # The binding names its slot's interface: one Provider may fill two
-        # slots of different interfaces, so the Provider pin cannot tell them apart.
-        surface.append(
-            {
-                "artifact_kind": "Provider",
-                "interface_digest": binding.interface_digest,
-                "pin_role": "provider",
-                "slot_name": binding.slot_name,
-            }
-        )
-    surface.sort(key=lambda item: item["slot_name"].encode("utf-8"))
     return typed_digest(
         Sha256Value,
-        "playbill-line-slot-interface-surface-v1",
-        {"slots": surface},
+        "cruxible-line-slot-signature-surface-v1",
+        {
+            "slots": {
+                name: dict(zip(("in", "out", "effect"), slot.key(), strict=True))
+                for name, slot in sorted(authored.definition.slots.items())
+            }
+        },
     ).tagged
 
 
@@ -218,7 +203,7 @@ def line_track_record_dimensions(
         )
     return LineTrackRecordDimensionsV1(
         implementation_digest=accepted_procedure.artifact_digest,
-        slot_interface_digest=line_slot_interface_digest(accepted_line, accepted_procedure),
+        slot_interface_digest=line_slot_signature_digest(accepted_line, accepted_procedure),
         declared_input_bucket=line_declared_input_bucket(line_declared_inputs(accepted_procedure)),
     )
 
@@ -694,7 +679,7 @@ __all__ = [
     "build_line_track_record",
     "line_declared_input_bucket",
     "line_declared_inputs",
-    "line_slot_interface_digest",
+    "line_slot_signature_digest",
     "line_track_record_digest",
     "line_track_record_dimension_key",
     "line_track_record_dimensions",

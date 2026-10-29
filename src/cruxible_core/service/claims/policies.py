@@ -6,10 +6,6 @@ from collections.abc import Mapping
 from typing import Literal
 
 from cruxible_client import contracts
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_digest,
-    parse_acquisition_policy,
-)
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
     approval_policy_digest,
@@ -139,7 +135,6 @@ def service_playbill_policies_in_force(
     kinds = (
         "approval-policy",
         "procedure-runtime-policy",
-        "source-acquisition-policy",
         "claim-type",
         "capture-contract",
         "query-definition",
@@ -183,22 +178,6 @@ def service_playbill_policies_in_force(
                     path=path,
                     field_path="/",
                     policy=runtime_policy.model_dump(mode="json"),
-                )
-            )
-        elif kind == "source-acquisition-policy":
-            acquisition_policy = parse_acquisition_policy(content, path=path, codec=artifact_codec)
-            if acquisition_policy.lifecycle.state != "live":
-                continue
-            rows.append(
-                _row(
-                    placement="standalone",
-                    policy_kind="source_acquisition_policy",
-                    identity=acquisition_policy.identity.qualified,
-                    artifact_kind=acquisition_policy.identity.kind,
-                    digest=acquisition_policy_digest(acquisition_policy).tagged,
-                    path=path,
-                    field_path="/",
-                    policy=acquisition_policy.model_dump(mode="json"),
                 )
             )
         elif kind == "claim-type":

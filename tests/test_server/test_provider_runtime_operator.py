@@ -14,15 +14,21 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
-
-import cruxible_core.runtime.playbill_manager as playbill_manager_module
-import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_digest,
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    provider_interface_digest,
+    provider_interface_path,
+    render_provider_interface,
+)
+from fastapi.testclient import TestClient
+
+import cruxible_core.runtime.playbill_manager as playbill_manager_module
+import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
@@ -58,12 +64,6 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    provider_interface_digest,
-    provider_interface_path,
-    render_provider_interface,
-)
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderV2,
@@ -134,6 +134,7 @@ def _indexed_instance(tree: dict[str, bytes]) -> SimpleNamespace:
         parse_provider_interface,
         provider_interface_digest,
     )
+
     from cruxible_client.contracts.providers import parse_provider, provider_digest
 
     sources: dict[str, object] = {}

@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-import cruxible_core.providers.builtin_workspace_file as adapter_module
 from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixture,
     evaluate_provider_interface_law,
@@ -33,6 +31,8 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_external_interface_definition_digest,
     render_provider_interface,
 )
+
+import cruxible_core.providers.builtin_workspace_file as adapter_module
 from cruxible_client.contracts.providers import (
     evaluate_provider_law,
     provider_path,

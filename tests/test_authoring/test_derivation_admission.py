@@ -3,13 +3,13 @@
 from types import SimpleNamespace
 
 import pytest
-
-from cruxible_client.authoring.inputs import CarriedContractInput
-from cruxible_client.authoring.source import claim_candidate, halt, procedure, propose_change_set
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+
+from cruxible_client.authoring.inputs import CarriedContractInput
+from cruxible_client.authoring.source import claim_candidate, halt, procedure, propose_change_set
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayload,

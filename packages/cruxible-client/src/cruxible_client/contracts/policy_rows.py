@@ -1,8 +1,8 @@
 """One live governed policy row: where it is declared and what it says.
 
 ``orient(section="policies")`` pages these rows. A policy is either a standalone
-governed artifact (the ``ApprovalPolicy``, the ``ProcedureRuntimePolicy``, a
-source acquisition policy) or a field embedded in the artifact that declares it
+governed artifact (the ``ApprovalPolicy``, the ``ProcedureRuntimePolicy``) or a
+field embedded in the artifact that declares it
 (a ClaimType's admission or resolution policy, a QueryDefinition's evaluation
 policy, ...); ``field_path`` names that field and ``declaring_artifact_identity``
 is the reference ``get`` reads the whole declaring artifact by.
@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict
 PolicyKind: TypeAlias = Literal[
     "approval_policy",
     "procedure_runtime_policy",
-    "source_acquisition_policy",
     "claim_evidence_admission_policy",
     "claim_admission_policy",
     "claim_resolution_policy",

@@ -287,9 +287,6 @@ from cruxible_client.contracts.procedures.windows import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import ProposalItemReason as ProposalItemReason
-from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContract as _ProviderOperationContractV1,
-)
 from cruxible_client.contracts.provider_installation import (
     InstalledProvider as InstalledProvider,
 )
@@ -417,7 +414,6 @@ AuthoringExampleName = Literal[
     "procedure-mandate",
     "line",
     "trigger",
-    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 ]
@@ -2133,34 +2129,6 @@ class SinceResult(BaseModel):
         if self.result_digest != _since_digest("playbill-since-result-v1", payload):
             raise ValueError("since result digest does not reproduce")
         return self
-
-
-class ProviderInterfaceImplementation(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-provider-interface-implementation-v1"] = (
-        "playbill-provider-interface-implementation-v1"
-    )
-    provider_identity: str
-    provider_artifact_digest: str
-    #: The most recently registered live build of its provider name.
-    newest: bool = True
-    #: Exact head(s) of this provider name, including builds on other contracts.
-    newest_builds: tuple[str, ...] = ()
-
-
-class ProviderInterfaceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-provider-interface-entry-v1"]
-    identity: str
-    artifact_digest: str
-    artifact_kind: Literal["ProviderInterface"]
-    pin_role: Literal["provider-interface"]
-    effect_class: Literal["pure", "external_read", "external_mutation"]
-    interface_basis: Literal["accepted_registration"]
-    providers: list[ProviderInterfaceImplementation] = Field(default_factory=list)
-    operation_contract: _ProviderOperationContractV1 | None = None
 
 
 class CoverageResult(BaseModel):

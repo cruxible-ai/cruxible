@@ -3,15 +3,15 @@
 from dataclasses import asdict
 
 import pytest
+from cruxible_client.contracts.provider_interfaces import (
+    provider_interface_path,
+    render_provider_interface,
+)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
-from cruxible_client.contracts.provider_interfaces import (
-    provider_interface_path,
-    render_provider_interface,
-)
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,

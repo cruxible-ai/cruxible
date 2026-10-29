@@ -7,7 +7,7 @@ author, what needs attention, and runnable follow-up calls. ``orient(kind=K)``
 widens one kind to every predicate in full, the predicates that point at it
 (``incoming``, its reverse follows) and sample Subject IDs, and
 ``orient(section=S)`` pages one artifact family as compact rows, including the
-provider interfaces a Procedure can call.
+provider operations a Line can bind a Procedure slot to.
 
 Values lead: a predicate's accepted evidence is shown as CaptureContract NAMES,
 never digests, and absent optional fields are left out of the wire rather than
@@ -44,7 +44,6 @@ from cruxible_client.contracts.operational_reads import (
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.types import PrincipalRecord
 
 OrientSection: TypeAlias = Literal[
@@ -53,7 +52,7 @@ OrientSection: TypeAlias = Literal[
     "claim_types",
     "subject_kinds",
     "queries",
-    "interfaces",
+    "operations",
     "runs",
     "running",
     "lines",
@@ -276,7 +275,7 @@ class OrientArtifactCounts(_StrictOrientModel):
     procedures: int = Field(ge=0)
     documents: int = Field(ge=0)
     queries: int = Field(ge=0)
-    interfaces: int = Field(ge=0)
+    operations: int = Field(ge=0)
     lines: int = Field(default=0, ge=0)
     captures: int = Field(default=0, ge=0)
     capture_contracts: int = Field(default=0, ge=0)
@@ -310,35 +309,23 @@ class OrientProcedure(_StrictOrientModel):
     runnable: Literal["direct", "line", "unsupported"]
 
 
-class OrientInterfaceProvider(_StrictOrientModel):
-    """One live Provider implementing an interface, and the implementation it pins."""
+class OrientOperation(_StrictOrientModel):
+    """One operation a live provider build serves: what a Line can bind a slot to.
 
-    provider: str
-
-
-class OrientInterface(_StrictOrientModel):
-    """One live provider interface a Procedure node can call.
-
-    ``input`` and ``output`` list the operation contract's fields as
-    ``name: type`` (``?`` when optional); an acquisition interface's output is
-    the named external-capture contract instead. ``effect`` is the interface's
-    governed effect class: an ``external_mutation`` call needs an effect policy
-    on its node. ``providers`` names the live Providers implementing it; one
-    with none has nothing to run it yet. ``operation_contract`` describes the
-    node's input and output. ``produces`` lists the logical source names the
-    interface declares its Captures carry (empty when undeclared, as when the
-    caller names the source). ``get("ProviderInterface:<name>")`` reads the
-    whole accepted entry. Admission records the exact versions selected by name.
+    ``input`` and ``output`` name its Contracts (``name@N``); a slot whose
+    signature is ``{in: input, out: output, effect}`` fits it. ``build`` is the
+    exact build (``Provider:<name>/<build key>``); a Line binding names it as
+    ``<build>#<operation>``. ``refusals`` lists the typed refusal codes it may
+    return. ``get("Provider:<build>")`` reads the whole build.
     """
 
-    name: str
-    description: str | None = Field(default=None, exclude_if=_is_none)
-    input: tuple[str, ...] = ()
-    output: tuple[str, ...] = ()
+    build: str
+    operation: str
+    input: str
+    output: str
     effect: Literal["pure", "external_read", "external_mutation"]
-    produces: tuple[str, ...] = ()
-    providers: tuple[OrientInterfaceProvider, ...] = ()
-    operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)
+    refusals: tuple[str, ...] = ()
+    signature_digest: str
 
 
 class OrientEnablements(_StrictOrientModel):
@@ -695,17 +682,14 @@ class OrientGraph(_StrictOrientModel):
 
 #: The definition kinds whose pins ``orient(section="pins")`` lists, in byte order.
 ORIENT_PIN_SOURCE_KINDS: tuple[str, ...] = (
-    "Blueprint",
     "CaptureContract",
     "ClaimType",
     "Line",
     "Procedure",
     "ProcedureMandate",
     "Provider",
-    "ProviderInterface",
     "QueryDefinition",
     "ResolutionContract",
-    "SourceAcquisitionPolicy",
     "SubjectKind",
     "Trigger",
 )
@@ -734,7 +718,7 @@ class OrientResult(_StrictOrientModel):
       ``artifacts``, ``queries`` and ``attention``;
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
-      ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an
+      ``claim_types``, ``subject_kinds``, ``queries``, ``operations``, or an
       operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the logical sources runs landed
@@ -770,7 +754,7 @@ class OrientResult(_StrictOrientModel):
     # Accepted Contract versions by name then version (section "contracts").
     contracts: tuple[OrientContract, ...] | None = Field(default=None, exclude_if=_is_none)
     queries: tuple[OrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
-    interfaces: tuple[OrientInterface, ...] | None = Field(default=None, exclude_if=_is_none)
+    operations: tuple[OrientOperation, ...] | None = Field(default=None, exclude_if=_is_none)
     # Procedure runs, newest admission first (section "runs"), or only the runs
     # still running (section "running"). Runs are operational state, read live.
     runs: tuple[RunRow, ...] | None = Field(default=None, exclude_if=_is_none)
@@ -852,8 +836,7 @@ __all__ = [
     "OrientGraphNode",
     "OrientGraphTotals",
     "OrientPin",
-    "OrientInterfaceProvider",
-    "OrientInterface",
+    "OrientOperation",
     "OrientKindDetail",
     "OrientKind",
     "OrientKindSummary",

@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, get_args
 
 import pytest
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistration,
+    interface_definition_digest,
+)
 from pydantic import ValidationError
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
@@ -50,10 +54,6 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_digest,
 )
 from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.exhaust import parse_journal_payload

@@ -300,18 +300,12 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.block.sync", arguments={"all": True}
     ),
     "projection_dirty": RepairOperation(operation="cruxible.block.sync", arguments={"all": True}),
-    # A Source run needs an accepted SourceAcquisitionPolicy with a rule for
-    # each of its Source inputs; authoring one is the repair, so the runnable
-    # command is the authoring example the caller would start from.
-    "source_acquisition_policy_required": RepairOperation(
-        operation="cruxible.authoring.example",
-        arguments={"example": "source-acquisition-policy"},
-    ),
-    # The policy is accepted but its rule denies a declared input. Authoring a
-    # successor policy is the repair; the run itself is not retryable as-is.
+    # The run's acquisition rules (the Line's, else the Procedure's defaults)
+    # deny a declared Source input; a Line successor with its acquisition
+    # override is the repair, so the runnable command is the Line example.
     "source_acquisition_refused": RepairOperation(
         operation="cruxible.authoring.example",
-        arguments={"example": "source-acquisition-policy"},
+        arguments={"example": "line"},
     ),
     # Measurement doors. A declaration, run, or subject that does not fit is
     # repaired by inspecting what stands (the readings door is read-only) or

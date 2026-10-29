@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 import pytest
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 
 from cruxible_client.authoring.inputs import CarriedContractInput, lower_authoring_input
 from cruxible_client.authoring.procedures import (
@@ -29,7 +30,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     TransformAdapterSpec,
 )
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from tests.support.procedures import RUN_WALL_CLOCK
 
 EMPTY = CarriedContractInput(name="empty", fields={})
@@ -291,8 +291,9 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
     binding = ProviderBinding.from_interface(entry, provider="second")
     assert binding.provider == "Provider:second"
     assert binding.effect_class == "external_read"
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
     from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+
+    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 
     typed_entry = entry.model_copy(
         update={

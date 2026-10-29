@@ -61,7 +61,6 @@ from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
     ProcedureBudget,
     ProcedureHardCaps,
-    ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
@@ -134,8 +133,8 @@ class PlaybillFloorCoverageManifestV2(CoverageManifestProfileV2):
 class PlaybillProcedureInputContractV1(_StrictFloorModel):
     """The run input planes a Procedure declares, without resolving open slots."""
 
-    input: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
-    parameters: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef | None = None
+    input: ArtifactPin | ArtifactNameRef
+    parameters: ArtifactPin | ArtifactNameRef | None = None
 
 
 class PlaybillProcedureCapabilitiesV1(_StrictFloorModel):
@@ -169,7 +168,7 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     artifact_digest: str
     accepted_coordinate: AcceptedCoordinate
     input_contract: PlaybillProcedureInputContractV1
-    output_contract: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef
+    output_contract: ArtifactPin | ArtifactNameRef
     runnable: ProcedureRunnable
     capabilities: PlaybillProcedureCapabilitiesV1
     budget: ProcedureBudget

@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
@@ -27,7 +29,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.models import CallNode, ProjectNode, SourceNode
-from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_execution import ProviderEgressObservation
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     workspace_file_accepted_registration,

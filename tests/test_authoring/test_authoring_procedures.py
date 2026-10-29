@@ -1382,6 +1382,7 @@ def _accepted_authoring_trio(tmp_path, *, historical=False):
     from cruxible_client.contracts.acquisition_policies import (
         SourceAcquisitionPolicy,
     )
+
     from cruxible_client.contracts.authoring.models import (
         LineAuthoringPayload,
         ProcedureMandateAuthoringPayload,

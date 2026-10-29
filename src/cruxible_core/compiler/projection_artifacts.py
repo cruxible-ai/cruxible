@@ -57,7 +57,6 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
-from cruxible_client.contracts.provider_interfaces import interface_definition_digest
 from cruxible_client.contracts.semantic import (
     ContentSpan,
     SemanticAddress,
@@ -232,29 +231,31 @@ SUBJECT_IDENTITY_ARTIFACT_KINDS = ArtifactKindRegistry(
 )
 
 
-# Revision 34: several builds per provider name, one contract registration per
-# interface contract. Both forms of each path are registered: a single-path
-# Provider or registration (the built-in, and every one registered before
-# builds) stays one build of its name.
+# Revision 34: several builds per provider name. Both forms of a provider path
+# are registered: a single-path Provider (the built-in) stays one build of its
+# name. Revisions 34 to 36 never shipped: their grammar holds no
+# ProviderInterface, Blueprint or SourceAcquisitionPolicy (a build declares
+# typed operations, a Procedure declares slots a Line binds, and a Line and its
+# Procedure carry the acquisition rules).
+_RETIRED_KINDS = frozenset({"provider-interface", "blueprint", "source-acquisition-policy"})
+
+
 def _with_build_paths(entry: ArtifactPathKind) -> ArtifactPathKind:
     if entry.kind == "provider":
         return ArtifactPathKind(
             "provider",
             re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"),
         )
-    if entry.kind == "provider-interface":
-        return ArtifactPathKind(
-            "provider-interface",
-            re.compile(
-                r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/(?:[0-9a-f]{64}|v[1-9][0-9]*))?\.json$"
-            ),
-        )
     return entry
 
 
 PROVIDER_BUILDS_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
-        *(_with_build_paths(entry) for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries()),
+        *(
+            _with_build_paths(entry)
+            for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries()
+            if entry.kind not in _RETIRED_KINDS
+        ),
         # One immutable data shape per version. The path parses under revisions
         # 34 and 35, which share this grammar; only revision 36 admits a Contract.
         ArtifactPathKind(
@@ -276,7 +277,6 @@ RegisteredPathKind = Literal[
     "resolution-contract",
     "attestation",
     "approval-policy",
-    "blueprint",
     "contract",
     "procedure-runtime-policy",
     "capture-contract",
@@ -290,9 +290,7 @@ RegisteredPathKind = Literal[
     "procedure",
     "procedure-mandate",
     "provider",
-    "provider-interface",
     "query-definition",
-    "source-acquisition-policy",
     "subject",
     "subject-kind",
     "trigger",
@@ -781,50 +779,12 @@ def parse_projection_tree(
                     )
                 )
                 continue
-            if kind == "blueprint":
-                from cruxible_client.contracts.procedures.blueprints import (
-                    blueprint_digest,
-                    parse_blueprint,
+            if kind in _RETIRED_KINDS:
+                raise ProjectionFormatError(
+                    f"{path}: {kind} is not an artifact kind any more; re-import this instance "
+                    "(a build declares operations, a Procedure declares slots, a Line binds "
+                    "them and carries its acquisition rules)"
                 )
-                from cruxible_client.contracts.procedures.source_compiler import (
-                    verify_source_graph,
-                )
-
-                blueprint = parse_blueprint(content, path=path, codec=artifact_codec)
-                verify_source_graph(blueprint)
-                identity = blueprint.identity.qualified
-                if identity in identities:
-                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
-                identities[identity] = path
-                digest = blueprint_digest(blueprint).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity,
-                        kind,
-                        blueprint.artifact_format,
-                        path,
-                        digest,
-                        blueprint.lifecycle.predecessor_digest,
-                        projected_revision(
-                            accepted_change_sets,
-                            path=path,
-                            input_digest=file_digest(content).tagged,
-                            artifact_digest=digest,
-                        ),
-                    )
-                )
-                if blueprint.lifecycle.state == "retired":
-                    retired_identities.append(identity)
-                pins.extend(
-                    PinRow(
-                        source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=getattr(pin, "artifact_digest", None),
-                        role=pin.role,
-                    )
-                    for pin in dependency_pins(blueprint, by_name=by_name)
-                )
-                continue
             if kind == "contract":
                 from cruxible_client.contracts.shapes import (
                     CONTRACT_PIN_ROLE,
@@ -1504,172 +1464,6 @@ def parse_projection_tree(
                         )
                     )
                 continue
-            if kind == "provider-interface":
-                from cruxible_client.contracts.provider_interfaces import (
-                    ProviderInterfaceContract,
-                    ProviderInterfaceContractV3,
-                    ProviderInterfaceRegistration,
-                    parse_provider_interface,
-                    provider_interface_digest,
-                )
-
-                registration = parse_provider_interface(
-                    content,
-                    path=path,
-                    codec=artifact_codec,
-                )
-                if isinstance(
-                    registration, ProviderInterfaceRegistration
-                ) and artifact_kinds not in (
-                    PROVIDER_PACKAGE_ARTIFACT_KINDS,
-                    RESOURCE_BUDGET_ARTIFACT_KINDS,
-                    SDK_SOURCE_ARTIFACT_KINDS,
-                    CLAIM_EVIDENCE_ARTIFACT_KINDS,
-                    SOURCE_CHECKED_ARTIFACT_KINDS,
-                    TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
-                    SUBJECT_IDENTITY_ARTIFACT_KINDS,
-                    PROVIDER_BUILDS_ARTIFACT_KINDS,
-                ):
-                    raise ProjectionFormatError(
-                        "ProviderInterface v2 requires the provider-package compiler"
-                    )
-                identity = registration.identity.qualified
-                if identity in identities:
-                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
-                identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = provider_interface_digest(registration).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity=identity,
-                        kind="provider-interface",
-                        format_tag=registration.artifact_format,
-                        path=path,
-                        artifact_digest=artifact_digest,
-                        predecessor_digest=registration.lifecycle.predecessor_digest,
-                        revision=projected_revision(
-                            accepted_change_sets,
-                            path=path,
-                            input_digest=input_digest,
-                            artifact_digest=artifact_digest,
-                        ),
-                    )
-                )
-                if registration.lifecycle.state == "retired":
-                    retired_identities.append(identity)
-                pins.extend(
-                    PinRow(
-                        source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=getattr(pin, "artifact_digest", None),
-                        role=pin.role,
-                    )
-                    for pin in dependency_pins(registration, by_name=by_name)
-                )
-                registration_fact = ProjectionFact(
-                    schema_id="cruxible.provider_interface.registration",
-                    schema_version=1,
-                    subject_identity=identity,
-                    fact_key="registration",
-                    value={
-                        "artifact_digest": {"$digest": artifact_digest},
-                        "effect_class": registration.effect_class,
-                        "interface_digest": {"$digest": interface_definition_digest(registration)},
-                        "lifecycle": registration.lifecycle.model_dump(mode="json"),
-                    },
-                )
-                if isinstance(
-                    registration, ProviderInterfaceContractV3 | ProviderInterfaceContract
-                ):
-                    # A contract registration carries no bucket data.
-                    semantic_facts.append(registration_fact)
-                    continue
-                semantic_facts.extend(
-                    (
-                        registration_fact,
-                        ProjectionFact(
-                            schema_id="cruxible.provider_interface.vocabulary",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="vocabulary",
-                            value={
-                                "vocabulary": registration.vocabulary_document,
-                                "vocabulary_digest": {"$digest": registration.vocabulary_digest},
-                            },
-                        ),
-                        ProjectionFact(
-                            schema_id="cruxible.provider_interface.classifier",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="classifier",
-                            value={
-                                "classifier_digest": {"$digest": registration.classifier_digest},
-                                "classifier_identity": registration.classifier_identity,
-                                "classifier_version": registration.classifier_version,
-                                "conformance_fixture_set_digest": {
-                                    "$digest": registration.conformance_fixture_set_digest
-                                },
-                                "conformance_proofs": [
-                                    proof.model_dump(mode="json")
-                                    for proof in registration.conformance_proofs
-                                ],
-                            },
-                        ),
-                    )
-                )
-                continue
-            if kind == "source-acquisition-policy":
-                from cruxible_client.contracts.acquisition_policies import (
-                    acquisition_policy_digest,
-                    parse_acquisition_policy,
-                )
-
-                acquisition_policy = parse_acquisition_policy(
-                    content, path=path, codec=artifact_codec
-                )
-                identity = acquisition_policy.identity.qualified
-                if identity in identities:
-                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
-                identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = acquisition_policy_digest(acquisition_policy).tagged
-                envelopes.append(
-                    ArtifactEnvelopeRow(
-                        identity=identity,
-                        kind="source-acquisition-policy",
-                        format_tag=acquisition_policy.artifact_format,
-                        path=path,
-                        artifact_digest=artifact_digest,
-                        predecessor_digest=acquisition_policy.lifecycle.predecessor_digest,
-                        revision=projected_revision(
-                            accepted_change_sets,
-                            path=path,
-                            input_digest=input_digest,
-                            artifact_digest=artifact_digest,
-                        ),
-                    )
-                )
-                pins.extend(
-                    PinRow(
-                        source_identity=identity,
-                        target_identity=pin.target.qualified,
-                        target_digest=getattr(pin, "artifact_digest", None),
-                        role=pin.role,
-                    )
-                    for pin in getattr(acquisition_policy, "pins", ())
-                )
-                semantic_facts.append(
-                    ProjectionFact(
-                        schema_id="cruxible.source_acquisition_policy.policy",
-                        schema_version=1,
-                        subject_identity=identity,
-                        fact_key="complete_policy",
-                        value=acquisition_policy.model_dump(mode="json"),
-                    )
-                )
-                continue
             if kind == "procedure-mandate":
                 from cruxible_client.contracts.procedure_mandates import (
                     ProcedureMandate,
@@ -1924,10 +1718,10 @@ def parse_projection_tree(
                                     }
                                     for node_id in graph.node_ids
                                 ],
-                                "pin_slots": [
-                                    slot.model_dump(mode="json")
-                                    for slot in procedure.definition.pin_slots
-                                ],
+                                "slots": {
+                                    name: slot.model_dump(mode="json", by_alias=True)
+                                    for name, slot in procedure.definition.slots.items()
+                                },
                             },
                         ),
                         *(

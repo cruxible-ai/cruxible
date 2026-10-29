@@ -415,6 +415,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         acquisition_policy_path,
         render_acquisition_policy,
     )
+
     from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,

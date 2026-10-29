@@ -8,36 +8,14 @@ accepted one is refused before any state is read.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
-
-from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
+from cruxible_client.contracts.orient import OrientOperation
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
-from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContract,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderEffectClass,
-    ProviderInterfaceRegistrationAny,
-    interface_definition_bytes,
-    interface_definition_digest,
-    parse_provider_interface,
-    provider_effect_class,
-    provider_interface_digest,
-    provider_operation_contract,
-)
-from cruxible_client.contracts.providers import (
-    ProviderV2,
-    parse_provider,
-    provider_digest,
-    provider_interface_pin,
-)
+from cruxible_client.contracts.provider_operations import operation_signature_digest
+from cruxible_client.contracts.providers import ProviderV2, parse_provider
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     parse_query_definition,
@@ -57,213 +35,47 @@ from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.discovery.query_definitions import QUERY_DEFINITION_PATH_PREFIX
 
 
-class _StrictDiscoveryServiceModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
-    """One live Provider implementing an interface, with the pins a Source node needs."""
-
-    tag: Literal["playbill-provider-interface-implementation-v1"] = (
-        "playbill-provider-interface-implementation-v1"
-    )
-    provider_identity: str
-    provider_artifact_digest: str
-    #: This build is its provider name's most recently registered live build:
-    #: what a bare provider name selects.
-    newest: bool = True
-    #: Exact head(s) of this provider name, including builds on other contracts.
-    newest_builds: tuple[str, ...] = ()
-
-    @field_validator("provider_artifact_digest")
-    @classmethod
-    def _digests(cls, value: str) -> str:
-        ArtifactDigest.from_tagged(value)
-        return value
-
-
-class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
-    tag: Literal["playbill-provider-interface-entry-v1"] = "playbill-provider-interface-entry-v1"
-    identity: str
-    artifact_digest: str
-    artifact_kind: Literal["ProviderInterface"] = "ProviderInterface"
-    pin_role: Literal["provider-interface"] = "provider-interface"
-    effect_class: ProviderEffectClass
-    interface_basis: Literal["accepted_registration"] = "accepted_registration"
-    # Additive: the live Providers implementing this interface, so an author can
-    # pin a graph-v4 Source node from the served inventory alone.
-    providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
-    operation_contract: ProviderOperationContract | None = None
-
-    @field_validator("artifact_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        ArtifactDigest.from_tagged(value)
-        return value
-
-
-@dataclass(frozen=True)
-class AcceptedProviderInterface:
-    """One live accepted interface: its registration and its inventory entry."""
-
-    registration: ProviderInterfaceRegistrationAny
-    entry: ProviderInterfaceEntryV1
-    #: The name to reference it by: its interface id when it is that id's most
-    #: recently registered live contract (a bare id resolves to it), otherwise
-    #: its full identity name (``<id>/<contract key>``).
-    name: str = ""
-
-
-def _provider_interfaces(
-    providers: Iterable[ProviderV2],
-    registrations: Iterable[ProviderInterfaceRegistrationAny],
-    *,
-    newest: Mapping[str, str],
-    newest_builds: frozenset[str],
-    build_heads: Mapping[str, tuple[str, ...]] | None = None,
-) -> tuple[AcceptedProviderInterface, ...]:
-    """The inventory entries of live registrations, each with the live builds
-    implementing its exact contract (interface id and digest)."""
-
-    if build_heads is None:
-        grouped: dict[str, list[str]] = {}
-        for identity in sorted(newest_builds):
-            grouped.setdefault(identity.partition(":")[2].partition("/")[0], []).append(identity)
-        build_heads = {name: tuple(values) for name, values in grouped.items()}
-    implementations: dict[tuple[str, str], list[ProviderInterfaceImplementationV1]] = {}
-    for provider in providers:
-        for implementation in provider.implementations:
-            pin = provider_interface_pin(provider, implementation.interface_id)
-            if pin is None:
-                continue
-            implementations.setdefault(
-                (pin.target.qualified, implementation.interface_digest), []
-            ).append(
-                ProviderInterfaceImplementationV1(
-                    provider_identity=provider.identity.qualified,
-                    provider_artifact_digest=provider_digest(provider).tagged,
-                    newest=provider.identity.qualified in newest_builds,
-                    newest_builds=build_heads.get(provider.provider_name, ()),
-                )
-            )
-    entries: list[AcceptedProviderInterface] = []
-    for registration in registrations:
-        entry = ProviderInterfaceEntryV1(
-            providers=tuple(
-                sorted(
-                    implementations.get(
-                        (
-                            registration.identity.qualified,
-                            interface_definition_digest(registration),
-                        ),
-                        (),
-                    ),
-                    key=lambda item: (item.provider_identity.encode("utf-8"),),
-                )
-            ),
-            identity=registration.identity.qualified,
-            artifact_digest=provider_interface_digest(registration).tagged,
-            operation_contract=(
-                provider_operation_contract(registration)
-                if "contracts"
-                in json.loads(bytes.fromhex(interface_definition_bytes(registration).hex()))
-                else None
-            ),
-            effect_class=provider_effect_class(registration),
-        )
-        entries.append(
-            AcceptedProviderInterface(
-                registration=registration,
-                entry=entry,
-                name=registration.interface_id
-                if newest.get(registration.interface_id) == registration.identity.qualified
-                else registration.identity.name,
-            )
-        )
-    return tuple(sorted(entries, key=lambda item: item.entry.identity.encode("utf-8")))
-
-
-def accepted_provider_interfaces(
+def accepted_provider_operations(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-) -> tuple[AcceptedProviderInterface, ...]:
-    """Every live accepted provider interface at one coordinate, sorted by identity.
+) -> tuple[OrientOperation, ...]:
+    """Every operation a live accepted build serves at one coordinate.
 
-    The one inventory source: ``discover(profile="interfaces")`` serves its
-    entries, and ``orient(section="interfaces")`` its compact rows. It reads the
-    live rows only (a retired build or registration costs nothing here).
+    The one inventory source ``orient(section="operations")`` serves: what a
+    Line can bind a slot to. It reads the live build rows only (a retired build
+    costs nothing here), sorted by build then operation.
     """
-
-    from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.builds import BuildRow, newest_live
 
     with instance.bind_accepted_projection(coordinate) as projection:
         typed = projection.typed
-        provider_rows = typed.connection.execute(
-            "SELECT path,identity,artifact_digest,provider_name,registration_sequence "
-            "FROM main.providers "
-            "WHERE lifecycle='live' ORDER BY path"
-        ).fetchall()
-        interface_rows = typed.connection.execute(
-            "SELECT identity,path,artifact_digest,interface_id,registration_sequence "
-            "FROM main.provider_interfaces "
-            "WHERE lifecycle='live' ORDER BY path"
-        ).fetchall()
-        typed.prefetch_members(
-            tuple(row[0] for row in provider_rows) + tuple(row[1] for row in interface_rows)
-        )
-        providers = [
+        paths = [
+            str(row[0])
+            for row in typed.connection.execute(
+                "SELECT path FROM main.providers WHERE lifecycle='live' ORDER BY path"
+            )
+        ]
+        typed.prefetch_members(tuple(paths))
+        builds = [
             provider
-            for (path, *_rest) in provider_rows
+            for path in paths
             if isinstance(
                 provider := parse_provider(typed.member_bytes(path), path=path), ProviderV2
             )
         ]
-        registrations = [
-            parse_provider_interface(typed.member_bytes(row[1]), path=row[1])
-            for row in interface_rows
-        ]
-    by_id: dict[str, list[BuildRow]] = {}
-    for identity, path, digest, interface_id, sequence in interface_rows:
-        by_id.setdefault(interface_id, []).append(
-            BuildRow(identity, path, digest, True, registration_sequence=sequence)
+    rows = [
+        OrientOperation(
+            build=build.identity.qualified,
+            operation=operation.name,
+            input=operation.in_.spelling,
+            output=operation.out.spelling,
+            effect=operation.effect,
+            refusals=tuple(sorted(operation.refusals)),
+            signature_digest=operation_signature_digest(operation.signature()),
         )
-    by_name: dict[str, list[BuildRow]] = {}
-    for path, identity, digest, name, sequence in provider_rows:
-        by_name.setdefault(name, []).append(
-            BuildRow(identity, path, digest, True, registration_sequence=sequence)
-        )
-    newest = {key: rows[0].identity for key, rows in by_id.items()}
-    newest_builds = {key: rows[0].identity for key, rows in by_name.items()}
-    contested = [
-        (target, rows)
-        for target, groups in ((newest, by_id), (newest_builds, by_name))
-        for rows in groups.values()
-        if len(rows) > 1
+        for build in builds
+        for operation in build.operations
     ]
-    for target, rows in contested:
-        try:
-            chosen = newest_live(rows, {row.identity: row.registration_sequence for row in rows})
-        except RequestRefusedError:
-            chosen = None
-        key = rows[0].identity.partition(":")[2].partition("/")[0]
-        if chosen is None:
-            target.pop(key, None)
-        else:
-            target[key] = chosen.identity
-    build_heads = {}
-    for name, rows in by_name.items():
-        last = max(row.registration_sequence for row in rows)
-        build_heads[name] = tuple(
-            sorted(row.identity for row in rows if row.registration_sequence == last)
-        )
-    return _provider_interfaces(
-        providers,
-        registrations,
-        newest=newest,
-        newest_builds=frozenset(newest_builds.values()),
-        build_heads=build_heads,
-    )
+    return tuple(sorted(rows, key=lambda item: (item.build, item.operation)))
 
 
 def _resolve_coordinate(
@@ -343,10 +155,8 @@ def build_accepted_discovery_vocabulary(
 
 
 __all__ = [
-    "AcceptedProviderInterface",
-    "ProviderInterfaceEntryV1",
     "accepted_claim_types",
-    "accepted_provider_interfaces",
+    "accepted_provider_operations",
     "accepted_query_definitions",
     "build_accepted_discovery_vocabulary",
 ]

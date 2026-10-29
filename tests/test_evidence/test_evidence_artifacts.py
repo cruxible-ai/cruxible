@@ -6,10 +6,11 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
+
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (

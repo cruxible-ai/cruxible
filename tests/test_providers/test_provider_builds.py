@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_path,
     render_provider_interface,
 )
+from pydantic import ValidationError
+
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderBuild,

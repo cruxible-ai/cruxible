@@ -10,12 +10,22 @@ import hashlib
 from datetime import UTC, datetime
 
 import pytest
-
-from cruxible_client import Cruxible
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    interface_definition_digest,
+    provider_interface_digest,
+    provider_interface_path,
+    render_provider_interface,
+)
+from cruxible_core.providers.web_fetch import (
+    WEB_FETCH_INTERFACE_V2_DIGEST,
+    web_fetch_interface_registration,
+)
+
+from cruxible_client import Cruxible
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -25,12 +35,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.named_references import name_provider
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.provider_interfaces import (
-    interface_definition_digest,
-    provider_interface_digest,
-    provider_interface_path,
-    render_provider_interface,
-)
 from cruxible_client.contracts.providers import (
     provider_digest,
     provider_expected_implementation_records,
@@ -39,10 +43,6 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.providers.web_fetch import (
-    WEB_FETCH_INTERFACE_V2_DIGEST,
-    web_fetch_interface_registration,
-)
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._light_capture_support import http_contract
 from tests.core_support._p2b1_support import provider_v2
@@ -161,12 +161,11 @@ def test_sdk_source_retains_and_reads_acquisition(
         web = pytest.importorskip(
             "cruxible_provider_web.fetch", reason="cross-repo web provider integration"
         )
+        from cruxible_core.providers.web_fetch import WEB_FETCH_INTERFACE_DEFINITION
         from cruxible_provider_runtime.egress import EgressRecorder
         from cruxible_provider_runtime.protocol import Budgets
         from cruxible_provider_runtime.provider_api import ProviderRunContext
         from cruxible_provider_web.interfaces import FETCH_PREIMAGE
-
-        from cruxible_core.providers.web_fetch import WEB_FETCH_INTERFACE_DEFINITION
 
         assert FETCH_PREIMAGE == WEB_FETCH_INTERFACE_DEFINITION
         result = web.WebFetch()(

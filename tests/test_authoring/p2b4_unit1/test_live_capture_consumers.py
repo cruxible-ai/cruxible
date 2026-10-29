@@ -8,13 +8,20 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.acquisition_policies import (
     InputAcquisitionRule,
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceContract,
+    ProviderInterfaceDefinition,
+    provider_interface_contract,
+    render_provider_interface,
+)
+
+import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayload,
     ClaimDependencyDrafts,
@@ -37,13 +44,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
-from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceContract,
-    ProviderInterfaceDefinition,
-    provider_interface_contract,
-    render_provider_interface,
-)
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -252,6 +252,7 @@ def run_capture_producers(
             provider_interface_digest,
             provider_interface_path,
         )
+
         from tests.support.provider_builds import legacy_interface_contract
 
         registration = legacy_interface_contract(

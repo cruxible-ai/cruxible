@@ -115,6 +115,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         acquisition_policy_path,
         render_acquisition_policy,
     )
+
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,

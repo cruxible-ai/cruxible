@@ -8,12 +8,13 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_digest,
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
@@ -32,7 +33,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.indexes.sqlite import bind_projection

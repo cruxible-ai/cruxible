@@ -19,8 +19,6 @@ from typing import Any
 from zipfile import ZipFile
 
 import pytest
-
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderInterfaceContract,
@@ -31,6 +29,8 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_interface_path,
     render_provider_interface,
 )
+
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.providers import (
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,

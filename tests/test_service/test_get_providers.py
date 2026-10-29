@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import pytest
-
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.provider_interfaces import (
     provider_interface_path,
     render_provider_interface,
 )
+
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.service.procedures.provider_installation import installed_providers
 from tests.core_support._support import initialize_local

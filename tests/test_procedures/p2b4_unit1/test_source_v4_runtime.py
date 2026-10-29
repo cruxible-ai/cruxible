@@ -10,8 +10,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
     InputAcquisitionRule,
@@ -19,6 +17,8 @@ from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
 )
+
+import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (

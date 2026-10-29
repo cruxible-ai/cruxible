@@ -103,12 +103,13 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
 
 
 def test_named_provider_keeps_install_code_identity_and_resolves_registration_by_name():
-    from cruxible_client.contracts.named_references import name_provider
     from cruxible_client.contracts.provider_interfaces import (
         AcceptedProviderInterfaceRegistration,
         provider_interface_digest,
         provider_interface_path,
     )
+
+    from cruxible_client.contracts.named_references import name_provider
     from cruxible_client.contracts.providers import (
         evaluate_provider_law,
         parse_provider,
@@ -287,16 +288,17 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
 
 
 def test_named_blueprint_instantiates_names_and_admission_refuses_ambiguous_slots():
-    from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedure,
-        procedure_artifact_digest,
-        procedure_path,
-    )
     from cruxible_client.contracts.procedures.blueprints import (
         AcceptedBlueprint,
         blueprint_digest,
         blueprint_path,
         instantiate_blueprint,
+    )
+
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+        procedure_path,
     )
     from cruxible_client.contracts.procedures.names import name_procedure
     from cruxible_core.procedures.reference_binding import bind_procedure_references
@@ -604,11 +606,12 @@ def test_current_and_pre36_authoring_choose_one_format_per_kind(tmp_path, histor
 
 
 def test_frozen_blueprint_instantiation_chooses_frozen_or_unified_procedure_models():
-    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from cruxible_client.contracts.procedures.blueprints import (
         blueprint_digest,
         instantiate_blueprint,
     )
+
+    from cruxible_client.contracts.procedures.artifacts import NamedProcedureArtifact
     from tests.core_support._p2b1_support import accepted_interface, accepted_provider
     from tests.test_procedures.test_blueprints import _blueprint
 

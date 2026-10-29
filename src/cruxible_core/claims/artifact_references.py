@@ -10,38 +10,24 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
 
 from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import (
-    BlueprintArtifact,
-    BlueprintOrigin,
-    NamedBlueprintArtifact,
-    NamedBlueprintOrigin,
     NamedProcedureArtifact,
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import (
-    CallNode,
-    RepeatBodyNode,
-    SourceNode,
-    iter_pin_bindings,
-)
 from cruxible_client.contracts.procedures.source_program import (
     NamedProcedureSourceProgram,
     NamedSourceClaimType,
     NamedSourceProcedureBinding,
-    NamedSourceProviderBinding,
     NamedSourceQueryBinding,
-    NamedSourceSlotBinding,
     ProcedureSourceProgram,
     SourceClaimType,
     SourceProcedureBinding,
-    SourceProviderBinding,
     SourceQueryBinding,
     SourceSlotBinding,
 )
@@ -90,12 +76,6 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
     ),
     "query-definitions/": (("pins", *_PIN),),
-    # A ProviderInterface is carried as its package registers it; its pins are
-    # its only references (its other digests are its own content).
-    "provider-interfaces/": (("pins", *_PIN),),
-    # Only historical v1 policies carry pins; age-only v2 policies have no
-    # digest references. Coherence and rule digests were values, not references.
-    "source-acquisition-policies/": (("pins", *_PIN),),
     "claims/": (
         ("statement", "claim_type_digest"),
         ("pins", *_REQUIRED_CLAIM_PIN),
@@ -124,10 +104,6 @@ def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tup
             continue
         for steps in fields:
             yield from _identities_at(payload, steps)
-    if path.startswith("procedures/"):
-        policy = payload.get("acquisition_policy")
-        if isinstance(policy, str):
-            yield "SourceAcquisitionPolicy", policy
     if path.startswith("subject-kinds/"):
         # A keyed SubjectKind names its key ClaimTypes by predicate.
         rule = payload.get("identity_rule")
@@ -153,27 +129,22 @@ def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str,
         yield from _identities_at(value[head], rest)
 
 
-# Procedures and Blueprints hold their pins inside a graph whose digest their
-# envelope carries, and a source program holds the same pins again as version
-# strings: they move through their typed model (``_move_graph``), never a field
-# table. A Procedure's Blueprint origin is provenance and never moves.
-_GRAPH_FAMILIES = ("blueprints/", "procedures/")
+# Procedures hold their pins inside a graph whose digest their envelope
+# carries, and a source program holds the same pins again as version strings:
+# they move through their typed model (``_move_graph``), never a field table.
+# A Procedure names no provider build, so a build move never touches one: a
+# Line binds builds, and ``provider move`` moves Lines.
+_GRAPH_FAMILIES = ("procedures/",)
 
 
 def _graph_model(
     path: str, payload: Mapping[str, Any] | None = None
-) -> type[ProcedureArtifact] | type[BlueprintArtifact] | None:
+) -> type[ProcedureArtifact] | None:
     if path.startswith("procedures/"):
         return (
             NamedProcedureArtifact
             if payload and payload.get("artifact_format") == "cruxible-procedure-v3"
             else ProcedureArtifact
-        )
-    if path.startswith("blueprints/"):
-        return (
-            NamedBlueprintArtifact
-            if payload and payload.get("artifact_format") == "cruxible-blueprint-v2"
-            else BlueprintArtifact
         )
     return None
 
@@ -182,109 +153,21 @@ def _source_versions(source: ProcedureSourceProgram | None) -> Iterator[str]:
     if source is None or isinstance(source, NamedProcedureSourceProgram):
         return
     for binding in source.bindings.values():
-        if isinstance(binding, SourceProviderBinding):
-            yield binding.provider_version
-            yield binding.interface_version
-        elif isinstance(binding, SourceSlotBinding):
-            yield binding.interface_version
-        else:
+        if isinstance(binding, SourceQueryBinding | SourceProcedureBinding):
             yield binding.version
     for claim_type in source.claim_types.values():
         yield claim_type.version
     yield from source.capture_contracts.values()
 
 
-class ProviderBuildMoveRefused(ValueError):
-    """An occurrence cannot move to the target build: it implements none of the
-    exact contracts the occurrence uses (``reason`` = ``contract_changed``)."""
-
-    def __init__(self, message: str, *, reason: str = "contract_changed") -> None:
-        super().__init__(message)
-        self.reason = reason
-
-
-@dataclass(frozen=True)
-class ProviderBuildMove:
-    """Move every occurrence bound to one provider build onto another build.
-
-    Unlike a digest remap this moves the pin's target identity too: the old and
-    new builds are different artifacts (``Provider:<name>/<build key>``). Each
-    occurrence moves to the new build's implementation of the same interface
-    contract, and to the registration the new build binds for it.
-    """
-
-    source: ArtifactPin | ArtifactNameRef
-    target: ArtifactPin
-    #: Old implementation digest -> the new build's implementation of the same
-    #: interface id and interface digest.
-    implementations: Mapping[str, str] = field(default_factory=dict)
-    #: Old registration artifact digest -> the registration pin the new build binds.
-    interfaces: Mapping[str, ArtifactPin] = field(default_factory=dict)
-    interface_names: Mapping[str, ArtifactNameRef] = field(default_factory=dict)
-
-
-def _moved_occurrence(value: Any, move: ProviderBuildMove) -> dict[str, Any]:
-    implementation = move.implementations.get(value.implementation_digest)
-    interface = move.interfaces.get(value.interface.artifact_digest)
-    if implementation is None or interface is None:
-        raise ProviderBuildMoveRefused(
-            f"{move.target.target.name} implements no exact contract of "
-            f"{value.interface.target.name} that this occurrence uses"
-        )
-    return {
-        "provider": move.target,
-        "implementation_digest": implementation,
-        "interface": interface,
-    }
-
-
-def _moved_binding(value: SourceProviderBinding, move: ProviderBuildMove) -> dict[str, Any]:
-    implementation = move.implementations.get(value.implementation_digest)
-    interface = move.interfaces.get(value.interface_version)
-    if implementation is None or interface is None:
-        raise ProviderBuildMoveRefused(
-            f"{move.target.target.name} implements no exact contract of {value.interface} "
-            "that this source binding uses"
-        )
-    return {
-        "provider": move.target.target.name,
-        "provider_version": move.target.artifact_digest,
-        "implementation_digest": implementation,
-        "interface": interface.target.name,
-        "interface_version": interface.artifact_digest,
-    }
-
-
-def _build_move(pin: Any, builds: Mapping[str, ProviderBuildMove]) -> ProviderBuildMove | None:
-    if not isinstance(pin, ArtifactPin | ArtifactNameRef):
-        return None
-    move = builds.get(pin.target.qualified)
-    return (
-        move
-        if move is not None
-        and (
-            isinstance(pin, ArtifactNameRef)
-            or isinstance(move.source, ArtifactNameRef)
-            or move.source.artifact_digest == pin.artifact_digest
-        )
-        else None
-    )
-
-
-def _moved(
-    value: Any,
-    remap: Mapping[str, str],
-    builds: Mapping[str, ProviderBuildMove] | None = None,
-) -> Any:
-    """``value`` with every pin and source version string moved through ``remap``,
-    and every occurrence bound to a moved provider build moved to its new build."""
+def _moved(value: Any, remap: Mapping[str, str]) -> Any:
+    """``value`` with every pin and source version string moved through ``remap``."""
 
     def move(digest: str) -> str:
         return remap.get(digest, digest)
 
     if isinstance(value, ArtifactNameRef):
-        selected = None if builds is None else builds.get(value.target.qualified)
-        return value if selected is None else ArtifactNameRef(target=selected.target.target)
+        return value
     if isinstance(value, ArtifactPin):
         moved = move(value.artifact_digest)
         return (
@@ -292,76 +175,16 @@ def _moved(
             if moved == value.artifact_digest
             else value.model_copy(update={"artifact_digest": moved})
         )
-    if isinstance(value, BlueprintOrigin | NamedBlueprintOrigin):
-        return value
-    if isinstance(value, NamedSourceProviderBinding):
-        selected = None if builds is None else builds.get("Provider:" + value.provider)
-        if selected is None:
-            return value
-        interface = selected.interface_names.get("ProviderInterface:" + value.interface)
-        if interface is None:
-            raise ProviderBuildMoveRefused("Target build does not serve the named source interface")
-        return value.model_copy(
-            update={"provider": selected.target.target.name, "interface": interface.target.name}
-        )
     if isinstance(
         value,
-        NamedSourceSlotBinding
+        SourceSlotBinding
         | NamedSourceQueryBinding
         | NamedSourceProcedureBinding
         | NamedSourceClaimType,
     ):
         return value
     updates: dict[str, Any] = {}
-    if (
-        builds
-        and isinstance(value, SourceNode | CallNode | RepeatBodyNode)
-        and isinstance(value.provider, ArtifactNameRef)
-    ):
-        selected = builds.get(value.provider.target.qualified)
-        if selected is not None:
-            assert value.interface is not None
-            interface = selected.interface_names.get(value.interface.target.qualified)
-            if interface is None:
-                raise ProviderBuildMoveRefused("Target build does not serve the named interface")
-            updates = {
-                "provider": ArtifactNameRef(target=selected.target.target),
-                "interface": interface,
-            }
-    if (
-        builds
-        and isinstance(value, SourceNode | CallNode | RepeatBodyNode)
-        and not isinstance(value.provider, ArtifactNameRef)
-    ):
-        occurrence_move = _build_move(value.provider, builds)
-        if occurrence_move is not None:
-            updates = _moved_occurrence(value, occurrence_move)
-    if isinstance(value, SourceProviderBinding):
-        binding_move = (
-            None
-            if not builds
-            else next(
-                (
-                    item
-                    for item in builds.values()
-                    if item.source.target.name == value.provider
-                    and isinstance(item.source, ArtifactPin)
-                    and item.source.artifact_digest == value.provider_version
-                ),
-                None,
-            )
-        )
-        updates = (
-            _moved_binding(value, binding_move)
-            if binding_move is not None
-            else {
-                "provider_version": move(value.provider_version),
-                "interface_version": move(value.interface_version),
-            }
-        )
-    elif isinstance(value, SourceSlotBinding):
-        updates = {"interface_version": move(value.interface_version)}
-    elif isinstance(value, SourceQueryBinding | SourceProcedureBinding | SourceClaimType):
+    if isinstance(value, SourceQueryBinding | SourceProcedureBinding | SourceClaimType):
         updates = {"version": move(value.version)}
     elif isinstance(value, ProcedureSourceProgram) and not isinstance(
         value, NamedProcedureSourceProgram
@@ -376,18 +199,18 @@ def _moved(
             if name in updates:
                 continue
             item = getattr(value, name)
-            moved_item = _moved(item, remap, builds)
+            moved_item = _moved(item, remap)
             if moved_item is not item:
                 updates[name] = moved_item
         changed = {name: item for name, item in updates.items() if item != getattr(value, name)}
         return value.model_copy(update=changed) if changed else value
     if isinstance(value, tuple | list):
-        items = [_moved(item, remap, builds) for item in value]
+        items = [_moved(item, remap) for item in value]
         if all(new is old for new, old in zip(items, value, strict=True)):
             return value
         return type(value)(items)
     if isinstance(value, dict):
-        moved_values = {key: _moved(item, remap, builds) for key, item in value.items()}
+        moved_values = {key: _moved(item, remap) for key, item in value.items()}
         if all(moved_values[key] is value[key] for key in value):
             return value
         return moved_values
@@ -403,20 +226,12 @@ def _graph_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
     yield from _source_versions(graph.definition.source)
 
 
-_OCCURRENCE_PIN_ROLES = frozenset({"provider", "provider-interface"})
-
-
-def _move_graph(
-    path: str,
-    payload: Mapping[str, Any],
-    remap: Mapping[str, str],
-    builds: Mapping[str, ProviderBuildMove] | None = None,
-) -> dict[str, Any]:
+def _move_graph(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
     model = _graph_model(path, payload)
     assert model is not None
     graph = model.model_validate(payload)
-    definition = _moved(graph.definition, remap, builds)
-    if isinstance(graph, NamedProcedureArtifact | NamedBlueprintArtifact):
+    definition = _moved(graph.definition, remap)
+    if isinstance(graph, NamedProcedureArtifact):
         moved = model.model_validate(
             {
                 **graph.model_dump(mode="json", by_alias=True),
@@ -424,20 +239,10 @@ def _move_graph(
                 "definition_digest": compute_procedure_definition_digest(definition).tagged,
             }
         )
-        if isinstance(moved, NamedProcedureArtifact):
-            from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+        from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
 
-            return dict(compact_procedure(moved))
-        return moved.model_dump(mode="json", by_alias=True)
+        return dict(compact_procedure(moved))
     moved_pins = [_moved(pin, remap) for pin in graph.pins]
-    if builds and definition is not graph.definition:
-        # The Provider and interface pins are exactly the ones the occurrences
-        # name: after a build move, read them again from the moved definition.
-        moved_pins = [pin for pin in moved_pins if pin.role not in _OCCURRENCE_PIN_ROLES] + [
-            pin
-            for pin in iter_pin_bindings(definition)
-            if isinstance(pin, ArtifactPin) and pin.role in _OCCURRENCE_PIN_ROLES
-        ]
     unique = {
         (
             pin.role.encode("utf-8"),
@@ -462,8 +267,8 @@ def _move_graph(
 def reference_fields(path: str) -> tuple[tuple[str, ...], ...] | None:
     """This path's reference fields, or None when its family has no table entry.
 
-    Procedures and Blueprints have none: their references move only through
-    ``move_references`` (their typed graph), never field by field.
+    Procedures have none: their references move only through ``move_references``
+    (their typed graph), never field by field.
     """
 
     for prefix, fields in REFERENCE_FIELDS.items():
@@ -510,7 +315,7 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
 
 def movable_references(path: str) -> bool:
     """Whether ``move_references`` can re-pin an artifact at ``path``: a family with a
-    reference table, or a Procedure or Blueprint (through its typed graph)."""
+    reference table, or a Procedure (through its typed graph)."""
 
     return path.startswith(_GRAPH_FAMILIES) or reference_fields(path) is not None
 
@@ -527,17 +332,11 @@ def move_references(
     path: str,
     payload: Mapping[str, Any],
     remap: Mapping[str, str],
-    builds: Mapping[str, ProviderBuildMove] | None = None,
 ) -> dict[str, Any]:
-    """A copy of ``payload`` with its reference fields moved through ``remap``.
-
-    ``builds`` (old build identity -> move) also moves a Procedure's occurrences
-    bound to an old provider build onto the new build; it raises
-    ``ProviderBuildMoveRefused`` when the new build lacks a contract one uses.
-    """
+    """A copy of ``payload`` with its reference fields moved through ``remap``."""
 
     if path.startswith(_GRAPH_FAMILIES):
-        return _move_graph(path, payload, remap, builds)
+        return _move_graph(path, payload, remap)
     fields = reference_fields(path)
     if fields is None:
         raise ValueError(f"{path} has no reference table; it cannot be re-pinned automatically")

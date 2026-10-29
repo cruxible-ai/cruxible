@@ -76,7 +76,7 @@ from cruxible_client.contracts.refusal_receipts import (
     claim_producer,
     claim_refusal_match_key,
 )
-from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGESTS
+from cruxible_client.contracts.workspace_file import is_workspace_file_signature
 from cruxible_core.indexes.history.history_index import history_reads_detached
 from cruxible_core.indexes.proposals.proposal_index import _micros
 from cruxible_core.indexes.sql_batch import insert_rows, select_in
@@ -196,7 +196,7 @@ def _legacy_workspace_content(
     evidence = getattr(envelope, "production_evidence", None)
     if (
         not isinstance(evidence, ProviderInvocationCaptureEvidence)
-        or evidence.interface_digest not in WORKSPACE_FILE_INTERFACE_DIGESTS
+        or not is_workspace_file_signature(evidence.operation_signature_digest)
         or commitment.materialization != "cas"
     ):
         return commitment.digest

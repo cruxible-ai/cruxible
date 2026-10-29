@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
@@ -9,7 +11,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import render_provider
 from cruxible_core.compiler.compiler import (
     artifact_kinds_for_compiler,

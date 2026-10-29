@@ -48,7 +48,6 @@ GetRefKind = Literal[
     "claim_type",
     "document",
     "procedure",
-    "blueprint",
     "query",
     "capture_contract",
     "trigger",
@@ -62,8 +61,6 @@ GetRefKind = Literal[
     "principal",
     "approval_policy",
     "procedure_runtime_policy",
-    "source_acquisition_policy",
-    "provider_interface",
     "provider",
     "contract",
 ]
@@ -95,7 +92,6 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim_type": ("summary", "history", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "proof"),
-    "blueprint": ("summary", "history", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "trigger": ("summary", "history", "proof"),
@@ -109,8 +105,6 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "principal": ("summary", "proof"),
     "approval_policy": ("summary", "history", "proof"),
     "procedure_runtime_policy": ("summary", "history", "proof"),
-    "source_acquisition_policy": ("summary", "history", "proof"),
-    "provider_interface": ("summary", "history", "proof"),
     "provider": ("summary", "history", "proof"),
     "contract": ("summary", "history", "proof"),
 }
@@ -438,27 +432,6 @@ class GetCaptureContractCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class GetBlueprintSlot(_StrictGetModel):
-    """One open slot: the interface it needs and the accepted Providers that fit it."""
-
-    slot: str
-    #: ``ProviderInterface:<name>``
-    interface: str
-    #: Live Providers implementing that interface exactly once; any one can be bound.
-    fits: tuple[str, ...] = ()
-
-
-class GetBlueprintCard(_StrictGetModel):
-    """A Procedure skeleton and its instantiation preview: each slot and what fits it."""
-
-    blueprint: str
-    description: str | None = Field(default=None, exclude_if=_omit_none)
-    lifecycle: str
-    inputs: dict[str, Any]
-    slots: tuple[GetBlueprintSlot, ...]
-    next: tuple[str, ...] = ()
-
-
 class GetTriggerCard(_StrictGetModel):
     """One Trigger: when it fires and what it sets off."""
 
@@ -572,29 +545,6 @@ class GetProcedureRuntimePolicyCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class GetAcquisitionInput(_StrictGetModel):
-    """How one Procedure input is acquired under a source acquisition policy."""
-
-    input: str
-    requirement: Literal["required", "optional", "conservative_default"]
-    #: The oldest acquisition admitted, as ``<seconds>s``; absent means any age.
-    max_age: str | None = Field(default=None, exclude_if=_omit_none)
-
-
-class GetSourceAcquisitionPolicyCard(_StrictGetModel):
-    """One source policy: age defaults and alias overrides, or frozen v1 details."""
-
-    policy: str
-    lifecycle: str
-    max_age: str | None = Field(default=None, exclude_if=_omit_none)
-    overrides: dict[str, str | None] = Field(default_factory=dict)
-    coherence: Literal["independent", "bounded_window", "declared_snapshot_group"] | None = Field(
-        default=None, exclude_if=_omit_none
-    )
-    inputs: tuple[GetAcquisitionInput, ...] = Field(default=(), exclude_if=lambda value: not value)
-    next: tuple[str, ...] = ()
-
-
 class GetProviderCard(_StrictGetModel):
     """One accepted Provider build, using the names shown by provider list."""
 
@@ -603,30 +553,8 @@ class GetProviderCard(_StrictGetModel):
     package: str | None = None
     version: str | None = None
     state: Literal["live", "retired"]
-    interfaces: tuple[str, ...] = ()
-    next: tuple[str, ...] = ()
-
-
-class GetProviderInterfaceProvider(_StrictGetModel):
-    provider: str
-
-
-class GetProviderInterfaceCard(_StrictGetModel):
-    """One live provider interface: its contract fields, effect and implementations.
-
-    ``produces`` lists the logical source names the interface declares its
-    Captures carry (empty when undeclared). ``detail="proof"`` answers the
-    accepted inventory entry a Procedure node pins (``entry``): the artifact and
-    interface digests, the operation contract and every implementation.
-    """
-
-    interface: str
-    description: str | None = Field(default=None, exclude_if=_omit_none)
-    input: tuple[str, ...] = ()
-    output: tuple[str, ...] = ()
-    effect: Literal["pure", "external_read", "external_mutation"]
-    produces: tuple[str, ...] = ()
-    providers: tuple[GetProviderInterfaceProvider, ...] = ()
+    #: Each operation as ``<name>: <in>@N -> <out>@N (<effect>)``.
+    operations: tuple[str, ...] = ()
     next: tuple[str, ...] = ()
 
 
@@ -636,7 +564,6 @@ GetCard = (
     | GetClaimTypeCard
     | GetDocumentCard
     | GetProcedureCard
-    | GetBlueprintCard
     | GetQueryCard
     | GetCaptureContractCard
     | GetTriggerCard
@@ -650,8 +577,6 @@ GetCard = (
     | GetPrincipalCard
     | GetApprovalPolicyCard
     | GetProcedureRuntimePolicyCard
-    | GetSourceAcquisitionPolicyCard
-    | GetProviderInterfaceCard
     | GetProviderCard
     | GetContractCard
 )
@@ -1001,7 +926,6 @@ __all__ = [
     "AttestationCountReason",
     "ByteRange",
     "ClaimLine",
-    "GetAcquisitionInput",
     "GetApprovalPolicyCard",
     "GetAttestationEvidence",
     "GetBatchRequest",
@@ -1036,15 +960,11 @@ __all__ = [
     "GetIncomingClaim",
     "GetLineRuns",
     "GetPrincipalCard",
-    "GetBlueprintCard",
-    "GetBlueprintSlot",
     "GetProcedureCard",
     "GetProcedureNode",
     "GetProcedureRuntimePolicyCard",
     "GetProcedureTrackRecord",
-    "GetProviderInterfaceCard",
     "GetProviderCard",
-    "GetProviderInterfaceProvider",
     "GetProposalCard",
     "GetProposalRefusal",
     "GetProposalChange",
@@ -1054,7 +974,6 @@ __all__ = [
     "GetRequest",
     "GetResult",
     "GetRevision",
-    "GetSourceAcquisitionPolicyCard",
     "GetSubjectCard",
     "GetNone",
     "GetSubjectClaim",

@@ -862,6 +862,8 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
 def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> tuple[Any, Any]:
     """Accept an external record contract and its provider; answer (contract, provider)."""
 
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.captures import (
         capture_contract_path,
@@ -872,7 +874,6 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionRule,
     )
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
     from cruxible_client.contracts.providers import provider_path, render_provider
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal

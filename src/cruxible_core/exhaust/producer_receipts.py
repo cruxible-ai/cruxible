@@ -35,8 +35,8 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompleted,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGESTS,
     SourceReadReceipt,
+    is_workspace_file_signature,
     parse_executed_workspace_request,
     source_read_receipt_digest,
 )
@@ -600,7 +600,7 @@ class JournalProducerReceiptResolver:
                     source_read = source_reads.get(
                         (provider_receipt.run_id, provider_receipt.occurrence_path)
                     )
-                    if (provider_receipt.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
+                    if is_workspace_file_signature(provider_receipt.operation_signature_digest) != (
                         source_read is not None
                     ):
                         raise ValueError(

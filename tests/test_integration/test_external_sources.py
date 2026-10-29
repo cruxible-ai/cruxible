@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
@@ -22,7 +23,6 @@ from cruxible_client.contracts.claims import (
     claim_path,
     render_claim,
 )
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path

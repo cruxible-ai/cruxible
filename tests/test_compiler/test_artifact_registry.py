@@ -126,6 +126,7 @@ def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
 
 def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() -> None:
     from cruxible_client.contracts.acquisition_policies import parse_acquisition_policy
+
     from cruxible_client.contracts.approval_policy import parse_approval_policy
     from cruxible_client.contracts.captures import parse_capture_contract
     from cruxible_client.contracts.claim_types import parse_claim_type

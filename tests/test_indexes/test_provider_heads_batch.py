@@ -177,14 +177,15 @@ def test_domain_removal_aggregates_across_parameter_chunks():
 
 @pytest.mark.usefixtures("contracted_demo")
 def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        instantiate_blueprint,
+    )
+
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.procedures.artifacts import (
         procedure_artifact_digest,
         render_procedure,
-    )
-    from cruxible_client.contracts.procedures.blueprints import (
-        blueprint_digest,
-        instantiate_blueprint,
     )
     from cruxible_core.compiler.compiler import (
         PROVIDER_BUILDS_COMPILER,

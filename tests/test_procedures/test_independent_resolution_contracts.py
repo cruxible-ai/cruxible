@@ -482,6 +482,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         acquisition_policy_path,
         render_acquisition_policy,
     )
+
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,

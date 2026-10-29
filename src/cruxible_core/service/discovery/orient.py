@@ -54,11 +54,10 @@ from cruxible_client.contracts.orient import (
     OrientContract,
     OrientDocument,
     OrientEnablements,
-    OrientInterface,
-    OrientInterfaceProvider,
     OrientKind,
     OrientKindDetail,
     OrientKindSummary,
+    OrientOperation,
     OrientPredicate,
     OrientProcedure,
     OrientQuery,
@@ -69,12 +68,6 @@ from cruxible_client.contracts.orient import (
     OrientYou,
 )
 from cruxible_client.contracts.policy_rows import PolicyInForce
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceContract,
-    interface_definition_bytes,
-    provider_effect_class,
-)
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.shapes import Contract
@@ -93,10 +86,7 @@ from cruxible_core.service.discovery.activity import ActivityPosition, activity_
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.contracts import ContractKey, contracts_page
-from cruxible_core.service.discovery.discovery import (
-    AcceptedProviderInterface,
-    accepted_provider_interfaces,
-)
+from cruxible_core.service.discovery.discovery import accepted_provider_operations
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.generation_rows import generation_row
 from cruxible_core.service.discovery.graph import GraphKey, graph_page
@@ -191,7 +181,7 @@ class _State:
     procedures: tuple[OrientProcedure, ...]
     documents: tuple[OrientDocument, ...]
     queries: tuple[OrientQuery, ...]
-    interfaces: tuple[OrientInterface, ...] = ()
+    operations: tuple[OrientOperation, ...] = ()
     #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
     #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
@@ -230,75 +220,6 @@ def _query_row(query: QueryDefinition) -> OrientQuery:
         params=tuple(
             f"{param.name}{'' if param.required else '?'}: {param.value_type}"
             for param in query.parameters
-        ),
-    )
-
-
-def _contract_fields(schema: object, *, stub: bool) -> tuple[str, ...]:
-    """An operation contract side as ``name: type`` rows, ``?`` marking optional fields.
-
-    A contract names its fields under ``fields``; a stub interface's definition
-    is the field map itself; an acquisition output is a named contract.
-    """
-
-    if isinstance(schema, str):
-        return (schema,)
-    if not isinstance(schema, Mapping):
-        return ()
-    fields = schema if stub else schema.get("fields")
-    if not isinstance(fields, Mapping):
-        return ()
-    rows: list[str] = []
-    for name, spec in fields.items():
-        if not isinstance(spec, Mapping):
-            continue
-        optional = spec.get("optional") is True or spec.get("required") is False
-        rows.append(f"{name}{'?' if optional else ''}: {spec.get('type', 'any')}")
-    return tuple(rows)
-
-
-def _first_sentence(text: str) -> str | None:
-    text = " ".join(text.split())
-    if not text:
-        return None
-    head, separator, _rest = text.partition(". ")
-    return head + "." if separator else text
-
-
-def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
-    registration = item.registration
-    definition = json.loads(bytes.fromhex(interface_definition_bytes(registration).hex()))
-    contracts_block = definition.get("contracts") if isinstance(definition, Mapping) else None
-    stub = not isinstance(contracts_block, Mapping)
-    sides: Mapping[str, Any] = (
-        definition if stub and isinstance(definition, Mapping) else contracts_block or {}
-    )
-    # The interface definition describes the operation; a registration's bucket
-    # vocabulary is historical classifier data and describes nothing served.
-    description = definition.get("description") if isinstance(definition, Mapping) else None
-    return OrientInterface(
-        name=item.name or registration.interface_id,
-        description=_first_sentence(description) if isinstance(description, str) else None,
-        input=_contract_fields(sides.get("input"), stub=stub),
-        output=_contract_fields(sides.get("output"), stub=stub),
-        effect=provider_effect_class(registration),
-        produces=(
-            registration.interface.produces
-            if isinstance(registration, ProviderInterfaceContract)
-            else ()
-        ),
-        providers=tuple(
-            OrientInterfaceProvider(
-                provider=provider.provider_identity.removeprefix("Provider:"),
-            )
-            for provider in item.entry.providers
-        ),
-        operation_contract=(
-            None
-            if item.entry.operation_contract is None
-            else ProviderOperationContract.model_validate(
-                item.entry.operation_contract.model_dump(mode="json")
-            )
         ),
     )
 
@@ -366,9 +287,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         procedures=procedures,
         documents=documents,
         queries=tuple(sorted(queries, key=lambda item: item.name)),
-        interfaces=tuple(
-            interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
-        ),
+        operations=accepted_provider_operations(instance, coordinate),
         identities=identities,
     )
 
@@ -1198,8 +1117,8 @@ def service_playbill_orient(
         calls.append(_Call("claim_type_upgrade"))
     if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
-    if state.interfaces:
-        calls.append(_Call("orient", (("section", "interfaces"),)))
+    if state.operations:
+        calls.append(_Call("orient", (("section", "operations"),)))
     counts = _operational_counts(instance, coordinate)
     # Operational families are listed by count, never inlined; point at the
     # two an agent most often needs: runs in flight and the Lines.
@@ -1232,7 +1151,7 @@ def service_playbill_orient(
             procedures=live_procedures,
             documents=len(state.documents),
             queries=len(state.queries),
-            interfaces=len(state.interfaces),
+            operations=len(state.operations),
             **counts,
             claims=_claim_counts(instance, coordinate, evaluation_time=moment, heads=heads),
         ),
@@ -1363,7 +1282,6 @@ _GOVERNANCE_SECTIONS: frozenset[str] = frozenset({"principals", "policies"})
 _GETTABLE_POLICY_DECLARERS = (
     "ApprovalPolicy:",
     "ProcedureRuntimePolicy:",
-    "SourceAcquisitionPolicy:",
     "Trigger:",
     "ClaimType:",
     "CaptureContract:",
@@ -1912,11 +1830,11 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
             [item.name for item in state.queries],
             lambda row: f"query:{row.name}",
         )
-    if section == "interfaces":
+    if section == "operations":
         return (
-            state.interfaces,
-            [item.name for item in state.interfaces],
-            lambda row: f"ProviderInterface:{row.name}",
+            state.operations,
+            [f"{item.build}#{item.operation}" for item in state.operations],
+            lambda row: row.build,
         )
     accepted = {item.predicate for item in state.claim_types}
     rows = tuple(
@@ -1940,7 +1858,6 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
 __all__ = [
     "OrientCaller",
     "accepted_subject_kinds",
-    "interface_row",
     "render_orient_call",
     "service_playbill_head",
     "service_playbill_orient",

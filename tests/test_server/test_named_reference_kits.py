@@ -29,6 +29,8 @@ def test_retiring_legacy_definitions_on_36_uses_admitted_successor_formats(tmp_p
         SourceAcquisitionPolicyV1,
         render_acquisition_policy,
     )
+    from cruxible_client.contracts.procedures.blueprints import BlueprintArtifact, render_blueprint
+
     from cruxible_client.contracts.canonical import pretty_canonical_bytes
     from cruxible_client.contracts.captures import (
         CaptureContract,
@@ -37,7 +39,6 @@ def test_retiring_legacy_definitions_on_36_uses_admitted_successor_formats(tmp_p
         capture_shape_components,
         render_capture_contract,
     )
-    from cruxible_client.contracts.procedures.blueprints import BlueprintArtifact, render_blueprint
     from cruxible_client.contracts.providers import ProviderV1, provider_path, render_provider
     from cruxible_client.contracts.query.definitions import QueryDefinition, render_query_definition
     from cruxible_core.claims.closure import parse_dependency_artifact
@@ -59,14 +60,15 @@ def test_retiring_legacy_definitions_on_36_uses_admitted_successor_formats(tmp_p
             "cruxible-procedure-v3",
         )
     elif family == "blueprint":
-        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-        from cruxible_client.contracts.procedures.models import ProcedureDefinition
         from cruxible_client.contracts.provider_interfaces import (
             ProviderInterfaceContract,
             interface_definition_digest,
             provider_interface_digest,
             render_provider_interface,
         )
+
+        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
 
         interface = ProviderInterfaceContract.model_validate(
             {

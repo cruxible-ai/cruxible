@@ -1136,11 +1136,12 @@ def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp
 def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path, provider_count):
     from datetime import UTC, datetime
 
+    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
     from cruxible_client.contracts.cas_contracts import BodyAccessContext
     from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import NamedLineSpec, render_line_spec
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
     from cruxible_client.contracts.providers import provider_path, render_provider
     from cruxible_core.exhaust.payloads import read_payload
     from tests.core_support._identity_support import accept_tree

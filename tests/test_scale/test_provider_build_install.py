@@ -310,11 +310,12 @@ def test_head_updates_are_flat_and_retirement_falls_back(tmp_path, monkeypatch, 
 
 
 def test_accepted_head_preserves_registration_order_and_reconstructs(tmp_path, package):
-    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.provider_interfaces import (
         provider_interface_path,
         render_provider_interface,
     )
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.providers import provider_digest
     from cruxible_core.errors import RequestRefusedError
     from cruxible_core.indexes.typed_sqlite import authenticate_source_rows

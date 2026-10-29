@@ -22,8 +22,6 @@ from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
-
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
     SourceAcquisitionPolicy,
@@ -31,6 +29,13 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    parse_provider_interface,
+    provider_interface_digest,
+    provider_interface_path,
+)
+
+from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -82,11 +87,6 @@ from cruxible_client.contracts.procedures.results import (
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
     VerifiedProviderBinding,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
     parse_provider,
@@ -457,6 +457,7 @@ def _world(  # noqa: PLR0913
             InputAcquisitionRule,
             SourceAcquisitionPolicyV1,
         )
+
         from tests.core_support._pc_c_support import capture_contract as frozen_contract
 
         accepted_contract = frozen_contract() if contract is None else contract

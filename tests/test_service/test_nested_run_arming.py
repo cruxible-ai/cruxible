@@ -45,6 +45,7 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
         acquisition_policy_path,
         render_acquisition_policy,
     )
+
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,

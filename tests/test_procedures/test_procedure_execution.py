@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from pydantic import TypeAdapter
 
 import cruxible_client.contracts.procedures.results as procedure_result_contracts
 import cruxible_core.procedures.execution as execution_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,

@@ -331,8 +331,9 @@ def _author(world: Any, *, procedure: bool = True) -> None:
     if hasattr(world, "instance"):
         # Preserve the original frozen Blueprint fixture in revision-35 tests.
         # The removed new-authoring model is not needed to construct old bytes.
-        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
         from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
+
+        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
         from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
         from cruxible_client.contracts.procedures.models import ProcedureDefinition
         from cruxible_core.authoring.lowering import lower_authoring
@@ -1032,6 +1033,7 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
         SourceAcquisitionPolicy,
         render_acquisition_policy,
     )
+
     from cruxible_client.contracts.kits import KitArtifact, KitArtifactBytes
     from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
     from cruxible_core.service.kits import _artifact_state

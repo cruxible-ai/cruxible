@@ -576,6 +576,7 @@ def test_reinstalling_the_registrant_binds_the_existing_contract_registration(
         provider_interface_path,
     )
     from cruxible_core.providers.web_fetch import web_fetch_interface_registration
+
     from tests.support.provider_installation import build_web_fetch_alternative
 
     http, instance_id, _reviewer = installer_http

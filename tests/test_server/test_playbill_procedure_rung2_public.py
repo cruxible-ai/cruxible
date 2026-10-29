@@ -16,14 +16,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cruxible_client.contracts.acquisition_policies import (
+    SourceAcquisitionPolicy,
+)
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts import ClaimViewRecord
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
 from cruxible_client.contracts.capture_reads import CaptureReadRequest

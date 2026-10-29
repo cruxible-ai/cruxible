@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pytest
-
-from cruxible_client import contracts
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+
+from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.builtin_claim_types import (
     BUILTIN_CLAIM_TYPES,

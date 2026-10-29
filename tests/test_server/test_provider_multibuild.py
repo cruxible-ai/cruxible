@@ -66,6 +66,7 @@ def _instantiate(world, name):
         provider_interface_digest,
         provider_interface_path,
     )
+
     from cruxible_client.contracts.providers import (
         AcceptedProvider,
         parse_provider,

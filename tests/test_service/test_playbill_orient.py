@@ -488,7 +488,6 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
 def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """Accept the demo interface with its Provider, plus an acquisition interface with none."""
 
-    from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.provider_interfaces import (
         ProviderBucketVocabulary,
         provider_bucket_vocabulary_digest,
@@ -496,6 +495,8 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         provider_interface_path,
         render_provider_interface,
     )
+
+    from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.providers import render_provider
     from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -801,13 +802,14 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
 
 
 def test_orient_and_get_show_the_sources_an_interface_produces(tmp_path: Path) -> None:
-    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_client.contracts.provider_interfaces import (
         ProviderInterfaceDefinition,
         provider_interface_contract,
         provider_interface_path,
         render_provider_interface,
     )
+
+    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
     from cruxible_core.service.discovery.get import service_playbill_get

@@ -3,9 +3,6 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
-from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderClassifierCode,
@@ -16,6 +13,9 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_package_classifier_digest,
     render_provider_interface,
 )
+from pydantic import ValidationError
+
+from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     Provider,

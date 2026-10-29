@@ -5058,17 +5058,16 @@ accept the same digest. Next: submit the prepared intent, then enable the Line.
 
 ## Provider slots
 
-A Procedure may leave Provider slots open, each naming its required interface.
-A direct run selects the single installed build that fits each slot. No fit refuses
-`cruxible.procedure.slot_binding_missing`; several fits refuse
-`cruxible.procedure.slot_binding_ambiguous` and list the candidates. Select explicitly
-with `cruxible procedure run NAME INPUT --bind slot=provider`, or pass
-`bindings={"slot": "provider"}` to the SDK's `Procedure.run`. A `line` member can
-carry the same `bindings` mapping alongside its Procedure and parameters.
-Existing Blueprint artifacts remain readable, and their exact Procedure instances
-keep running. New definitions are Procedures with slots.
-
-<a id="api-changesetinput"></a>
+A Procedure names no provider. Each provider-calling node names a slot, and the
+Procedure declares every slot's signature `{in, out, effect}` (Contracts written
+`name@N`). A Line binds each slot to one exact build and operation when it is
+accepted: `bindings` names `provider[/build][#operation]` per slot, and a slot
+left out is fitted. No live operation serving the signature refuses
+`cruxible.line.slot_unfilled`; several refuse `cruxible.line.slot_ambiguous` and
+list the candidates. Runs use the Line's binding as recorded and never refit. A
+direct `procedure run` fits its slots the same way when the request is admitted
+(`--bind slot=provider`, or `bindings={"slot": "provider"}` to the SDK's
+`Procedure.run`) and records that ephemeral spec's digest with the run.
 
 ## `ChangeSetInput`
 

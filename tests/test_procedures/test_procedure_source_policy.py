@@ -4,7 +4,6 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-
 from cruxible_client.contracts.acquisition_policies import (
     AcquisitionRule,
     IndependentCoherence,
@@ -15,6 +14,7 @@ from cruxible_client.contracts.acquisition_policies import (
     parse_acquisition_policy,
     render_acquisition_policy,
 )
+
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_core.evidence.source_readers import (
     ExternalSourceReadRequestV1,
@@ -178,6 +178,12 @@ def test_selection_does_not_restate_contract_replayability(
 def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
     import base64
 
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_digest,
+        provider_interface_path,
+        render_provider_interface,
+    )
+
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
     from cruxible_client.contracts.captures import (
@@ -190,11 +196,6 @@ def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
         render_procedure,
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_interface_digest,
-        provider_interface_path,
-        render_provider_interface,
-    )
     from cruxible_client.contracts.providers import (
         ProviderBuild,
         provider_build_key,
@@ -233,9 +234,10 @@ def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
 
     # A source adapter reads the observation an earlier acquire actually landed.
     # Its recorded observation time stays intact when the adapter serves it later.
+    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
+
     from cruxible_client.contracts.artifacts import ArtifactNameRef
     from cruxible_client.contracts.named_references import name_provider
-    from cruxible_client.contracts.provider_interfaces import interface_definition_digest
 
     registration = _acquisition_registration()
     adapter = capture_provider_build(source.capture_contract(), named=False)

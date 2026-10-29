@@ -9,18 +9,19 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import BaseModel
-
-from cruxible_client import Cruxible
-from cruxible_client.authoring.examples import acquisition_policy_example, procedure_example
-from cruxible_client.authoring.sdk import ChangeSetDraft
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
     SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
     parse_acquisition_policy,
 )
+from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+from cruxible_client import Cruxible
+from cruxible_client.authoring.examples import acquisition_policy_example, procedure_example
+from cruxible_client.authoring.sdk import ChangeSetDraft
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -62,7 +63,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
     render_procedure,
 )
-from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
     QueryDefinitionSpec,

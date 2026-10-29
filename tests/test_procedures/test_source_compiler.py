@@ -315,11 +315,12 @@ def test_query_binds_request_parameters_and_types_the_result():
 
 
 def test_capture_terminal_has_declared_result_and_requires_material_schema():
-    from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
     from cruxible_client.contracts.provider_contracts import (
         ACQUISITION_RESULT,
         ProviderOperationContract,
     )
+
+    from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
 
     provider = SourceProviderBinding(
         provider="web",

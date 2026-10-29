@@ -113,7 +113,6 @@ _SCHEMA_DEFINING_ARTIFACT_KINDS = frozenset(
         "procedure",
         "query-definition",
         "capture-contract",
-        "source-acquisition-policy",
         "provider",
     }
 )

@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
+from pydantic import ValidationError
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,

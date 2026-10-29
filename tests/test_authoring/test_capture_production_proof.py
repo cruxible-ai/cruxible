@@ -16,11 +16,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from cruxible_client.contracts.acquisition_policies import (
     CanonicalDuration,
     InputAcquisitionRule,
 )
+
 from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,

@@ -25,12 +25,6 @@ from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
-)
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyV1,
-)
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
@@ -74,11 +68,8 @@ from cruxible_client.contracts.get_reads import (
     GET_DETAILS_BY_KIND,
     GET_HISTORY_DEFAULT_LIMIT,
     ByteRange,
-    GetAcquisitionInput,
     GetApprovalPolicyCard,
     GetAttestationEvidence,
-    GetBlueprintCard,
-    GetBlueprintSlot,
     GetBody,
     GetCaptureContractCard,
     GetCaptureErasure,
@@ -114,15 +105,12 @@ from cruxible_client.contracts.get_reads import (
     GetProposalRefusal,
     GetProposedReason,
     GetProviderCard,
-    GetProviderInterfaceCard,
-    GetProviderInterfaceProvider,
     GetQueryCard,
     GetQueryParameter,
     GetRefKind,
     GetRequest,
     GetResult,
     GetRevision,
-    GetSourceAcquisitionPolicyCard,
     GetSubjectCard,
     GetSubjectClaim,
     GetSubjectHistory,
@@ -160,10 +148,6 @@ from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.discovery import (
-    AcceptedProviderInterface,
-    accepted_provider_interfaces,
-)
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
@@ -226,7 +210,6 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "Document": "document",
     "document": "document",
     "Procedure": "procedure",
-    "Blueprint": "blueprint",
     "QueryDefinition": "query",
     "query": "query",
     "CaptureContract": "capture_contract",
@@ -243,8 +226,6 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "Principal": "principal",
     "ApprovalPolicy": "approval_policy",
     "ProcedureRuntimePolicy": "procedure_runtime_policy",
-    "SourceAcquisitionPolicy": "source_acquisition_policy",
-    "ProviderInterface": "provider_interface",
     "Provider": "provider",
 }
 # The projection's artifact kind for each reference kind, and back.
@@ -254,7 +235,6 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "claim_type": "claim-type",
     "document": "document",
     "procedure": "procedure",
-    "blueprint": "blueprint",
     "query": "query-definition",
     "capture_contract": "capture-contract",
     "trigger": "trigger",
@@ -264,8 +244,6 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "mandate": "procedure-mandate",
     "approval_policy": "approval-policy",
     "procedure_runtime_policy": "procedure-runtime-policy",
-    "source_acquisition_policy": "source-acquisition-policy",
-    "provider_interface": "provider-interface",
     "provider": "provider",
     "contract": "contract",
 }
@@ -276,7 +254,6 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "claim_type": "ClaimType",
     "document": "document",
     "procedure": "Procedure",
-    "blueprint": "Blueprint",
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
@@ -286,15 +263,12 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "mandate": "ProcedureMandate",
     "approval_policy": "ApprovalPolicy",
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
-    "source_acquisition_policy": "SourceAcquisitionPolicy",
-    "provider_interface": "ProviderInterface",
     "provider": "Provider",
     "contract": "Contract",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
     "procedure",
-    "blueprint",
     "query",
     "capture_contract",
     "trigger",
@@ -307,7 +281,6 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "claim_type": "ClaimType",
     "document": "Document",
     "procedure": "Procedure",
-    "blueprint": "Blueprint",
     "query": "query",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
@@ -321,8 +294,6 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "principal": "Principal",
     "approval_policy": "ApprovalPolicy",
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
-    "source_acquisition_policy": "SourceAcquisitionPolicy",
-    "provider_interface": "ProviderInterface",
     "provider": "Provider",
     "contract": "Contract",
 }
@@ -339,8 +310,6 @@ _ORIENT_SECTION: Mapping[GetRefKind, str] = {
     "principal": "principals",
     "approval_policy": "policies",
     "procedure_runtime_policy": "policies",
-    "source_acquisition_policy": "policies",
-    "provider_interface": "interfaces",
 }
 
 
@@ -719,13 +688,6 @@ def _resolve_typed(
     row = _envelope(projection, identity)
     if row is not None:
         return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
-    if kind == "provider_interface" and "/" not in name:
-        # A bare interface id names its most recently registered live contract.
-        newest = _newest_interface(projection, name.removeprefix("ProviderInterface:"))
-        if newest is not None:
-            row = _envelope(projection, newest)
-            if row is not None:
-                return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
     if kind == "subject" and not subject_suggestions:
         # World supplies its own AbsentSubject repair. Identity/alias/key
         # resolution above already established absence; do not enumerate the
@@ -749,7 +711,6 @@ def _resolve_typed(
         "subject": "Subject",
         "document": "Document",
         "procedure": "Procedure",
-        "blueprint": "Blueprint",
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
         "trigger": "Trigger",
@@ -759,8 +720,6 @@ def _resolve_typed(
         "mandate": "ProcedureMandate",
         "approval_policy": "ApprovalPolicy",
         "procedure_runtime_policy": "ProcedureRuntimePolicy",
-        "source_acquisition_policy": "SourceAcquisitionPolicy",
-        "provider_interface": "ProviderInterface",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -843,30 +802,6 @@ def _resolve_provider(projection: Any, name: str, *, ref: str) -> ResolvedRef:
             context={"ref": ref},
         )
     return ResolvedRef("provider", row.identity, row.identity, row.path)
-
-
-def _newest_interface(projection: Any, interface_id: str) -> str | None:
-    """The identity of ``interface_id``'s most recently registered live registration."""
-
-    from cruxible_core.providers.builds import (
-        indexed_interface_registrations,
-        newest_live,
-    )
-
-    rows = [
-        row
-        for row in indexed_interface_registrations(projection.typed.connection, interface_id)
-        if row.live
-    ]
-    if len(rows) <= 1:
-        return rows[0].identity if len(rows) == 1 else None
-    from cruxible_core.errors import RequestRefusedError
-
-    try:
-        chosen = newest_live(rows, {row.identity: row.registration_sequence for row in rows})
-    except RequestRefusedError:
-        return None
-    return None if chosen is None else chosen.identity
 
 
 def _resolve_subject_text(
@@ -1612,70 +1547,6 @@ def _duration_text(microseconds: int) -> str:
     return f"{microseconds / 1_000_000:g}s"
 
 
-def _acquisition_policy_card(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    resolved: ResolvedRef,
-    *,
-    surface: ReadSurface,
-) -> GetSourceAcquisitionPolicyCard:
-    with instance.bind_accepted_projection(coordinate) as projection:
-        policy = cast(SourceAcquisitionPolicy, projection.typed.source(resolved.identity))
-    return GetSourceAcquisitionPolicyCard(
-        policy=resolved.display,
-        lifecycle=policy.lifecycle.state,
-        max_age=(
-            None
-            if isinstance(policy, SourceAcquisitionPolicyV1) or policy.max_age is None
-            else _duration_text(policy.max_age.microseconds)
-        ),
-        overrides=(
-            {}
-            if isinstance(policy, SourceAcquisitionPolicyV1)
-            else {
-                alias: None if age is None else _duration_text(age.microseconds)
-                for alias, age in policy.overrides.items()
-            }
-        ),
-        coherence=policy.coherence.kind if isinstance(policy, SourceAcquisitionPolicyV1) else None,
-        inputs=tuple(
-            GetAcquisitionInput(
-                input=rule.input_name,
-                requirement=rule.requirement,
-                max_age=None if rule.max_age is None else _duration_text(rule.max_age.microseconds),
-            )
-            for rule in policy.inputs
-        )
-        if isinstance(policy, SourceAcquisitionPolicyV1)
-        else (),
-        next=(
-            _render_get(surface, resolved.display, "history"),
-            _render_get(surface, resolved.display, "proof"),
-        ),
-    )
-
-
-def _live_interface(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    resolved: ResolvedRef,
-) -> AcceptedProviderInterface:
-    """The live accepted inventory entry of one provider interface, or a coded refusal."""
-
-    for item in accepted_provider_interfaces(instance, coordinate):
-        if item.entry.identity == resolved.identity:
-            return item
-    raise ReadRefusalError(
-        "cruxible.get.ref_not_found",
-        f"{resolved.display} is retired; no live provider interface carries that name",
-        http_status=404,
-        candidates=(),
-        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "interfaces"}),
-        repair_line='Run orient(section="interfaces") to list the live interfaces',
-        context={"ref": resolved.display},
-    )
-
-
 def _provider_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1694,32 +1565,9 @@ def _provider_card(
         package=None if distribution is None else distribution.name,
         version=None if distribution is None else distribution.version,
         state=provider.lifecycle.state,
-        interfaces=tuple(
-            sorted({item.interface_id for item in getattr(provider, "implementations", ())})
-        ),
-        next=(_render_get(surface, resolved.display, "proof"),),
-    )
-
-
-def _provider_interface_card(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    resolved: ResolvedRef,
-    *,
-    surface: ReadSurface,
-) -> GetProviderInterfaceCard:
-    from cruxible_core.service.discovery.orient import interface_row
-
-    row = interface_row(_live_interface(instance, coordinate, resolved))
-    return GetProviderInterfaceCard(
-        interface=resolved.display,
-        description=row.description,
-        input=row.input,
-        output=row.output,
-        effect=row.effect,
-        produces=row.produces,
-        providers=tuple(
-            GetProviderInterfaceProvider(provider=item.provider) for item in row.providers
+        operations=tuple(
+            f"{item.name}: {item.in_.spelling} -> {item.out.spelling} ({item.effect})"
+            for item in getattr(provider, "operations", ())
         ),
         next=(_render_get(surface, resolved.display, "proof"),),
     )
@@ -3083,12 +2931,6 @@ def _proof(
         return service_playbill_procedure_readiness(
             instance, name=name, request=ProcedureReadinessRequestV1(at=at)
         ).model_dump(mode="json")
-    if resolved.kind == "provider_interface":
-        item = _live_interface(instance, coordinate, resolved)
-        return {
-            "coordinate": at.model_dump(mode="json"),
-            "entry": item.entry.model_dump(mode="json"),
-        }
     if resolved.kind == "principal":
         record = _principals_at(instance, coordinate)[name]
         return {
@@ -3097,7 +2939,6 @@ def _proof(
             "record": record.model_dump(mode="json"),
         }
     if resolved.kind in {
-        "blueprint",
         "capture_contract",
         "trigger",
         "subject_kind",
@@ -3106,7 +2947,6 @@ def _proof(
         "mandate",
         "approval_policy",
         "procedure_runtime_policy",
-        "source_acquisition_policy",
         "provider",
         "contract",
     }:
@@ -3257,27 +3097,6 @@ def service_playbill_get(
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "trigger":
             card = _trigger_card(instance, coordinate, resolved, surface=surface)
-        elif resolved.kind == "blueprint":
-            with instance.bind_accepted_projection(coordinate) as projection:
-                retained = projection.typed.source(resolved.identity)
-            assert retained is not None
-            from cruxible_client.contracts.procedures.blueprints import blueprint_slot_interface
-
-            card = GetBlueprintCard(
-                blueprint=_name(resolved.identity),
-                description=retained.definition.description,
-                lifecycle=retained.lifecycle.state,
-                inputs={"input": _pin_name(retained.definition.contract_in)},
-                slots=tuple(
-                    GetBlueprintSlot(
-                        slot=slot.slot_name,
-                        interface="" if reference is None else reference.target.qualified,
-                    )
-                    for slot in retained.definition.pin_slots
-                    for reference in (blueprint_slot_interface(retained, slot),)
-                ),
-                next=(_render_get(surface, resolved.display, "proof"),),
-            )
         elif resolved.kind == "subject_kind":
             card = _subject_kind_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "contract":
@@ -3321,10 +3140,6 @@ def service_playbill_get(
             card = _approval_policy_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "procedure_runtime_policy":
             card = _runtime_policy_card(instance, coordinate, resolved, surface=surface)
-        elif resolved.kind == "source_acquisition_policy":
-            card = _acquisition_policy_card(instance, coordinate, resolved, surface=surface)
-        elif resolved.kind == "provider_interface":
-            card = _provider_interface_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "provider":
             card = _provider_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "mandate":

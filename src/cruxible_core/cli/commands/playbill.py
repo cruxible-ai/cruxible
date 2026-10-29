@@ -1639,12 +1639,12 @@ def list_provider_packages(output_json: bool) -> None:
     for installed in result.installed:
         runs = "" if installed.package is None else f" ({installed.package} {installed.version})"
         marker = " [newest]" if installed.newest else ""
-        interfaces = ", ".join(installed.interfaces) or "-"
-        click.echo(f"  {installed.build}{runs}{marker}: {interfaces}")
+        operations = ", ".join(installed.operations) or "-"
+        click.echo(f"  {installed.build}{runs}{marker}: {operations}")
     if result.packages:
         click.echo("Provider repository:")
     for package in result.packages:
-        click.echo(f"  {package.name} {package.version}: {', '.join(package.interfaces)}")
+        click.echo(f"  {package.name} {package.version}: {', '.join(package.operations)}")
     if result.detail:
         click.echo(result.detail)
 
@@ -1752,7 +1752,7 @@ def install_provider(
             click.echo(f"Proposal: {result.proposal_id}")
         for operation in result.operations:
             if operation.missing_requirements:
-                click.echo(f"{operation.interface_id}: {', '.join(operation.missing_requirements)}")
+                click.echo(f"{operation.operation}: {', '.join(operation.missing_requirements)}")
 
 
 @provider_group.command("retire")
@@ -1998,11 +1998,10 @@ def build_kit(
 ) -> None:
     """Export this instance's owned definitions as one self-contained kit release.
 
-    Every Provider a carried Procedure pins must be named with --provider or
-    --default-provider (the same build this instance installed), and every
-    ProviderInterface the kit carries must be exactly what a named package
-    registers; kit add installs the providers before the definitions, a default
-    one only when no installed Provider implements its interfaces.
+    Provider packages are named with --provider or --default-provider (the same
+    build this instance installed); kit add installs the providers before the
+    definitions, a default one only when no installed build already serves
+    every slot the kit's Procedures declare.
     """
     if out.exists():
         raise click.UsageError(f"{out} already exists")
@@ -4544,13 +4543,12 @@ def authoring_example_command(
     Input kind family: claim | procedure |
     subject | subject_kind | subject_succession | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    acquisition_policy | line | trigger | change_set (tagless).
+    line | trigger | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | subject_kind | subject_succession |
-    query_definition | procedure_mandate | acquisition_policy | line | trigger |
-    procedure.
+    query_definition | procedure_mandate | line | trigger | procedure.
     claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
@@ -4562,8 +4560,8 @@ def authoring_example_command(
     member kinds, lowers once, and admits or refuses whole, typed to the member
     index that offends. `change-set` prints a mixed set and
     `claim-type-succession` a vocabulary evolution; `procedure`, `line`,
-    `trigger`, `acquisition-policy` and `procedure-mandate` are accepted
-    together as members of one change set.
+    `trigger` and `procedure-mandate` are accepted together as members of one
+    change set.
     """
 
     if name is None:
@@ -9132,7 +9130,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     if section == "mandates":
         for row in result["mandates"]:
             lines.append(
-                f"{row['mandate']}  {row['procedure']}  {row['grants']}  {row['state']}  "
+                f"{row['mandate']}  {row['line']}  {row['grants']}  {row['state']}  "
                 f"expires {row['expires_at']}" + ("  suspended" if row.get("suspended") else "")
             )
             for scope in row.get("scope", ()):
@@ -9144,16 +9142,14 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 lines.append(f"  condition {row['condition_query']}")
             if row.get("subject_creation"):
                 lines.append(f"  may create {', '.join(row['subject_creation'])}")
-    if section == "interfaces":
-        for row in result["interfaces"]:
-            providers = (
-                ",".join(item["provider"] for item in row.get("providers", ())) or "(no provider)"
+    if section == "operations":
+        for row in result["operations"]:
+            build = str(row["build"]).removeprefix("Provider:")
+            lines.append(
+                f"{build}#{row['operation']}  {row['input']} -> {row['output']}  ({row['effect']})"
             )
-            lines.append(f"{row['name']}  effect={row['effect']}  providers={providers}")
-            if row.get("description"):
-                lines.append(f"  {row['description']}")
-            lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
-            lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
+            if row.get("refusals"):
+                lines.append(f"  refuses {', '.join(row['refusals'])}")
     if section == "generations":
         for row in result["generations"]:
             approvals = ",".join(row.get("approvals", ())) or "-"

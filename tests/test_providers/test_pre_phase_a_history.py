@@ -20,6 +20,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceContract,
+    evaluate_provider_interface_law,
+    interface_definition_bytes,
+    interface_definition_digest,
+    parse_provider_interface,
+    provider_interface_digest,
+    provider_interface_path,
+    render_provider_interface,
+)
 
 import cruxible_core.service.procedures.procedure_runs as service
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -33,16 +43,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompleted,
     ProviderInvocationStarted,
-)
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceContract,
-    evaluate_provider_interface_law,
-    interface_definition_bytes,
-    interface_definition_digest,
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_path,
-    render_provider_interface,
 )
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.records import StoredProcedureJournalRecordV1
