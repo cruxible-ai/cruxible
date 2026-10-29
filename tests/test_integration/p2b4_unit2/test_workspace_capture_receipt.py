@@ -22,8 +22,9 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_output_digest,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_DIGEST,
+    WORKSPACE_FILE_OPERATION,
     SourceReadReceipt,
+    workspace_file_signature_digest,
 )
 from tests.core_support.p2b4_unit1._support import digest, provider_capture_fixture
 from tests.support.capture_receipts import StaticReceipts, produced_by_run
@@ -31,17 +32,23 @@ from tests.support.capture_receipts import StaticReceipts, produced_by_run
 
 def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
     fixture = provider_capture_fixture(tmp_path)
+    # is_workspace_file_signature() (cruxible_client.contracts.captures) keys
+    # the "this occurrence is a workspace.file read" test off the exact
+    # operation signature digest, not an operation/interface name.
+    signature_digest = workspace_file_signature_digest()
     local = fixture.occurrence.local_execution.model_copy(
         update={
-            "interface_id": "workspace.file",
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "operation": WORKSPACE_FILE_OPERATION,
+            "operation_signature_digest": signature_digest,
             "declared_endpoints": (),
         }
     )
     occurrence = fixture.occurrence.model_copy(
         update={
-            "interface_id": "workspace.file",
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "operation": fixture.occurrence.operation.model_copy(
+                update={"name": WORKSPACE_FILE_OPERATION}
+            ),
+            "operation_signature_digest": signature_digest,
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
         }
@@ -90,8 +97,8 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
     egress = ProviderEgressObservation(observer_backend="sandbox", observer_grade="conformance")
     receipt = fixture.receipt.model_copy(
         update={
-            "interface_id": "workspace.file",
-            "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
+            "operation": WORKSPACE_FILE_OPERATION,
+            "operation_signature_digest": signature_digest,
             "output": ProviderInvocationOutputDigest(
                 output_digest=provider_invocation_output_digest(provider_output)
             ).model_dump(mode="json"),

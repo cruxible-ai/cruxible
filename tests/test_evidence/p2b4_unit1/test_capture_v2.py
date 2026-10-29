@@ -139,12 +139,10 @@ def test_provider_v2_round_trips_and_replays_complete_runtime_evidence(tmp_path:
 @pytest.mark.parametrize(
     "field",
     [
-        "interface_artifact_digest",
-        "interface_id",
-        "interface_digest",
+        "operation",
+        "operation_signature_digest",
         "implementation_digest",
         "materialization_digest",
-        "input_bucket",
         "provider_artifact_digest",
         "external_occurrence_plan_digest",
         "invocation_receipt_digest",
@@ -170,10 +168,8 @@ def test_every_provider_evidence_edge_is_mutation_sensitive(
     evidence = built.envelope.production_evidence
     assert isinstance(evidence, ProviderInvocationCaptureEvidence)
     replacement: object = digest("mutation", field)
-    if field == "interface_id":
-        replacement = "mutated.interface"
-    elif field == "input_bucket":
-        replacement = "kind=mutated"
+    if field == "operation":
+        replacement = "mutated.operation"
     elif field == "secret_references":
         replacement = ()
     elif field == "egress":
@@ -407,12 +403,10 @@ def test_union_refuses_unknown_tags_and_noncanonical_wire(tmp_path: Path) -> Non
         parse_capture_envelope(render_capture_envelope(built.envelope) + b"\n")
 
 
-@pytest.mark.parametrize("revision", [1, 2])
-def test_each_workspace_interface_requires_the_host_read_receipt(tmp_path, revision):
-    from cruxible_client.contracts.workspace_file import (
-        WORKSPACE_FILE_INTERFACE_DIGEST,
-        WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    )
+def test_the_workspace_file_operation_requires_the_host_read_receipt(tmp_path):
+    # Interface versioning (v1 vs v2 digests) is gone with ProviderInterface;
+    # there is one current workspace.file operation signature now.
+    from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 
     fixture = provider_capture_fixture(tmp_path)
     built = build_provider_external_capture_v2(
@@ -425,8 +419,6 @@ def test_each_workspace_interface_requires_the_host_read_receipt(tmp_path, revis
         bound_generation=fixture.bound_generation,
     )
     evidence = built.envelope.production_evidence.model_dump(mode="json")
-    evidence["interface_digest"] = (
-        WORKSPACE_FILE_INTERFACE_DIGEST if revision == 1 else WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    )
+    evidence["operation_signature_digest"] = workspace_file_signature_digest()
     with pytest.raises(ValidationError, match="source-read"):
         ProviderInvocationCaptureEvidence.model_validate(evidence)

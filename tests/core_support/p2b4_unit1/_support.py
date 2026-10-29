@@ -29,12 +29,42 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_output_digest,
     provider_secret_binding_identity_digest,
 )
+from cruxible_client.contracts.provider_operations import (
+    ProviderOperation,
+    operation_signature_digest,
+)
+from cruxible_client.contracts.shapes import Contract, ContractRef, contract_digest
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._pc_c_support import NOW, capture_contract
+
+#: A trivial operation for this fixture's source occurrence. Its exact shape
+#: never matters here (these fixtures exercise Capture-envelope
+#: building/verification, not operation-contract validation) -- only that it
+#: is a well-formed ProviderOperation (B2: operations replace interfaces).
+_SOURCE_VALUE = Contract.model_validate(
+    {"name": "test.p2b4.source-value", "version": 1, "fields": {"value": {"type": "int"}}}
+)
 
 
 def digest(domain: str, value: str) -> str:
     return typed_digest(Sha256Value, domain, {"value": value}).tagged
+
+
+def _source_operation() -> ProviderOperation:
+    pinned = ContractRef(
+        name=_SOURCE_VALUE.name,
+        version=_SOURCE_VALUE.version,
+        digest=contract_digest(_SOURCE_VALUE).tagged,
+    )
+    return ProviderOperation.model_validate(
+        {
+            "name": "read",
+            "in": pinned,
+            "out": pinned,
+            "effect": "external_read",
+            "entrypoint": "orders.source:Provider",
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -53,9 +83,9 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
     cas_root.mkdir(parents=True)
     store = ContentAddressedBodyStore(cas_root)
     contract = capture_contract()
+    operation = _source_operation()
+    operation_sig_digest = operation_signature_digest(operation.signature())
     provider_digest = digest("provider", "source")
-    interface_artifact_digest = digest("interface-artifact", "source")
-    interface_digest = digest("interface", "source")
     implementation_digest = digest("implementation", "source")
     deployment_digest = digest("deployment", "source")
     materialization_digest = digest("materialization", "source")
@@ -86,9 +116,8 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
     )
     local = VerifiedProviderBinding(
         provider_artifact_digest=provider_digest,
-        interface_artifact_digest=interface_artifact_digest,
-        interface_id="orders.read",
-        interface_digest=interface_digest,
+        operation=operation.name,
+        operation_signature_digest=operation_sig_digest,
         implementation_digest=implementation_digest,
         deployment_digest=deployment_digest,
         materialization_digest=materialization_digest,
@@ -101,16 +130,14 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         occurrence_kind="source",
         node_id="source-orders",
         input_name="orders",
+        slot="orders",
         provider_artifact_digest=provider_digest,
-        interface_artifact_digest=interface_artifact_digest,
-        interface_id=local.interface_id,
-        interface_digest=interface_digest,
-        vocabulary_digest=digest("vocabulary", "source"),
-        classifier_digest=digest("classifier", "source"),
-        accepted_bucket_selectors=("kind=orders",),
+        operation=operation,
+        operation_signature_digest=operation_sig_digest,
         implementation_digest=implementation_digest,
         effect_class="external_read",
         capture_contract_digest=capture_contract_digest(contract).tagged,
+        contracts=(_SOURCE_VALUE,),
         local_execution=local,
         secret_plan=secret_plan,
         budget_translation=budget,
@@ -144,8 +171,8 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         implementation_digest=implementation_digest,
         materialization_digest=materialization_digest,
         deployment_digest=deployment_digest,
-        interface_id=local.interface_id,
-        interface_digest=interface_digest,
+        operation=local.operation,
+        operation_signature_digest=local.operation_signature_digest,
         protocol_version="1.0",
         input_bucket="kind=orders",
         capture_contract_digest=capture_contract_digest(contract).tagged,
