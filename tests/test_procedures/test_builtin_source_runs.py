@@ -15,8 +15,8 @@ from cruxible_client.contracts.providers import AcceptedProvider, provider_diges
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
-    workspace_file_accepted_registration,
     workspace_file_builtin_provider,
+    workspace_file_operation,
 )
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
@@ -45,22 +45,22 @@ from tests.test_procedures.test_procedure_source_runs import (
 
 
 def _accepted() -> tuple[AcceptedProvider, Any]:
-    interface = workspace_file_accepted_registration()
-    provider = workspace_file_builtin_provider(interface_artifact_digest=interface.artifact_digest)
+    operation = workspace_file_operation()
+    provider = workspace_file_builtin_provider()
     accepted = AcceptedProvider(
         path="providers/cruxible-builtin.json",
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
     )
-    return accepted, interface
+    return accepted, operation
 
 
 def _context(binding: Any, payload: dict[str, object], *, output_bytes: int = 1 << 20) -> Any:
     return ProviderRuntimeRunContextV1(
         protocol_version="1.0",
         run_id="run-1",
-        interface_id=binding.interface_id,
-        interface_digest=binding.interface_digest,
+        interface_id=binding.operation,
+        interface_digest=binding.operation_signature_digest,
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input=payload,
