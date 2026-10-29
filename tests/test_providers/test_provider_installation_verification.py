@@ -25,7 +25,6 @@ from cruxible_core.providers.provider_local_runtime import (
     verification_format_upgrade,
     verify_provider_installation,
 )
-from tests.core_support._p2b1_support import accepted_interface
 from tests.test_providers.test_provider_package_contracts import package_provider
 
 
@@ -103,7 +102,7 @@ def bind(provider: Provider, deployment: LocalProviderDeploymentV1):
             provider=provider,
             artifact_digest=provider_digest(provider).tagged,
         ),
-        accepted_interface(),
+        provider.operations[0],
         provider.implementations[0].implementation_digest,
         deployment,
     )

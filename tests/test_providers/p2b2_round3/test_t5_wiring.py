@@ -67,15 +67,17 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) ->
     """An acquisition carrier may be direct; an EFFECT intent may not.
 
     The V3 carrier now admits an actor origin, because a direct run that reads
-    an external source binds a real acquisition plan. What still binds a Line
-    alone is the authority to cause an effect: an effective rung is checked
-    against Line-only coordinates and refused outright on an actor invocation,
-    so no direct run can reach a terminal.
+    an external source binds a real acquisition plan. Ruling C4 (closed by the
+    F01 fix round) lets an actor-origin (direct) admission bind an effective
+    rung too -- its ephemeral Line spec, capped at propose -- so it is checked
+    against the Procedure version alone rather than refused outright; a Line
+    run is still checked against every Line-only coordinate.
 
     Driven, not read. A real direct admission out of `prepare_direct_procedure_run`
     and a real rung out of `compute_effective_rung` go through the executor's own
-    guard three ways: the actor origin refuses, the same rung relabelled as a Line
-    run passes, and one term changed refuses again -- so the test fails if the
+    guard three ways: the actor origin with a matching Procedure digest passes, a
+    mismatched Procedure digest refuses, and the same rung relabelled as a Line
+    run with every coordinate bound also passes -- so the test fails if the
     guard goes missing, and it does not pass on a guard that is merely present.
     """
 
@@ -111,9 +113,19 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) ->
     executor = SimpleNamespace(effective_rung=rung)
     verify = ProcedureExecutor._verify_effective_rung  # noqa: SLF001
 
+    # An actor-origin (direct) admission whose rung was computed against this
+    # exact Procedure version is admitted: ruling C4's ephemeral-Line-spec,
+    # capped-at-propose authority, not a universal refusal.
+    verify(executor, admission)
+
+    mismatched_actor = SimpleNamespace(
+        effective_rung=rung.model_copy(
+            update={"procedure_definition_digest": _c2_digest("another-procedure")}
+        )
+    )
     with pytest.raises(ExecutionError) as refused:
-        verify(executor, admission)
-    assert "never a direct actor invocation" in str(refused.value)
+        verify(mismatched_actor, admission)
+    assert "another admission binding" in str(refused.value)
 
     as_line = admission.model_copy(
         update={

@@ -3,38 +3,121 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
+    ProviderDistributionRef,
     ProviderImplementationManifestV1,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeArtifactPayloadV1,
+    ProviderRuntimeManifestV1,
+    ProviderSigningKey,
     ProviderV1,
     ProviderV2,
     evaluate_provider_law,
     parse_provider,
     provider_digest,
+    provider_expected_implementation_records,
     provider_implementation_digest,
+    provider_manifest_digest,
     provider_path,
     render_provider,
 )
-from tests.core_support._p2b1_support import (
-    accepted_interface,
-    provider_v2,
-)
+from cruxible_client.contracts.shapes import ContractRef, contract_digest
+from tests.support.operation_world import VALUE, operation
+
+
+def _bare_v2() -> ProviderV2:
+    """A bare ProviderV2 (not a build/named build): this file's whole subject.
+
+    Protocol-1 runtime wire (``ProviderRuntimeArtifactPayloadV1``, schema
+    version 1), with one ``compute`` operation layered on top the way B2 adds
+    operations to ProviderV2 -- the shared ``provider_v2()`` fixture builds the
+    newer ``NamedProviderBuild`` (schema version 2) directly, which this file's
+    dict round-trip tests cannot validate back through the bare V1 field type.
+    """
+
+    manifest = ProviderRuntimeManifestV1(
+        provider_id="demo-provider",
+        distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifestV1(
+                interface_id="compute",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                declared_input_buckets=(),
+                requires_extras=("engine",),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
+    )
+    payload = ProviderRuntimeArtifactPayloadV1(
+        provider_id="demo-provider",
+        status="accepted",
+        manifest=manifest,
+        manifest_digest=provider_manifest_digest(manifest),
+        distribution=ProviderLocalDistributionPin(
+            name="demo-provider",
+            version="1.0.0",
+            filename="demo_provider-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + "a" * 64,
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "b" * 64,
+            materialization_digests={"linux-cp311+engine": "sha256:" + "c" * 64},
+        ),
+    )
+    return ProviderV2(
+        identity=ArtifactIdentity(kind="Provider", name="demo-provider"),
+        control_domain="demo-provider",
+        signing_keys=(
+            ProviderSigningKey(
+                key_id="demo-key",
+                public_key="d" * 64,
+                valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ),
+        capture_contract_digests=(),
+        runtime_artifact=payload,
+        implementations=provider_expected_implementation_records(payload),
+        operations=(
+            operation(entrypoint="demo.runtime:Provider").model_copy(
+                update={
+                    "in_": ContractRef(
+                        name=VALUE.name, version=VALUE.version, digest=contract_digest(VALUE).tagged
+                    ),
+                    "out": ContractRef(
+                        name=VALUE.name, version=VALUE.version, digest=contract_digest(VALUE).tagged
+                    ),
+                }
+            ),
+        ),
+    )
 
 
 def test_provider_v2_round_trip_external_digests_and_filtered_materializations() -> None:
-    provider = provider_v2()
+    provider = _bare_v2()
 
-    assert provider.runtime_artifact.manifest_digest == (
-        "sha256:0229d1a9dd68fdc7f89bcb0424304bcc33ecbfa9ba3693bf21a8a8576fceaa1f"
+    # The manifest/implementation digests reproduce from content (not a
+    # fixture-specific golden byte string, which changed under this rewrite).
+    assert provider.runtime_artifact.manifest_digest == provider_manifest_digest(
+        provider.runtime_artifact.manifest
     )
     implementation = provider.implementations[0]
-    assert implementation.implementation_digest == (
-        "sha256:dec6763f6709a713f1399871ec416d19a5d76481b13b8ac1f8701fb7d28b4658"
+    assert implementation.implementation_digest == provider_implementation_digest(
+        interface_id=implementation.interface_id,
+        interface_digest=implementation.interface_digest,
+        entrypoint=implementation.entrypoint,
+        distribution_sha256=provider.runtime_artifact.distribution.sha256,
     )
     assert tuple(
         reference.environment_pin_key
@@ -48,7 +131,7 @@ def test_provider_v2_round_trip_external_digests_and_filtered_materializations()
 
 
 def test_implementation_digest_is_backend_invariant_and_four_field_exact() -> None:
-    provider = provider_v2()
+    provider = _bare_v2()
     row = provider.implementations[0]
     manifest = provider.runtime_artifact.manifest.implementations[0]
 
@@ -67,7 +150,7 @@ def test_implementation_digest_is_backend_invariant_and_four_field_exact() -> No
 
 
 def test_provider_v2_refuses_manifest_and_normalized_table_divergence() -> None:
-    provider = provider_v2()
+    provider = _bare_v2()
     payload = provider.model_dump(mode="json")
     payload["runtime_artifact"]["manifest_digest"] = f"sha256:{'0' * 64}"
     with pytest.raises(ValidationError, match="manifest_divergence"):
@@ -85,7 +168,7 @@ def test_provider_v2_refuses_manifest_and_normalized_table_divergence() -> None:
 
 
 def test_provider_runtime_mirror_rejects_unknown_endpoint_forms() -> None:
-    payload = provider_v2().runtime_artifact.manifest.implementations[0].model_dump(mode="json")
+    payload = _bare_v2().runtime_artifact.manifest.implementations[0].model_dump(mode="json")
     payload["declared_endpoints"] = ["dynamic:not-a-runtime-form"]
 
     with pytest.raises(ValidationError, match="unknown dynamic endpoint form"):
@@ -102,7 +185,7 @@ def test_provider_runtime_mirror_rejects_unknown_endpoint_forms() -> None:
     ),
 )
 def test_provider_local_environment_pin_key_grammar_is_governed(pin_key: str) -> None:
-    payload = provider_v2().model_dump(mode="json")
+    payload = _bare_v2().model_dump(mode="json")
     local_env = payload["runtime_artifact"]["local_env"]
     local_env["materialization_digests"] = {pin_key: "sha256:" + "c" * 64}
 
@@ -111,10 +194,11 @@ def test_provider_local_environment_pin_key_grammar_is_governed(pin_key: str) ->
 
 
 def test_provider_v1_bytes_remain_version_discriminated() -> None:
-    provider = provider_v2()
+    provider = _bare_v2()
     payload = provider.model_dump(mode="json")
     payload.pop("runtime_artifact")
     payload.pop("implementations")
+    payload.pop("operations", None)
     payload["artifact_format"] = "playbill-provider-v1"
     historical = ProviderV1.model_validate(payload)
     content = render_provider(historical)
@@ -125,10 +209,11 @@ def test_provider_v1_bytes_remain_version_discriminated() -> None:
 
 
 def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
-    provider = provider_v2()
+    provider = _bare_v2()
     historical_payload = provider.model_dump(mode="json")
     historical_payload.pop("runtime_artifact")
     historical_payload.pop("implementations")
+    historical_payload.pop("operations", None)
     historical_payload["artifact_format"] = "playbill-provider-v1"
     historical = ProviderV1.model_validate(historical_payload)
     predecessor = AcceptedProvider(
@@ -139,42 +224,41 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
     successor = provider.model_copy(
         update={"lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)}
     )
-    registration = accepted_interface()
+    # B2: the install law resolves each operation's pinned Contracts by exact
+    # digest instead of a ProviderInterface registration (removed).
+    contracts = {(VALUE.name, VALUE.version): contract_digest(VALUE).tagged}
 
     assert (
         evaluate_provider_law(
             successor,
             path=predecessor.path,
             predecessor=predecessor,
-            interface_registrations={
-                registration.registration.identity.qualified: registration,
-            },
+            contracts=contracts,
         ).verdict
         == "accepted"
     )
 
-    mutation_registration = registration.model_copy(
+    mismatched_effect = successor.model_copy(
         update={
-            "registration": registration.registration.model_copy(
-                update={"effect_class": "external_mutation"}
+            "operations": (
+                successor.operations[0].model_copy(update={"effect": "external_mutation"}),
             )
         }
     )
     refused = evaluate_provider_law(
-        successor,
+        mismatched_effect,
         path=predecessor.path,
         predecessor=predecessor,
-        interface_registrations={
-            mutation_registration.registration.identity.qualified: mutation_registration,
-        },
+        contracts=contracts,
     )
     assert refused.diagnostics[0].code == "cruxible.provider.effect_declaration_mismatch"
 
-    unpinned = successor.model_copy(update={"pins": ()})
-    refused = evaluate_provider_law(
-        unpinned,
+    # ProviderInterface pinning (the old "interface_pin_missing" refusal) is
+    # removed (C12); there is no surviving equivalent to probe here.
+    unresolved = evaluate_provider_law(
+        successor,
         path=predecessor.path,
         predecessor=predecessor,
-        interface_registrations={registration.registration.identity.qualified: registration},
+        contracts={},
     )
-    assert refused.diagnostics[0].code == "cruxible.provider.interface_pin_missing"
+    assert unresolved.diagnostics[0].code == "cruxible.provider.operation_contract_unresolved"

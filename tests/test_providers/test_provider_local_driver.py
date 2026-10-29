@@ -36,11 +36,13 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
     provider_secret_binding_identity_digest,
 )
+from cruxible_client.contracts.provider_operations import operation_signature_digest
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
+    provider_path,
 )
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -66,7 +68,7 @@ from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
 )
-from tests.core_support._p2b1_support import accepted_interface, provider_v2
+from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.short_temporary_root import short_temporary_directory
@@ -263,16 +265,22 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
             ),
         }
     )
-    provider = ProviderV2.model_validate(
-        base.model_copy(
-            update={
-                "runtime_artifact": payload,
-                "implementations": provider_expected_implementation_records(payload),
-            }
-        ).model_dump(mode="python")
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+
+    # A bare ProviderV2 (not a ProviderBuild), as this probe needs: it isolates
+    # distribution/lock/materialization recomputation from the separate
+    # installation-verification path (covered by test_provider_installation_verification.py).
+    provider = ProviderV2(
+        identity=ArtifactIdentity(kind="Provider", name="demo-provider"),
+        control_domain=base.control_domain,
+        signing_keys=base.signing_keys,
+        capture_contract_digests=base.capture_contract_digests,
+        runtime_artifact=payload,
+        implementations=provider_expected_implementation_records(payload),
+        operations=base.operations,
     )
     accepted = AcceptedProvider(
-        path="providers/demo-provider.json",
+        path=provider_path(provider.identity.name),
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
     )
@@ -289,7 +297,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     )
 
     bound = LocalProviderExecutionDriver().bind(
-        accepted, accepted_interface(), implementation.implementation_digest, deployment
+        accepted, provider.operations[0], implementation.implementation_digest, deployment
     )
     assert bound.binding.materialization_digest == materialization_digest
     assert bound.binding.environment_manifest_digest == _sha256_file(environment_manifest)
@@ -301,7 +309,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     runtime_file.write_bytes(b"tampered")
     with pytest.raises(ProviderLocalRuntimeRefused) as tampered_runtime:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert tampered_runtime.value.code == "environment_divergence"
     runtime_file.write_bytes(original_runtime)
@@ -310,7 +318,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     os.link(runtime_file, hardlink)
     with pytest.raises(ProviderLocalRuntimeRefused) as multiply_linked:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert multiply_linked.value.code == "environment_divergence"
     hardlink.unlink()
@@ -321,7 +329,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     runtime_file.symlink_to(runtime_backup)
     with pytest.raises(ProviderLocalRuntimeRefused) as symlinked:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert symlinked.value.code == "environment_divergence"
     runtime_file.unlink()
@@ -334,7 +342,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     environment_manifest.write_bytes(canonical_bytes(manifest_payload))
     with pytest.raises(ProviderLocalRuntimeRefused) as incomplete_manifest:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert incomplete_manifest.value.code == "environment_divergence"
     environment_manifest.write_bytes(seal_bytes)
@@ -344,7 +352,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     environment_manifest.write_bytes(canonical_bytes(manifest_payload))
     with pytest.raises(ProviderLocalRuntimeRefused) as escaping_manifest:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     # A seal declaring a path outside the environment is not a divergence
     # between the seal and the running code: it is an unusable cached seal, so
@@ -357,7 +365,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     with pytest.raises(ProviderLocalRuntimeRefused) as escaped_environment:
         LocalProviderExecutionDriver().bind(
             accepted,
-            accepted_interface(),
+            provider.operations[0],
             implementation.implementation_digest,
             replace(deployment, environment_path=verified_environment),
         )
@@ -368,7 +376,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     environment_manifest.write_bytes(canonical_bytes(manifest_payload))
     with pytest.raises(ProviderLocalRuntimeRefused) as missing_runtime:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert missing_runtime.value.code == "provider_runtime_not_in_materialization"
 
@@ -378,21 +386,21 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     environment_manifest.write_bytes(b"{not json")
     with pytest.raises(ProviderLocalRuntimeRefused) as malformed_seal:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert malformed_seal.value.code == "cache_integrity"
 
     environment_manifest.write_bytes(b'{"b": 1, "a": 2}')
     with pytest.raises(ProviderLocalRuntimeRefused) as noncanonical_seal:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert noncanonical_seal.value.code == "cache_integrity"
 
     environment_manifest.unlink()
     with pytest.raises(ProviderLocalRuntimeRefused) as absent_seal:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert absent_seal.value.code == "cache_integrity"
     environment_manifest.write_bytes(seal_bytes)
@@ -404,7 +412,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     record.write_text(f"{original_record}../../../../escaped-payload,,\n", encoding="utf-8")
     with pytest.raises(ProviderLocalRuntimeRefused) as escaping_record:
         LocalProviderExecutionDriver().bind(
-            accepted, accepted_interface(), implementation.implementation_digest, deployment
+            accepted, provider.operations[0], implementation.implementation_digest, deployment
         )
     assert escaping_record.value.code == "environment_divergence"
     assert "../../../../escaped-payload" in str(escaping_record.value)
@@ -419,9 +427,8 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
     binding = BoundLocalProviderV1(
         binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
-            interface_artifact_digest=_digest("interface-artifact"),
-            interface_id="demo.interface",
-            interface_digest=_digest("interface"),
+            operation="demo.interface",
+            operation_signature_digest=_digest("interface"),
             implementation_digest=_digest("implementation"),
             deployment_digest=_digest("deployment"),
             materialization_digest=_digest("materialization"),
@@ -488,9 +495,8 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(
     bound = BoundLocalProviderV1(
         binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
-            interface_artifact_digest=_digest("interface-artifact"),
-            interface_id="demo.interface",
-            interface_digest=_digest("interface"),
+            operation="demo.interface",
+            operation_signature_digest=_digest("interface"),
             implementation_digest=_digest("implementation"),
             deployment_digest=_digest("deployment"),
             materialization_digest=_digest("materialization"),
@@ -1207,11 +1213,11 @@ def test_environment_secret_keys_are_injective_across_separator_collisions(
 def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
     _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path, code: str
 ) -> None:
+    op = provider_v2().operations[0]
     binding = VerifiedProviderBinding(
         provider_artifact_digest=_digest("provider"),
-        interface_artifact_digest=_digest("interface-artifact"),
-        interface_id="demo.interface",
-        interface_digest=_digest("interface"),
+        operation=op.name,
+        operation_signature_digest=operation_signature_digest(op.signature()),
         implementation_digest=_digest("implementation"),
         deployment_digest=_digest("deployment"),
         materialization_digest=_digest("materialization"),
@@ -1239,7 +1245,6 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
     invoker = ProviderLocalRuntimeInvoker(
         deployments_by_digest={binding.deployment_digest: deployment},
         accepted_providers_by_digest={binding.provider_artifact_digest: object()},  # type: ignore[dict-item]
-        accepted_interfaces_by_digest={binding.interface_artifact_digest: object()},  # type: ignore[dict-item]
         secret_resolvers=ProviderSecretResolverRegistry(()),
         process_leases=_lease_store(tmp_path / "bind-leases"),
         driver=_RefusingDriver(),
@@ -1247,15 +1252,16 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
     occurrence = SimpleNamespace(
         local_execution=binding,
         provider_artifact_digest=binding.provider_artifact_digest,
-        interface_artifact_digest=binding.interface_artifact_digest,
+        operation=op,
+        operation_signature_digest=binding.operation_signature_digest,
         implementation_digest=binding.implementation_digest,
         secret_plan=ProviderSecretResolutionPlan(),
     )
     context = ProviderRuntimeRunContextV1(
         protocol_version="1.0",
         run_id="RUN-bind",
-        interface_id=binding.interface_id,
-        interface_digest=binding.interface_digest,
+        interface_id=binding.operation,
+        interface_digest=binding.operation_signature_digest,
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input={},
@@ -1337,9 +1343,8 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
     binding = BoundLocalProviderV1(
         binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
-            interface_artifact_digest=_digest("interface-artifact"),
-            interface_id="demo.interface",
-            interface_digest=_digest("interface"),
+            operation="demo.interface",
+            operation_signature_digest=_digest("interface"),
             implementation_digest=_digest("implementation"),
             deployment_digest=_digest("deployment"),
             materialization_digest=_digest("materialization"),
