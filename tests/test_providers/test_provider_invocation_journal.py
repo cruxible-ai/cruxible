@@ -1339,19 +1339,6 @@ def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
     assert "provider_invocation_started" not in _event_kinds(prepared, fixture)
 
 
-# KNOWN SRC BUG (not fixed here, see final report): the pre-spawn and
-# mid-invoke wall-clock checks raise ProviderLocalRuntimeRefused("budget_wall_clock", ...)
-# from core itself (execution.py, around the `effective_wall_clock_seconds() <= 0`
-# checks), which the exception handler a few lines later funnels through the
-# same map_provider_refusal()/outcome_class="node_refusal" path as a genuine
-# provider-returned refusal. _typed_refusal then requires the admitted
-# operation to have declared "budget_wall_clock" in its own `refusals` dict
-# (provider_outcomes.py maps it to ("node_refusal", "input_budget")), which no
-# operation here declares -- so a core-synthesized budget refusal now
-# surfaces as `provider_protocol_violation` ("declares no refusal
-# 'budget_wall_clock'") instead of a clean `budget_wall_clock` run refusal.
-# This makes the next four tests fail with status "failed" instead of
-# "refused"; left red and documented rather than worked around.
 def test_a_start_append_that_spends_the_budget_closes_the_start_without_spawning(
     tmp_path: Path,
 ) -> None:

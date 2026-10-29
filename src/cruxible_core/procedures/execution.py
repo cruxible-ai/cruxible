@@ -2674,6 +2674,12 @@ def _kernel_list_boundary(
     return (f"contract-out:{contract.target.name}", field_path)
 
 
+# Refusal codes core itself synthesizes around a Provider call -- never
+# returned by the Provider -- so they never need the admitted operation to
+# declare them (see ``ProcedureExecutor._typed_refusal``).
+_CORE_SYNTHESIZED_REFUSAL_CODES: frozenset[str] = frozenset({"budget_wall_clock"})
+
+
 class ProcedureExecutor:
     """Execute one admitted graph while making the journal the operational authority."""
 
@@ -5405,8 +5411,17 @@ class ProcedureExecutor:
         "node_refusal"``) whose code the operation never declared is a
         protocol violation, never an undeclared pass-through. Core/transport
         failures are a different outcome class and never reach here.
+
+        ``budget_wall_clock`` is the one exception: it is core's own
+        pre-spawn/mid-invoke deadline check (``ProviderSpawnDeadline`` and the
+        executor's ``effective_wall_clock_seconds`` gate), synthesized before
+        or around the Provider call rather than returned by it. Core raises
+        it regardless of what the admitted operation declares, so it never
+        needs operation declaration.
         """
 
+        if outcome.code in _CORE_SYNTHESIZED_REFUSAL_CODES:
+            return
         declared = occurrence.operation.refusals.get(outcome.code or "")
         if declared is None:
             raise _InternalFailure(
