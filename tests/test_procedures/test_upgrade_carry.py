@@ -340,14 +340,6 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
         assert not any("unrelated" in path for path in reads)
 
 
-@pytest.mark.skip(
-    reason="src bug (recorded, not fixed): settle_changes/dependent_closure_inventory produces "
-    "zero automation_carries for a Procedure-only write here (settled.writes == "
-    "{the procedure's own path} and settled.automation_carries == ()) -- no Line carry and no "
-    "Mandate carry at all, contradicting settle_changes' own docstring ('every Mandate pinning "
-    "a Line that changed arrives propose-only'). The Procedure->Line->Mandate two-hop cascade "
-    "this B2 pin chain requires does not appear to be wired into the dependency closure walk."
-)
 def test_two_settle_mandates_propose_after_upgrade_until_explicit_regrant(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, parse_procedure
     from tests.test_procedures import test_procedure_settlement_delivery as delivery

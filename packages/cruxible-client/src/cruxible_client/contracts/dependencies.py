@@ -58,7 +58,6 @@ NAME_REFERENCE_FAMILIES = frozenset(
         "procedure",
         "query-definition",
         "trigger",
-        "line",
         "capture-contract",
         "provider",
     }
@@ -66,6 +65,12 @@ NAME_REFERENCE_FAMILIES = frozenset(
 
 
 def is_frozen_dependency(source_kind: str, role: str) -> bool:
+    # A Line's own pins (its "procedure" and "provider" roles -- the only
+    # pins LineSpec.pins ever produces) are always exact, by_name indexing
+    # or not: ruling C2/C3 pins a Line to an exact Procedure version and
+    # exact bound builds, never a name it could follow. "line" is therefore
+    # never in NAME_REFERENCE_FAMILIES, unlike a Procedure's or Trigger's own
+    # (looser) dependencies, which by_name indexing may treat as name-following.
     return source_kind not in NAME_REFERENCE_FAMILIES
 
 
@@ -96,11 +101,14 @@ def dependency_pins(
     }:
         return tuple(pins)
 
+    # "line" is deliberately absent: every pin LineSpec.pins produces (its
+    # "procedure" and "provider" roles) is the Line's own exact binding
+    # (ruling C2/C3), never downgraded to a name reference by any indexing
+    # convention.
     if by_name and getattr(getattr(artifact, "identity", None), "kind", "").lower() in {
         "procedure",
         "querydefinition",
         "trigger",
-        "line",
         "capturecontract",
         "provider",
     }:
