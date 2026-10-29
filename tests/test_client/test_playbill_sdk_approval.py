@@ -64,11 +64,11 @@ class Client:
             members=[
                 api.ReviewedMember(
                     path=candidate.members[0].path,
-                    artifact_kind="document",
-                    disposition="replacement",
-                    closure_role="authored",
-                    predecessor_artifact_digest=None,
-                    candidate_artifact_digest=candidate.members[0].artifact_digest,
+                    artifact_kind=candidate.members[0].artifact_kind,
+                    disposition=candidate.members[0].disposition,
+                    closure_role=candidate.members[0].closure_role,
+                    predecessor_artifact_digest=candidate.members[0].predecessor_artifact_digest,
+                    candidate_artifact_digest=candidate.members[0].candidate_artifact_digest,
                     base_semantic_artifact=None,
                     candidate_semantic_artifact=None,
                     semantic_delta=[],
@@ -81,7 +81,11 @@ class Client:
             governance={},
             provenance={"actor_id": "creator"},
             attestation_coverage={},
-            documents=[{"path": candidate.members[0].path}],
+            documents=[
+                {"path": member.path}
+                for member in candidate.members
+                if member.artifact_kind == "document"
+            ],
             redactions=[],
         )
         self.changes: dict[str, Any] = {}
@@ -258,7 +262,11 @@ def test_redacted_initial_review_has_explicit_repair(setup) -> None:
 @pytest.mark.parametrize("field", ["members", "documents"])
 def test_missing_rendered_member_coverage_refuses_review(setup, field) -> None:
     pb, client, signer = setup
-    getattr(client.review, field).clear()
+    if field == "members":
+        client.review.members.clear()
+    else:
+        # The candidate carries no Document; a rendered one it lacks refuses.
+        client.review.documents.append({"path": "documents/extra.json"})
     with pytest.raises(ApprovalReviewMismatch):
         pb.proposal("proposal-one").review()
     assert signer.calls == client.prepared == client.submitted == 0

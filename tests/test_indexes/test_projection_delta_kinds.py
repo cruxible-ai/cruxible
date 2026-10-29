@@ -172,10 +172,8 @@ def test_revisions_timestamps_and_coordinates_read_one_path_index() -> None:
 
     from cruxible_core.compiler import projection_artifacts as artifacts
 
-    def member(path: str, digest: str | None, input_digest: str | None = None):  # type: ignore[no-untyped-def]
-        return SimpleNamespace(
-            path=path, candidate_artifact_digest=digest, artifact_digest=input_digest
-        )
+    def member(path: str, digest: str | None):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(path=path, candidate_artifact_digest=digest)
 
     records = tuple(
         (
@@ -188,41 +186,34 @@ def test_revisions_timestamps_and_coordinates_read_one_path_index() -> None:
             ),
         )
         for sequence, members in (
-            (1, (member("a", "d1"), member("b", None, "i1"))),
+            (1, (member("a", "d1"), member("b", None))),
             (2, (member("a", "d2"),)),
             (3, (member("b", "d3"), member("a", "d2"))),
             (4, (member("c", "d4"),)),
         )
     )
 
-    def scanned_revision(path, input_digest, artifact_digest):  # type: ignore[no-untyped-def]
+    def scanned_revision(path, artifact_digest):  # type: ignore[no-untyped-def]
         history = tuple(
             item for _path, record in records for item in record.members if item.path == path
         )
-        if any(
-            (
-                item.candidate_artifact_digest == artifact_digest
-                if item.candidate_artifact_digest is not None
-                else item.artifact_digest == input_digest
-            )
-            for item in history
-        ):
+        if any(item.candidate_artifact_digest == artifact_digest for item in history):
             return len(history)
         return len(history) + 1
 
     coordinates = {sequence: f"coordinate-{sequence}" for sequence in range(1, 5)}
-    for path, input_digest, digest in (
-        ("a", "x", "d2"),
-        ("a", "x", "d1"),
-        ("a", "x", "dz"),
-        ("b", "i1", "d0"),
-        ("b", "x", "d3"),
-        ("c", "x", "d4"),
-        ("z", "x", "d9"),
+    for path, digest in (
+        ("a", "d2"),
+        ("a", "d1"),
+        ("a", "dz"),
+        ("b", "d0"),
+        ("b", "d3"),
+        ("c", "d4"),
+        ("z", "d9"),
     ):
         assert artifacts.projected_revision(
             records, path=path, artifact_digest=digest
-        ) == scanned_revision(path, input_digest, digest)
+        ) == scanned_revision(path, digest)
         newest = next(
             (
                 record

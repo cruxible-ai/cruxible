@@ -53,7 +53,7 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
     parsed = []
     real = claim_types._parse_claim_type
 
-    def counted(content, *, path, codec):  # type: ignore[no-untyped-def]
+    def counted(content, *, path):  # type: ignore[no-untyped-def]
         parsed.append(path)
         return real(content, path=path)
 
