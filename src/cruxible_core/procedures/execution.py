@@ -2694,6 +2694,7 @@ class ProcedureExecutor:
         clock: ProcedureClockProtocol | None = None,
         nested_runner: NestedProcedureRunner | None = None,
         parent_context: ParentInvocationContext | None = None,
+        ephemeral_spec_digest: str | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2717,6 +2718,11 @@ class ProcedureExecutor:
         self.clock = clock or SystemProcedureClock()
         self.nested_runner = nested_runner
         self.parent_context = parent_context
+        # F12: a direct run's ephemeral Line spec digest (ruling C4), recorded
+        # on its attempt_started event -- the Admission itself never carries
+        # it (PC-E1 reserves line/mandate/calibration coordinates for Line
+        # runs), so this is its only retained, verifiable record.
+        self.ephemeral_spec_digest = ephemeral_spec_digest
 
     def _pin(
         self,
@@ -2821,11 +2827,17 @@ class ProcedureExecutor:
         # child run inherits its parent's admission and is never gated again.
         gate = LINE_ARM_ADMISSION_GATE.get() if self.parent_context is None else None
         with gate() if gate is not None else nullcontext():
+            attempt_started_payload: dict[str, object] = {
+                "attempt": admission.attempt,
+                "admitted_at": admission.admitted_at.isoformat(),
+            }
+            if self.ephemeral_spec_digest is not None:
+                attempt_started_payload["ephemeral_spec_digest"] = self.ephemeral_spec_digest
             self._append_event(
                 admission,
                 records,
                 "attempt_started",
-                {"attempt": admission.attempt, "admitted_at": admission.admitted_at.isoformat()},
+                attempt_started_payload,
             )
             self._append_event(
                 admission,

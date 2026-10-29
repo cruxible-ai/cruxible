@@ -313,6 +313,7 @@ def service_execute_direct_procedure(
     clock: ProcedureClockProtocol | None = None,
     nested_runner: NestedProcedureRunner | None = None,
     parent_context: ParentInvocationContext | None = None,
+    ephemeral_spec_digest: str | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
@@ -338,6 +339,7 @@ def service_execute_direct_procedure(
             clock=clock,
             nested_runner=nested_runner,
             parent_context=parent_context,
+            ephemeral_spec_digest=ephemeral_spec_digest,
         ).execute(prepared, accepted)
     finally:
         index.close()

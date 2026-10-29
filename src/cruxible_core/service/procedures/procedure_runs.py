@@ -3396,6 +3396,7 @@ def service_run_playbill_procedure(
             workspace_file_reader=workspace_file_reader,
             effective_rung=direct_effective_rung,
             egress_sink=direct_egress_sink,
+            ephemeral_spec_digest=ephemeral_spec_digest,
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,

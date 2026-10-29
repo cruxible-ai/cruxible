@@ -438,6 +438,84 @@ def test_a_direct_run_settle_terminal_is_capped_at_propose():
     assert rung.limiting_term in {"mandate_grant", "line_requested_rung"}
 
 
+def _attempt_started_payload(instance, run_id):  # type: ignore[no-untyped-def]
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.measurements import _journal
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    journal, stream = _journal(instance)
+    for stored in journal.select_records(stream, event_kind="attempt_started"):
+        if stored.record.run_id == run_id:
+            return read_payload(
+                instance.body_store(),
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+    raise AssertionError(f"no attempt_started event for run {run_id!r}")
+
+
+def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
+    """One `project` step: no Call or Source node, so no provider is involved."""
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": name,
+            "input": {"value": "integer"},
+            "output": {"value": "integer"},
+            "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
+            "returns": "result",
+            "budget": {"provider_calls": 0},
+        }
+    )
+
+
+def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
+    """F12: the ordinary (no provider/Source node) direct-run branch carries its
+    ephemeral spec digest too, and it is verified from retained journal data
+    -- not merely spied on through a monkeypatched digest function."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.procedures.line_specs import (
+        EphemeralLineSpec,
+        ephemeral_line_spec_digest,
+    )
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+
+    instance = world(tmp_path)
+    author_procedure(instance, plain_spec())
+    result = service_run_playbill_procedure(
+        instance,
+        name="test.plain",
+        request=ProcedureRunRequest(input={"value": 9}, evaluation_time=NOW),
+        actor_context=actor(),
+        provider_runtime_operator=Operator(Invoker()),  # type: ignore[arg-type]
+    )
+    assert result.status == "succeeded", result
+    assert result.result == {"value": 9}
+    payload = _attempt_started_payload(instance, result.run_id)
+    assert isinstance(payload, dict)
+    recorded_digest = payload["ephemeral_spec_digest"]
+    assert isinstance(recorded_digest, str) and recorded_digest.startswith("sha256:")
+    expected = ephemeral_line_spec_digest(
+        EphemeralLineSpec(
+            procedure=ArtifactPin(
+                role="procedure",
+                target=result.procedure_identity,
+                artifact_digest=result.procedure_artifact_digest,
+            ),
+            parameters={"value": 9},
+            bindings={},
+            acquisition={},
+        )
+    )
+    assert recorded_digest == expected
+
+
 # --- 10. removed nouns are refused, naming their replacement ------------------
 
 
