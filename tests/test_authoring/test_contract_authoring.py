@@ -259,9 +259,13 @@ def _status_query(row: str) -> QueryDefinitionInput:
 
 
 def test_a_query_whose_projection_produces_its_row_contract_is_accepted(tmp_path: Path) -> None:
+    """``status`` must be optional: a Claim value is never guaranteed present (F3b)."""
+
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
-    _accept(instance, owner, _row_contract("project.status-row", item_id="string", status="string"))
+    _accept(
+        instance, owner, _row_contract("project.status-row", item_id="string", status="string?")
+    )
     _accept(instance, owner, _status_query("project.status-row@1"))
     tree = _accepted_tree(instance)
     path = query_definition_path("project.work_items_by_status")
@@ -302,8 +306,11 @@ def test_query_parameters_must_be_the_fields_of_their_contract() -> None:
     from cruxible_client.contracts.shapes import validate_contract
 
     data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    # A plain string field: this test is about name/type agreement, not the
+    # separate structural-refinement rule (an enum field is a refinement and
+    # would be refused outright regardless of agreement; see F3a).
     params = validate_contract(
-        {"name": "project.params", "version": 1, "fields": {"status": "enum[ready, done]"}}
+        {"name": "project.params", "version": 1, "fields": {"status": "string"}}
     )
 
     def query(*declared: dict[str, object]) -> QueryDefinitionSpec:
@@ -551,6 +558,206 @@ def test_a_subject_id_cannot_satisfy_a_length_bounded_row_field() -> None:
     assert "cruxible.query_definition.row_disagrees" in problems
 
 
+# -- F3a: enum/enum_of row and parameter fields are refused structurally ----------------
+
+
+def test_a_parameter_cannot_satisfy_an_enum_row_field() -> None:
+    """Row Contracts are structural only in B1: an enum field is itself a refinement.
+
+    ``_has_refinement`` previously recognized only bounded strings/numbers; an
+    ``enum[...]`` field restricts membership just as much as a bound does, and
+    no dynamic source can prove membership statically, so the whole Contract
+    is now refused at acceptance rather than judged per source.
+    """
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {"name": "project.enum-row", "version": 1, "fields": {"status": "enum[allowed]"}}
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "status", "value_type": "string"}],
+            "row_contract": "project.enum-row@1",
+            "projection": {
+                "fields": [
+                    {"name": "status", "value": {"kind": "parameter", "parameter": "status"}},
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_a_subject_id_cannot_satisfy_an_enum_row_field() -> None:
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {"name": "project.enum-row2", "version": 1, "fields": {"item_id": "enum[wi-42]"}}
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "row_contract": "project.enum-row2@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_a_parameter_cannot_satisfy_an_enum_of_row_field() -> None:
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.enum-of-row",
+            "version": 1,
+            "fields": {"status": "enum_of project.work_item.status"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "status", "value_type": "string"}],
+            "row_contract": "project.enum-of-row@1",
+            "projection": {
+                "fields": [
+                    {"name": "status", "value": {"kind": "parameter", "parameter": "status"}},
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_a_refined_parameter_contract_field_is_refused_structurally() -> None:
+    """Parameter Contracts are structural only too: their refinements are not enforced."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    params = validate_contract(
+        {"name": "project.refined-params", "version": 1, "fields": {"rank": "int{0..1}"}}
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "rank", "value_type": "integer"}],
+            "parameter_contract": "project.refined-params@1",
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: params)
+    )
+    assert "cruxible.query_definition.parameters_disagree" in problems
+
+
+# -- F3b: Claim-sourced row fields are never guaranteed present -------------------------
+
+
+def test_a_claim_field_cannot_satisfy_a_required_row_field() -> None:
+    """A Claim role/verdict is never guaranteed present: no Claim need exist for a predicate."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {"name": "project.role-row", "version": 1, "fields": {"role": "string"}}
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "row_contract": "project.role-row@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "role",
+                        "value": {
+                            "kind": "claim_field",
+                            "binding": "item",
+                            "predicate": "project.work_item.status",
+                            "field": "role",
+                        },
+                    },
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_a_claim_value_cannot_satisfy_a_required_row_field() -> None:
+    """A Claim's value was unchecked entirely (fell through to success); it is never guaranteed
+    present either, since no Claim need exist for the predicate."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.value-row",
+            "version": 1,
+            "fields": {"item_id": "string", "status": "string"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate({**data, "row_contract": "project.value-row@1"})
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
 def test_a_query_definitions_row_contract_pins_an_exact_digest(tmp_path: Path) -> None:
     """Lowering pins row_contract/parameter_contract the same way a Contract pins a nested one."""
 
@@ -562,7 +769,9 @@ def test_a_query_definitions_row_contract_pins_an_exact_digest(tmp_path: Path) -
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
-    _accept(instance, owner, _row_contract("project.status-row", item_id="string", status="string"))
+    _accept(
+        instance, owner, _row_contract("project.status-row", item_id="string", status="string?")
+    )
     _accept(instance, owner, _status_query("project.status-row@1"))
     tree = _accepted_tree(instance)
     row_path = contract_path("project.status-row", 1)

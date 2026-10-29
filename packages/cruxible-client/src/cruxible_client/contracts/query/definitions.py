@@ -44,6 +44,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
     QueryClaimFieldRef,
+    QueryClaimValueRef,
     QueryEntry,
     QueryEvaluationTimeRef,
     QueryFilter,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryReferenceInventory,
     QuerySubjectFieldRef,
     QueryTraversalStep,
+    QueryValueRef,
     require_union_discriminators,
     sorted_unique,
     validate_ordering_keys,
@@ -66,6 +68,8 @@ from cruxible_client.contracts.shapes import (
     ContractField,
     ContractRef,
     DecimalType,
+    EnumOfType,
+    EnumType,
     FieldPresent,
     FieldType,
     IntType,
@@ -800,6 +804,17 @@ def query_contract_problems(
     if query.parameter_contract is not None:
         shape = contract(query.parameter_contract, "parameter")
         if shape is not None:
+            refined = _refined_field_names(shape)
+            if refined:
+                problems.append(
+                    (
+                        "cruxible.query_definition.parameters_disagree",
+                        f"{query.parameter_contract.spelling} declares a refinement on "
+                        f"{', '.join(refined)}; parameter Contracts are structural only in "
+                        "B1 (a kind, never a bound/pattern/enum), since no refinement on a "
+                        "supplied parameter is enforced at execution.",
+                    )
+                )
             if set(declared) != set(shape.fields):
                 problems.append(
                     (
@@ -826,6 +841,17 @@ def query_contract_problems(
     if query.row_contract is not None and query.projection is not None:
         shape = contract(query.row_contract, "row")
         if shape is not None:
+            refined = _refined_field_names(shape)
+            if refined:
+                problems.append(
+                    (
+                        "cruxible.query_definition.row_disagrees",
+                        f"{query.row_contract.spelling} declares a refinement on "
+                        f"{', '.join(refined)}; row Contracts are structural only in B1 (a "
+                        "kind, never a bound/pattern/enum), since execution enforces no "
+                        "refinement on any source that produces a row.",
+                    )
+                )
             projected = {item.name: item.value for item in query.projection.fields}
             if set(projected) != set(shape.fields):
                 problems.append(
@@ -835,11 +861,14 @@ def query_contract_problems(
                         f"{query.row_contract.spelling} declares {sorted(shape.fields)}.",
                     )
                 )
+            entry_binding = query.entry.binding if isinstance(query.entry, QueryEntry) else None
             for name, value in projected.items():
                 field = shape.fields.get(name)
                 if field is None:
                     continue
-                problem = _projected_value_problem(value, field, declared)
+                problem = _projected_value_problem(
+                    value, field, declared, entry_binding=entry_binding
+                )
                 if problem is not None:
                     problems.append(
                         (
@@ -852,7 +881,14 @@ def query_contract_problems(
 
 
 def _has_refinement(field_type: FieldType) -> bool:
-    """Whether ``field_type`` narrows its kind beyond what a bare value type guarantees."""
+    """Whether ``field_type`` narrows its kind beyond what a bare value of that kind holds.
+
+    Query row and parameter Contracts are structural only in B1 (coordinator
+    ruling): no refinement is enforced anywhere, not at run time for a
+    supplied parameter, and not for a Subject, Claim or evaluation-time
+    source either. ``enum``/``enum_of`` restrict membership exactly as much
+    as a numeric bound restricts range, so they count as refinements too.
+    """
 
     if isinstance(field_type, StringType):
         return (
@@ -862,46 +898,88 @@ def _has_refinement(field_type: FieldType) -> bool:
         )
     if isinstance(field_type, IntType | DecimalType):
         return field_type.min is not None or field_type.max is not None
+    if isinstance(field_type, EnumType | EnumOfType):
+        return True
+    return False
+
+
+def _refined_field_names(contract: Contract) -> tuple[str, ...]:
+    """Every field of ``contract`` that declares a refinement, byte-sorted."""
+
+    return tuple(
+        sorted(name for name, item in contract.fields.items() if _has_refinement(item.type))
+    )
+
+
+#: Sources a well-formed, successfully evaluated row is guaranteed to carry a
+#: present value for, and why a required row field may use them:
+#:
+#: - a non-null literal: a definition-fixed constant, never conditionally absent;
+#: - the evaluation time: a required argument to every evaluation call;
+#: - a required parameter: resolve_query_parameters refuses before any row is
+#:   built if its value is missing or null (F3c), so once execution proceeds
+#:   a bound required parameter's value is never None.
+#:
+#: Also guaranteed: the query's own *entry* Subject field (not a traversal
+#: step's), since a row for one entry Subject cannot exist without that
+#: Subject bound -- the entry is what anchors the row in the first place. A
+#: traversal step's binding is not guaranteed the same way (an optional step
+#: may bind nothing for a given row), so it stays off this list.
+#:
+#: Every other source can resolve absent for a given row -- a non-entry
+#: Subject field's binding may carry no Subject, an optional parameter may be
+#: omitted, and a Claim-sourced value or field need not exist for its
+#: predicate -- so none of them may ever satisfy a required field. When in
+#: doubt, this list stays short: the field must be declared optional instead.
+def _source_guarantees_presence(
+    value: QueryValueRef,
+    declared: Mapping[str, QueryParameterDeclaration],
+    *,
+    entry_binding: str | None,
+) -> bool:
+    if isinstance(value, QueryLiteralRef):
+        return value.value is not None
+    if isinstance(value, QueryEvaluationTimeRef):
+        return True
+    if isinstance(value, QueryParameterRef):
+        parameter = declared.get(value.parameter)
+        return parameter is not None and parameter.required
+    if isinstance(value, QuerySubjectFieldRef):
+        return entry_binding is not None and value.binding == entry_binding
     return False
 
 
 def _projected_value_problem(
-    value: object,
+    value: QueryValueRef,
     field: ContractField,
     declared: Mapping[str, QueryParameterDeclaration],
+    *,
+    entry_binding: str | None,
 ) -> str | None:
     """Why ``value`` cannot be trusted to satisfy ``field``, or ``None`` if it can.
 
-    Only a literal is fully known at acceptance time; every other source is
-    bound at run time, and ``query/engine.py`` enforces none of a Contract's
-    refinements on it (``resolve_query_parameters`` checks only a supplied
-    parameter's bare ``value_type``; a Subject ID's length and a Claim's role
-    or verdict are read as-is). Trusting a declared parameter_contract field's
-    refinement here -- even one that matches the row field exactly -- would
-    claim a guarantee nothing enforces, so any refined field sourced from a
-    dynamic reference fails closed. A later slice that enforces Contract
-    refinements at run time can lift this for the sources it enforces.
+    Row and parameter Contracts are structural only in B1: no field may
+    declare a refinement (``query_contract_problems`` refuses the whole
+    Contract first if one does, see ``_refined_field_names``), so only two
+    questions remain: does the source's bare kind agree with the field's
+    bare kind, and -- for a required field -- does execution guarantee the
+    source present (``_source_guarantees_presence``).
     """
 
     kind = field.type.kind
+    if not field.optional and not _source_guarantees_presence(
+        value, declared, entry_binding=entry_binding
+    ):
+        return (
+            "cannot be guaranteed present for a required field (only a literal, the "
+            "evaluation time, a required parameter, or the query's own entry Subject is)"
+        )
     if isinstance(value, QueryParameterRef):
         parameter = declared.get(value.parameter)
         if parameter is None:
             return None
-        if not parameter.required and not field.optional:
-            # An optional parameter may be absent at call time; a required
-            # field never is.
-            return f"is optional parameter {value.parameter!r}, which may be absent"
         allowed = _VALUE_TYPE_KINDS[parameter.value_type]
-        if kind not in allowed:
-            return f"is a {parameter.value_type} parameter"
-        if _has_refinement(field.type):
-            return (
-                f"is parameter {value.parameter!r}; execution checks only its declared "
-                f"{parameter.value_type} type, never a Contract refinement, so "
-                f"{field.spelling} cannot be verified"
-            )
-        return None
+        return None if kind in allowed else f"is a {parameter.value_type} parameter"
     if isinstance(value, QueryLiteralRef):
         if value.value is None:
             # T? means the key is absent, never a null value: a projected
@@ -910,18 +988,18 @@ def _projected_value_problem(
         checked = check_value(value.value, field.type, at="/literal")
         return None if isinstance(checked, FieldPresent) else "is a literal outside its type"
     if isinstance(value, QuerySubjectFieldRef):
-        if kind not in _VALUE_TYPE_KINDS["string"]:
-            return "is a Subject identity string"
-        if _has_refinement(field.type):
-            return (
-                f"is a Subject identity string of unverified shape; "
-                f"{field.spelling} cannot be verified"
-            )
-        return None
+        return None if kind == "string" else "is a Subject identity string"
     if isinstance(value, QueryEvaluationTimeRef):
         return None if kind == "datetime" else "is the evaluation time (a datetime)"
     if isinstance(value, QueryClaimFieldRef):
-        return None if kind in ("string", "enum") else "is a Claim role or verdict (a string)"
+        return None if kind == "string" else "is a Claim role or verdict (a string)"
+    if isinstance(value, QueryClaimValueRef):
+        # A Claim's own value type is the ClaimType's, established where
+        # Claims are admitted, not by this row Contract; nothing here
+        # resolves it. The presence check above already refuses it for any
+        # required field (no Claim need exist for a predicate); an optional
+        # field accepts it structurally, since its kind cannot be checked.
+        return None
     return None
 
 
