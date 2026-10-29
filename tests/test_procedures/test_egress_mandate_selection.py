@@ -28,9 +28,9 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.terminal_services import ProposalTerminalAdapter
 from tests.test_procedures.test_procedure_effectful_terminals import (
     NOW,
-    _admission,
     _effectful_request,
     _item,
+    _line_run_admission,
     _runtime_mandate,
 )
 from tests.test_procedures.test_procedure_execution import _digest
@@ -104,8 +104,8 @@ def _request(admission, mandate):
 
 
 def test_egress_reads_only_the_exact_mandate_source(tmp_path, projection_factory, record_property):
-    admission = _admission(tmp_path)
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
+    admission = _line_run_admission(tmp_path)
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     request = _request(admission, mandate)
     counts = []
     for unrelated in (0, 500):
@@ -144,10 +144,10 @@ def test_egress_reads_only_the_exact_mandate_source(tmp_path, projection_factory
     assert counts[1] <= counts[0] * 1.1 + 20, counts
 
 
-@pytest.mark.parametrize("change", ["retired", "replaced", "absent", "procedure", "expired"])
+@pytest.mark.parametrize("change", ["retired", "replaced", "absent", "line", "expired"])
 def test_egress_rechecks_current_exact_contract(tmp_path, projection_factory, change):
-    admission = _admission(tmp_path)
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
+    admission = _line_run_admission(tmp_path)
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     bound = mandate
     if change == "retired":
         mandate = mandate.model_copy(
@@ -156,13 +156,9 @@ def test_egress_rechecks_current_exact_contract(tmp_path, projection_factory, ch
         bound = mandate  # Its exact retired digest must reach the mandate law.
     elif change == "replaced":
         mandate = mandate.model_copy(update={"namespace": ("claims",)})
-    elif change == "procedure":
+    elif change == "line":
         mandate = mandate.model_copy(
-            update={
-                "procedure": mandate.procedure.model_copy(
-                    update={"artifact_digest": _digest("other")}
-                )
-            }
+            update={"line": mandate.line.model_copy(update={"artifact_digest": _digest("other")})}
         )
         bound = mandate
     elif change == "expired":
@@ -181,8 +177,8 @@ def test_egress_rechecks_current_exact_contract(tmp_path, projection_factory, ch
 
 
 def test_egress_refuses_source_that_differs_from_selected_digest(tmp_path, projection_factory):
-    admission = _admission(tmp_path)
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
+    admission = _line_run_admission(tmp_path)
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     projection = projection_factory([mandate])
     projection.typed.source = lambda identity: mandate.model_copy(update={"namespace": ("claims",)})
     with pytest.raises(ProjectionIntegrityError, match="exact digest"):
@@ -195,8 +191,8 @@ def test_egress_refuses_source_that_differs_from_selected_digest(tmp_path, proje
 def test_proposal_callback_binds_its_coordinate_without_reading_the_head_tree(
     tmp_path, projection_factory, present
 ):
-    admission = _admission(tmp_path)
-    mandate = _runtime_mandate(admission, namespace=("subjects",))
+    admission = _line_run_admission(tmp_path)
+    mandate = _runtime_mandate(admission, namespace=("subjects",), grants="propose")
     projection = projection_factory([mandate] if present else [])
     request = _request(admission, mandate)
     assert projection.accepted.git_oid != request.accepted_coordinate.git_oid
