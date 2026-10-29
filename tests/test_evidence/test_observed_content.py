@@ -19,7 +19,7 @@ import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    WEB_FETCH_V3_INTERFACE_DIGEST,
+    WEB_FETCH_OPERATION,
     CaptureFormatError,
     CaptureObservedContentMismatch,
     ProviderInvocationCaptureEvidence,
@@ -69,15 +69,22 @@ def _web_fetch_fixture(tmp_path: Path, *, body: bytes, stated: str | None = None
             "bytes_digest": "sha256:" + hashlib.sha256(material).hexdigest(),
         }
     )
-    local = fixture.occurrence.local_execution.model_copy(
-        update={"interface_digest": WEB_FETCH_V3_INTERFACE_DIGEST}
-    )
+    # web.fetch is recognized by operation NAME (unlike workspace.file, which
+    # is recognized by its exact operation signature digest) -- see
+    # build_provider_external_capture_v2's `occurrence.operation.name ==
+    # WEB_FETCH_OPERATION` check in cruxible_client.contracts.captures.
+    local = fixture.occurrence.local_execution.model_copy(update={"operation": WEB_FETCH_OPERATION})
     occurrence = fixture.occurrence.model_copy(
-        update={"interface_digest": WEB_FETCH_V3_INTERFACE_DIGEST, "local_execution": local}
+        update={
+            "operation": fixture.occurrence.operation.model_copy(
+                update={"name": WEB_FETCH_OPERATION}
+            ),
+            "local_execution": local,
+        }
     )
     receipt = fixture.receipt.model_copy(
         update={
-            "interface_digest": WEB_FETCH_V3_INTERFACE_DIGEST,
+            "operation": WEB_FETCH_OPERATION,
             "output": ProviderInvocationOutputDigest(
                 output_digest=provider_invocation_output_digest(result.model_dump(mode="json"))
             ).model_dump(mode="json"),
