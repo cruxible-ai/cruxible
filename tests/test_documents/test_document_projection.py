@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
+from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
 from cruxible_client.contracts.canonical import (
     canonical_bytes,
     canonical_digest,
-    manifest_root,
     semantic_diff,
 )
 from cruxible_client.contracts.documents import (
@@ -25,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
     ReseedRequired,
 )
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.documents.projection_documents import (
@@ -86,9 +86,9 @@ def _candidate_coordinate(
 ) -> ProvisionalProjectionCoordinate:
     canonical = accepted_coordinate(repository)
     difference, scope = semantic_diff({}, tree)
-    candidate = SemanticCandidateV1(
+    candidate = SemanticCandidate(
         parent_semantic_root=canonical.semantic_root,
-        candidate_manifest_root=manifest_root(tree).tagged,
+        candidate_manifest_root=merkle_manifest_root(tree).tagged,
         semantic_diff_digest=difference.tagged,
         scope=scope,
         timestamp=TIMESTAMP,
@@ -210,7 +210,9 @@ def test_canonical_query_ignores_candidate_projection_and_provisional_read_names
     assert view.coordinate_kind == "provisional"
     assert view.coordinate == provisional_coordinate
     assert provisional_coordinate.canonical == canonical
-    assert provisional_coordinate.candidate.candidate_manifest_root == manifest_root(tree).tagged
+    assert provisional_coordinate.candidate.candidate_manifest_root == (
+        merkle_manifest_root(tree).tagged
+    )
 
     altered = {DOCUMENT_PATH: tree[DOCUMENT_PATH] + b" "}
     with pytest.raises(ProjectionCoordinateError, match="candidate manifest"):

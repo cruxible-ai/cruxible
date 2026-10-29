@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
+from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
 from cruxible_client.contracts.canonical import (
     CandidateDigest,
     GenerationRoot,
@@ -58,7 +58,7 @@ class ProvisionalSemanticReadCoordinate(_StrictSourceModel):
         "playbill-provisional-read-coordinate-v1"
     )
     accepted_base: AcceptedCoordinate
-    candidate: SemanticCandidateV1
+    candidate: SemanticCandidate
     candidate_digest: str
 
     @field_validator("candidate_digest")
@@ -83,7 +83,7 @@ class CandidateGenerationReadCoordinate(_StrictSourceModel):
         "playbill-candidate-generation-read-coordinate-v1"
     )
     accepted_base: AcceptedCoordinate
-    candidate: SemanticCandidateV1
+    candidate: SemanticCandidate
     candidate_digest: str
     generation_git_oid: str
     semantic_root: str

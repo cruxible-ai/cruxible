@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
-    SemanticCandidateLike,
+    SemanticCandidate,
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import (
@@ -136,16 +136,15 @@ class VerifiedApproval:
 def verify_approval(
     submission: ApprovalSubmission,
     *,
-    candidate: SemanticCandidateLike,
+    candidate: SemanticCandidate,
     principals: PrincipalRegistrySnapshot,
     purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> VerifiedApproval:
     """Verify one public attestation against the exact signing-root registry.
 
-    The expected payload digest is taken under the candidate's own version
-    domain, so an attestation raised over a v1 candidate cannot approve the v2
-    candidate carrying the same five values, and vice versa. The succession
-    therefore invalidates no accepted signature and forges no new one.
+    The expected payload digest is taken under the candidate's own tag
+    domain, so an attestation cannot be replayed over a different candidate
+    that happens to carry the same five values.
     """
 
     attestation = submission.attestation

@@ -20,7 +20,6 @@ from cruxible_client.contracts.candidates import (
     CandidateRecord,
     ClosureProof,
     SemanticCandidate,
-    SemanticCandidateV1,
     candidate_digest,
     render_candidate_record,
 )
@@ -141,26 +140,6 @@ def test_candidate_v2_carries_the_merkle_root_and_never_the_flat_one() -> None:
 
     with pytest.raises(ValidationError, match="candidate_manifest_root"):
         _candidate_v2(candidate_manifest_root=FLAT_ROOT)
-    with pytest.raises(ValidationError, match="candidate_manifest_root"):
-        SemanticCandidateV1.model_validate(
-            {
-                "parent_semantic_root": PARENT_ROOT,
-                "candidate_manifest_root": MERKLE_ROOT,
-                "semantic_diff_digest": DIFF_DIGEST,
-                "scope": ("claims/alpha.json",),
-                "timestamp": TIMESTAMP,
-            }
-        )
-    # The two versions carry one root each, never both, and never the other's.
-    assert set(candidate.model_dump()) == set(
-        SemanticCandidateV1(
-            parent_semantic_root=PARENT_ROOT,
-            candidate_manifest_root=FLAT_ROOT,
-            semantic_diff_digest=DIFF_DIGEST,
-            scope=("claims/alpha.json",),
-            timestamp=TIMESTAMP,
-        ).model_dump()
-    )
 
 
 def test_candidate_v2_keeps_every_other_v1_field_law() -> None:
@@ -178,33 +157,6 @@ def test_candidate_v2_keeps_every_other_v1_field_law() -> None:
         )
 
 
-def test_the_two_candidate_versions_never_share_a_digest_domain() -> None:
-    v2 = _candidate_v2()
-    v1 = SemanticCandidateV1(
-        parent_semantic_root=PARENT_ROOT,
-        candidate_manifest_root=FLAT_ROOT,
-        semantic_diff_digest=DIFF_DIGEST,
-        scope=("claims/alpha.json",),
-        timestamp=TIMESTAMP,
-    )
-    assert candidate_digest(v1) != candidate_digest(v2)
-    payload = v2.model_dump(mode="json")
-    payload.pop("tag")
-    # Not merely because the roots are spelled differently: the domain moves
-    # too, so the same five values hashed under v1's domain give a third value.
-    under_v1_domain = hashlib.sha256(
-        canonical_bytes({"tag": "playbill-candidate-v1", **payload})
-    ).hexdigest()
-    assert under_v1_domain != candidate_digest(v2).value
-    assert sorted(payload) == [
-        "candidate_manifest_root",
-        "parent_semantic_root",
-        "scope",
-        "semantic_diff_digest",
-        "timestamp",
-    ]
-
-
 def test_candidate_v2_preimage_and_digest_match_golden() -> None:
     golden = json.loads(CANDIDATE_GOLDEN.read_bytes())
     assert golden["format"] == "playbill-candidate-v2-golden-v1"
@@ -216,10 +168,6 @@ def test_candidate_v2_preimage_and_digest_match_golden() -> None:
         == golden["canonical_preimage"]
     )
     assert candidate_digest(candidate).tagged == golden["candidate_digest"]
-
-    sibling = SemanticCandidateV1.model_validate(golden["flat_rooted_v1_sibling"]["candidate"])
-    assert candidate_digest(sibling).tagged == golden["flat_rooted_v1_sibling"]["candidate_digest"]
-    assert candidate_digest(sibling).tagged != golden["candidate_digest"]
 
 
 # --------------------------------------------------------------------------

@@ -139,7 +139,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # candidate was made; nothing checks them against a daemon clock.
     ("AuthoringIntentV1", "canonical_timestamp"): "ASSERTION TIME",
     ("PreflightCertificate", "canonical_timestamp"): "ASSERTION TIME",
-    ("SemanticCandidateV1", "timestamp"): "ASSERTION TIME",
     ("SemanticCandidate", "timestamp"): "ASSERTION TIME",
     # The accepted record's own C_s instant, carried as a verified fact.
     ("GenerationRecordFacts", "timestamp"): "ASSERTION TIME",

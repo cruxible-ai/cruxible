@@ -14,7 +14,6 @@ from cruxible_client.contracts.canonical import (
     DependencyEdgeRoot,
     GenerationRoot,
     SemanticDiffDigest,
-    SemanticManifestRoot,
     SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
@@ -73,53 +72,12 @@ def _validated_candidate_scope(value: tuple[str, ...]) -> tuple[str, ...]:
     return value
 
 
-class SemanticCandidateV1(_StrictCandidateModel):
-    """The complete locator-free object signed by reviewers in PB-D."""
-
-    tag: Literal["playbill-candidate-v1"] = "playbill-candidate-v1"
-    parent_semantic_root: str
-    candidate_manifest_root: str
-    semantic_diff_digest: str
-    scope: tuple[str, ...]
-    timestamp: str
-
-    @field_validator("parent_semantic_root")
-    @classmethod
-    def _parent_semantic_root(cls, value: str) -> str:
-        SemanticRoot.from_tagged(value)
-        return value
-
-    @field_validator("candidate_manifest_root")
-    @classmethod
-    def _candidate_manifest_root(cls, value: str) -> str:
-        SemanticManifestRoot.from_tagged(value)
-        return value
-
-    @field_validator("semantic_diff_digest")
-    @classmethod
-    def _semantic_diff_digest(cls, value: str) -> str:
-        SemanticDiffDigest.from_tagged(value)
-        return value
-
-    @field_validator("scope")
-    @classmethod
-    def _scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _validated_candidate_scope(value)
-
-    @field_validator("timestamp")
-    @classmethod
-    def _timestamp(cls, value: str) -> str:
-        return validate_candidate_timestamp(value)
-
-
 class SemanticCandidate(_StrictCandidateModel):
-    """The same five C_s fields, with the manifest root carried as a merkle root.
+    """The complete locator-free object signed by reviewers, with a merkle manifest root.
 
-    The merkle root *replaces* the flat root; a v2 candidate never carries both,
-    and the two spellings are disjoint, so the version of a candidate and the
-    structure of the commitment it signs can never disagree. A flat root is
-    refused here exactly as a merkle root is refused by v1: the validator asks
-    for its own root type and nothing else parses.
+    The validator asks for exactly this root type and nothing else parses: a
+    flat manifest root is refused here, so the structure of a candidate's
+    commitment can never be ambiguous.
     """
 
     tag: Literal["playbill-candidate-v2"] = "playbill-candidate-v2"
@@ -158,17 +116,9 @@ class SemanticCandidate(_StrictCandidateModel):
         return validate_candidate_timestamp(value)
 
 
-SemanticCandidateLike = SemanticCandidateV1 | SemanticCandidate
-
-
 @sealed_memo
-def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
-    """Hash exactly the five C_s fields under the candidate's own version domain.
-
-    The domain is read off the object's own frozen `tag`, so v1 hashes under
-    `playbill-candidate-v1` byte-for-byte as it always has and a v2 candidate can
-    never collide with the v1 candidate that carries the same five values.
-    """
+def candidate_digest(candidate: SemanticCandidate) -> CandidateDigest:
+    """Hash exactly the five C_s fields under the candidate's own tag domain."""
 
     payload = candidate.model_dump(mode="json")
     domain = str(payload.pop("tag"))
@@ -622,8 +572,6 @@ __all__ = [
     "DependencyProofReference",
     "LawEvaluationCoordinate",
     "MemberLawEvaluation",
-    "SemanticCandidateV1",
-    "SemanticCandidateLike",
     "SemanticCandidate",
     "candidate_digest",
     "candidate_member_evidence_digest",

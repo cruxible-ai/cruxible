@@ -14,12 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightCertificate,
     preflight_certificate_digest,
 )
-from cruxible_client.contracts.candidates import (
-    CandidateRecord,
-    SemanticCandidateV1,
-    candidate_digest,
-)
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -514,34 +509,6 @@ def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: P
         )
 
     assert service.transport.read_proposal_ref(_request(instance).target_ref) is None
-
-
-def test_candidate_preimage_is_exact_oid_free_and_matches_golden() -> None:
-    fixture_path = Path(__file__).parents[1] / "goldens" / "playbill" / "candidate-v1.json"
-    fixture = json.loads(fixture_path.read_bytes())
-    candidate = SemanticCandidateV1.model_validate(fixture["candidate"])
-
-    payload = candidate.model_dump(mode="json")
-    payload.pop("tag")
-    assert sorted(payload) == [
-        "candidate_manifest_root",
-        "parent_semantic_root",
-        "scope",
-        "semantic_diff_digest",
-        "timestamp",
-    ]
-    assert (
-        canonical_bytes({"tag": "playbill-candidate-v1", **payload}).decode()
-        == (fixture["canonical_preimage"])
-    )
-    assert candidate_digest(candidate).tagged == fixture["candidate_digest"]
-
-    for _qualified_object_format in ("sha1", "sha256"):
-        assert candidate_digest(SemanticCandidateV1.model_validate(fixture["candidate"])) == (
-            candidate_digest(candidate)
-        )
-    with pytest.raises(ValidationError, match="base_oid"):
-        SemanticCandidateV1.model_validate({**fixture["candidate"], "base_oid": "0" * 40})
 
 
 def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Path) -> None:

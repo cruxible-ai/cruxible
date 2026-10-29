@@ -33,7 +33,6 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
     )
     for name in (
         "claim-type-v1.json",
-        "candidate-v1.json",
         "candidate-v2.json",
         "depgraph-v3.json",
         "merkle-manifest-v1.json",

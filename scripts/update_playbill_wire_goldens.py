@@ -13,7 +13,6 @@ from cruxible_client.contracts.candidates import (
     DependencyProofReference,
     MemberLawEvaluation,
     SemanticCandidate,
-    SemanticCandidateV1,
     candidate_digest,
     candidate_member_evidence_digest,
     member_law_evidence_digest,
@@ -264,19 +263,6 @@ def _update_changeset_golden() -> None:
     _write(path, fixture)
 
 
-def _update_candidate_v1_golden() -> None:
-    path = GOLDENS / "candidate-v1.json"
-    fixture = _read(path)
-    candidate = SemanticCandidateV1.model_validate(fixture["candidate"])
-    payload = candidate.model_dump(mode="json")
-    payload.pop("tag")
-    fixture["canonical_preimage"] = canonical_bytes(
-        {"tag": "playbill-candidate-v1", **payload}
-    ).decode()
-    fixture["candidate_digest"] = candidate_digest(candidate).tagged
-    _write(path, fixture)
-
-
 def _update_source_reference_golden() -> None:
     path = GOLDENS / "source-reference-v1.json"
     fixture = _read(path)
@@ -296,11 +282,6 @@ def _update_candidate_v2_golden() -> None:
         {"tag": "playbill-candidate-v2", **payload}
     ).decode()
     fixture["candidate_digest"] = candidate_digest(candidate).tagged
-    sibling = fixture["flat_rooted_v1_sibling"]
-    if not isinstance(sibling, dict):
-        raise TypeError("candidate-v2 golden has no flat-rooted sibling")
-    sibling_candidate = SemanticCandidateV1.model_validate(sibling["candidate"])
-    sibling["candidate_digest"] = candidate_digest(sibling_candidate).tagged
     _write(path, fixture)
 
 
@@ -435,7 +416,6 @@ def main() -> None:
     _update_query_golden()
     _update_subject_golden()
     _update_semantic_genesis_golden()
-    _update_candidate_v1_golden()
     _update_candidate_v2_golden()
     _update_merkle_manifest_golden()
     _update_dependency_edge_golden()
