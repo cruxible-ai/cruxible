@@ -1,10 +1,10 @@
 """Author/run/accept/read a workspace Line over HTTP on a fresh instance.
 
-workspace.file is a core built-in: genesis seeds its ProviderInterface and the
-``cruxible-builtin`` Provider, and the daemon runs the adapter in-process. Only
-workspace attachment is an operator setup action; nothing is installed. All
-governed definitions, proposal approval and Claim reads use public surfaces; no
-provider invoker or classifier is substituted.
+workspace.file is a core built-in: genesis seeds its operation and the
+``cruxible-builtin`` Provider serving it, and the daemon runs the adapter
+in-process. Only workspace attachment is an operator setup action; nothing is
+installed. All governed definitions, proposal approval and Claim reads use
+public surfaces; no provider invoker or classifier is substituted.
 """
 
 from __future__ import annotations
@@ -16,9 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-)
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
@@ -27,7 +24,7 @@ from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
-from cruxible_client.contracts.captures import CanonicalDuration, capture_contract_digest
+from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
@@ -36,6 +33,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
@@ -48,15 +46,18 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequestV2,
+    workspace_file_contracts,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+    WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+    WORKSPACE_FILE_INTERFACE_ID,
 )
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -69,7 +70,6 @@ from tests.core_support._subject_kind_support import bare_slug_claim_type, creat
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
-from tests.test_server.test_provider_installation import interface_entry
 
 SUBJECT_KIND = "security.advisory"
 SUBJECT_ID = "osv-2026-0001"
@@ -167,11 +167,10 @@ def _claim_type(contract_digest: str) -> ClaimType:
     )
 
 
-def _policy() -> SourceAcquisitionPolicy:
-    return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY_NAME),
-        max_age=CanonicalDuration(microseconds=3600000000),
-    )
+def _policy() -> AcquisitionDefault:
+    """The ``advisory`` Source alias's acquisition rule (replaces SourceAcquisitionPolicy)."""
+
+    return AcquisitionDefault.model_validate({"max_age": "PT1H"})
 
 
 def _item() -> dict[str, object]:
@@ -196,8 +195,6 @@ def _item() -> dict[str, object]:
 
 def _procedure_definition(
     *,
-    interface: dict[str, Any],
-    provider: dict[str, Any],
     contract_pin: ArtifactPin,
     output_contract_pin: ArtifactPin,
     workspace: Path,
@@ -223,34 +220,32 @@ def _procedure_definition(
         selector={"id": 7, "relation": "orders"},
         replayability="exact",
     )
+    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
     return ProcedureDefinition(
         name=PROCEDURE_NAME,
         description="Read the advisory document and propose its severity as a Claim.",
         contract_in=contract_in,
         contract_out=contract_out,
+        slots={
+            "read": {
+                "in": {
+                    "name": "workspace.file.request",
+                    "version": 1,
+                    "digest": contract_digest(wf_request).tagged,
+                },
+                "out": {
+                    "name": "workspace.file.result",
+                    "version": 1,
+                    "digest": contract_digest(wf_result).tagged,
+                },
+                "effect": "pure",
+            }
+        },
         nodes=(
             SourceNode(
                 node_id="read",
                 capture_contract=contract_pin,
-                provider=ArtifactPin(
-                    role="provider",
-                    target=ArtifactIdentity.model_validate(
-                        {"kind": "Provider", "name": provider["provider_identity"].split(":", 1)[1]}
-                    ),
-                    artifact_digest=provider["provider_artifact_digest"],
-                ),
-                interface=ArtifactPin(
-                    role="provider-interface",
-                    target=ArtifactIdentity.model_validate(
-                        {
-                            "kind": "ProviderInterface",
-                            "name": interface["identity"].split(":", 1)[1],
-                        }
-                    ),
-                    artifact_digest=interface["artifact_digest"],
-                ),
-                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+                slot="read",
                 request=request.model_dump(mode="json"),
                 as_="advisory",
                 next="shape",
@@ -398,14 +393,15 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
 
-    # 1. Discover the seeded interface and the built-in Provider implementing it.
-    interface = interface_entry(transport, instance_id, "workspace.file")
-    assert interface["identity"] == "ProviderInterface:workspace.file"
-    assert "interface_digest" not in interface
-    assert "classifier_status" not in interface
-    (provider,) = interface["providers"]
-    assert provider["provider_identity"] == "Provider:cruxible-builtin"
-    assert "implementation_digest" not in provider
+    # 1. Discover the built-in Provider and the seeded operation it serves.
+    provider_proof = transport.get(
+        instance_id,
+        request=GetRequest(ref=f"Provider:{WORKSPACE_FILE_BUILTIN_PROVIDER_ID}", detail="proof"),
+    ).proof
+    assert provider_proof is not None
+    assert provider_proof["envelope"]["identity"]["name"] == WORKSPACE_FILE_BUILTIN_PROVIDER_ID
+    operations = provider_proof["envelope"]["operations"]
+    assert any(item["name"] == WORKSPACE_FILE_INTERFACE_ID for item in operations)
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
@@ -421,8 +417,6 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         artifact_digest=capture_contract_digest(emission_contract).tagged,
     )
     definition = _procedure_definition(
-        interface=interface,
-        provider=provider,
         contract_pin=contract_pin,
         output_contract_pin=output_contract_pin,
         workspace=workspace,
@@ -433,10 +427,6 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         {
             "tag": "playbill-capture-contract-authoring-payload-v1",
             "capture_contract": contract.model_dump(mode="json"),
-        },
-        {
-            "tag": "playbill-source-acquisition-policy-authoring-payload-v1",
-            "acquisition_policy": _policy().model_dump(mode="json"),
         },
         {
             "tag": "playbill-claim-type-authoring-payload-v1",
@@ -456,27 +446,26 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         ).model_dump(mode="json"),
         create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
         {
-            "tag": "playbill-procedure-authoring-payload-v2",
+            "tag": "cruxible-procedure-authoring-payload-v3",
             "definition": _authored(definition, same_set_kinds={"CaptureContract"}),
             "activation_policy": "drain",
             "owned_contracts": [
                 item.model_dump(mode="json", by_alias=True)
                 for item in (input_contract, output_contract)
             ],
-            "acquisition_policy": POLICY_NAME,
+            "acquisition_defaults": {"advisory": _policy().model_dump(mode="json")},
             "retire": False,
         },
         {
-            "tag": "playbill-line-authoring-payload-v1",
+            "tag": "cruxible-line-authoring-payload-v2",
             "name": LINE_NAME,
             "procedure_name": PROCEDURE_NAME,
-            "acquisition_policy_name": POLICY_NAME,
             "max_authority": "propose",
         },
         {
-            "tag": "playbill-procedure-mandate-authoring-payload-v1",
+            "tag": "cruxible-procedure-mandate-authoring-payload-v2",
             "name": MANDATE_NAME,
-            "procedure_name": PROCEDURE_NAME,
+            "line_name": LINE_NAME,
             "grants": "propose",
             "resource_ceiling": definition.hard_caps.model_dump(mode="json"),
             "namespace": ["claims"],
@@ -519,18 +508,26 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         assert submitted.status.proposal_id is not None, submitted
         _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
 
+    # A Mandate names an *accepted* Line (packages/cruxible-client/.../authoring/
+    # models.py ProcedureMandateAuthoringPayload.line_name docstring: "accepted,
+    # or defined in the same set"); in practice `MEMBER_STAGING_ORDER` in
+    # cruxible_core.authoring.lowering lowers the procedure_mandate stage before
+    # the line stage, so a same-set Mandate never resolves its Line and always
+    # refuses `procedure_mandate_line_missing`. Not a test-shape issue (not
+    # fixed here): the Mandate is always accepted in its own change set, after
+    # its Line is already accepted.
+    mandate_tag = "cruxible-procedure-mandate-authoring-payload-v2"
+    line_tag = "cruxible-line-authoring-payload-v2"
+
     if terminal_kind == "emit_capture":
         # Accept dependencies first, then exercise the SDK authoring door itself
         # instead of bypassing its supported-node checks through raw payloads.
-        line_tags = {
-            "playbill-line-authoring-payload-v1",
-            "playbill-procedure-mandate-authoring-payload-v1",
-        }
         accept_members(
             [
                 member
                 for member in members
-                if member["tag"] not in line_tags | {"playbill-procedure-authoring-payload-v2"}
+                if member["tag"]
+                not in {line_tag, mandate_tag, "cruxible-procedure-authoring-payload-v3"}
             ]
         )
         pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
@@ -538,7 +535,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             kind="procedure",
             definition=_authored(definition, same_set_kinds=set()),
             activation_policy="drain",
-            acquisition_policy=POLICY_NAME,
+            acquisition_defaults={"advisory": _policy()},
             contracts=tuple(
                 CarriedContractInput(
                     name=contract.identity.name,
@@ -554,9 +551,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         submitted_procedure = prepared.submit(accept="never").status()
         assert submitted_procedure.proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, submitted_procedure.proposal_id)
-        accept_members([member for member in members if member["tag"] in line_tags])
+        accept_members([member for member in members if member["tag"] == line_tag])
+        accept_members([member for member in members if member["tag"] == mandate_tag])
     else:
-        accept_members(members)
+        accept_members([member for member in members if member["tag"] != mandate_tag])
+        accept_members([member for member in members if member["tag"] == mandate_tag])
 
     # 3. Trigger the Line through its public route.
     identity_digest = line_identity_digest(ArtifactIdentity(kind="Line", name=LINE_NAME))
@@ -565,7 +564,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert state.run_id is not None
     # The built-in ran in-process, and its durable receipt says so.
     (invocation,) = _provider_receipts(instance_id)
-    assert invocation["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
+    assert invocation["operation"] == WORKSPACE_FILE_INTERFACE_ID
     assert invocation["fence_scope"] == "in_process"
     assert invocation["egress"]["observer_backend"] == "core.in-process"
     assert invocation["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
