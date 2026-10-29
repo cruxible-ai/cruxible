@@ -5688,12 +5688,15 @@ class ProcedureExecutor:
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             )
         assert output is not None
-        if occurrence.occurrence_kind == "call" or (
-            occurrence.occurrence_kind == "source" and occurrence.effect_class == "pure"
-        ):
-            # A Source over a pure operation (the workspace.file structuring)
-            # returns the material itself; an external_read Source returns the
-            # acquisition envelope core captures, checked when it is built.
+        if occurrence.occurrence_kind in ("call", "source"):
+            # F02: every operation output is checked against its own pinned
+            # Contract, call or Source, pure or external_read alike. A Source
+            # over a pure operation (the workspace.file structuring) returns
+            # the material itself; an external_read Source's acquisition
+            # envelope is checked here too -- the later Capture-wire check
+            # (ProviderResultToExternalCapture) is a different, generic
+            # shape/law, never a substitute for the operation's own out
+            # Contract.
             output = self._validate_operation_value(
                 occurrence,
                 output,

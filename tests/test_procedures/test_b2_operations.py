@@ -1012,6 +1012,179 @@ def test_an_undeclared_provider_refusal_is_a_protocol_violation(tmp_path):
     assert state.terminal.code == "provider_protocol_violation"
 
 
+def _fetch_world(tmp_path):  # type: ignore[no-untyped-def]
+    """A world whose ``fetch`` slot is an ``external_read`` Source operation
+    with a declared out Contract stricter than the generic Capture wire
+    shape (F02): it accepts only ``replayability: exact``."""
+
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from cruxible_client.contracts.providers import (
+        ProviderDistributionRef,
+        ProviderImplementationManifest,
+        ProviderLocalDistributionPin,
+        ProviderLocalEnvBackendPin,
+        ProviderRuntimeManifest,
+    )
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
+    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._light_capture_support import record_contract
+    from tests.core_support._support import initialize_local
+
+    fetch_request = Contract.model_validate(
+        {"name": "demo.fetch.request", "version": 1, "fields": {"query": {"type": "string"}}}
+    )
+    fetch_result = Contract.model_validate(
+        {
+            "name": "demo.fetch.result",
+            "version": 1,
+            "fields": {
+                "source_identity": {"type": "string"},
+                "coordinate_type": {"type": "string"},
+                "coordinate": {"type": "string"},
+                "selector_type": {"type": "string"},
+                "selector": {"type": "string"},
+                "replayability": {"type": "enum[exact]"},
+                "content_base64": {"type": "string"},
+                "byte_length": {"type": "int{0..}"},
+                "bytes_digest": {"type": "string"},
+                "observed_at": {"type": "datetime"},
+            },
+        }
+    )
+    served = (
+        operation(
+            "fetch",
+            effect="external_read",
+            signature=("demo.fetch.request@1", "demo.fetch.result@1"),
+        ),
+    )
+    manifest = ProviderRuntimeManifest(
+        provider_id="fetcher",
+        distribution=ProviderDistributionRef(name="fetcher", version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifest(
+                interface_id="fetch",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                declared_input_buckets=(),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
+    )
+    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+
+    def digests(ref):  # type: ignore[no-untyped-def]
+        for item in (VALUE, REFUSAL, fetch_request, fetch_result):
+            if (ref.name, ref.version) == (item.name, item.version):
+                return contract_digest(item).tagged
+        return None
+
+    build = document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name="fetcher",
+            version="1.0.0",
+            filename="fetcher-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + ("a" * 64),
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "b" * 64,
+            materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
+        ),
+        control_domain="fetcher",
+        operations=document.pinned_operations(digests),
+    )
+    # The request/result Contracts and CaptureContract must be accepted
+    # before the build that pins them; see test_an_accepted_enum_of_...
+    # above for why this cannot go through world()'s default-build path.
+    instance, _owner = initialize_local(tmp_path)
+    capture_contract = record_contract(name="test.events-v1", replay="attested")
+    accept_tree(
+        instance,
+        {
+            **contract_files(),
+            contract_path(fetch_request.name, fetch_request.version): render_contract(
+                fetch_request
+            ),
+            contract_path(fetch_result.name, fetch_result.version): render_contract(fetch_result),
+            capture_contract_path(capture_contract.identity.name): render_capture_contract(
+                capture_contract
+            ),
+        },
+        name="fetch-contracts",
+    )
+    accept_tree(instance, build_files(build), name="fetch-build")
+    author_procedure(
+        instance,
+        ProcedureSpec.model_validate(
+            {
+                "procedure": "test.fetched",
+                "input": {},
+                "output": {"ok": "bool"},
+                "slots": {
+                    "fetch": {
+                        "in": "demo.fetch.request@1",
+                        "out": "demo.fetch.result@1",
+                        "effect": "external_read",
+                    }
+                },
+                "steps": [
+                    {
+                        "source": "doc",
+                        "contract": capture_contract.identity.name,
+                        "slot": "fetch",
+                        "request": {"query": "orders"},
+                    },
+                    {"project": "out", "fields": {"ok": True}},
+                ],
+                "returns": "out",
+                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            }
+        ),
+    )
+    author_line(instance, name="test.fetched-line", procedure="test.fetched", parameters={})
+    return instance
+
+
+def test_an_external_read_sources_output_is_checked_against_its_operation_contract(
+    tmp_path,
+):
+    """F02: an external-read Source's output is validated against its
+    operation's own out Contract, not only the generic Capture-wire shape."""
+
+    instance = _fetch_world(tmp_path)
+
+    def bad_output(context):  # type: ignore[no-untyped-def]
+        return {
+            "source_identity": "demo.events",
+            "coordinate_type": "database-snapshot-v1",
+            "coordinate": "workspace",
+            "selector_type": "relation-primary-key-v1",
+            "selector": "orders",
+            # Wire-shape valid (Literal["exact", "attested_only"]); the
+            # operation's own out Contract permits only "exact" (F02).
+            "replayability": "attested_only",
+            "content_base64": "e30=",
+            "byte_length": 2,
+            "bytes_digest": "sha256:" + "0" * 64,
+            "observed_at": "2026-10-29T12:00:00Z",
+        }
+
+    state, _ = run_line(instance, invoker=Invoker(output=bad_output), name="test.fetched-line")
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "contract_output_refused"
+    assert "replayability" in state.terminal.message
+
+
 # --- 8. exact producer versions -----------------------------------------------
 
 
