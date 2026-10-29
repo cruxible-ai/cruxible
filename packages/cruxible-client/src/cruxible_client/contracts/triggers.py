@@ -309,6 +309,16 @@ def schedule_satisfies_input(
 
     The one rule for every target: a Line's accepted event and an internal
     action's declared input are both judged here.
+
+    ``by_name=False`` asks for an exact-digest match, but a
+    ``NamedCaptureEventSelector`` (a Line's own ``trigger_event`` is always
+    one) carries no digest at all -- it overrides ``capture_contract_digest``
+    to a ``ClassVar`` ``None``, so comparing it by digest is comparing
+    ``None`` to whatever the other side has, never a real match. Neither side
+    of this pure function can resolve a name to today's live digest (that
+    needs an instance read), so a Named side -- having nothing to compare --
+    falls back to the identity match already required above, the same as
+    ``by_name=True``.
     """
 
     if isinstance(required, NoTriggerInput):
@@ -319,7 +329,12 @@ def schedule_satisfies_input(
     event = required.event
     return (
         selector.capture_contract_identity == event.capture_contract_identity
-        and (by_name or selector.capture_contract_digest == event.capture_contract_digest)
+        and (
+            by_name
+            or isinstance(selector, NamedCaptureEventSelector)
+            or isinstance(event, NamedCaptureEventSelector)
+            or selector.capture_contract_digest == event.capture_contract_digest
+        )
         and (
             not event.logical_sources
             or bool(selector.logical_sources)

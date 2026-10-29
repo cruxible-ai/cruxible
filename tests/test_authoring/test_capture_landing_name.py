@@ -153,36 +153,72 @@ def test_name_schedule_refuses_exact_selector_or_expected_digest(extra):
         )
 
 
-@pytest.mark.skip(
-    reason=(
-        "src bug (B2): LineSpec.trigger_event is now always a NamedCaptureEventSelector "
-        "(capture_contract_digest is a ClassVar None, per the 'Bind slots at Line "
-        "acceptance' commit), so it can never carry a digest to mismatch against. "
-        "_render_trigger_member's schedule_satisfies_input(..., by_name=light) still "
-        "does `by_name or selector.capture_contract_digest == event.capture_contract_digest` "
-        "(lowering.py ~3714/triggers.py:322): with light=False this is always False, so "
-        "every light=False Trigger authored against a Line with any trigger_event now "
-        "refuses unconditionally, even on a genuine name match. Needs a core fix (compare "
-        "by name unconditionally, since no Line ever carries a digest here) before this "
-        "test's premise (a real digest mismatch, as opposed to an unconditional one) can "
-        "be exercised again."
-    )
-)
-def test_source_pinned_mismatch_names_both_digests():
+def test_source_pinned_digest_is_irrelevant_only_identity_and_sources_are_checked():
+    """A Line's ``trigger_event`` is always Named: it never carries a digest.
+
+    ``NamedCaptureEventSelector.capture_contract_digest`` is a ``ClassVar``
+    ``None`` (per the "Bind slots at Line acceptance" commit), so a Line's
+    trigger event can never actually carry a digest to compare, however it is
+    constructed. ``schedule_satisfies_input``'s legacy ``by_name=False`` path
+    (what ``_render_trigger_member(..., light=False)`` -- the default -- uses)
+    used to compare that always-``None`` digest against the schedule's real
+    one and always refuse, even on a genuine identity match. Fixed: the
+    digest check is skipped whenever either side is Named, falling back to
+    the identity (and sources) check already required. A real identity
+    mismatch still refuses.
+    """
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 
     staged = tree()
     path = line_spec_path("triage")
     line = parse_line_spec(staged[path], path=path)
-    other = SELECTOR.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
+    # Attempt to force a mismatched digest onto the Line's trigger event; it
+    # is dropped on the render/parse round trip (the field is a ClassVar on
+    # NamedCaptureEventSelector), so only the identity -- the same as
+    # SELECTOR's -- survives.
+    attempted = SELECTOR.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
     staged[path] = render_line_spec(
         line.model_copy(
             update={
                 "trigger_input": "feed",
-                "trigger_event": other,
+                "trigger_event": attempted,
                 "pins": tuple(
                     sorted(
-                        (*line.pins, *trigger_schedule_pins(CaptureLandingSchedule(event=other))),
+                        (
+                            *line.pins,
+                            *trigger_schedule_pins(CaptureLandingSchedule(event=attempted)),
+                        ),
+                        key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+                    )
+                ),
+            }
+        )
+    )
+    reparsed = parse_line_spec(staged[path], path=path)
+    assert reparsed.trigger_event is not None
+    assert reparsed.trigger_event.capture_contract_digest is None
+    assert reparsed.trigger_event.capture_contract_identity == SELECTOR.capture_contract_identity
+
+    rendered = _render_trigger_member(payload(), tree=staged)
+    trigger = parse_trigger(rendered[1], path=rendered[0])
+    assert trigger.schedule.event == SELECTOR
+
+    other_contract = foreign_source_capture_contract("security.advisory")
+    other_selector = CaptureEventSelector(
+        capture_contract_identity=other_contract.identity,
+        capture_contract_digest=capture_contract_digest(other_contract).tagged,
+    )
+    staged[path] = render_line_spec(
+        line.model_copy(
+            update={
+                "trigger_input": "feed",
+                "trigger_event": other_selector,
+                "pins": tuple(
+                    sorted(
+                        (
+                            *line.pins,
+                            *trigger_schedule_pins(CaptureLandingSchedule(event=other_selector)),
+                        ),
                         key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
                     )
                 ),
@@ -192,8 +228,6 @@ def test_source_pinned_mismatch_names_both_digests():
     with pytest.raises(AuthoringLoweringError) as caught:
         _render_trigger_member(payload(), tree=staged)
     assert caught.value.code == "cruxible.trigger.event_not_accepted"
-    assert SELECTOR.capture_contract_digest in caught.value.message
-    assert other.capture_contract_digest in caught.value.message
     assert caught.value.repairs
 
 
@@ -461,17 +495,6 @@ def test_trigger_input_accepts_only_sources_covered_by_its_line(required, offere
     )
 
 
-@pytest.mark.skip(
-    reason=(
-        "src bug (B2): same unconditional-refusal bug as "
-        "test_source_pinned_mismatch_names_both_digests -- _render_trigger_member's "
-        "default light=False routes schedule_satisfies_input's by_name=False, which "
-        "requires selector.capture_contract_digest == event.capture_contract_digest; "
-        "LineSpec.trigger_event (NamedCaptureEventSelector) never carries a digest, so "
-        "this now refuses even when the Line's accepted event is a genuine unrestricted "
-        "name match. See lowering.py ~3714 / triggers.py:schedule_satisfies_input."
-    )
-)
 def test_named_sourced_trigger_can_target_an_unrestricted_source_input():
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 
