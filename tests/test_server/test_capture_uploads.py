@@ -33,21 +33,19 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNode,
     SourceNode,
 )
+from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.uploads import (
     UPLOAD_PART_SIZE,
     CaptureUploadCompleteRequest,
     CaptureUploadOpenRequest,
 )
 from cruxible_client.contracts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequestV2,
+    workspace_file_contracts,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import generate_client_principal_key
-from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
-)
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -58,7 +56,6 @@ from tests.core_support._light_capture_support import record_contract as capture
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_server.test_playbill_procedure_rung2_public import _authored, _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
-from tests.test_server.test_provider_installation import interface_entry
 
 NOW = datetime(2026, 10, 22, 12, tzinfo=UTC)
 PROCEDURE = "advisory-acquire"
@@ -542,7 +539,7 @@ def _contracts() -> tuple[ProcedureOwnedContract, ProcedureOwnedContract]:
     )
 
 
-def _definition(interface: dict[str, Any], provider: dict[str, Any], contract_pin: ArtifactPin):
+def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
     input_contract, output_contract = _contracts()
 
     def pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
@@ -562,31 +559,32 @@ def _definition(interface: dict[str, Any], provider: dict[str, Any], contract_pi
         replayability="exact",
     ).model_dump(mode="json")
     request["relative_path"] = "$input.relative_path"
+    _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
     return ProcedureDefinition(
         name=PROCEDURE,
         description="Read an uploaded advisory and return its severity.",
         contract_in=pin("contract-in", input_contract),
         contract_out=pin("contract-out", output_contract),
+        slots={
+            "read": {
+                "in": {
+                    "name": "workspace.file.request",
+                    "version": 1,
+                    "digest": contract_digest(wf_request).tagged,
+                },
+                "out": {
+                    "name": "workspace.file.result",
+                    "version": 1,
+                    "digest": contract_digest(wf_result).tagged,
+                },
+                "effect": "pure",
+            }
+        },
         nodes=(
             SourceNode(
                 node_id="read",
                 capture_contract=contract_pin,
-                provider=ArtifactPin(
-                    role="provider",
-                    target=ArtifactIdentity(
-                        kind="Provider", name=provider["provider_identity"].split(":", 1)[1]
-                    ),
-                    artifact_digest=provider["provider_artifact_digest"],
-                ),
-                interface=ArtifactPin(
-                    role="provider-interface",
-                    target=ArtifactIdentity(
-                        kind="ProviderInterface", name=interface["identity"].split(":", 1)[1]
-                    ),
-                    artifact_digest=interface["artifact_digest"],
-                ),
-                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-                implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+                slot="read",
                 request=request,
                 as_="advisory",
                 next="shape",
@@ -680,37 +678,26 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
         authoring_member_identity,
     )
 
-    interface = interface_entry(transport, instance_id, "workspace.file")
-    (provider,) = interface["providers"]
     contract = capture_contract()
     contract_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
         artifact_digest=capture_contract_digest(contract).tagged,
     )
-    definition = _definition(interface, provider, contract_pin)
-    policy = _policy().model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name="advisory-uploads")
-        }
-    )
+    definition = _definition(contract_pin)
     members: list[dict[str, Any]] = [
         {
             "tag": "playbill-capture-contract-authoring-payload-v1",
             "capture_contract": contract.model_dump(mode="json"),
         },
         {
-            "tag": "playbill-source-acquisition-policy-authoring-payload-v1",
-            "acquisition_policy": policy.model_dump(mode="json"),
-        },
-        {
-            "tag": "playbill-procedure-authoring-payload-v2",
+            "tag": "cruxible-procedure-authoring-payload-v3",
             "definition": _authored(definition, same_set_kinds={"CaptureContract"}),
             "activation_policy": "drain",
             "owned_contracts": [
                 item.model_dump(mode="json", by_alias=True) for item in _contracts()
             ],
-            "acquisition_policy": "advisory-uploads",
+            "acquisition_defaults": {"advisory": _policy().model_dump(mode="json")},
             "retire": False,
         },
     ]
