@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import (
     line_identity_digest,
+    line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
@@ -267,7 +268,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
-    line = fixtures._served_line(with_terminal, policy).model_copy(
+    line = fixtures._served_line(instance, with_terminal, policy).model_copy(
         update={"max_authority": max_authority}
     )
     trigger_members: dict[str, bytes] = {}
@@ -319,10 +320,10 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     for index in range(mandates):
         mandate = ProcedureMandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=f"settle-{index}"),
-            procedure=ArtifactPin(
-                role="procedure",
-                target=with_terminal.identity,
-                artifact_digest=procedure_artifact_digest(with_terminal).tagged,
+            line=ArtifactPin(
+                role="line",
+                target=line.identity,
+                artifact_digest=line_spec_digest(line).tagged,
             ),
             grants="settle",
             resource_ceiling=with_terminal.definition.hard_caps,
@@ -364,10 +365,10 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
         for day in range(256):
             grant = ProcedureMandate(
                 identity=ArtifactIdentity(kind="ProcedureMandate", name="propose-grant"),
-                procedure=ArtifactPin(
-                    role="procedure",
-                    target=with_terminal.identity,
-                    artifact_digest=procedure_artifact_digest(with_terminal).tagged,
+                line=ArtifactPin(
+                    role="line",
+                    target=line.identity,
+                    artifact_digest=line_spec_digest(line).tagged,
                 ),
                 grants="propose",
                 resource_ceiling=with_terminal.definition.hard_caps,
@@ -679,9 +680,47 @@ def test_graduating_the_line_to_settle_keeps_the_procedure_and_settles(tmp_path:
             ),
         }
     )
+    # A Line whose digest changes must carry every live Mandate granting it as an
+    # exact, propose-only successor in the same ChangeSet (ruling C3); settle is
+    # renewed by a separate governed Mandate change.
+    graduated_line_pin = ArtifactPin(
+        role="line",
+        target=graduated.identity,
+        artifact_digest=line_spec_digest(graduated).tagged,
+    )
+    original_mandate_path = procedure_mandate_path("settle-0")
+    original_mandate = parse_procedure_mandate_any(
+        instance.blob_at(instance.accepted_coordinate().git_oid, original_mandate_path),
+        path=original_mandate_path,
+    )
+    carried_successor = original_mandate.model_copy(
+        update={
+            "line": graduated_line_pin,
+            "grants": "propose",
+            "scope": (),
+            "condition": None,
+            "subject_scope": None,
+            "subject_creation": (),
+            "lifecycle": original_mandate.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_mandate_digest(original_mandate).tagged}
+            ),
+        }
+    )
+    renewed_settle = original_mandate.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ProcedureMandate", name="settle-0-renewed"),
+            "line": graduated_line_pin,
+        }
+    )
     inspection = submit_member_candidate(
         instance,
-        members={line_spec_path(graduated.identity.name): render_line_spec(graduated)},
+        members={
+            line_spec_path(graduated.identity.name): render_line_spec(graduated),
+            original_mandate_path: render_procedure_mandate(carried_successor),
+            procedure_mandate_path(renewed_settle.identity.name): render_procedure_mandate(
+                renewed_settle
+            ),
+        },
         actor_id="owner",
         proposal_name="graduate-line",
         proposal_family="procedure",
@@ -1142,7 +1181,6 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
     from types import SimpleNamespace
 
     from cruxible_client.contracts.line_dispatch import LineEnablementPrincipal
-    from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_core.runtime import line_arms
     from cruxible_core.runtime.line_arms import dispatch_armed_line
     from cruxible_core.service.procedures.line_dispatch import (
@@ -1620,7 +1658,7 @@ def test_demoting_the_line_closes_its_row(tmp_path: Path) -> None:
     )
     assert successor.identity == line.identity
     assert successor.procedure == line.procedure
-    assert successor.acquisition_policy == line.acquisition_policy
+    assert successor.acquisition == line.acquisition
     assert successor.max_authority == "propose"
     assert (successor.parameters, successor.budgets) == (line.parameters, line.budgets)
     assert successor.occurrence_epoch == line.occurrence_epoch
