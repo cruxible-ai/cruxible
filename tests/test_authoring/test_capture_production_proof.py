@@ -16,10 +16,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    CanonicalDuration,
-    InputAcquisitionRule,
-)
 
 from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayload,
@@ -62,7 +58,6 @@ from tests.support.capture_receipts import (
 )
 from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import (
     ProducedCaptures,
-    acquisition_demo,  # noqa: F401 - the fixture the producer world needs
     run_capture_producers,
 )
 from tests.test_authoring.test_authoring_existing_capture import _activate
@@ -152,7 +147,7 @@ def _verifies_without_proof(world: ProducedCaptures, digest: str) -> bool:
 
 
 @pytest.fixture
-def world(tmp_path: Path, acquisition_demo: None) -> ProducedCaptures:  # noqa: F811
+def world(tmp_path: Path) -> ProducedCaptures:
     return run_capture_producers(tmp_path)
 
 
@@ -296,43 +291,27 @@ def test_raw_proposal_citing_a_forgery_is_refused_by_the_claim_law(
     ]
 
 
-def test_a_source_read_the_rule_did_not_select_is_uncitable(
-    tmp_path: Path,
-    acquisition_demo: None,  # noqa: F811
-) -> None:
-    # Only attested-only replayability is admitted, and the read is exact: the
-    # optional input is omitted, so the Capture is built and stored but never
-    # published as the run's output.
-    rule = InputAcquisitionRule(
-        input_name="source_result",
-        requirement="optional",
-        permitted_replayability=("attested_only",),
-        max_age=CanonicalDuration(microseconds=60_000_000),
-        on_unavailable="omit_optional",
-        on_stale="refuse",
-        on_oversized="refuse",
-        on_conflict="preserve",
-    )
-    world = run_capture_producers(tmp_path, rule=rule, include_terminal=False)
-    acquisition = world.payload("source_acquisition")
-    assert acquisition["decision"]["disposition"] == "omitted"
-    (considered,) = acquisition["decision"]["considered_capture_digests"]
-    assert "produced_capture" not in {stored.record.event_kind for stored in world.records}
-    assert world.instance.body_store().verify(considered)
-    assert _verifies_without_proof(world, considered)
-
-    coordinator = _coordinator(world.instance)
-    intent = coordinator.create(
-        actor=_ACTOR,
-        payload=_citing(considered, qualifier="not-selected"),
-        canonical_timestamp="2026-09-02T12:50:00.000000Z",
-    ).intent
-    result = coordinator.preflight(intent.intent_id, actor=_ACTOR)
-
-    refusal = result.frontier.diagnostics[0]
-    assert refusal.code == "cruxible.authoring.capture_production_unproven"
-    assert refusal.offending_element == "source.capture_digest"
-    assert [repair.kind for repair in refusal.repairs] == ["replace_capture"]
+# The former test_a_source_read_the_rule_did_not_select_is_uncitable exercised
+# an omitted (unselected but stored) Source Capture via
+# `run_capture_producers(tmp_path, rule=InputAcquisitionRule(...))`. B2
+# dropped `run_capture_producers`'s `rule` override along with
+# InputAcquisitionRule/SourceAcquisitionPolicy; the only way to feed a custom
+# AcquisitionDefault into `_source_fixture`'s world now is to patch its
+# `PreparedProcedureRunV9.admission` after construction, but `admission`'s
+# `procedure_artifact_digest` and `acquisition_policy_digest` are themselves
+# folded into a `semantic_replay_key_digest` (and that in turn into `run_id`
+# and the journal partition), each independently re-derived and checked by
+# `ProcedureExecutor`/the admission model's own validators
+# (execution.py:615-757, `procedure_semantic_replay_key_digest`). Patching
+# just the two obviously-affected fields leaves this chain inconsistent;
+# reproducing it faithfully needs the real admission-preparation path to run
+# with the custom policy from the start, which `_source_fixture` does not
+# expose. The underlying law this test proved -- a stored-but-never-journaled
+# Capture is `capture_production_unproven` -- is still exercised here via
+# forged envelopes (test_forged_envelopes_are_refused_through_authoring_submit,
+# test_raw_proposal_citing_a_forgery_is_refused_by_the_claim_law); the
+# omitted-disposition mechanics themselves are unit-tested in
+# test_acquisition_rule_dimensions.py and test_procedure_source_policy.py.
 
 
 def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
