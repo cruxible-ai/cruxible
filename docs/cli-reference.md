@@ -1056,27 +1056,18 @@ are read by the client and transferred through CAS, so this also works against
 a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
-and proposes the package's provider interfaces and Provider definition through
-ordinary acceptance. The interface contract owns its registration, not the
-implementation: an exported interface whose definition is already registered
-live here (an equal interface digest) is bound rather than registered again, and
-the package's Provider pins that exact registration, so a second implementation
-of a contract installs onto the same ProviderInterface and a Blueprint slot typed
-by it takes either. Cruxible classifies no input: a package's bucket vocabulary,
-classifier, fixtures and declared selectors (which the provider-runtime 0.2.x
-package format still carries) are read by Cruxible's own package reader as
-inert registration data. Their bytes are verified against their digests, and
-nothing parses a selector, matches a bucket, requires a fixture for a selector
-or runs the classifier; an occurrence admits every input that passes the
-interface's input contract. What
-a provider cannot serve, it refuses itself with a typed refusal. A different
-definition under the same interface id adds a contract registration alongside
-the old one. New registrations contain the contract alone; classifier and
-vocabulary data stays in package metadata. Cruxible
-owns the `web.fetch` contract (definitions v2 and v3, the one
-`cruxible-provider-web` 0.2.x ships): a package implementing either installs onto
-Cruxible's own registration of it, whatever the package itself ships, so every
-implementation binds the same ProviderInterface.
+and proposes the package's Provider build through ordinary acceptance. A
+package speaks provider runtime protocol 2.0: its `registration.json` (schema
+2) declares typed operations, each naming its input and output Contracts
+(`name@N`), its effect, the refusals it may return (each with a detail
+Contract) and the manifest entrypoint that serves it; one entrypoint may serve
+several operations. The install pins every Contract an operation names to the
+version accepted here, and refuses a Contract version that is not accepted, an
+operation declaring a refusal code the provider runtime reserves, and a
+schema-1 package (interfaces, bucket vocabularies, classifiers). Cruxible
+classifies no input: an occurrence admits every input that passes its
+operation's input Contract, and what a provider cannot serve, it refuses itself
+under a code its operation declares.
 The registration lands at once when the approval policy requires no approval;
 otherwise it stops at proposed (`awaiting_approval`) for the ordinary review and
 activation. It returns `ready`, `awaiting_approval`, or `blocked` (a landed

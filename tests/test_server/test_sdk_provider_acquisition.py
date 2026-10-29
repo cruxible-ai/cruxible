@@ -92,18 +92,13 @@ def web_provider(
     manifest = ProviderRuntimeManifest(
         provider_id="web-fetch-demo",
         distribution=ProviderDistributionRef(name="web-fetch-demo", version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
             ProviderImplementationManifest(
-                interface_id=operation.name,
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint="cruxible_provider_web.fetch:WebFetch",
                 backends=("local_env",),
-                declared_input_buckets=tuple(sorted(selectors.values())),
-                bucket_conformance={selector: name for name, selector in selectors.items()},
                 declared_endpoints=("https://fixture.invalid",),
                 deterministic=False,
-                side_effects=False,
             ),
         ),
     )

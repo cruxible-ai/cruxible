@@ -985,7 +985,7 @@ def _install_locked(
         ]
         for requirement in document.runtime_requirements:
             if (
-                requirement.interface_id != implementation.interface_id
+                requirement.entrypoint != implementation.entrypoint
                 or requirement.kind != "runtime_resource"
             ):
                 continue

@@ -371,9 +371,9 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
+    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_OPERATION
     from cruxible_core.governance.seed_artifacts.workspace_file import (
         WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-        WORKSPACE_FILE_INTERFACE_ID,
     )
     from tests.core_support._light_capture_support import record_contract as capture_contract
     from tests.test_procedures.test_procedure_source_runs import _source_request
@@ -420,7 +420,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         **{
             SOURCE_ALIAS: ProviderBinding(
                 provider=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-                interface=WORKSPACE_FILE_INTERFACE_ID,
+                interface=WORKSPACE_FILE_OPERATION,
             )
         }
     )

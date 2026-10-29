@@ -383,9 +383,7 @@ class ProcedureNodeRefusal(_StrictResultModel):
         if self.code == "budget_exhausted" and self.budget is None:
             raise ValueError("budget refusal requires typed budget detail")
         if self.code not in _AUTHORED_DETAIL_CODES and self.detail_code is not None:
-            raise ValueError(
-                "only a guard or operation refusal carries an authored detail code"
-            )
+            raise ValueError("only a guard or operation refusal carries an authored detail code")
         if self.code != "budget_exhausted" and self.budget is not None:
             raise ValueError("only a budget refusal carries typed budget detail")
         return self

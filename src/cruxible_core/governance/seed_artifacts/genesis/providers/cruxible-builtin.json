@@ -12,18 +12,16 @@
         "local_env"
       ],
       "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
-      "implementation_digest": "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c",
-      "interface_digest": "sha256:faa92552bd6032d3280753881ce991501013b2eaa2005e0f974820f01248d866",
-      "interface_id": "workspace.file",
+      "implementation_digest": "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994",
       "materialization_references": [
         {
           "environment_pin_key": "builtin",
           "kind": "local_env",
-          "materialization_digest": "sha256:c3b0a038d244f7ae27c8b8fa389c7950ebad9e25e5939a80011594a495cf7147",
+          "materialization_digest": "sha256:6abe553b21aa386d479efb1dc79f26f9097a99b74ab09f7c82dbabb164e68640",
           "tag": "playbill-provider-local-materialization-reference-v1"
         }
       ],
-      "tag": "playbill-provider-implementation-v1"
+      "tag": "cruxible-provider-implementation-v2"
     }
   ],
   "lifecycle": {
@@ -84,9 +82,9 @@
       "version": "1"
     },
     "local_env": {
-      "lock_sha256": "sha256:1f37cd30a5ea30e3895135de4d900affd7ac200c5845a95724c8e5b150632168",
+      "lock_sha256": "sha256:947c40b7cb6597b13a4def134d8ec2085d88b34cb5585a81a7d680ef259c60de",
       "materialization_digests": {
-        "builtin": "sha256:c3b0a038d244f7ae27c8b8fa389c7950ebad9e25e5939a80011594a495cf7147"
+        "builtin": "sha256:6abe553b21aa386d479efb1dc79f26f9097a99b74ab09f7c82dbabb164e68640"
       }
     },
     "manifest": {
@@ -100,41 +98,19 @@
           "backends": [
             "local_env"
           ],
-          "bucket_conformance": {
-            "content_kind=binary;byte_size=medium": "workspace-file-binary-medium",
-            "content_kind=binary;byte_size=small": "workspace-file-binary-small",
-            "content_kind=binary;byte_size=tiny": "workspace-file-binary-tiny",
-            "content_kind=text;byte_size=medium": "workspace-file-text-medium",
-            "content_kind=text;byte_size=small": "workspace-file-text-small",
-            "content_kind=text;byte_size=tiny": "workspace-file-text-tiny"
-          },
-          "capture_contract_families": [
-            "workspace.file.capture.v1"
-          ],
           "declared_endpoints": [],
-          "declared_input_buckets": [
-            "content_kind=binary;byte_size=medium",
-            "content_kind=binary;byte_size=small",
-            "content_kind=binary;byte_size=tiny",
-            "content_kind=text;byte_size=medium",
-            "content_kind=text;byte_size=small",
-            "content_kind=text;byte_size=tiny"
-          ],
           "deterministic": true,
           "entrypoint": "cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
-          "interface_digest": "sha256:faa92552bd6032d3280753881ce991501013b2eaa2005e0f974820f01248d866",
-          "interface_id": "workspace.file",
-          "requires_extras": [],
-          "side_effects": false
+          "requires_extras": []
         }
       ],
       "provider_id": "cruxible-builtin",
-      "schema_version": 1,
+      "schema_version": 2,
       "supported_protocol_majors": [
-        1
+        2
       ]
     },
-    "manifest_digest": "sha256:928823ae61a982b2853efc5f6d8498d455e3e16f5635c10d78fc6a9fdc37aeb7",
+    "manifest_digest": "sha256:e244e53d928ba0f8c51e4699b4b0e8d0a2594df353a4b02812c2ab76e5db7a74",
     "provider_id": "cruxible-builtin",
     "schema_version": 2,
     "status": "accepted"

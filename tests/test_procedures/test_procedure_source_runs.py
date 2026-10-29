@@ -84,13 +84,15 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.repairs import HandEditRepair
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
+from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_OPERATION,
+    WorkspaceFileSourceRequestV2,
+)
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-    WORKSPACE_FILE_INTERFACE_ID,
 )
 from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayloadV9
 from cruxible_core.providers.provider_local_runtime import (
@@ -642,7 +644,7 @@ def _served_line(
         bindings={
             "read": LineBinding(
                 build=binding_pin(provider.identity, provider_digest(provider).tagged),
-                operation=WORKSPACE_FILE_INTERFACE_ID,
+                operation=WORKSPACE_FILE_OPERATION,
             )
         },
         acquisition={SOURCE_ALIAS: policy},

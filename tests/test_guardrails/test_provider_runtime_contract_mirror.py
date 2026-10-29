@@ -12,8 +12,21 @@ from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.provider_operations import (
     OPERATION_SIGNATURE_DOMAIN,
+    OperationRefusal,
     OperationSignature,
+    ProviderOperation,
     operation_signature_digest,
+)
+from cruxible_client.contracts.providers import (
+    PROVIDER_IMPLEMENTATION_DOMAIN,
+    ProviderImplementationManifest,
+    ProviderRuntimeManifest,
+    provider_implementation_digest,
+)
+from cruxible_client.contracts.shapes import ContractRef
+from cruxible_core.providers.package_metadata import (
+    PackageRegistrationDescriptor,
+    PackageRuntimeRequirement,
 )
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_REFUSAL_CODE_RE,
@@ -45,6 +58,15 @@ PROVIDER_RUNTIME_CONTRACT_FIXTURE_DIGEST = (
 )
 
 _MODEL_MAP: dict[str, type[BaseModel]] = {
+    # The package-side declarations, which core reads through its own models.
+    "ContractRef": ContractRef,
+    "ImplementationManifest": ProviderImplementationManifest,
+    "OperationRefusal": OperationRefusal,
+    "PackageRegistration": PackageRegistrationDescriptor,
+    "ProviderManifest": ProviderRuntimeManifest,
+    "ProviderOperation": ProviderOperation,
+    "RuntimeRequirement": PackageRuntimeRequirement,
+    # The wire.
     "Budgets": ProviderRuntimeBudgets,
     "ProtocolVersion": ProviderRuntimeProtocolVersion,
     "ProviderErrorPayload": ProviderRuntimeProviderErrorPayload,
@@ -55,22 +77,6 @@ _MODEL_MAP: dict[str, type[BaseModel]] = {
     "SecretRef": ProviderRuntimeSecretRef,
     "Trace": ProviderRuntimeTrace,
 }
-
-
-#: The package-side declaration schemas core reads through its own models
-#: (``contracts/providers.py``, ``contracts/provider_operations.py``,
-#: ``providers/package_metadata.py``), not wire mirrors of the runtime's.
-_PACKAGE_SIDE_SCHEMAS = frozenset(
-    {
-        "ContractRef",
-        "ImplementationManifest",
-        "OperationRefusal",
-        "PackageRegistration",
-        "ProviderManifest",
-        "ProviderOperation",
-        "RuntimeRequirement",
-    }
-)
 
 
 def _fixture() -> dict[str, Any]:
@@ -115,6 +121,17 @@ def test_provider_runtime_fixture_is_the_atomic_pinned_catalog() -> None:
     assert fixture["operation_refusal_code_pattern"] == PROVIDER_REFUSAL_CODE_RE.pattern
 
 
+def test_implementation_digests_reproduce_the_runtime_goldens() -> None:
+    fixture = _fixture()
+    assert fixture["domains"]["implementation"] == PROVIDER_IMPLEMENTATION_DOMAIN
+    for name, case in fixture["implementation_cases"].items():
+        assert set(case) == {"entrypoint", "distribution_sha256"}
+        assert (
+            provider_implementation_digest(**case)
+            == fixture["digest_goldens"]["implementation"][name]
+        )
+
+
 def test_operation_signature_digests_reproduce_the_runtime_goldens() -> None:
     fixture = _fixture()
     assert fixture["domains"]["operation_signature"] == OPERATION_SIGNATURE_DOMAIN
@@ -141,9 +158,7 @@ def test_provider_runtime_schemas_match_the_pinned_provider_models() -> None:
         actual[provider_name] = _normalize_schema(schema, root=schema, names=names)
     expected = {}
     for name, schema in fixture["schemas"].items():
-        if name in _MODEL_MAP:
-            expected[name] = _normalize_schema(schema, root=schema, names={})
-    assert set(fixture["schemas"]) - set(_MODEL_MAP) == _PACKAGE_SIDE_SCHEMAS
+        expected[name] = _normalize_schema(schema, root=schema, names={})
     assert actual == expected
 
 

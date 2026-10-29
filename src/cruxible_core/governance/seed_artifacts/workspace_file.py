@@ -8,19 +8,17 @@ in-process adapter (``cruxible_core.providers.builtin_workspace_file``). Core
 recognizes the operation by its exact signature, never by name.
 
 Identity. The implementation digest is the ordinary
-``provider_implementation_digest(interface_id, interface_digest, entrypoint,
-distribution_sha256)`` over the runtime manifest's implementation row. A
-built-in has no wheel, so ``distribution_sha256`` is
+``provider_implementation_digest(entrypoint, distribution_sha256)``
+(``cruxible.provider.implementation.v2``) over the runtime manifest's one
+entrypoint row. A built-in has no wheel, so ``distribution_sha256`` is
 ``WORKSPACE_FILE_BUILTIN_REVISION``: a compiler-owned constant that names the
 adapter's behaviour. It is not the core version and not the module's source
 bytes; it changes only when the adapter's output for some input changes, and the
 behaviour golden in ``tests/test_providers/test_builtin_workspace_file.py``
-fails until it does. The manifest row's ``interface_id`` and
-``interface_digest`` are runtime-manifest fields (the provider-runtime 0.2.x
-wire); the built-in keeps the values the package format gave it so its
-implementation digest stays the same constant. The materialization, deployment,
-environment-manifest and lock digests are typed constants derived from the
-implementation digest, so a binding to the built-in is the same in every daemon.
+fails until it does. The materialization, deployment, environment-manifest and
+lock digests are typed constants derived from the implementation digest, so a
+binding to the built-in is the same in every daemon. The built-in speaks
+provider runtime protocol 2.0, like any provider.
 """
 
 from __future__ import annotations
@@ -49,13 +47,6 @@ from cruxible_client.contracts.workspace_file import (
     workspace_file_refusal_contracts,
 )
 
-#: The runtime-manifest implementation row's interface id and digest: the
-#: provider-runtime 0.2.x package fields the built-in's implementation digest
-#: has always covered (the package's v2 definition digest). Opaque to core.
-WORKSPACE_FILE_INTERFACE_ID = WORKSPACE_FILE_OPERATION
-WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST = (
-    "sha256:faa92552bd6032d3280753881ce991501013b2eaa2005e0f974820f01248d866"
-)
 WORKSPACE_FILE_BUILTIN_PROVIDER_ID = "cruxible-builtin"
 WORKSPACE_FILE_BUILTIN_ENTRYPOINT = "cruxible_core.providers.builtin_workspace_file:WorkspaceFile"
 #: The built-in adapter's current behaviour revision. Bump only on a semantic
@@ -73,7 +64,6 @@ WORKSPACE_FILE_BUILTIN_REVISION = (
 )
 #: The one local-environment pin key the built-in Provider advertises.
 WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY = "builtin"
-WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY = "workspace.file.capture.v1"
 
 
 @dataclass(frozen=True)
@@ -98,10 +88,7 @@ def workspace_file_builtin_identity(
     revision: str, *, entrypoint: str = WORKSPACE_FILE_BUILTIN_ENTRYPOINT
 ) -> BuiltinProviderIdentity:
     implementation_digest = provider_implementation_digest(
-        interface_id=WORKSPACE_FILE_INTERFACE_ID,
-        interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
-        entrypoint=entrypoint,
-        distribution_sha256=revision,
+        entrypoint=entrypoint, distribution_sha256=revision
     )
 
     def derived(role: str) -> str:
@@ -132,18 +119,6 @@ WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = (
     WORKSPACE_FILE_BUILTIN_IDENTITY.environment_manifest_digest
 )
 WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.lock_digest
-
-
-#: The seeded built-in's input bucket claims: inert manifest data, kept
-#: byte-for-byte so the manifest (and its digest) never changes.
-_INERT_BUCKETS: tuple[tuple[str, str], ...] = (
-    ("content_kind=binary;byte_size=medium", "workspace-file-binary-medium"),
-    ("content_kind=binary;byte_size=small", "workspace-file-binary-small"),
-    ("content_kind=binary;byte_size=tiny", "workspace-file-binary-tiny"),
-    ("content_kind=text;byte_size=medium", "workspace-file-text-medium"),
-    ("content_kind=text;byte_size=small", "workspace-file-text-small"),
-    ("content_kind=text;byte_size=tiny", "workspace-file-text-tiny"),
-)
 
 
 def workspace_file_operation() -> ProviderOperation:
@@ -215,21 +190,15 @@ def workspace_file_builtin_provider(
     """The ``cruxible-builtin`` Provider serving ``workspace.file`` in-process."""
 
     implementation = ProviderImplementationManifest(
-        interface_id=WORKSPACE_FILE_INTERFACE_ID,
-        interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
         entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
         backends=("local_env",),
-        declared_input_buckets=tuple(selector for selector, _fixture in _INERT_BUCKETS),
-        bucket_conformance=dict(_INERT_BUCKETS),
         declared_endpoints=(),
-        capture_contract_families=(WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY,),
         deterministic=True,
-        side_effects=False,
     )
     manifest = ProviderRuntimeManifest(
         provider_id=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
         distribution=ProviderDistributionRef(name=WORKSPACE_FILE_BUILTIN_PROVIDER_ID, version="1"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(implementation,),
     )
     runtime_artifact = ProviderRuntimeArtifactPayload(
@@ -280,8 +249,6 @@ __all__ = [
     "WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST",
     "WORKSPACE_FILE_BUILTIN_PROVIDER_ID",
     "WORKSPACE_FILE_BUILTIN_REVISION",
-    "WORKSPACE_FILE_INTERFACE_ID",
-    "WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST",
     "workspace_file_builtin_identity",
     "workspace_file_builtin_provider",
     "workspace_file_operation",

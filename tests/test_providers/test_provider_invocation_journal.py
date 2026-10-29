@@ -164,7 +164,6 @@ def _provider_for(*, effect: str = "pure") -> AcceptedProvider:
         return accepted_provider()
     build = operation_build(
         operations=(operation(effect=effect),),  # type: ignore[arg-type]
-        side_effects=effect == "external_mutation",
     )
     return AcceptedProvider(
         path=provider_path(build.identity.name),

@@ -705,8 +705,6 @@ class LocalProviderExecutionDriver:
                 item
                 for item in provider.runtime_artifact.manifest.implementations
                 if item.entrypoint == implementation_record.entrypoint
-                and item.interface_id == implementation_record.interface_id
-                and item.interface_digest == implementation_record.interface_digest
             ),
             None,
         )

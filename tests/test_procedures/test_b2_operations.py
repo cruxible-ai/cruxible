@@ -1042,16 +1042,12 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
     manifest = ProviderRuntimeManifest(
         provider_id="demo-provider",
         distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
             ProviderImplementationManifest(
-                interface_id="compute",
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint="demo.runtime:Provider",
                 backends=("local_env",),
-                declared_input_buckets=(),
                 deterministic=True,
-                side_effects=False,
             ),
         ),
     )
@@ -1246,16 +1242,12 @@ def _fetch_world(
     manifest = ProviderRuntimeManifest(
         provider_id="fetcher",
         distribution=ProviderDistributionRef(name="fetcher", version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
             ProviderImplementationManifest(
-                interface_id="fetch",
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint="demo.runtime:Provider",
                 backends=("local_env",),
-                declared_input_buckets=(),
                 deterministic=True,
-                side_effects=False,
             ),
         ),
     )

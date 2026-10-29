@@ -48,7 +48,12 @@ PROVIDER_BUILD_FORMAT = "cruxible-provider-v4"
 _KEY_ID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 _PUBLIC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-_DYNAMIC_ENDPOINT_FORMS = frozenset({"dynamic:target-from-run-input"})
+_DYNAMIC_ENDPOINT_FORMS = frozenset(
+    {"dynamic:target-from-configuration", "dynamic:target-from-run-input"}
+)
+#: The provider runtime's implementation identity: ``sha256(domain || NUL ||
+#: canonical JSON)`` over exactly ``{entrypoint, distribution_sha256}``.
+PROVIDER_IMPLEMENTATION_DOMAIN = "cruxible.provider.implementation.v2"
 
 
 class ProviderFormatError(FormatError):
@@ -222,22 +227,19 @@ class ProviderDistributionRef(_StrictProviderModel):
     version: str
 
 
-class ProviderImplementationManifestV1(_StrictProviderModel):
-    interface_id: str
-    interface_digest: str
+class ProviderImplementationManifest(_StrictProviderModel):
+    """One entrypoint of a provider package's manifest (schema 2): how and where it runs.
+
+    What it serves is the package's operations' business (each names its
+    entrypoint; one entrypoint may serve several); whether it mutates the world
+    is each operation's ``effect``.
+    """
+
     entrypoint: str
     backends: tuple[Literal["local_env", "container"], ...]
-    # The provider-runtime 0.2.x manifest's bucket claims: inert. Core admits
-    # every input the interface's contract admits and reads none of these.
-    declared_input_buckets: tuple[str, ...]
-    bucket_conformance: dict[str, str] = Field(default_factory=dict)
     declared_endpoints: tuple[str, ...] = ()
-    capture_contract_families: tuple[str, ...] = ()
     requires_extras: tuple[str, ...] = ()
     deterministic: bool
-    side_effects: bool
-
-    _interface_digest = field_validator("interface_digest")(_sha256)
 
     @field_validator("entrypoint")
     @classmethod
@@ -284,13 +286,15 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
         return value
 
 
-class ProviderRuntimeManifestV1(_StrictProviderModel):
-    schema_version: Literal[1] = 1
+class ProviderRuntimeManifest(_StrictProviderModel):
+    """A provider package's ``manifest.yaml``, schema 2: one row per entrypoint."""
+
+    schema_version: Literal[2] = 2
     provider_id: str
     distribution: ProviderDistributionRef
     entrypoint_group: Literal["cruxible.providers"] = "cruxible.providers"
     supported_protocol_majors: tuple[int, ...]
-    implementations: tuple[ProviderImplementationManifestV1, ...]
+    implementations: tuple[ProviderImplementationManifest, ...]
 
     @field_validator("supported_protocol_majors")
     @classmethod
@@ -303,31 +307,17 @@ class ProviderRuntimeManifestV1(_StrictProviderModel):
     @classmethod
     def _implementations(
         cls,
-        value: tuple[ProviderImplementationManifestV1, ...],
-    ) -> tuple[ProviderImplementationManifestV1, ...]:
-        keys = tuple((item.interface_id, item.entrypoint) for item in value)
-        if not value or len(keys) != len(set(keys)):
-            raise ValueError("Provider manifest implementations must be nonempty and unique")
+        value: tuple[ProviderImplementationManifest, ...],
+    ) -> tuple[ProviderImplementationManifest, ...]:
+        entrypoints = tuple(item.entrypoint for item in value)
+        if not value or len(entrypoints) != len(set(entrypoints)):
+            raise ValueError(
+                "Provider manifest implementations must be nonempty, one per entrypoint"
+            )
         return value
 
 
-class ProviderImplementationManifest(ProviderImplementationManifestV1):
-    """Current endpoint vocabulary; the V1 reader remains frozen."""
-
-    @field_validator("declared_endpoints")
-    @classmethod
-    def _endpoints(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        ProviderImplementationManifestV1._endpoints(
-            tuple(item for item in value if item != "dynamic:target-from-configuration")
-        )
-        return value
-
-
-class ProviderRuntimeManifest(ProviderRuntimeManifestV1):
-    implementations: tuple[ProviderImplementationManifest, ...]
-
-
-def provider_manifest_digest(manifest: ProviderRuntimeManifestV1) -> str:
+def provider_manifest_digest(manifest: ProviderRuntimeManifest) -> str:
     return _external_domain_digest(
         "cruxible.provider.manifest.v1",
         manifest.model_dump(mode="json"),
@@ -425,7 +415,7 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
     schema_version: Literal[1] = 1
     provider_id: str
     status: Literal["proposed", "accepted"] = "proposed"
-    manifest: ProviderRuntimeManifestV1
+    manifest: ProviderRuntimeManifest
     manifest_digest: str
     distribution: ProviderDistributionPin | ProviderLocalDistributionPin
     local_env: ProviderLocalEnvBackendPin | None = None
@@ -447,7 +437,6 @@ class ProviderRuntimeArtifactPayload(ProviderRuntimeArtifactPayloadV1):
     """Advertised manifest with pins only for prepared execution backends."""
 
     schema_version: Literal[2] = 2  # type: ignore[assignment]
-    manifest: ProviderRuntimeManifest
 
 
 def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) -> str:
@@ -466,23 +455,16 @@ def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) 
     )
 
 
-def provider_implementation_digest(
-    *,
-    interface_id: str,
-    interface_digest: str,
-    entrypoint: str,
-    distribution_sha256: str,
-) -> str:
-    _sha256(interface_digest, label="interface digest")
+def provider_implementation_digest(*, entrypoint: str, distribution_sha256: str) -> str:
+    """One entrypoint of one exact distribution: the runtime's implementation identity.
+
+    One entrypoint may serve several operations; they share this identity.
+    """
+
     _sha256(distribution_sha256, label="distribution digest")
     return _external_domain_digest(
-        "cruxible.provider.implementation.v1",
-        {
-            "interface_id": interface_id,
-            "interface_digest": interface_digest,
-            "entrypoint": entrypoint,
-            "distribution_sha256": distribution_sha256,
-        },
+        PROVIDER_IMPLEMENTATION_DOMAIN,
+        {"entrypoint": entrypoint, "distribution_sha256": distribution_sha256},
     )
 
 
@@ -541,15 +523,15 @@ def _materialization_key(
 
 
 class ProviderImplementationRecord(_StrictProviderModel):
-    tag: Literal["playbill-provider-implementation-v1"] = "playbill-provider-implementation-v1"
-    interface_id: str
-    interface_digest: str
+    """One accepted entrypoint: its implementation identity and prepared materializations."""
+
+    tag: Literal["cruxible-provider-implementation-v2"] = "cruxible-provider-implementation-v2"
     entrypoint: str
     implementation_digest: str
     backend_kinds: tuple[Literal["local_env", "container"], ...]
     materialization_references: tuple[ProviderMaterializationReference, ...]
 
-    _digests = field_validator("interface_digest", "implementation_digest")(_sha256)
+    _digests = field_validator("implementation_digest")(_sha256)
 
     @field_validator("backend_kinds")
     @classmethod
@@ -607,8 +589,6 @@ def provider_expected_implementation_records(
     records: list[ProviderImplementationRecord] = []
     for manifest in payload.manifest.implementations:
         implementation_digest = provider_implementation_digest(
-            interface_id=manifest.interface_id,
-            interface_digest=manifest.interface_digest,
             entrypoint=manifest.entrypoint,
             distribution_sha256=payload.distribution.sha256,
         )
@@ -647,8 +627,6 @@ def provider_expected_implementation_records(
             continue
         records.append(
             ProviderImplementationRecord(
-                interface_id=manifest.interface_id,
-                interface_digest=manifest.interface_digest,
                 entrypoint=manifest.entrypoint,
                 implementation_digest=implementation_digest,
                 backend_kinds=tuple(
@@ -664,7 +642,7 @@ def provider_expected_implementation_records(
         sorted(
             records,
             key=lambda item: (
-                item.interface_id.encode("utf-8"),
+                item.entrypoint.encode("utf-8"),
                 item.implementation_digest.encode("ascii"),
             ),
         )
@@ -695,7 +673,7 @@ class ProviderV2(ProviderV1):
             sorted(
                 value,
                 key=lambda item: (
-                    item.interface_id.encode("utf-8"),
+                    item.entrypoint.encode("utf-8"),
                     item.implementation_digest.encode("ascii"),
                 ),
             )
@@ -1149,15 +1127,13 @@ def operation_law_problem(
     """The install law for one build's operations: ``(code, message)`` or ``None``.
 
     Every pin resolves to the exact accepted Contract; names are unique (the
-    model enforces it); every refusal code has a Contract and is a code the
-    provider runtime can return; every entrypoint is one the manifest exports
-    (the model enforces it); and an operation's effect agrees with the side
-    effects its manifest implementation declares.
+    model enforces it); every refusal code has a Contract and none is one the
+    provider runtime reserves; and every entrypoint is one the manifest exports.
+    An operation's ``effect`` is the one declaration of whether it mutates the
+    world.
     """
 
-    by_entrypoint = {
-        item.entrypoint: item for item in provider.runtime_artifact.manifest.implementations
-    }
+    entrypoints = {item.entrypoint for item in provider.runtime_artifact.manifest.implementations}
     for operation in provider.operations:
         for ref in operation.contract_refs():
             accepted = contracts.get((ref.name, ref.version))
@@ -1179,17 +1155,10 @@ def operation_law_problem(
                 f"runtime reserves for its own machinery: {reserved}. An operation "
                 "declares its own refusal codes.",
             )
-        implementation = by_entrypoint.get(operation.entrypoint)
-        if implementation is None:
+        if operation.entrypoint not in entrypoints:
             return (
                 "cruxible.provider.operation_entrypoint_unknown",
                 f"Operation {operation.name!r} names an entrypoint the manifest lacks.",
-            )
-        if implementation.side_effects != (operation.effect == "external_mutation"):
-            return (
-                "cruxible.provider.effect_declaration_mismatch",
-                f"Operation {operation.name!r} is {operation.effect}, but its entrypoint "
-                f"declares side_effects={implementation.side_effects}.",
             )
     return None
 
@@ -1197,6 +1166,7 @@ def operation_law_problem(
 __all__ = [
     "AcceptedProvider",
     "PROVIDER_BUILD_FORMAT",
+    "PROVIDER_IMPLEMENTATION_DOMAIN",
     "ProviderAny",
     "ProviderBuild",
     "ProviderBuildName",
@@ -1206,14 +1176,12 @@ __all__ = [
     "ProviderDistributionRef",
     "ProviderFormatError",
     "ProviderImageProvenance",
-    "ProviderImplementationManifestV1",
     "ProviderImplementationRecord",
     "ProviderLocalDistributionPin",
     "ProviderLocalEnvBackendPin",
     "ProviderLocalMaterializationReference",
     "ProviderMaterializationReference",
     "ProviderRuntimeArtifactPayloadV1",
-    "ProviderRuntimeManifestV1",
     "ProviderSigningKey",
     "ProviderV1",
     "ProviderV2",

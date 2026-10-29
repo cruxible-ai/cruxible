@@ -79,8 +79,8 @@ def _pseudo_random(length: int, *, seed: str) -> bytes:
     return bytes(output[:length])
 
 
-#: The package's six registration fixtures (byte-equal to its own), whose
-#: digests the seeded registration's (inert) conformance proofs still name.
+#: The package's six registration fixtures (byte-equal to the 0.2.x package's):
+#: the parity golden's registration-fixture inputs.
 _FIXTURE_BYTES: dict[str, bytes] = {
     "workspace-file-binary-medium": _pseudo_random(70_000, seed="workspace-file-binary-medium"),
     "workspace-file-binary-small": _pseudo_random(5_000, seed="workspace-file-binary-small"),
@@ -97,13 +97,7 @@ _FIXTURE_BYTES: dict[str, bytes] = {
 
 @dataclass(frozen=True)
 class _ConformanceFixture:
-    """Local stand-in for the removed ``ProviderBucketConformanceFixture``.
-
-    Bucket conformance is now just an inert ``{selector: fixture_id}`` string
-    mapping on the manifest (no embedded fixture bytes/digest object survives
-    in the current model); this file keeps the shape only to drive the parity
-    golden below, which exercises the adapter directly.
-    """
+    """One parity-golden input: its id, its run input and its bytes' bucket label."""
 
     fixture_id: str
     canonical_input: dict[str, object]
@@ -228,7 +222,7 @@ def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
         "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
     )
     assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST == (
-        "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c"
+        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994"
     )
     assert (
         len(
@@ -243,22 +237,23 @@ def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
     )
 
 
-def test_the_seeded_provider_declares_exactly_the_fixtures_bucket_conformance_names() -> None:
-    """The seeded provider's inert bucket claims still name exactly these fixtures.
-
-    ProviderInterfaceRegistration (with its own standalone definition file and
-    conformance-proof digests) is removed (B2 C12); bucket conformance is now
-    just an inert ``{selector: fixture_id}`` string mapping straight on the
-    manifest (``_INERT_BUCKETS`` in seed_artifacts/workspace_file.py), so
-    there is no surviving fixture-byte-digest proof to check -- only that the
-    claimed fixture ids are exactly these fixtures (the parity golden above
-    runs over the same fixture inputs).
-    """
+def test_the_seeded_provider_speaks_protocol_2_from_one_entrypoint() -> None:
+    """The built-in's manifest is schema 2: one entrypoint row, no interface or buckets."""
 
     provider = workspace_file_builtin_provider()
-    (manifest_implementation,) = provider.runtime_artifact.manifest.implementations
-    fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
-    assert set(manifest_implementation.bucket_conformance.values()) == set(fixtures)
+    manifest = provider.runtime_artifact.manifest
+    assert manifest.schema_version == 2
+    assert manifest.supported_protocol_majors == (2,)
+    (row,) = manifest.implementations
+    assert set(row.model_dump()) == {
+        "entrypoint",
+        "backends",
+        "declared_endpoints",
+        "requires_extras",
+        "deterministic",
+    }
+    assert WorkspaceFile.operations == ("workspace.file",)
+    assert [item.entrypoint for item in provider.operations] == [row.entrypoint]
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
@@ -311,12 +306,13 @@ def test_the_adapter_module_is_pure() -> None:
     assert imported == _ALLOWED_IMPORTS, imported ^ _ALLOWED_IMPORTS
 
 
-#: The frozen prefix of BUILTIN_IMPLEMENTATIONS: implementation digest and the
-#: revision it was derived from. A revision bump appends a line; an old line
-#: must never change or disappear, because seeded instances pin it forever.
+#: The frozen prefix of BUILTIN_IMPLEMENTATIONS: implementation digest (the
+#: ``cruxible.provider.implementation.v2`` identity) and the revision it was
+#: derived from. A revision bump appends a line; an old line must never change
+#: or disappear, because seeded instances pin it forever.
 FROZEN_BUILTIN_IMPLEMENTATIONS = (
     (
-        "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c",
+        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994",
         "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d",
     ),
 )

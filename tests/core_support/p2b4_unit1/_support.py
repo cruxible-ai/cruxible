@@ -174,7 +174,6 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         operation=local.operation,
         operation_signature_digest=local.operation_signature_digest,
         protocol_version="2.0",
-        input_bucket="kind=orders",
         capture_contract_digest=capture_contract_digest(contract).tagged,
         input_digest=digest("input", "source"),
         outcome=ProviderInvocationOutcome(

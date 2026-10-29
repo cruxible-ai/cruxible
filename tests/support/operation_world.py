@@ -120,7 +120,6 @@ def operation_build(
     provider_id: str = "demo-provider",
     build: str = "a",
     operations: tuple[ProviderOperation, ...] | None = None,
-    side_effects: bool = False,
 ) -> NamedProviderBuild:
     """One provider build declaring ``operations`` (pinned), as an install lowers it.
 
@@ -133,17 +132,12 @@ def operation_build(
     manifest = ProviderRuntimeManifest(
         provider_id=provider_id,
         distribution=ProviderDistributionRef(name=provider_id, version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=tuple(
             ProviderImplementationManifest(
-                # Protocol 1.0 names the operation in its interface fields.
-                interface_id=next(item.name for item in served if item.entrypoint == entry),
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint=entry,
                 backends=("local_env",),
-                declared_input_buckets=(),
                 deterministic=True,
-                side_effects=side_effects,
             )
             for entry in entrypoints
         ),

@@ -4919,7 +4919,6 @@ def service_recover_provider_invocations(
                         occurrence.local_execution.operation_signature_digest
                     ),
                     protocol_version=occurrence.local_execution.protocol_version,
-                    input_bucket=started.input_bucket,
                     capture_contract_digest=occurrence.capture_contract_digest,
                     input_digest=started.input_digest,
                     outcome=outcome,
