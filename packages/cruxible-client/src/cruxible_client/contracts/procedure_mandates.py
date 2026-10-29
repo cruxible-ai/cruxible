@@ -1,4 +1,11 @@
-"""Governed, exact-Procedure authority grants for effectful terminals."""
+"""Governed authority grants for effectful terminals, each pinned to one exact Line.
+
+A Mandate pins the exact Line it grants authority to; the Line pins its exact
+Procedure version, parameters and every slot's build and operation. Changing
+any of them is a new Line digest, so the grant does not follow: the Line's
+successor carries its Mandates as propose-only successors, and settle needs a
+renewed grant (ruling C3).
+"""
 
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -79,78 +87,17 @@ occurrence, by claiming a time rather than by waiting for one.
 """
 
 
-class ProcedureMandateV1(_StrictProcedureMandateModel):
-    """One finite grant pinned to one exact accepted Procedure artifact."""
-
-    artifact_format: Literal["playbill-procedure-mandate-v1"] = "playbill-procedure-mandate-v1"
-    identity: ArtifactIdentity
-    procedure: ArtifactPin
-    rung: Literal[2, 3]
-    authority_ceiling: ProcedureHardCaps
-    namespace: tuple[str, ...]
-    valid_from: datetime
-    expires_at: datetime
-    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-
-    @field_validator("namespace")
-    @classmethod
-    def _namespace(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _validate_namespace(value)
-
-    @field_validator("valid_from", "expires_at")
-    @classmethod
-    def _time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_serializer("valid_from", "expires_at", when_used="json")
-    def _serialize_time(self, value: datetime) -> str | None:
-        return format_datetime(value)
-
-    @model_validator(mode="after")
-    def _shape(self) -> "ProcedureMandateV1":
-        if self.identity.kind != "ProcedureMandate" or not _MANDATE_NAME_RE.fullmatch(
-            self.identity.name
-        ):
-            raise ValueError("ProcedureMandate identity is not path-addressable")
-        if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
-            raise ValueError("ProcedureMandate must pin one exact Procedure")
-        if self.expires_at <= self.valid_from:
-            raise ValueError("ProcedureMandate requires a finite increasing interval")
-        return self
-
-    @property
-    def pins(self) -> tuple[ArtifactPin, ...]:
-        return (self.procedure,)
-
-
 def procedure_mandate_path(name: str) -> str:
     if not _MANDATE_NAME_RE.fullmatch(name):
         raise ProcedureMandateError("ProcedureMandate identity is not path-addressable")
     return f"procedure-mandates/{name}.json"
 
 
-def render_procedure_mandate(mandate: "ProcedureMandateV1 | ProcedureMandate") -> bytes:
+def render_procedure_mandate(mandate: "ProcedureMandate") -> bytes:
     return pretty_canonical_bytes(mandate.model_dump(mode="json"))
 
 
-def parse_procedure_mandate(
-    content: bytes,
-    *,
-    path: str,
-    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ProcedureMandateV1:
-    try:
-        mandate = ProcedureMandateV1.model_validate(json.loads(content))
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ProcedureMandateError("ProcedureMandate failed strict v1 validation") from exc
-    if not artifact_path_matches(procedure_mandate_path(mandate.identity.name), path, codec=codec):
-        raise ProcedureMandateError("ProcedureMandate identity/path disagreement")
-    if artifact_bytes_for_path(render_procedure_mandate(mandate), path, codec=codec) != content:
-        raise ProcedureMandateError("ProcedureMandate is not in canonical wire form")
-    return mandate
-
-
-def procedure_mandate_digest(mandate: "ProcedureMandateV1 | ProcedureMandate") -> ArtifactDigest:
+def procedure_mandate_digest(mandate: "ProcedureMandate") -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -160,7 +107,7 @@ def procedure_mandate_digest(mandate: "ProcedureMandateV1 | ProcedureMandate") -
 
 class AcceptedProcedureMandate(_StrictProcedureMandateModel):
     path: str
-    mandate: "ProcedureMandateV1 | ProcedureMandate"
+    mandate: "ProcedureMandate"
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -240,59 +187,6 @@ def _widen_message(field: str, widenings: tuple[str, ...]) -> str:
     )
 
 
-def evaluate_procedure_mandate_law(
-    mandate: ProcedureMandateV1,
-    *,
-    path: str,
-    predecessor: AcceptedProcedureMandate | None,
-    procedure: AcceptedProcedure,
-) -> ProcedureMandateLawResult:
-    if path != procedure_mandate_path(mandate.identity.name):
-        return _law_refusal(
-            "cruxible.procedure_mandate.path_mismatch",
-            "ProcedureMandate identity/path disagreement.",
-            path=path,
-        )
-    if mandate.procedure.target != procedure.procedure.identity or (
-        mandate.procedure.artifact_digest != procedure.artifact_digest
-    ):
-        return _law_refusal(
-            "cruxible.procedure_mandate.procedure_mismatch",
-            "ProcedureMandate must pin the exact candidate Procedure artifact.",
-            path=path,
-        )
-    widenings = _ceiling_widenings(
-        mandate.authority_ceiling, procedure.procedure.definition.hard_caps
-    )
-    if widenings:
-        return _law_refusal(
-            "cruxible.procedure_mandate.authority_ceiling_widens_procedure",
-            _widen_message("authority_ceiling", widenings),
-            path=path,
-        )
-    if predecessor is None and mandate.lifecycle.predecessor_digest is not None:
-        return _law_refusal(
-            "cruxible.procedure_mandate.predecessor_missing",
-            "A new ProcedureMandate cannot name a predecessor.",
-            path=path,
-        )
-    if predecessor is not None and (
-        mandate.identity != predecessor.mandate.identity
-        or mandate.lifecycle.predecessor_digest != predecessor.artifact_digest
-    ):
-        return _law_refusal(
-            "cruxible.procedure_mandate.predecessor_mismatch",
-            "ProcedureMandate successor identity or predecessor differs.",
-            path=path,
-        )
-    return ProcedureMandateLawResult(
-        verdict="accepted",
-        artifact_digest=procedure_mandate_digest(mandate).tagged,
-        required_tier="governed_write",
-        approval_scope=(),
-    )
-
-
 class ScopedClaimType(_StrictProcedureMandateModel):
     """What the v2 law needs to know about one accepted ClaimType a scope pins."""
 
@@ -308,11 +202,16 @@ def evaluate_procedure_mandate_v2_law(
     *,
     path: str,
     predecessor: AcceptedProcedureMandate | None,
+    line: AcceptedLineSpec,
     procedure: AcceptedProcedure,
     claim_types: Mapping[ArtifactIdentity, ScopedClaimType],
     condition_query: "AcceptedQueryDefinition | None",
 ) -> ProcedureMandateLawResult:
-    """Accept a v2 grant only when every pin is exact and its predicate fails closed."""
+    """Accept a grant only when every pin is exact and its predicate fails closed.
+
+    ``line`` is the exact accepted Line the Mandate pins, and ``procedure`` the
+    exact Procedure version that Line pins.
+    """
 
     if path != procedure_mandate_path(mandate.identity.name):
         return _law_refusal(
@@ -320,12 +219,21 @@ def evaluate_procedure_mandate_v2_law(
             "ProcedureMandate identity/path disagreement.",
             path=path,
         )
-    if mandate.procedure.target != procedure.procedure.identity or (
-        mandate.procedure.artifact_digest != procedure.artifact_digest
+    if mandate.line.target != line.line.identity or (
+        mandate.line.artifact_digest != line.artifact_digest
     ):
         return _law_refusal(
-            "cruxible.procedure_mandate.procedure_mismatch",
-            "ProcedureMandate must pin the exact candidate Procedure artifact.",
+            "cruxible.procedure_mandate.line_mismatch",
+            "A Mandate must pin the exact candidate Line artifact.",
+            path=path,
+        )
+    if (
+        line.line.procedure.target != procedure.procedure.identity
+        or line.line.procedure.artifact_digest != procedure.artifact_digest
+    ):
+        return _law_refusal(
+            "cruxible.procedure_mandate.line_mismatch",
+            "The Mandate's Line pins another Procedure version than the one supplied.",
             path=path,
         )
     definition = procedure.procedure.definition
@@ -411,18 +319,18 @@ def evaluate_procedure_mandate_v2_law(
 
 
 class ProcedureMandateInvocation(_StrictProcedureMandateModel):
-    tag: Literal["playbill-procedure-mandate-invocation-v1"] = (
-        "playbill-procedure-mandate-invocation-v1"
+    tag: Literal["playbill-procedure-mandate-invocation-v2"] = (
+        "playbill-procedure-mandate-invocation-v2"
     )
-    procedure_identity: ArtifactIdentity
-    procedure_artifact_digest: str
+    line_identity: ArtifactIdentity
+    line_artifact_digest: str
     requested_rung: Literal[2, 3]
     requested_authority: ProcedureHardCaps
     target_paths: tuple[str, ...]
     evaluation_time: datetime
     accepted_mandate_digest: str
 
-    @field_validator("procedure_artifact_digest", "accepted_mandate_digest")
+    @field_validator("line_artifact_digest", "accepted_mandate_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
@@ -471,20 +379,20 @@ def _path_is_in_namespace(path: str, namespace: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in namespace)
 
 
-def mandate_creates_subject(mandate: "ProcedureMandateV1 | ProcedureMandate", path: str) -> bool:
+def mandate_creates_subject(mandate: "ProcedureMandate", path: str) -> bool:
     """Whether ``path`` is a Subject of a kind the settle grant's ``subject_creation`` names.
 
     Only the path's kind is read here; that the Subject is new to the change is
     the settle verifier's to check (``settle_targets``).
     """
 
-    if not isinstance(mandate, ProcedureMandate) or not path.startswith("subjects/"):
+    if not path.startswith("subjects/"):
         return False
     return path.removeprefix("subjects/").partition("/")[0] in mandate.subject_creation
 
 
 def evaluate_procedure_mandate(
-    mandate: "ProcedureMandateV1 | ProcedureMandate",
+    mandate: "ProcedureMandate",
     invocation: ProcedureMandateInvocation,
 ) -> ProcedureMandateEvaluation:
     """Test EVALUATION INSTANT membership in the mandate VALIDITY WINDOW."""
@@ -492,15 +400,15 @@ def evaluate_procedure_mandate(
     digest = procedure_mandate_digest(mandate).tagged
     if invocation.accepted_mandate_digest != digest or mandate.lifecycle.state != "live":
         refusals.add("procedure_mandate_superseded")
-    if isinstance(mandate, ProcedureMandate) and mandate.suspended:
+    if mandate.suspended:
         refusals.add("procedure_mandate_suspended")
     if not (mandate.valid_from <= invocation.evaluation_time < mandate.expires_at):
         refusals.add("procedure_mandate_expired")
     if (
-        invocation.procedure_identity != mandate.procedure.target
-        or invocation.procedure_artifact_digest != mandate.procedure.artifact_digest
+        invocation.line_identity != mandate.line.target
+        or invocation.line_artifact_digest != mandate.line.artifact_digest
     ):
-        refusals.add("procedure_mandate_procedure_mismatch")
+        refusals.add("procedure_mandate_line_mismatch")
     if invocation.requested_rung > mandate_rung(mandate):
         refusals.add("procedure_mandate_grant_insufficient")
     if not _ceiling_within(invocation.requested_authority, _resources(mandate)):
@@ -539,9 +447,7 @@ def mandate_rung(mandate: "ProcedureMandateAny") -> Literal[2, 3]:
 def mandate_grant(mandate: "ProcedureMandateAny") -> MandateGrant:
     """The verb a mandate grants; historical v1 rungs map 2->propose, 3->settle."""
 
-    if isinstance(mandate, ProcedureMandate):
-        return mandate.grants
-    return "settle" if mandate.rung == 3 else "propose"
+    return mandate.grants
 
 
 class MandateClaimScope(_StrictProcedureMandateModel):
@@ -608,11 +514,11 @@ class MandateCondition(_StrictProcedureMandateModel):
 
 
 class ProcedureMandate(_StrictProcedureMandateModel):
-    """A propose or conditional settle grant pinned to one exact Procedure."""
+    """A propose or conditional settle grant pinned to one exact Line."""
 
-    artifact_format: Literal["playbill-procedure-mandate-v2"] = "playbill-procedure-mandate-v2"
+    artifact_format: Literal["cruxible-procedure-mandate-v3"] = "cruxible-procedure-mandate-v3"
     identity: ArtifactIdentity
-    procedure: ArtifactPin
+    line: ArtifactPin
     grants: MandateGrant
     resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
@@ -651,8 +557,8 @@ class ProcedureMandate(_StrictProcedureMandateModel):
             self.identity.name
         ):
             raise ValueError("ProcedureMandate identity is not path-addressable")
-        if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
-            raise ValueError("ProcedureMandate must pin one exact Procedure")
+        if self.line.role != "line" or self.line.target.kind != "Line":
+            raise ValueError("A Mandate pins one exact Line with role line")
         if self.expires_at <= self.valid_from:
             raise ValueError("ProcedureMandate requires a finite increasing interval")
         claim_types = [item.claim_type.target for item in self.scope]
@@ -691,10 +597,10 @@ class ProcedureMandate(_StrictProcedureMandateModel):
     @property
     def pins(self) -> tuple[ArtifactPin, ...]:
         condition = () if self.condition is None else (self.condition.query,)
-        return (self.procedure, *(item.claim_type for item in self.scope), *condition)
+        return (self.line, *(item.claim_type for item in self.scope), *condition)
 
 
-ProcedureMandateAny: TypeAlias = ProcedureMandateV1 | ProcedureMandate
+ProcedureMandateAny: TypeAlias = ProcedureMandate
 
 
 def _within_window(new: ProcedureMandateAny, old: ProcedureMandateAny) -> bool:
@@ -702,11 +608,7 @@ def _within_window(new: ProcedureMandateAny, old: ProcedureMandateAny) -> bool:
 
 
 def _resources(mandate: ProcedureMandateAny) -> ProcedureHardCaps:
-    return (
-        mandate.resource_ceiling
-        if isinstance(mandate, ProcedureMandate)
-        else mandate.authority_ceiling
-    )
+    return mandate.resource_ceiling
 
 
 def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateAny) -> bool:
@@ -717,7 +619,7 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
     the predicate itself -- is widening.
     """
 
-    if new.procedure != old.procedure:
+    if new.line != old.line:
         return False
     # Reviving a retired mandate restores revoked authority: that is widening.
     if old.lifecycle.state == "retired" and new.lifecycle.state != "retired":
@@ -730,15 +632,11 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
         return False
     if not set(new.namespace) <= set(old.namespace) or not _within_window(new, old):
         return False
-    if (
-        isinstance(old, ProcedureMandate)
-        and old.suspended
-        and not (isinstance(new, ProcedureMandate) and new.suspended)
-    ):
+    if old.suspended and not new.suspended:
         return False
-    if not isinstance(new, ProcedureMandate) or new.grants == "propose":
+    if new.grants == "propose":
         return True
-    if not isinstance(old, ProcedureMandate) or old.grants != "settle":
+    if old.grants != "settle":
         return False
     if new.condition != old.condition:
         return False
@@ -766,23 +664,29 @@ def parse_procedure_mandate_any(
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProcedureMandateAny:
-    """Parse either mandate generation; the compiler decides which may be accepted."""
+    """Parse one Mandate; every earlier generation pinned a Procedure and is not read."""
 
     try:
         raw = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureMandateError("ProcedureMandate is not JSON") from exc
-    if not isinstance(raw, dict) or raw.get("artifact_format") != "playbill-procedure-mandate-v2":
-        return parse_procedure_mandate(content, path=path, codec=codec)
+    if not isinstance(raw, dict) or raw.get("artifact_format") != "cruxible-procedure-mandate-v3":
+        raise ProcedureMandateError(
+            "A Mandate pins a Line (cruxible-procedure-mandate-v3); an earlier generation "
+            "pinned a Procedure and is no longer read. Re-author it against its Line."
+        )
     try:
         mandate = ProcedureMandate.model_validate(raw)
     except ValueError as exc:
-        raise ProcedureMandateError("ProcedureMandate failed strict v2 validation") from exc
+        raise ProcedureMandateError("ProcedureMandate failed strict validation") from exc
     if not artifact_path_matches(procedure_mandate_path(mandate.identity.name), path, codec=codec):
         raise ProcedureMandateError("ProcedureMandate identity/path disagreement")
     if artifact_bytes_for_path(render_procedure_mandate(mandate), path, codec=codec) != content:
         raise ProcedureMandateError("ProcedureMandate is not in canonical wire form")
     return mandate
+
+
+parse_procedure_mandate = parse_procedure_mandate_any
 
 
 def condition_query_refusal(
@@ -876,9 +780,7 @@ __all__ = [
     "ProcedureMandateEvaluation",
     "ProcedureMandateInvocation",
     "ProcedureMandateLawResult",
-    "ProcedureMandateV1",
     "evaluate_procedure_mandate",
-    "evaluate_procedure_mandate_law",
     "parse_procedure_mandate",
     "procedure_mandate_digest",
     "procedure_mandate_evaluation_digest",

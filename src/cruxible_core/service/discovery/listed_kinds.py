@@ -47,7 +47,6 @@ from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     ProcedureMandate,
-    ProcedureMandateV1,
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
@@ -231,9 +230,7 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
     ),
     "ProcedureMandate": (
         ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
-        ListedField(
-            QueryColumn(name="procedure", type="string"), index_column="procedure_identity"
-        ),
+        ListedField(QueryColumn(name="line", type="string"), index_column="line_identity"),
         ListedField(
             QueryColumn(name="grant", type="enum", members=("propose", "settle")),
             index_column="rung",
@@ -763,14 +760,14 @@ def _mandate_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
     from cruxible_core.service.discovery.operational import mandate_state
 
     def row(source: Any) -> dict[str, Any]:
-        mandate = cast(ProcedureMandateV1 | ProcedureMandate, source)
+        mandate = cast(ProcedureMandate, source)
         current = mandate if isinstance(mandate, ProcedureMandate) else None
         scope = () if current is None else current.scope
         kinds = {kind for item in scope for kind in item.change_kinds}
         condition = None if current is None else current.condition
         return {
             "name": mandate.identity.name,
-            "procedure": mandate.procedure.target.qualified,
+            "line": mandate.line.target.qualified,
             "grant": mandate_grant(mandate),
             "state": mandate_state(mandate, now=context.evaluation_time),
             "scope": [item.claim_type.target.qualified for item in scope],

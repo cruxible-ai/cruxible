@@ -427,7 +427,8 @@ def _resolve_prepared(
         generation_root=admission.accepted_coordinate.generation_root,
         compiler_digest=admission.accepted_coordinate.compiler_digest,
     )
-    accepted = _accepted_procedure(
+    # The run's Procedure must still be accepted where it was admitted.
+    _accepted_procedure(
         instance,
         name=admission.procedure_identity.name,
         coordinate=coordinate,
@@ -442,10 +443,11 @@ def _resolve_prepared(
             return retained
         delegation = retained
         root = delegation.authority(nested)
-        accepted = _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
+        _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
     mandates = _accepted_line_mandates(
         instance,
-        accepted,
+        getattr(admission, "line_identity", None),
+        admission.line_spec_digest,
         coordinate=coordinate,
         evaluation_time=request.evaluation_time,
     )

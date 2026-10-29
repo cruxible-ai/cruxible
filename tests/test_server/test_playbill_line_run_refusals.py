@@ -9,17 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-    acquisition_policy_digest,
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
-    ProcedureMandateV1,
+    ProcedureMandate,
+    procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -30,10 +25,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     line_spec_path,
     render_line_spec,
-)
-from cruxible_client.contracts.procedures.results import (
-    ProcedureSelectionDecision,
-    procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
@@ -55,35 +46,24 @@ from tests.test_ledger.test_activation import _sign
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
 
-def _acquisition_policy(name: str) -> SourceAcquisitionPolicy:
-    return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
-    )
-
-
 def _served_line(
     name: str,
     *,
     accepted: AcceptedProcedure,
-    policy: SourceAcquisitionPolicy,
     historical: bool = False,
 ) -> LineSpec:
-    procedure_pin = ArtifactPin(
-        role="procedure",
-        target=accepted.procedure.identity,
-        artifact_digest=accepted.artifact_digest,
-    )
-    policy_pin = ArtifactPin(
-        role="acquisition-policy",
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
-    line = LineSpec(
+    """A propose Line over ``accepted`` (no slots to bind, no acquisition overrides)."""
+
+    del historical
+    return LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
-        procedure=procedure_pin,
+        procedure=ArtifactPin(
+            role="procedure",
+            target=accepted.procedure.identity,
+            artifact_digest=accepted.artifact_digest,
+        ),
         parameters={"status": "open"},
-        acquisition_policy=policy_pin,
         max_authority="propose",
         budgets={
             "max_capture_bytes": 0,
@@ -92,29 +72,19 @@ def _served_line(
             "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
-        pins=tuple(
-            sorted(
-                (procedure_pin, policy_pin),
-                key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-            )
-        ),
     )
 
-    from cruxible_client.contracts.named_references import name_line
 
-    return line if historical else name_line(line)
+def _line_mandate(accepted: AcceptedProcedure, line: LineSpec) -> ProcedureMandate:
+    """A propose grant pinning ``line`` exactly (ruling C3)."""
 
-
-def _line_mandate(accepted: AcceptedProcedure) -> ProcedureMandateV1:
-    return ProcedureMandateV1(
+    return ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-line-mandate"),
-        procedure=ArtifactPin(
-            role="procedure",
-            target=accepted.procedure.identity,
-            artifact_digest=accepted.artifact_digest,
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        rung=2,
-        authority_ceiling=accepted.procedure.definition.hard_caps,
+        grants="propose",
+        resource_ceiling=accepted.procedure.definition.hard_caps,
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -373,8 +343,7 @@ def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
     client, instance_id, reviewer_key_path = playbill_http
     instance = get_playbill_manager().get(instance_id)
     accepted = _slotless_procedure("query-pinning-triage")
-    policy = _acquisition_policy("query-pinning-inputs")
-    line = _served_line("query-pinning-hourly", accepted=accepted, policy=policy)
+    line = _served_line("query-pinning-hourly", accepted=accepted)
     query_pin = ArtifactPin(
         role="query-definition",
         target=ArtifactIdentity(kind="QueryDefinition", name="query-pinning-open-work"),
@@ -391,13 +360,12 @@ def test_a_line_pinning_a_query_definition_runs_through_the_live_route(
             )
         }
     )
-    mandate = _line_mandate(accepted)
+    mandate = _line_mandate(accepted, line)
     _accept_members(
         instance,
         reviewer_key_path,
         {
             accepted.path: render_procedure(accepted.procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -426,15 +394,13 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
     client, instance_id, reviewer_key_path = playbill_http
     instance = get_playbill_manager().get(instance_id)
     accepted = _slotless_procedure("served-line-triage")
-    policy = _acquisition_policy("served-line-inputs")
-    line = _served_line("served-line-hourly", accepted=accepted, policy=policy)
-    mandate = _line_mandate(accepted)
+    line = _served_line("served-line-hourly", accepted=accepted)
+    mandate = _line_mandate(accepted, line)
     _accept_members(
         instance,
         reviewer_key_path,
         {
             accepted.path: render_procedure(accepted.procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -469,85 +435,6 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
     assert admissions[0].line_spec_digest == line_spec_digest(line).tagged
 
 
-def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicy:
-    """The served-Line policy again, this time declaring the input REQUIRED."""
-
-    return SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
-    )
-
-
-def test_a_source_free_line_under_a_required_rule_still_runs(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    """A declared input this Procedure cannot serve is not a plan-time denial.
-
-    The acceptance law requires a served Line to pin an acquisition policy and
-    requires that policy to declare at least one input; it has never required
-    the declared inputs to be the Procedure's Source aliases. This Line's
-    Procedure has no `source` node at all, so its policy's `status` rule can
-    never have a planned occurrence. Scoring that miss at plan time would take
-    an accepted, already running Line from `succeeded` to `admission_refused`
-    on nothing the author changed, so the planner leaves the arrival of an
-    input to the read that reports it.
-    """
-
-    client, instance_id, reviewer_key_path = playbill_http
-    instance = get_playbill_manager().get(instance_id)
-    accepted = _slotless_procedure("strict-policy-triage")
-    policy = _strict_acquisition_policy("strict-policy-inputs")
-    line = _served_line("strict-policy-hourly", accepted=accepted, policy=policy)
-    mandate = _line_mandate(accepted)
-    _accept_members(
-        instance,
-        reviewer_key_path,
-        {
-            accepted.path: render_procedure(accepted.procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
-            line_spec_path(line.identity.name): render_line_spec(line),
-            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
-        },
-        timestamp="2026-09-03T09:00:00.000000Z",
-    )
-
-    identity_digest = line_identity_digest(line.identity)
-    response = client.post(
-        f"/api/v1/{instance_id}/lines/{identity_digest}/runs",
-        json=_body(identity_digest),
-    )
-
-    assert response.status_code == 200, response.text
-    state = response.json()
-    assert state["status"] == "succeeded", state["terminal"]
-    admissions = procedure_run_service._line_admissions(  # noqa: SLF001
-        instance,
-        procedure_run_service._accepted_line_by_reference(  # noqa: SLF001
-            instance,
-            coordinate=instance.accepted_coordinate(),
-            reference=identity_digest,
-        ),
-    )
-    assert len(admissions) == 1
-    # Nothing was scored, because nothing was planned: the recorded decision is
-    # the one a Source-free occurrence has always carried, which is why this
-    # Line's run id is the one it had before the shared planner landed.
-    selection = admissions[0].selection_decision
-    assert selection.verdict == "selected"
-    assert selection.decisions == ()
-    assert selection.policy_digest == acquisition_policy_digest(policy).tagged
-    # Byte-identical to the blanket decision the lane recorded before the shared
-    # planner landed, so this occurrence's plan digest, replay key and run id are
-    # the ones it had -- there is no run-id break for a Source-free Line.
-    pre_batch = ProcedureSelectionDecision(
-        policy_digest=acquisition_policy_digest(policy).tagged,
-        verdict="selected",
-        decisions=(),
-    )
-    assert procedure_selection_decision_digest(selection) == (
-        procedure_selection_decision_digest(pre_batch)
-    )
-
-
 @pytest.mark.parametrize("successions", [1, 2])
 def test_accepted_line_successors_run_against_their_retained_predecessor(
     playbill_http: tuple[TestClient, str, Path],
@@ -556,15 +443,13 @@ def test_accepted_line_successors_run_against_their_retained_predecessor(
     client, instance_id, reviewer_key_path = playbill_http
     instance = get_playbill_manager().get(instance_id)
     accepted = _slotless_procedure("successor-triage")
-    policy = _acquisition_policy("successor-inputs")
-    line = _served_line("successor-line", accepted=accepted, policy=policy)
-    mandate = _line_mandate(accepted)
+    line = _served_line("successor-line", accepted=accepted)
+    mandate = _line_mandate(accepted, line)
     _accept_members(
         instance,
         reviewer_key_path,
         {
             accepted.path: render_procedure(accepted.procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
@@ -577,11 +462,23 @@ def test_accepted_line_successors_run_against_their_retained_predecessor(
                 "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
             }
         )
+        # A grant never follows a changed Line: its Mandate is carried, propose-only.
+        mandate = mandate.model_copy(
+            update={
+                "line": mandate.line.model_copy(
+                    update={"artifact_digest": line_spec_digest(line).tagged}
+                ),
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=procedure_mandate_digest(mandate).tagged
+                ),
+            }
+        )
         _accept_members(
             instance,
             reviewer_key_path,
             {
                 line_spec_path(line.identity.name): render_line_spec(line),
+                procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             },
             timestamp=f"2026-09-03T09:0{revision + 1}:00.000000Z",
         )

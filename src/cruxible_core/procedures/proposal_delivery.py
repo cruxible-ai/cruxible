@@ -154,7 +154,7 @@ from cruxible_core.procedures.egress import (
     UnchangedChildReceiptAny,
     settle_authority_capped_reason,
 )
-from cruxible_core.procedures.nested import ProcedureDelegation, authority_procedure
+from cruxible_core.procedures.nested import ProcedureDelegation, authority_line
 from cruxible_core.procedures.terminal_dependencies import (
     TerminalItemDependencyManifestV1,
     citable_captures,
@@ -1360,14 +1360,16 @@ def select_procedure_mandate(
         if isinstance(request, TerminalEgressRequestV2)
         else request.prepared_at
     )
-    authority = authority_procedure(admission, delegation)
+    line_identity, line_digest = authority_line(admission, delegation)
+    if line_identity is None or line_digest is None:
+        return None
     ranked: list[tuple[int, bool, str]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         evaluation = evaluate_procedure_mandate(
             mandate,
             ProcedureMandateInvocation(
-                procedure_identity=authority.target,
-                procedure_artifact_digest=authority.artifact_digest,
+                line_identity=line_identity,
+                line_artifact_digest=line_digest,
                 requested_rung=request.required_rung,  # type: ignore[arg-type]
                 requested_authority=admission.hard_caps,
                 target_paths=target_paths,
@@ -1409,17 +1411,19 @@ def select_settle_mandate(
     any other way refuses ``settle_mandate_missing``.
     """
 
-    authority = authority_procedure(admission, delegation)
+    line_identity, line_digest = authority_line(admission, delegation)
     covering: list[str] = []
     partial: list[tuple[int, str, tuple[str, ...]]] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         if not isinstance(mandate, ProcedureMandate) or mandate.grants != "settle":
             continue
+        if line_identity is None or line_digest is None:
+            continue  # a direct run has no Line, so no grant covers it
         evaluation = evaluate_procedure_mandate(
             mandate,
             ProcedureMandateInvocation(
-                procedure_identity=authority.target,
-                procedure_artifact_digest=authority.artifact_digest,
+                line_identity=line_identity,
+                line_artifact_digest=line_digest,
                 requested_rung=3,
                 requested_authority=admission.hard_caps,
                 target_paths=target_paths,

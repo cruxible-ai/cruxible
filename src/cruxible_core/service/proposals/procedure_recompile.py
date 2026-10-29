@@ -179,9 +179,13 @@ def procedure_input(
         else delegation.authority(nested).target.name
     )
     try:
-        accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+        _accepted_procedure(instance, name=name, coordinate=coordinate)
         mandates = _accepted_line_mandates(
-            instance, accepted, coordinate=coordinate, evaluation_time=request.evaluation_time
+            instance,
+            getattr(admission, "line_identity", None),
+            admission.line_spec_digest,
+            coordinate=coordinate,
+            evaluation_time=request.evaluation_time,
         )
         sink = ProposalTerminalEgressSink(
             instance=instance, accepted_mandates=dict(mandates), delegation=delegation

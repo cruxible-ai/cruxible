@@ -60,7 +60,6 @@ from cruxible_client.contracts.operational_reads import (
 )
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
-    ProcedureMandateV1,
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.line_specs import (
@@ -981,7 +980,7 @@ def prediction_rows(
 # -- mandates ----------------------------------------------------------------------------
 
 
-def mandate_state(mandate: ProcedureMandateV1 | ProcedureMandate, *, now: datetime) -> MandateState:
+def mandate_state(mandate: ProcedureMandate, *, now: datetime) -> MandateState:
     if mandate.lifecycle.state == "retired":
         return "retired"
     if isinstance(mandate, ProcedureMandate) and mandate.suspended:
@@ -995,7 +994,7 @@ def mandate_state(mandate: ProcedureMandateV1 | ProcedureMandate, *, now: dateti
     return "active"
 
 
-def _scope(mandate: ProcedureMandateV1 | ProcedureMandate) -> tuple[MandateScope, ...]:
+def _scope(mandate: ProcedureMandate) -> tuple[MandateScope, ...]:
     if not isinstance(mandate, ProcedureMandate):
         return ()
     return tuple(
@@ -1008,7 +1007,7 @@ def _scope(mandate: ProcedureMandateV1 | ProcedureMandate) -> tuple[MandateScope
     )
 
 
-def _condition(mandate: ProcedureMandateV1 | ProcedureMandate) -> MandateConditionView | None:
+def _condition(mandate: ProcedureMandate) -> MandateConditionView | None:
     if not isinstance(mandate, ProcedureMandate) or mandate.condition is None:
         return None
     condition = mandate.condition
@@ -1030,11 +1029,11 @@ def mandate_card(
     render: RenderGet,
 ) -> GetMandateCard:
     with instance.bind_accepted_projection(coordinate) as projection:
-        mandate = cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(identity))
-    procedure = mandate.procedure.target.qualified
+        mandate = cast(ProcedureMandate, projection.typed.source(identity))
+    line = mandate.line.target.qualified
     return GetMandateCard(
         mandate=identity,
-        procedure=procedure,
+        line=f"{line}@{mandate.line.artifact_digest}",
         grants=mandate_grant(mandate),
         lifecycle=mandate.lifecycle.state,
         state=mandate_state(mandate, now=evaluation_time),
@@ -1052,7 +1051,7 @@ def mandate_card(
             mandate.subject_creation if isinstance(mandate, ProcedureMandate) else ()
         ),
         suspended=isinstance(mandate, ProcedureMandate) and mandate.suspended,
-        next=(render(procedure, None), render(identity, "history")),
+        next=(render(line, None), render(identity, "history")),
     )
 
 
@@ -1064,7 +1063,7 @@ def mandate_rows(
 ) -> tuple[OrientMandate, ...]:
     with instance.bind_accepted_projection(coordinate) as projection:
         mandates = [
-            cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(str(identity)))
+            cast(ProcedureMandate, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM procedure_mandates ORDER BY identity"
             )
@@ -1072,7 +1071,7 @@ def mandate_rows(
     return tuple(
         OrientMandate(
             mandate=mandate.identity.qualified,
-            procedure=mandate.procedure.target.qualified,
+            line=mandate.line.target.qualified,
             grants=mandate_grant(mandate),
             state=mandate_state(mandate, now=evaluation_time),
             expires_at=mandate.expires_at,

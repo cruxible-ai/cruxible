@@ -219,7 +219,6 @@ def service_move_provider(
                 name,
                 "Provider:" + resolution.resolved,
                 request.only,
-                include_blueprints=mode.head.compiler != LIGHT_ARTIFACTS_COMPILER,
             ):
                 kind, _, item_name = identity.partition(":")
                 movers.append(

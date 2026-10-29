@@ -78,12 +78,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject,
     StoppedAutomationV1,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_digest,
-    provider_interface_id_of,
-    provider_interface_path,
-)
 from cruxible_client.contracts.providers import (
     ProviderAny,
     ProviderV2,
@@ -93,9 +87,8 @@ from cruxible_client.contracts.providers import (
     provider_path,
 )
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.shapes import contract_path_for_identity
 from cruxible_core.claims.artifact_references import (
-    ProviderBuildMove,
-    ProviderBuildMoveRefused,
     movable_references,
     move_references,
     referenced_digests,
@@ -115,10 +108,11 @@ from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.automation_carry import carry_automation, parse_carry_line
 from cruxible_core.providers.build_moves import (
     Mover,
+    ProviderBuildMove,
+    ProviderBuildMoveRefused,
     SettledMoves,
     build_move,
     live_triggers_of,
-    restore_procedure_build,
     settle_changes,
 )
 from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
@@ -150,14 +144,15 @@ _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
 @functools.cache
 def _builtin_definitions() -> dict[tuple[str, str], frozenset[str]]:
     """(kind, name) -> the artifact digests of every compiler-seeded Provider and
-    ProviderInterface any genesis seed set wrote (``workspace.file`` and
-    ``cruxible-builtin``). They are on every instance seeded with them, so a kit
-    pins them as they are: it never carries, installs or remaps one."""
+    Contract any genesis seed set wrote (``cruxible-builtin`` and the
+    ``workspace.file`` operation's Contracts). They are on every instance seeded
+    with them, so a kit pins them as they are: it never carries, installs or
+    remaps one."""
 
     found: dict[tuple[str, str], set[str]] = {}
     for seed_set in GENESIS_SEED_SETS:
         for path, content in genesis_seed_files(seed_set).items():
-            if path.startswith(("providers/", "provider-interfaces/")):
+            if path.startswith(("providers/", "contracts/")):
                 state = _artifact_state(path, content)
                 found.setdefault((state.identity.kind, state.identity.name), set()).add(
                     state.artifact_digest
@@ -186,7 +181,7 @@ def _builtin_refusals(
             held_path = (
                 provider_path(pin.target.name)
                 if pin.target.kind == "Provider"
-                else provider_interface_path(pin.target.name)
+                else contract_path_for_identity(pin.target.name)
             )
             held = tree.get(held_path)
             state = None if held is None else _artifact_state(held_path, held)
@@ -248,10 +243,7 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
 
 
 def _owned(state: ArtifactDependencyStateV1, owns: tuple[str, ...]) -> bool:
-    # A ProviderInterface belongs to the provider package that registers it: a
-    # kit carries it for its Blueprints and Procedures and never owns it, so it
-    # never replaces or retires one.
-    return state.artifact_kind != "provider-interface" and state.identity.name.startswith(owns)
+    return state.identity.name.startswith(owns)
 
 
 def _dependency_order(
@@ -379,7 +371,6 @@ def service_build_kit(
             lock=lock,
             dependencies=dependencies,
             delivery=item.delivery,
-            named=coordinate.compiler == LIGHT_ARTIFACTS_COMPILER,
         )
         if item.delivery == "index":
             # A default provider installs by name: the kit carries none of its
@@ -498,34 +489,6 @@ def _build_difference(
     return None
 
 
-def _bundled_interface(
-    path: str, content: bytes, bundled: tuple[InspectedProviderPackage, ...]
-) -> None:
-    """A carried ProviderInterface is exactly what a bundled wheel registers.
-
-    Otherwise installing that wheel would propose a successor over the kit's
-    interface (or the kit's would overwrite the package's).
-    """
-
-    registered = [package for package in bundled if path in package.interfaces]
-    if not registered:
-        raise RequestRefusedError(
-            "cruxible.kit.interface_not_bundled",
-            f"the kit carries {path}, which no bundled provider package registers; bundle "
-            "the package that registers it (kit build --provider DIR)",
-            repair=RepairOperation(operation="cruxible.kit.build"),
-        )
-    if all(package.interfaces[path] != content for package in registered):
-        names = ", ".join(package.provider.wheel.filename for package in registered)
-        raise RequestRefusedError(
-            "cruxible.kit.interface_differs",
-            f"{path} here differs from what installing {names} registers; install the "
-            "bundled wheel here so this instance holds what it registers, or bundle the "
-            "build that registered this interface",
-            repair=RepairOperation(operation="cruxible.provider.install"),
-        )
-
-
 def build_kit(
     tree: Mapping[str, bytes],
     request: KitBuildRequest,
@@ -559,7 +522,7 @@ def build_kit(
                 tree_providers[path] = state
                 continue
             if _builtin(state.identity.kind, state.identity.name, state.artifact_digest):
-                # A compiler-seeded interface: pinned as it is, never carried.
+                # A compiler-seeded Contract: pinned as it is, never carried.
                 continue
             states[path] = state
             payloads[path] = json.loads(tree[path])
@@ -589,8 +552,6 @@ def build_kit(
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
-        if path.startswith("provider-interfaces/"):
-            _bundled_interface(path, content, providers)
         built[path] = content
     manifest = KitManifest(
         kit_id=request.kit_id,
@@ -886,16 +847,6 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
         procedure = name_procedure(parse_procedure(content, path=path))
         assert isinstance(procedure, ProcedureArtifact)
         return render_procedure(procedure)
-    if path.startswith("blueprints/"):
-        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
-        from cruxible_client.contracts.procedures.blueprints import (
-            parse_blueprint,
-            render_blueprint,
-        )
-
-        blueprint = name_procedure(parse_blueprint(content, path=path))
-        assert isinstance(blueprint, BlueprintArtifact)
-        return render_blueprint(blueprint)
     if path.startswith("query-definitions/"):
         from cruxible_client.contracts.query.definitions import (
             parse_query_definition,
@@ -931,24 +882,6 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
                 named=True,
             )
         )
-    if path.startswith("source-acquisition-policies/"):
-        from cruxible_client.contracts.acquisition_policies import (
-            SourceAcquisitionPolicy,
-            SourceAcquisitionPolicyV1,
-            parse_acquisition_policy,
-            render_acquisition_policy,
-        )
-
-        policy = parse_acquisition_policy(content, path=path)
-        if isinstance(policy, SourceAcquisitionPolicyV1):
-            # A tombstone cannot execute legacy fallback/coherence behavior.
-            # Retain every alias age bound in the current terminal format.
-            policy = SourceAcquisitionPolicy(
-                identity=policy.identity,
-                overrides={rule.input_name: rule.max_age for rule in policy.inputs},
-                lifecycle=policy.lifecycle,
-            )
-        return render_acquisition_policy(policy)
     return content
 
 
@@ -1116,7 +1049,7 @@ def _settle_dependents(
     pinning a replaced or retired kit definition takes a successor in the same
     generation, carried (re-pinned) to the kit's final definitions, or retired
     with a definition the request retires together with its dependents. Each
-    live Procedure bound to another build of a provider the kit ships moves to
+    live Line bound to another build of a provider the kit ships moves to
     the kit's build (``movers``), unless ``keep_build`` names it. A Line,
     or Mandate over a replaced or moved Procedure is carried disabled or
     propose-only, respectively; Triggers stay untouched. The plan
@@ -1149,11 +1082,11 @@ def _kit_movers(
     providers: tuple[KitProvider, ...],
     writes: Mapping[str, bytes],
 ) -> tuple[Mover, ...]:
-    """Each live Procedure bound to another build of a provider the kit ships.
+    """Each live Line bound to another build of a provider the kit ships.
 
-    The release's own definitions it replaces already pin the kit's build; every
-    other live pinner (the kit's kept ones, and the user's) moves to it.
-    O(affected live Procedure pins), from the maintained name reverse-pin index.
+    A kit carries no Lines, so every live binder of another build moves to the
+    kit's build. O(affected live Line bindings), from the maintained name
+    reverse-pin index.
     """
 
     found = []
@@ -1162,8 +1095,6 @@ def _kit_movers(
             connection,
             provider.provider_id,
             f"Provider:{provider.build}",
-            (),
-            procedures_only=True,
         ):
             if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
                 continue
@@ -1249,11 +1180,12 @@ def _planned_automation(
                 )
             continue
         row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
-        if row.procedure not in retiring_procedures:
+        stopped_by = item.triggering_identity.qualified
+        if stopped_by not in retiring_procedures:
             carries.append(row)
             continue
         stops[row.identity] = StoppedAutomationV1(
-            identity=row.identity, kind=row.kind, stopped_by=row.procedure
+            identity=row.identity, kind=row.kind, stopped_by=stopped_by
         )
         if row.kind == "line":
             for trigger, _ in live_triggers_of(connection, row.identity):
@@ -1576,58 +1508,38 @@ def _default_implementers(
     provider: KitProvider,
     contents: Mapping[str, bytes],
 ) -> tuple[str, ...]:
-    """The live Providers here that stand in for an index default, or none.
+    """The live builds here that stand in for an index default, or none.
 
-    A default provider stands for the contracts the kit carries, so it is
-    skipped only when no carried Procedure pins it (that pin moves to the build
-    installed here), each of its interfaces the kit carries is live here as the
-    kit carries it, and some live Provider implements each one on that
-    registration. Interfaces the package also implements that the kit
-    does not carry decide nothing. The implementers come from the pin index
-    (who pins each registration), never a walk of every Provider.
+    A default provider stands for the operations the kit's Procedures' slots
+    need, so it is skipped only when every slot the kit carries is already
+    served by a live build of another provider here. The builds come from the
+    signature index (one seek per slot), never a walk of every Provider.
     """
 
-    needed = tuple(
-        path
-        for path in sorted(contents)
-        if path.startswith("provider-interfaces/")
-        and provider_interface_id_of(_artifact_state(path, contents[path]).identity.name)
-        in provider.interfaces
-    )
-    if provider.delivery != "index" or not needed:
+    from cruxible_client.contracts.procedures.artifacts import parse_procedure
+    from cruxible_core.providers.operation_index import fitting_operations
+
+    if provider.delivery != "index" or not provider.operations:
         return ()
-    for path, content in contents.items():
-        if path.startswith("procedures/") and any(
-            pin.target.kind == "Provider"
-            and parse_provider_build_name(pin.target.name).name == provider.provider_id
-            for pin in _artifact_state(path, content).pins
-        ):
-            return ()
+    signatures = {
+        slot.key(): slot
+        for path, content in sorted(contents.items())
+        if path.startswith("procedures/")
+        for slot in parse_procedure(content, path=path).definition.slots.values()
+    }
+    if not signatures:
+        return ()
     found: set[str] = set()
-    for path in needed:
-        held_bytes = tree.get(path)
-        if held_bytes is None:
-            return ()
-        registration = parse_provider_interface(held_bytes, path=path)
-        if registration.lifecycle.state != "live" or _without_lifecycle(
-            json.loads(contents[path])
-        ) != _without_lifecycle(json.loads(held_bytes)):
-            return ()
-        artifact_digest = provider_interface_digest(registration).tagged
-        implementers = {
-            str(row[0]).removeprefix("Provider:")
-            for row in connection.execute(
-                "SELECT DISTINCT p.source_identity FROM main.pins p "
-                "JOIN main.providers r ON r.identity=p.source_identity "
-                "WHERE p.target_identity=? AND (p.target_digest=? OR p.target_digest IS NULL) "
-                "AND p.edge_kind='required_pin' AND p.pin_role='provider-interface' "
-                "AND r.lifecycle='live' AND r.provider_name<>?",
-                (registration.identity.qualified, artifact_digest, provider.provider_id),
-            )
+    for _key, signature in sorted(signatures.items()):
+        serving = {
+            item.build.removeprefix("Provider:")
+            for item in fitting_operations(connection, signature)
+            if parse_provider_build_name(item.build.removeprefix("Provider:")).name
+            != provider.provider_id
         }
-        if not implementers:
+        if not serving:
             return ()
-        found.update(implementers)
+        found.update(serving)
     return tuple(sorted(found))
 
 
@@ -1718,9 +1630,7 @@ def _early_refusals(
 ) -> list[str]:
     """Refusals the current state decides, checked before any provider installs.
 
-    A carried interface registration names one contract, so it is either live
-    here byte for byte or not here at all: it never conflicts with another
-    package's.
+    A pinned built-in is either live here at exactly its digest or refused.
     """
 
     refused = _builtin_refusals(tree, contents, by_name=by_name)
@@ -1733,7 +1643,7 @@ def _early_refusals(
 
 
 def _inspect_staged(
-    instance: PlaybillInstance, manifest: KitManifest, *, named: bool
+    instance: PlaybillInstance, manifest: KitManifest
 ) -> dict[str, InspectedProviderPackage]:
     """Each bundled package read from the body store and resolved for this host.
 
@@ -1754,7 +1664,6 @@ def _inspect_staged(
             dependencies=tuple(
                 (item.filename, read(item.filename)) for item in provider.dependencies
             ),
-            named=named,
         )
         for provider in manifest.providers
         if provider.delivery == "bundled"
@@ -1980,11 +1889,7 @@ def _add_kit(
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
     inspected = (
-        None
-        if mode.previewing or not manifest.providers
-        else _inspect_staged(
-            instance, manifest, named=mode.head.compiler == LIGHT_ARTIFACTS_COMPILER
-        )
+        None if mode.previewing or not manifest.providers else _inspect_staged(instance, manifest)
     )
     for provider in manifest.providers:
         # The staged bytes must reproduce what the manifest says they are.
@@ -1997,7 +1902,7 @@ def _add_kit(
                 "cruxible.kit.provider_manifest_mismatch",
                 f"the staged files of bundled provider {provider.provider_id} do not "
                 "reproduce its manifest entry (provider id, package, version, files or "
-                "interfaces); rebuild the kit with kit build",
+                "operations); rebuild the kit with kit build",
                 repair=RepairOperation(operation="cruxible.kit.build"),
             )
     with instance.bind_accepted_projection(mode.head) as projection:
@@ -2136,7 +2041,7 @@ def _add_kit(
     )
     ownership = _foreign_takeovers(receipts, manifest, diff)
     blocked.extend(item.detail for item in ownership)
-    # Each live Procedure on another build of a provider the kit ships moves to
+    # Each live Line on another build of a provider the kit ships moves to
     # the kit's build in this same change; a satisfied index default installs no
     # build, so nothing moves for it.
     shipped = tuple(
@@ -2148,28 +2053,6 @@ def _add_kit(
     with instance.bind_accepted_projection(mode.head) as projection:
         connection = projection.typed.connection
         movers = _kit_movers(connection, tree, shipped, diff.writes)
-        for mover in movers:
-            if mover.identity.qualified not in request.keep_build or mover.path not in diff.writes:
-                continue
-            try:
-                payload = restore_procedure_build(
-                    tree,
-                    path=mover.path,
-                    content=diff.writes[mover.path],
-                    source=mover.to_build,
-                    target=mover.from_build,
-                )
-                content, _digest = _render(mover.path, payload)
-                if _without_lifecycle(payload) == _without_lifecycle(json.loads(tree[mover.path])):
-                    diff.writes.pop(mover.path)
-                    _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
-                else:
-                    diff.writes[mover.path] = content
-                release_digest = _artifact_state(mover.path, contents[mover.path]).artifact_digest
-                diff.installed[release_digest] = _digest
-                diff.content[mover.path] = kit_content_digest(payload)
-            except ProviderBuildMoveRefused as exc:
-                blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
         if awaiting_install:
             # The kit's builds are not installed yet, so nothing can be moved or
             # evaluated: the preview names what the change will move and stop.

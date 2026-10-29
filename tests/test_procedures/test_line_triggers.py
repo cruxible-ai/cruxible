@@ -5,10 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.acquisition_policies import (
-    acquisition_policy_path,
-    render_acquisition_policy,
-)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     builtin_contract_for_write,
@@ -42,7 +38,6 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_independent_resolution_contracts import contract_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
 from tests.test_server.test_playbill_line_run_refusals import (
-    _acquisition_policy,
     _line_mandate,
     _served_line,
 )
@@ -67,33 +62,11 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historica
     instance, owner, contract = contract_world(tmp_path, historical=historical)
     accepted = _slotless_procedure("trigger-method", historical=historical)
     procedure = accepted.procedure
-    policy = _acquisition_policy("trigger-policy")
     profile = TRIGGER_CONTRACT
     if historical:
-        from cruxible_client.contracts.acquisition_policies import (
-            IndependentCoherence,
-            InputAcquisitionRule,
-            SourceAcquisitionPolicyV1,
-        )
         from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
 
         profile = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
-        policy = SourceAcquisitionPolicyV1(
-            identity=policy.identity,
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="unused",
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    max_age=policy.max_age,
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="preserve",
-                ),
-            ),
-            coherence=IndependentCoherence(),
-        )
         data = schedule.model_dump(mode="json")
         if data["kind"] == "capture_landing":
             data["event"]["capture_contract_digest"] = capture_contract_digest(profile).tagged
@@ -102,14 +75,13 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None, historica
                 profile
             ).tagged
         schedule = type(schedule).model_validate(data)
-    line = _served_line("trigger-test", accepted=accepted, policy=policy, historical=historical)
-    mandate = _line_mandate(accepted)
+    line = _served_line("trigger-test", accepted=accepted, historical=historical)
+    mandate = _line_mandate(accepted, line)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(profile.identity.name)] = render_capture_contract(profile)
     tree.update(
         {
             accepted.path: render_procedure(procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
             **trigger_members(

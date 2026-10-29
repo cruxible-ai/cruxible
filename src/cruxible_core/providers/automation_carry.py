@@ -1,6 +1,9 @@
 """Typed pin-only automation succession; consumer authority never transfers.
 
-Only the affected reverse-pin closure calls this module. Literal digest-looking
+Only the affected reverse-pin closure calls this module. A Line successor pins
+its Procedure's successor (or rebinds a moved build); each Mandate pinning the
+old Line digest takes a propose-only successor pinning the new one, because a
+grant never follows a changed Line (ruling C3). Literal digest-looking
 parameters and conditions are data, never reference replacement targets.
 """
 
@@ -74,40 +77,39 @@ def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProce
         ) from exc
 
 
-def carry_automation(
+def carry_line(
     path: str, content: bytes, replacements: Mapping[str, str], *, planned: bool = False
 ) -> tuple[bytes | None, AutomationCarryV1]:
-    """One accepted predecessor -> one final successor, or an inventory-only row."""
+    """One Line successor pinning its Procedure's final version (``replacements``)."""
 
-    if path.startswith("lines/"):
-        line = parse_carry_line(content, path=path)
-        old = _line_digest(line).tagged
-        target = replacements.get(line.procedure.artifact_digest)
-        pin = line.procedure.model_copy(update={"artifact_digest": target})
-        successor = line.model_copy(
-            update={
-                "procedure": pin,
-                "pins": tuple(
-                    sorted(
-                        (pin if item == line.procedure else item for item in line.pins),
-                        key=lambda item: (item.role, item.target.qualified, item.artifact_digest),
-                    )
-                ),
-                "lifecycle": ArtifactLifecycle(predecessor_digest=old),
-            }
-        )
-        return (
-            None if planned else render_line_spec(successor),
-            CarriedLineV1(
-                identity=line.identity.qualified,
-                procedure=line.procedure.target.qualified,
-                old_procedure_digest=line.procedure.artifact_digest,
-                new_procedure_digest=target,
-                old_artifact_digest=old,
-                new_artifact_digest=None if planned else line_spec_digest(successor).tagged,
-                phase="planned" if planned else "validated",
-            ),
-        )
+    line = parse_carry_line(content, path=path)
+    old = _line_digest(line).tagged
+    target = replacements.get(line.procedure.artifact_digest)
+    successor = line.model_copy(
+        update={
+            "procedure": line.procedure.model_copy(update={"artifact_digest": target}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=old),
+        }
+    )
+    return (
+        None if planned else render_line_spec(successor),
+        CarriedLineV1(
+            identity=line.identity.qualified,
+            procedure=line.procedure.target.qualified,
+            old_procedure_digest=line.procedure.artifact_digest,
+            new_procedure_digest=target,
+            old_artifact_digest=old,
+            new_artifact_digest=None if planned else line_spec_digest(successor).tagged,
+            phase="planned" if planned else "validated",
+        ),
+    )
+
+
+def carry_mandate(
+    path: str, content: bytes, line_replacements: Mapping[str, str], *, planned: bool = False
+) -> tuple[bytes | None, AutomationCarryV1]:
+    """One propose-only Mandate successor pinning its Line's successor."""
+
     mandate = _MANDATES.parse(
         content,
         path,
@@ -115,24 +117,20 @@ def carry_automation(
         lambda: parse_procedure_mandate_any(content, path=path),
     )
     old = _mandate_digest(mandate).tagged
-    target = replacements.get(mandate.procedure.artifact_digest)
+    target = line_replacements.get(mandate.line.artifact_digest)
     successor_mandate = (
         ProcedureMandate(
             identity=mandate.identity,
-            procedure=mandate.procedure.model_copy(update={"artifact_digest": target}),
+            line=mandate.line.model_copy(update={"artifact_digest": target}),
             grants="propose",
-            resource_ceiling=(
-                mandate.resource_ceiling
-                if isinstance(mandate, ProcedureMandate)
-                else mandate.authority_ceiling
-            ),
+            resource_ceiling=mandate.resource_ceiling,
             namespace=mandate.namespace,
             valid_from=mandate.valid_from,
             expires_at=mandate.expires_at,
-            suspended=mandate.suspended if isinstance(mandate, ProcedureMandate) else False,
+            suspended=mandate.suspended,
             lifecycle=ArtifactLifecycle(predecessor_digest=old),
         )
-        if not planned
+        if not planned and target is not None
         else None
     )
     grant = mandate_grant(mandate)
@@ -140,9 +138,9 @@ def carry_automation(
         None if successor_mandate is None else render_procedure_mandate(successor_mandate),
         CarriedMandateV1(
             identity=mandate.identity.qualified,
-            procedure=mandate.procedure.target.qualified,
-            old_procedure_digest=mandate.procedure.artifact_digest,
-            new_procedure_digest=target,
+            line=mandate.line.target.qualified,
+            old_line_digest=mandate.line.artifact_digest,
+            new_line_digest=target,
             old_artifact_digest=old,
             new_artifact_digest=(
                 None
@@ -152,8 +150,20 @@ def carry_automation(
             phase="planned" if planned else "validated",
             old_grant=grant,
             loses_settle=grant == "settle",
-            subject_creation_namespace_limitation=(
-                isinstance(mandate, ProcedureMandate) and bool(mandate.subject_creation)
-            ),
+            subject_creation_namespace_limitation=bool(mandate.subject_creation),
         ),
     )
+
+
+def carry_automation(
+    path: str, content: bytes, replacements: Mapping[str, str], *, planned: bool = False
+) -> tuple[bytes | None, AutomationCarryV1]:
+    """One accepted predecessor -> one final successor, or an inventory-only row.
+
+    For a Line, ``replacements`` maps Procedure digests; for a Mandate, Line
+    digests.
+    """
+
+    if path.startswith("lines/"):
+        return carry_line(path, content, replacements, planned=planned)
+    return carry_mandate(path, content, replacements, planned=planned)

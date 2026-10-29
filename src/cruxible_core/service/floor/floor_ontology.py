@@ -609,7 +609,7 @@ def _settlers(state: OntologyState, path: str, predicate: str) -> list[str]:
             )
             lines.append(
                 f"mandate {mandate.identity.name}  "
-                f"Procedure:{mandate.procedure.target.name}  "
+                f"Line:{mandate.line.target.name}  "
                 f"settle {'|'.join(item.change_kinds)}{condition}  "
                 f"valid {_time(mandate.valid_from)}..{_time(mandate.expires_at)}"
                 + ("  suspended" if mandate.suspended else "")

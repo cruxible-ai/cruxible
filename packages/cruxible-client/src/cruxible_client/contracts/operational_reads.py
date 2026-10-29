@@ -276,17 +276,18 @@ class MandateConditionView(_StrictOperationalModel):
 
 
 class GetMandateCard(_StrictOperationalModel):
-    """One mandate: what it grants, to which Procedure, over what, and until when.
+    """One mandate: what it grants, to which exact Line, over what, and until when.
 
     ``scope`` lists the ClaimTypes a settle grant covers; ``subject_scope`` the
     Subjects it is limited to (artifact paths), absent when it reaches every
     Subject its namespace does; ``condition`` the settlement predicate;
     ``subject_creation`` the Subject kinds a settle may create. ``suspended``
-    appears only when the mandate's kill switch is on. A v1 mandate has none.
+    appears only when the mandate's kill switch is on. ``line`` is the Line it
+    grants, at the exact version it pins (``Line:<name>@<digest>``).
     """
 
     mandate: str
-    procedure: str
+    line: str
     grants: Literal["propose", "settle"]
     lifecycle: str
     state: MandateState
@@ -473,10 +474,11 @@ class OrientPrediction(_StrictOperationalModel):
 class OrientMandate(_StrictOperationalModel):
     """One mandate row: its grant and state, the ClaimTypes a settle grant covers,
     its condition query's ref, the Subject kinds it may create, and ``suspended``
-    when its kill switch is on. ``get`` reads the rest."""
+    when its kill switch is on. ``line`` is the Line it grants. ``get`` reads the
+    rest."""
 
     mandate: str
-    procedure: str
+    line: str
     grants: Literal["propose", "settle"]
     state: MandateState
     expires_at: datetime

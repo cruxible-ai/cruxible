@@ -1510,15 +1510,10 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
     written must refuse the pinned commit, not arm the version it replaced.
     """
 
-    from cruxible_client.contracts.acquisition_policies import (
-        acquisition_policy_path,
-        render_acquisition_policy,
-    )
     from cruxible_core.errors import ChangeRefusedError
     from cruxible_core.exhaust.line_dispatch import dispatch_root
     from cruxible_core.service.procedures import line_dispatch
     from tests.test_indexes.test_resolution_contracts import _accept_tree
-    from tests.test_server.test_playbill_line_run_refusals import _acquisition_policy
 
     instance, line, _procedure, owner = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
@@ -1531,8 +1526,13 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
         found = original(current, **kwargs)
         name = next(moves)
         tree = current.tree_at(current.accepted_coordinate().git_oid)
-        policy = _acquisition_policy(name)
-        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+        from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+        # Any unrelated accepted change moves the head.
+        moved_contract = Contract.model_validate(
+            {"name": f"test.{name}", "version": 1, "fields": {"value": {"type": "int"}}}
+        )
+        tree[contract_path(moved_contract.name, 1)] = render_contract(moved_contract)
         _accept_tree(
             current, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name=name
         )

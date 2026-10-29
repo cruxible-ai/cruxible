@@ -9,14 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
+    ProcedureMandate,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -1666,21 +1663,26 @@ def test_repeat_call_body_refuses_the_direct_lane_before_journal(
 
 def _line_mandate(
     accepted,  # type: ignore[no-untyped-def]
+    line=None,  # type: ignore[no-untyped-def]
     *,
     rung: int = 3,
     valid_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
     expires_at: datetime = datetime(2027, 1, 1, tzinfo=UTC),
     state: str = "live",
-) -> ProcedureMandateV1:
-    return ProcedureMandateV1(
+) -> ProcedureMandate:
+    """A propose grant pinning ``line`` exactly (a Mandate pins a Line, ruling C3)."""
+
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+
+    del rung
+    assert line is not None, "a Mandate pins one exact Line"
+    return ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
-        procedure=ArtifactPin(
-            role="procedure",
-            target=accepted.procedure.identity,
-            artifact_digest=accepted.artifact_digest,
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
         ),
-        rung=rung,
-        authority_ceiling=accepted.procedure.definition.hard_caps,
+        grants="propose",
+        resource_ceiling=accepted.procedure.definition.hard_caps,
         namespace=("claims", "documents"),
         valid_from=valid_from,
         expires_at=expires_at,
@@ -1697,7 +1699,7 @@ def _admitted_line_service(
 ) -> None:
     """Reach the occurrence law with the closure and mandate already satisfied."""
 
-    mandate = _line_mandate(accepted)
+    mandate = _line_mandate(accepted, accepted_line.line)
     monkeypatch.setattr(
         procedure_run_service,
         "_accepted_line_by_reference",
@@ -1832,37 +1834,8 @@ def _line_run_against_a_degraded_lane(
 ) -> ProcedureRunStateV2:
     instance, _owner = initialize_local(tmp_path)
     line, accepted, _interfaces = _line()
-    acquisition_pin = ArtifactPin(
-        role="acquisition-policy",
-        target=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="line-sources"),
-        artifact_digest=_line_digest("acquisition-policy"),
-    )
-    with_policy = line.model_copy(
-        update={
-            "acquisition_policy": acquisition_pin,
-            "pins": tuple(
-                sorted(
-                    (*line.pins, acquisition_pin),
-                    key=lambda pin: (
-                        pin.role.encode(),
-                        pin.target.kind.encode(),
-                        pin.target.name.encode(),
-                    ),
-                )
-            ),
-        }
-    )
-    accepted_line = _accepted_line(with_policy)
+    accepted_line = _accepted_line(line)
     _admitted_line_service(monkeypatch, accepted, accepted_line)
-    # Since 0cb4cc0c5 the pinned acquisition policy is resolved before the
-    # Provider lane is planned (a trigger Capture binds against it), so the
-    # pinned policy must be accepted for the degraded lane to be what refuses.
-    accepted_policy = SourceAcquisitionPolicy(identity=acquisition_pin.target)
-    monkeypatch.setattr(
-        procedure_run_service,
-        "_accepted_acquisition_policies",
-        lambda *_a, **_k: ((acquisition_pin.artifact_digest, accepted_policy),),
-    )
 
     def refuse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise refusal
@@ -1871,9 +1844,9 @@ def _line_run_against_a_degraded_lane(
 
     return procedure_run_service.service_run_playbill_line(
         instance,
-        path_identity_digest=line_identity_digest(with_policy.identity),
+        path_identity_digest=line_identity_digest(line.identity),
         request=LineRunRequest(
-            line=line_identity_digest(with_policy.identity),
+            line=line_identity_digest(line.identity),
             evaluation_time=READ_TIME,
         ),
         actor_context=_actor(instance),

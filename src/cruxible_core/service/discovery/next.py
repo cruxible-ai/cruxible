@@ -95,7 +95,7 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityErr
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
-from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
+from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
     line_spec_path,
@@ -1022,7 +1022,8 @@ def _submitted_payload(values: Mapping[str, object]) -> Mapping[str, object] | N
 _SDK_LINE_KEYWORDS: tuple[tuple[str, str, object], ...] = (
     ("name", "name", None),
     ("procedure_name", "procedure", None),
-    ("acquisition_policy_name", "acquisition_policy", None),
+    ("bindings", "bindings", {}),
+    ("acquisition", "acquisition", {}),
     ("max_authority", "max_authority", None),
     ("trigger_input", "trigger_input", None),
     ("parameters", "parameters", {}),
@@ -4817,9 +4818,9 @@ def _line_settled_refusal_items(
 def _line_demotion_repair(line_identity: str, spec: LineSpec | None) -> PlaybillNextRepairV1:
     """The Line successor that closes a settled-prior-refusals row, filled from the Line.
 
-    Same identity, the same Procedure, acquisition policy, parameters, budgets
-    and trigger input, capped at `max_authority: propose`: lowering pins the
-    Procedure and policy by name and makes it the Line's successor, whose count
+    Same identity, the same Procedure, bindings, acquisition, parameters,
+    budgets and trigger input, capped at `max_authority: propose`: lowering
+    pins the Procedure by name and makes it the Line's successor, whose count
     starts empty. A Line whose record cannot be read (never at an accepted
     coordinate) keeps the template that starts the payload.
     """
@@ -4836,9 +4837,11 @@ def _line_demotion_repair(line_identity: str, spec: LineSpec | None) -> Playbill
         kind="line",
         name=spec.identity.name,
         procedure_name=spec.procedure.target.name,
-        acquisition_policy_name=(
-            None if spec.acquisition_policy is None else spec.acquisition_policy.target.name
-        ),
+        bindings={
+            key: f"{binding.build.target.name}#{binding.operation}"
+            for key, binding in spec.bindings.items()
+        },
+        acquisition=dict(spec.acquisition),
         max_authority="propose",
         trigger_input=spec.trigger_input,
         parameters=cast(dict[str, object], spec.model_dump(mode="json")["parameters"]),
@@ -6159,7 +6162,7 @@ def _mandate_items(
     with instance.bind_accepted_projection(coordinate) as projection:
         if expiring is None:
             rows = projection.typed.connection.execute(
-                "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
+                "SELECT identity,artifact_digest,line_identity FROM procedure_mandates "
                 "WHERE lifecycle='live' AND expires_at_us>? AND expires_at_us<=? ORDER BY identity",
                 (start, start + expiring_within.microseconds),
             ).fetchall()
@@ -6168,14 +6171,14 @@ def _mandate_items(
                 row
                 for identity in expiring
                 for row in projection.typed.connection.execute(
-                    "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
+                    "SELECT identity,artifact_digest,line_identity FROM procedure_mandates "
                     "WHERE identity=?",
                     (identity,),
                 )
             ]
-        for identity, digest, procedure_identity in rows:
+        for identity, digest, line_identity in rows:
             mandate = projection.typed.source(identity)
-            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate):
+            if not isinstance(mandate, ProcedureMandate):
                 raise NextAcceptedStateInvalid(
                     f"{NextAcceptedStateInvalid.code}: accepted ProcedureMandate "
                     f"{identity} has no valid source"
@@ -6187,10 +6190,10 @@ def _mandate_items(
                     severity="warning",
                     reason="mandate_expiring",
                     subject_identity=identity,
-                    related_identities=(procedure_identity,),
+                    related_identities=(line_identity,),
                     detail={
                         "mandate_digest": digest,
-                        "procedure_identity": procedure_identity,
+                        "line_identity": line_identity,
                         "grants": (
                             mandate.grants if isinstance(mandate, ProcedureMandate) else None
                         ),

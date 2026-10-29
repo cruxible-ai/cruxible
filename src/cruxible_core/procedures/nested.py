@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
@@ -269,6 +269,19 @@ def authority_procedure(
         target=admission.procedure_identity,
         artifact_digest=admission.procedure_artifact_digest,
     )
+
+
+def authority_line(
+    admission: ProcedureRunAdmissionV1, delegation: ProcedureDelegation | None = None
+) -> tuple[ArtifactIdentity | None, str | None]:
+    """The exact Line a run's terminal authority comes from (ruling C3).
+
+    A nested run inherits its root's Line (the delegation re-checks the parent
+    frame first); a direct run has none, so no Mandate covers it.
+    """
+
+    authority_procedure(admission, delegation)
+    return getattr(admission, "line_identity", None), admission.line_spec_digest
 
 
 class NestedProcedureRunner(Protocol):
