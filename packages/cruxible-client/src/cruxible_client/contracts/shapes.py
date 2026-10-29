@@ -1208,18 +1208,16 @@ def check_value(
     if isinstance(field_type, EnumType | EnumOfType):
         if not isinstance(value, str):
             return _invalid("type_mismatch", field, value)
+        members: tuple[str, ...] | None
         if isinstance(field_type, EnumType):
-            members: tuple[str, ...] | None = field_type.members
-        elif enum_members is None:
-            # No resolver at all: membership can never be confirmed. Fail
-            # closed rather than letting every string pass unchecked.
-            return _invalid("not_in_enum", field, value)
+            members = field_type.members
         else:
-            members = enum_members(field_type.claim_type)
-            if members is None:
-                # The ClaimType did not resolve: membership is unconfirmed,
-                # not "no restriction". Fail closed the same way.
-                return _invalid("not_in_enum", field, value)
+            members = None if enum_members is None else enum_members(field_type.claim_type)
+        if members is None:
+            # No resolver at all, or the ClaimType did not resolve: membership
+            # can never be confirmed. Fail closed rather than letting every
+            # string pass unchecked ("unconfirmed" is not "unbounded").
+            return _invalid("not_in_enum", field, value)
         if value not in members:
             return _invalid("not_in_enum", field, value)
         return FieldPresent(value=value, at=at)
@@ -1291,12 +1289,12 @@ def check_value(
         target = None if resolve is None else resolve(field_type.contract)
         if target is None:
             return _invalid("type_mismatch", field, value)
-        checked = _check_record_envelope(
+        envelope = _check_record_envelope(
             value, target, at=at, resolve=resolve, enum_members=enum_members
         )
-        if checked is None:
+        if envelope is None:
             return _invalid("type_mismatch", field, value)
-        return FieldPresent(value=checked, at=at)
+        return FieldPresent(value=envelope, at=at)
     if isinstance(field_type, ResultType):
         return _check_result(
             value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
