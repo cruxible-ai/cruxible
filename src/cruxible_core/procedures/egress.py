@@ -729,6 +729,7 @@ def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
             "item_manifest_digests": [item.manifest_digest for item in request.items],
             "target_paths": list(getattr(request, "target_paths", ())),
             "procedure_mandate_digest": getattr(request, "procedure_mandate_digest", None),
+            "ephemeral_spec_digest": getattr(request, "ephemeral_spec_digest", None),
             "procedure_artifact_digest": request.procedure_artifact_digest,
             # A capped settle is a proposal, not a settlement: another operation.
             **({} if request.capped_by is None else {"capped_by": request.capped_by}),
@@ -741,6 +742,11 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
 
     tag: Literal["playbill-terminal-egress-request-v2"] = "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
     procedure_mandate_digest: str | None = None
+    #: Ruling C4: a direct run's ephemeral Line spec digest, standing in for a
+    #: Procedure mandate when no accepted Line exists to pin one to. Grants
+    #: propose only -- the effective rung is already ceilinged below settle
+    #: (``EPHEMERAL_RUN_RUNG_CEILING``), so this never authorizes settlement.
+    ephemeral_spec_digest: str | None = None
     calibration_reading_digests: tuple[str, ...] = ()
     requested_authority: ProcedureHardCaps
     target_paths: tuple[str, ...] = ()
@@ -748,7 +754,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
     operation_key: str | None = None
     producer_receipt: ProcedureProducerReceiptV1 | None = None
 
-    @field_validator("procedure_mandate_digest", "operation_key")
+    @field_validator("procedure_mandate_digest", "ephemeral_spec_digest", "operation_key")
     @classmethod
     def _optional_digests(cls, value: str | None) -> str | None:
         return None if value is None else _tagged(value)
@@ -805,8 +811,17 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
                 or producer.capture_contract_digest != pin.artifact_digest
             ):
                 raise ValueError("Capture producer receipt does not reproduce its egress request")
-        if (self.procedure_mandate_digest is not None) != effectful:
-            raise ValueError("effectful terminal egress requires an exact Procedure mandate")
+        has_mandate_authority = self.procedure_mandate_digest is not None
+        has_ephemeral_authority = self.ephemeral_spec_digest is not None
+        if has_mandate_authority and has_ephemeral_authority:
+            raise ValueError(
+                "terminal egress authority is a Procedure mandate or an ephemeral spec, never both"
+            )
+        if (has_mandate_authority or has_ephemeral_authority) != effectful:
+            raise ValueError(
+                "effectful terminal egress requires an exact Procedure mandate or ephemeral "
+                "authority (ruling C4)"
+            )
         if self.mandate_pin is not None or self.mandate_basis_digests:
             raise ValueError(_INHERITED_MANDATE_REFUSAL)
         expected_key = terminal_operation_key(self) if effectful else None
@@ -921,8 +936,15 @@ def build_terminal_egress_request_v2(
     procedure_mandate_digest: str | None,
     calibration_reading_digests: tuple[str, ...],
     target_paths: tuple[str, ...],
+    ephemeral_spec_digest: str | None = None,
 ) -> TerminalEgressRequestV2:
-    """Successor a prepared request from its exact admission, never caller authority."""
+    """Successor a prepared request from its exact admission, never caller authority.
+
+    ``ephemeral_spec_digest`` is the direct run's own ephemeral Line spec
+    digest (ruling C4): the authority basis for an effectful terminal that has
+    no accepted Line and so no Procedure mandate could ever cover it. It is
+    mutually exclusive with ``procedure_mandate_digest``.
+    """
 
     validated_admission = _validated_run_admission(request, admission)
     payload = {
@@ -935,6 +957,7 @@ def build_terminal_egress_request_v2(
     provisional = TerminalEgressRequestV2.model_construct(
         **payload,
         procedure_mandate_digest=procedure_mandate_digest,
+        ephemeral_spec_digest=ephemeral_spec_digest,
         calibration_reading_digests=calibration_reading_digests,
         requested_authority=validated_admission.hard_caps,
         target_paths=target_paths,
@@ -1379,8 +1402,15 @@ def require_procedure_mandate(
     admission: ProcedureRunAdmissionV1,
     accepted_mandates: Mapping[str, ProcedureMandateAny],
     delegation: ProcedureDelegation | None = None,
-) -> ProcedureMandateAny:
-    """Resolve and evaluate authority before any effectful adapter is invoked."""
+) -> ProcedureMandateAny | None:
+    """Resolve and evaluate authority before any effectful adapter is invoked.
+
+    Returns the exact accepted mandate the request bound, or ``None`` when the
+    request instead carries ephemeral authority (ruling C4): a direct run has
+    no accepted Line, so no Procedure mandate could ever cover it, and its own
+    ephemeral Line spec grants propose on its own -- never settle, since the
+    effective rung is already ceilinged below it.
+    """
 
     _validated_run_admission(request, admission)
     from cruxible_core.procedures.nested import authority_line
@@ -1401,6 +1431,27 @@ def require_procedure_mandate(
                 )
             ),
         )
+    if request.ephemeral_spec_digest is not None:
+        if line_identity is not None or line_digest is not None:
+            raise TerminalAuthorityRefusal(
+                "procedure_mandate_line_mismatch",
+                "Ephemeral authority is claimed by a run admitted under an accepted Line.",
+                request=request,
+                repair_kind="rebind_admission",
+                repair=PROCEDURE_ADMISSION_REPAIR,
+            )
+        if request.required_rung > EPHEMERAL_RUN_RUNG_CEILING:
+            # The request model's own shape already forbids this (required_rung
+            # can never exceed the effective rung, itself ceilinged here), but
+            # authority is re-checked defensively before any effect.
+            raise TerminalAuthorityRefusal(
+                "procedure_mandate_line_mismatch",
+                "A Mandate grants authority to one exact Line; a direct run has none.",
+                request=request,
+                repair_kind="create_mandate",
+                repair=PROCEDURE_MANDATE_REPAIR,
+            )
+        return None
     digest = request.procedure_mandate_digest
     mandate = None if digest is None else accepted_mandates.get(digest)
     if mandate is None:
@@ -1449,7 +1500,7 @@ def require_procedure_mandate_at_head(
     admission: ProcedureRunAdmissionV1,
     projection: ProjectionHandle,
     delegation: ProcedureDelegation | None = None,
-) -> ProcedureMandateAny:
+) -> ProcedureMandateAny | None:
     """Re-establish the bound mandate against the accepted tree an effect is about to touch.
 
     Admission bound the mandate at the run's base. Accepted state may have
@@ -1578,7 +1629,8 @@ def verify_terminal_egress_receipt(
             raise TerminalEgressError("proposal egress requires a receipt naming its proposal")
         if request.kind == "settle_change_set" and (
             not isinstance(receipt, TerminalEgressReceiptV4)
-            or receipt.procedure_mandate_digest != request.procedure_mandate_digest
+            or receipt.procedure_mandate_digest
+            != (request.procedure_mandate_digest or request.ephemeral_spec_digest)
             or receipt.capped_by != served_capped_by(request)
         ):
             raise TerminalEgressError("settle egress must report under its exact mandate")

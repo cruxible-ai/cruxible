@@ -5048,7 +5048,13 @@ class ProcedureExecutor:
             ),
             prepared_at=self.clock.now(),
         )
-        if isinstance(admission, ProcedureRunAdmissionV5) and isinstance(node, CaptureEgressNode):
+        # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
+        # has no accepted Line), but it still builds a real v2 request under
+        # its own ephemeral Line spec -- the only authority basis it has.
+        v2_capable = (
+            isinstance(admission, ProcedureRunAdmissionV5) or self.ephemeral_spec_digest is not None
+        )
+        if v2_capable and isinstance(node, CaptureEgressNode):
             return (
                 build_terminal_egress_request_v2(
                     request,
@@ -5060,7 +5066,7 @@ class ProcedureExecutor:
                 None,
             )
         if (
-            isinstance(admission, ProcedureRunAdmissionV5)
+            v2_capable
             and isinstance(node, ProposeChangeSetNode)
             and isinstance(self.egress_sink, TerminalEgressPreparerProtocol)
         ):
@@ -5079,6 +5085,11 @@ class ProcedureExecutor:
                     request,
                     admission=admission,
                     procedure_mandate_digest=prepared.procedure_mandate_digest,
+                    ephemeral_spec_digest=(
+                        self.ephemeral_spec_digest
+                        if prepared.procedure_mandate_digest is None
+                        else None
+                    ),
                     calibration_reading_digests=(),
                     target_paths=prepared.target_paths,
                 ),

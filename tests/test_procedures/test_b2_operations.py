@@ -21,6 +21,7 @@ from tests.support.operation_world import (
     Invoker,
     Operator,
     actor,
+    author,
     author_line,
     author_procedure,
     build_files,
@@ -531,6 +532,146 @@ def test_a_plain_direct_run_also_records_its_ephemeral_spec_digest(tmp_path):
         )
     )
     assert recorded_digest == expected
+
+
+# --- F01 fix round 2: a direct run's propose/settle terminal really delivers -
+
+
+def _self_sourced_subject_item(rationale):  # type: ignore[no-untyped-def]
+    """A ``propose``/``settle`` candidate template: a self-sourced Subject.
+
+    No Capture, Source or provider is cited: the item's own body is its
+    evidence (``SelfSourceBody``), so a direct run with no provider/Source
+    node at all can still reach a real propose/settle delivery (F01).
+    """
+    import base64
+
+    return {
+        "tag": "playbill-procedure-subject-proposal-item-v1",
+        "subject_kind": "test.widget",
+        "key": {},
+        "rationale": rationale,
+        "create_new": True,
+        "source": {
+            "tag": "playbill-self-source-body-v1",
+            "content_base64": base64.b64encode(rationale.encode("utf-8")).decode("ascii"),
+        },
+    }
+
+
+def _author_widget_kind(instance):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput
+
+    author(
+        instance,
+        SubjectKindInput(kind="subject_kind", name="test.widget", minted=True),
+        name="subject-kind",
+    )
+
+
+def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
+    """No Call or Source node: a pure ``project`` feeding a propose/settle terminal."""
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": name,
+            "input": {},
+            "output": {"value": "integer"},
+            "steps": [
+                {"project": "shaped", "fields": {"value": 1}},
+                {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+            ],
+            "returns": "shaped",
+            "budget": {"provider_calls": 0},
+        }
+    )
+
+
+def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
+    """A slotted Call precedes the propose/settle terminal (a real provider run)."""
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": name,
+            "input": {"value": "integer"},
+            "output": {"value": "integer"},
+            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            "steps": [
+                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
+            ],
+            "returns": "result",
+            "budget": {"provider_calls": 1},
+        }
+    )
+
+
+def _direct_propose_or_settle_delivers(tmp_path, *, verb, with_call):  # type: ignore[no-untyped-def]
+    """Shared body: a direct run's terminal always delivers a real proposal.
+
+    A ``propose`` terminal delivers under ``effective_authority == "propose"``.
+    A ``settle`` terminal, which no accepted Line and so no Mandate could ever
+    cover (ruling C4), falls back to the very same delivery -- never settling
+    (``outcome == "proposed"``, ``accepted_git_oid`` is ``None``).
+    """
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+
+    build = operation_build() if with_call else None
+    instance = world(tmp_path, *(() if build is None else (build,)))
+    _author_widget_kind(instance)
+    name = f"test.{verb}-{'called' if with_call else 'plain'}-direct"
+    spec = (
+        _call_terminal_spec(name=name, verb=verb)
+        if with_call
+        else _plain_terminal_spec(name=name, verb=verb)
+    )
+    author_procedure(instance, spec)
+    base = instance.accepted_coordinate()
+    kwargs = {}
+    if with_call:
+        kwargs["provider_runtime_operator"] = Operator(Invoker())
+    result = service_run_playbill_procedure(
+        instance,
+        name=name,
+        request=ProcedureRunRequest(input={"value": 4} if with_call else {}, evaluation_time=NOW),
+        actor_context=actor(),
+        **kwargs,
+    )
+    assert result.status == "succeeded", result.terminal
+    assert len(result.terminal_egress) == 1
+    egress = result.terminal_egress[0]
+    assert egress.kind == f"{verb}_change_set"
+    assert egress.verdict == "delivered"
+    assert egress.proposal_id is not None and egress.candidate_digest is not None
+    assert egress.effective_authority == "propose"
+    if verb == "settle":
+        assert egress.capped_by is not None
+        assert egress.settle_outcome == "proposed"
+        assert egress.accepted_git_oid is None
+    # Producing the proposal activated nothing: a direct run never settles.
+    assert instance.accepted_coordinate() == base
+    return instance, result
+
+
+@pytest.mark.parametrize("with_call", [False, True])
+def test_a_direct_run_propose_terminal_really_delivers_a_proposal(tmp_path, with_call):
+    """F01: a self-sourced Subject proposal, with and without a preceding Call."""
+
+    _direct_propose_or_settle_delivers(tmp_path, verb="propose", with_call=with_call)
+
+
+@pytest.mark.parametrize("with_call", [False, True])
+def test_a_direct_run_settle_terminal_falls_back_to_a_real_proposal(tmp_path, with_call):
+    """F01/C4: a settle terminal in a direct run proposes -- it never settles."""
+
+    _direct_propose_or_settle_delivers(tmp_path, verb="settle", with_call=with_call)
 
 
 # --- 10. removed nouns are refused, naming their replacement ------------------
