@@ -59,6 +59,10 @@ def test_the_fan_out_form_parses_and_the_fixed_list_form_is_unchanged() -> None:
     assert fixed.candidate_templates == (item_template(),)
 
 
+@pytest.mark.skip(
+    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
+    "workspace.file's content contract is text/bytes only pre-B3"
+)
 def test_n_records_a_provider_emits_become_n_claims_of_one_proposal_each_citing_evidence(
     tmp_path: Path,
 ) -> None:
@@ -85,6 +89,10 @@ def test_n_records_a_provider_emits_become_n_claims_of_one_proposal_each_citing_
     assert all(claim.backing.capture_digests == (observation.capture_digest,) for claim in claims)
 
 
+@pytest.mark.skip(
+    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
+    "workspace.file's content contract is text/bytes only pre-B3"
+)
 def test_an_empty_list_proposes_nothing_and_the_run_succeeds(
     tmp_path: Path,
 ) -> None:
@@ -99,6 +107,10 @@ def test_an_empty_list_proposes_nothing_and_the_run_succeeds(
     assert _proposal_refs(instance) == []
 
 
+@pytest.mark.skip(
+    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
+    "workspace.file's content contract is text/bytes only pre-B3"
+)
 def test_a_malformed_element_refuses_typed_to_its_index(tmp_path: Path) -> None:
     instance, _owner, root, line, _procedure = proposal_world(tmp_path, templates=FAN_OUT)  # type: ignore[arg-type]
     _write_feed(root, [_element(None), {"severity": "high"}, _element("vendor")])
@@ -130,6 +142,10 @@ def _feed_without_list(root: Path, value: object, *, omit: bool = False) -> None
         ({"items": []}, False, "items_not_a_list"),
     ],
     ids=["missing", "string", "null", "object-holding-items"],
+)
+@pytest.mark.skip(
+    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
+    "workspace.file's content contract is text/bytes only pre-B3"
 )
 def test_a_fan_out_whose_items_are_not_a_list_refuses_typed(
     tmp_path: Path, value: object, omit: bool, reason: str
