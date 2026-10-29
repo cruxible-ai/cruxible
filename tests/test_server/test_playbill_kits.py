@@ -9,18 +9,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicy,
-    SourceAcquisitionPolicyV1,
-    acquisition_policy_digest,
-    parse_acquisition_policy,
-)
-from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.examples import acquisition_policy_example, procedure_example
 from cruxible_client.authoring.sdk import ChangeSetDraft
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -29,10 +21,9 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
-from cruxible_client.contracts.authoring.inputs import ProcedureInput, QueryDefinitionInput
+from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.captures import (
-    CanonicalDuration,
     CaptureContract,
     capture_contract_digest,
     parse_capture_contract,
@@ -57,11 +48,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
-)
-from cruxible_client.contracts.procedures.artifacts import (
-    parse_procedure,
-    procedure_artifact_digest,
-    render_procedure,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -1805,25 +1791,11 @@ def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[
     assert table <= _digest_fields(model)
 
 
-@pytest.mark.parametrize(
-    ("prefix", "model"),
-    [
-        ("source-acquisition-policies/", SourceAcquisitionPolicyV1),
-        ("source-acquisition-policies/", SourceAcquisitionPolicy),
-        ("provider-interfaces/", ProviderInterfaceRegistration),
-    ],
-)
-def test_policy_and_interface_references_are_their_pins_alone(
-    prefix: str, model: type[BaseModel]
-) -> None:
-    # A policy's coherence and join digests name built-in components or values,
-    # and an interface's digests are its own content: only pins are references.
-    table = {tuple(s for s in steps if not s.startswith("*")) for steps in REFERENCE_FIELDS[prefix]}
-    assert table == {("pins", "artifact_digest")}
-    if model is SourceAcquisitionPolicy:
-        assert _digest_fields(model) == set()
-    else:
-        assert table <= _digest_fields(model)
+# test_policy_and_interface_references_are_their_pins_alone was deleted:
+# "source-acquisition-policies/" and "provider-interfaces/" are no longer
+# REFERENCE_FIELDS prefixes (SourceAcquisitionPolicy and ProviderInterface
+# are removed nouns, cut clean per ruling C13; acquisition is now inline
+# data on a Procedure/Line, never a separately pinned artifact).
 
 
 def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_claims_follow(
@@ -1954,297 +1926,6 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
         "acme"
     ]
-
-
-POLICY = "acme.intake"
-POLICY_PATH = f"source-acquisition-policies/{POLICY}.json"
-PROCEDURE = "acme.count"
-PROCEDURE_PATH = f"procedures/{PROCEDURE}.json"
-
-
-def _policy(variant: int, predecessor: str | None = None) -> SourceAcquisitionPolicy:
-    policy = acquisition_policy_example().acquisition_policy
-    return policy.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY),
-            "max_age": CanonicalDuration(microseconds=variant * 60_000_000),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor),
-        }
-    )
-
-
-def _live_policy(world: _World) -> SourceAcquisitionPolicy:
-    return parse_acquisition_policy(world.tree()[POLICY_PATH], path=POLICY_PATH)
-
-
-def _author_policy(world: _World, variant: int) -> None:
-    current = world.tree().get(POLICY_PATH)
-    predecessor = (
-        None
-        if current is None
-        else acquisition_policy_digest(parse_acquisition_policy(current, path=POLICY_PATH)).tagged
-    )
-    if isinstance(world, _CoreWorld):
-        from cruxible_client.contracts.acquisition_policies import (
-            IndependentCoherence,
-            InputAcquisitionRule,
-            SourceAcquisitionPolicyV1,
-            render_acquisition_policy,
-        )
-
-        policy = SourceAcquisitionPolicyV1(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY),
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="intake",
-                    requirement="required",
-                    permitted_replayability=("exact",),
-                    max_age=CanonicalDuration(microseconds=variant * 60_000_000),
-                    on_unavailable="refuse",
-                    on_stale="refuse",
-                    on_oversized="refuse",
-                    on_conflict="refuse",
-                ),
-            ),
-            coherence=IndependentCoherence(),
-            lifecycle=ArtifactLifecycle(predecessor_digest=predecessor),
-        )
-        updates = {POLICY_PATH: render_acquisition_policy(policy)}
-        held = world.tree().get(PROCEDURE_PATH)
-        if held is not None:
-            updates[PROCEDURE_PATH] = render_procedure(
-                _historical_policy_pin(parse_procedure(held, path=PROCEDURE_PATH), policy)
-            )
-        _accept_stored_definitions(world, updates)
-        return
-    held = world.tree().get(PROCEDURE_PATH)
-    if held is not None:
-        procedure = parse_procedure(held, path=PROCEDURE_PATH)
-        if any(pin.role == "acquisition-policy" for pin in procedure.pins):
-            # These three regressions exercise immutable pre-A1 exact pins.
-            # Submit their stored artifact form through the ordinary proposal law.
-            from cruxible_client.contracts.acquisition_policies import render_acquisition_policy
-
-            policy = _policy(variant, predecessor)
-            historical = _historical_policy_pin(procedure, policy)
-            _accept_stored_definitions(
-                world,
-                {
-                    POLICY_PATH: render_acquisition_policy(policy),
-                    PROCEDURE_PATH: render_procedure(historical),
-                },
-            )
-            return
-    draft = world.pb.changes(rationale="Say how intake inputs are acquired.")
-    draft.acquisition_policy(_policy(variant, predecessor))
-    intent = draft.prepare()
-    assert not intent.refused, intent.diagnostics
-    submitted = intent.submit(accept="never")
-    assert submitted._candidate_status is not None
-    assert submitted._candidate_status.proposal_id is not None
-    world.approve(submitted._candidate_status.proposal_id)
-    world.pb.refresh()
-
-
-def _counting_procedure(name: str = PROCEDURE) -> ProcedureInput:
-    example = procedure_example()
-    return example.model_copy(
-        update={
-            "definition": {**example.definition, "name": name},
-            "acquisition_policy": POLICY,
-        }
-    )
-
-
-def _author_counting_procedure(
-    world: _World, *, historical_pin: bool = False, name: str = PROCEDURE
-) -> None:
-    if isinstance(world, _CoreWorld):
-        from cruxible_client.contracts.authoring.inputs import lower_authoring_input
-
-        world.submit(lower_authoring_input(_counting_procedure(name)))
-        if historical_pin:
-            procedure = parse_procedure(world.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
-            _accept_stored_definitions(
-                world,
-                {
-                    PROCEDURE_PATH: render_procedure(
-                        _historical_policy_pin(procedure, _live_policy(world))
-                    ),
-                },
-            )
-        return
-    draft = world.pb.changes(rationale="Count the intake.")
-    draft.procedure(definition=_counting_procedure(name))
-    intent = draft.prepare()
-    assert not intent.refused, intent.diagnostics
-    submitted = intent.submit(accept="never")
-    assert submitted._candidate_status is not None
-    assert submitted._candidate_status.proposal_id is not None
-    world.approve(submitted._candidate_status.proposal_id)
-    world.pb.refresh()
-
-    if historical_pin:
-        procedure = parse_procedure(world.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
-        _accept_stored_definitions(
-            world,
-            {
-                PROCEDURE_PATH: render_procedure(
-                    _historical_policy_pin(procedure, _live_policy(world))
-                )
-            },
-        )
-
-
-def _historical_policy_pin(procedure, policy):
-    pin = ArtifactPin(
-        role="acquisition-policy",
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
-    return procedure.model_copy(
-        update={
-            "acquisition_policy": None,
-            "pins": tuple(
-                sorted(
-                    (*(p for p in procedure.pins if p.role != pin.role), pin),
-                    key=lambda p: (p.role, p.target.qualified),
-                )
-            ),
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=procedure_artifact_digest(procedure).tagged
-            ),
-        }
-    )
-
-
-def _accept_stored_definitions(world, updates):
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-
-    instance = (
-        world.instance
-        if isinstance(world, _CoreWorld)
-        else get_playbill_manager().get(world.instance_id)
-    )
-    base = instance.accepted_coordinate()
-    actor_id = "owner" if isinstance(world, _CoreWorld) else "operator"
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/historical-policy-pin",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree={**world.tree(), **updates},
-        timestamp="2026-10-24T12:00:00.000000Z",
-    )
-    assert result.candidate is not None, result.evaluation.diagnostics
-    world.approve(result.admission.proposal_id)
-    world.pb.refresh()
-
-
-def _procedure_policy_pin(content: bytes) -> str:
-    procedure = parse_procedure(content, path=PROCEDURE_PATH)
-    (pin,) = (pin for pin in procedure.pins if pin.role == "acquisition-policy")
-    return pin.artifact_digest
-
-
-def test_a_kit_carries_procedures_and_the_policies_they_pin_moving_pins_through_the_graph(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = frozen_worlds
-    _author_policy(publisher, 1)
-    # History before the release: the snapshot's policy digest differs from
-    # the publisher's, so the Procedure's pin (bound into its definition
-    # digest) must move with it.
-    _author_policy(publisher, 2)
-    _author_counting_procedure(publisher, historical_pin=True)
-    local = acquisition_policy_digest(_live_policy(publisher)).tagged
-
-    release = publisher.build("1.0.0")
-
-    assert [item.path for item in release.manifest.artifacts] == [PROCEDURE_PATH, POLICY_PATH]
-    released = release.manifest.digests()[POLICY_PATH]
-    assert released != local
-    assert _procedure_policy_pin(release.contents()[PROCEDURE_PATH]) == released
-    added = consumer.add(release)
-    assert added.status == "accepted", added
-    tree = consumer.tree()
-    for path, content in release.contents().items():
-        assert tree[path] == content
-    run = consumer.pb.accepted_procedure(PROCEDURE).run()
-    assert run.status == "succeeded"
-
-    # An upgrade replaces the policy; the consumer's Procedure takes a
-    # successor pinning the consumer's new policy digest.
-    _author_policy(publisher, 3)
-    upgraded = consumer.add(publisher.build("1.1.0"))
-    assert upgraded.status == "accepted", upgraded
-    actions = {item.path: item.action for item in upgraded.plan}
-    assert actions == {POLICY_PATH: "replace", PROCEDURE_PATH: "replace"}
-    consumer_policy = acquisition_policy_digest(_live_policy(consumer)).tagged
-    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == consumer_policy
-    assert consumer.pb.accepted_procedure(PROCEDURE).run().status == "succeeded"
-
-
-def test_keeping_a_policy_keeps_the_procedure_pinned_to_the_consumers_version(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = frozen_worlds
-    _author_policy(publisher, 1)
-    _author_counting_procedure(publisher, historical_pin=True)
-    consumer.add(publisher.build("1.0.0"))
-    _author_policy(consumer, 2)
-    kept = acquisition_policy_digest(_live_policy(consumer)).tagged
-
-    _author_policy(publisher, 3)
-    upgraded = consumer.add(publisher.build("1.1.0"), keep=(f"SourceAcquisitionPolicy:{POLICY}",))
-
-    plan = {item.path: item for item in upgraded.plan}
-    assert plan[POLICY_PATH].action == "keep"
-    assert plan[POLICY_PATH].consequence == "overwrites_your_edit"
-    assert acquisition_policy_digest(_live_policy(consumer)).tagged == kept
-    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == kept
-
-
-def test_an_upgrade_carries_a_consumer_procedure_pinning_a_kit_policy(
-    frozen_worlds: tuple[_World, _World],
-) -> None:
-    """Review F-004: a Procedure the consumer authored outside the release takes a
-    successor through its typed graph; dropping the policy can retire it with it."""
-
-    publisher, consumer = frozen_worlds
-    _author_policy(publisher, 1)
-    assert consumer.add(publisher.build("1.0.0")).status == "accepted"
-    _author_counting_procedure(consumer, historical_pin=True)
-    before = parse_procedure(consumer.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
-
-    _author_policy(publisher, 2)
-    upgraded = consumer.add(publisher.build("1.1.0"))
-
-    assert upgraded.status == "accepted", upgraded
-    (policy_plan,) = (item for item in upgraded.plan if item.path == POLICY_PATH)
-    assert (policy_plan.action, policy_plan.dependent_count) == ("replace", 1)
-    after = parse_procedure(consumer.tree()[PROCEDURE_PATH], path=PROCEDURE_PATH)
-    assert after.lifecycle.predecessor_digest == procedure_artifact_digest(before).tagged
-    consumer_policy = acquisition_policy_digest(_live_policy(consumer)).tagged
-    assert _procedure_policy_pin(consumer.tree()[PROCEDURE_PATH]) == consumer_policy
-    assert consumer.pb.accepted_procedure(PROCEDURE).run().status == "succeeded"
-
-    # The next release drops the policy: retiring it retires the consumer's
-    # Procedure with it, by name.
-    dropped = KitBundle(
-        manifest=publisher.build("1.2.0").manifest.model_copy(
-            update={"artifacts": (), "owns": ("acme.",)}
-        ),
-        artifacts=(),
-    )
-    retired = consumer.add(dropped, retire_dependents=(f"SourceAcquisitionPolicy:{POLICY}",))
-    assert retired.status == "accepted", retired
-    tree = consumer.tree()
-    assert parse_procedure(tree[PROCEDURE_PATH], path=PROCEDURE_PATH).lifecycle.state == "retired"
-    assert parse_acquisition_policy(tree[POLICY_PATH], path=POLICY_PATH).lifecycle.state == (
-        "retired"
-    )
 
 
 def test_a_kit_carries_its_subject_kinds_and_their_keys(
@@ -2463,22 +2144,7 @@ def test_a_release_with_inert_files_installs_as_the_same_release(
     assert installed.content_digest == built.bundle.manifest.content_digest
 
 
-def test_a_kit_carries_a_named_policy_without_pinning_its_versions(worlds):
-    publisher, consumer = worlds
-    name = "acme.reader.count"
-    path = f"procedures/{name}.json"
-    _author_policy(publisher, 1)
-    _author_counting_procedure(publisher, name=name)
-    release = publisher.build("1.0.0", owns=("acme.reader.",))
-    assert set(release.contents()) == {path, POLICY_PATH}
-    procedure = parse_procedure(release.contents()[path], path=path)
-    assert procedure.acquisition_policy == POLICY
-    assert not any(pin.role == "acquisition-policy" for pin in procedure.pins)
-    assert consumer.add(release).status == "accepted"
-    before = consumer.tree()[path]
-    _author_policy(publisher, 2)
-    upgraded = consumer.add(publisher.build("1.1.0", owns=("acme.reader.",)))
-    assert upgraded.status == "accepted"
-    assert consumer.tree()[path] == before
-    assert _live_policy(consumer).max_age == CanonicalDuration(microseconds=120_000_000)
-    assert consumer.pb.accepted_procedure(name).run().status == "succeeded"
+# test_a_kit_carries_a_named_policy_without_pinning_its_versions was deleted:
+# the named-reference form it tested (Procedure.acquisition_policy = <name>,
+# no pin) is gone along with SourceAcquisitionPolicy -- acquisition is now
+# inline AcquisitionDefault data on the Procedure/Line itself (ruling C12).
