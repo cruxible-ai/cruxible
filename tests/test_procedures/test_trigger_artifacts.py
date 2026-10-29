@@ -17,6 +17,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.procedure_mandates import (
+    procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -69,7 +70,6 @@ from tests.support.lines import (
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_server.test_playbill_line_run_refusals import (
-    _acquisition_policy,
     _line_mandate,
     _served_line,
 )
@@ -322,13 +322,8 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
 
     instance, owner = initialize_local(tmp_path)
     accepted = _slotless_procedure("triggered-method")
-    policy = _acquisition_policy("triggered-policy")
-    line = _served_line("triggered-line", accepted=accepted, policy=policy)
-    mandate = _line_mandate(accepted)
-    from cruxible_client.contracts.acquisition_policies import (
-        acquisition_policy_path,
-        render_acquisition_policy,
-    )
+    line = _served_line("triggered-line", accepted=accepted)
+    mandate = _line_mandate(accepted, line)
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(
@@ -337,7 +332,6 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
                 render_capture_contract(TRIGGER_CONTRACT)
             ),
             accepted.path: render_procedure(accepted.procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
         }
@@ -345,7 +339,7 @@ def _line_world(tmp_path):  # type: ignore[no-untyped-def]
     _accept_tree(
         instance, owner, tree, timestamp="2026-09-30T10:00:00.000000Z", proposal_name="line"
     )
-    return instance, owner, line
+    return instance, owner, line, mandate
 
 
 def _submit(instance, members, name):  # type: ignore[no-untyped-def]
@@ -368,7 +362,7 @@ def _refused(result) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
 
 
 def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_triggers(tmp_path):
-    instance, owner, line = _line_world(tmp_path)
+    instance, owner, line, mandate = _line_world(tmp_path)
     stray = line_trigger("stray", line="absent-line", schedule=CadenceSchedule(interval_seconds=60))
     assert _refused(_submit(instance, trigger_members(stray), "stray")) == (
         "cruxible.trigger.target_line_unavailable",
@@ -404,8 +398,28 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
             )
         }
     )
+    # A retired Line must also retire (or carry) any Mandate it still holds,
+    # in the same ChangeSet (ruling C3) -- orthogonal to the trigger-settlement
+    # law this test is about, so retire the Mandate in every attempt below,
+    # re-pinned to the retired Line's own new digest (the generic pin-closure
+    # law checks this regardless of the Mandate's own lifecycle state).
+    retired_mandate = mandate.model_copy(
+        update={
+            "line": mandate.line.model_copy(
+                update={"artifact_digest": line_spec_digest(retired_line).tagged}
+            ),
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=procedure_mandate_digest(mandate).tagged
+            )
+        }
+    )
+    mandate_member = {
+        procedure_mandate_path(mandate.identity.name): render_procedure_mandate(retired_mandate)
+    }
     refused = _submit(
-        instance, {line_spec_path(line.identity.name): render_line_spec(retired_line)}, "retire"
+        instance,
+        {line_spec_path(line.identity.name): render_line_spec(retired_line), **mandate_member},
+        "retire",
     )
     assert _refused(refused) == ("cruxible.line.triggers_not_settled",)
     message = refused.evaluation.diagnostics[0].message
@@ -415,6 +429,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         instance,
         {
             line_spec_path(line.identity.name): render_line_spec(retired_line),
+            **mandate_member,
             **trigger_members(successor(hourly, state="retired")),
         },
         "retire-half",
@@ -424,6 +439,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         instance,
         {
             line_spec_path(line.identity.name): render_line_spec(retired_line),
+            **mandate_member,
             **trigger_members(
                 successor(hourly, state="retired"), successor(landing, state="retired")
             ),
@@ -534,7 +550,7 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
 
-    instance, owner, line = _line_world(tmp_path)
+    instance, owner, line, _mandate = _line_world(tmp_path)
     assert "trigger" in AUTHORING_EXAMPLE_NAMES
     example = AUTHORING_EXAMPLE_FACTORIES["trigger"]()
     assert isinstance(example, TriggerInput) and example.line_name == "replace-me"
