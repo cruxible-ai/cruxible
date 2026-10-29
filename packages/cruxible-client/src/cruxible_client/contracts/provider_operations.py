@@ -35,8 +35,10 @@ from cruxible_client.contracts.shapes import (
     ContractRef,
     EnumResolver,
     FieldInvalid,
+    FieldType,
     ListType,
     NestedType,
+    VariantType,
     check_value,
     contract_digest,
     parse_contract_ref,
@@ -331,27 +333,56 @@ def _closed(
         if key not in contract.fields:
             problems.append(f"{path}{key}: undeclared field")
     for name, declared in contract.fields.items():
-        member = value.get(name)
-        if isinstance(declared.type, NestedType) and isinstance(member, Mapping):
-            target = resolve(declared.type.contract)
+        _close_member(
+            value.get(name), declared.type, resolve=resolve, path=f"{path}{name}", problems=problems
+        )
+
+
+def _close_member(
+    value: object,
+    field_type: FieldType,
+    *,
+    resolve: ContractLookup,
+    path: str,
+    problems: list[str],
+) -> None:
+    """Close every record ``field_type`` reaches, at any depth of wrapping.
+
+    A list wraps to any depth (``list<list<Contract>>``), and a variant's arm
+    is one Contract chosen by its tag; closure traverses both, so a record
+    nested inside either can never carry an undeclared key past this check.
+    """
+
+    if isinstance(field_type, ListType):
+        if isinstance(value, list | tuple):
+            for index, item in enumerate(value):
+                _close_member(
+                    item,
+                    field_type.item,
+                    resolve=resolve,
+                    path=f"{path}[{index}]",
+                    problems=problems,
+                )
+        return
+    if isinstance(field_type, NestedType):
+        if isinstance(value, Mapping):
+            target = resolve(field_type.contract)
             if target is not None:
-                _closed(member, target, resolve=resolve, path=f"{path}{name}.", problems=problems)
-        elif (
-            isinstance(declared.type, ListType)
-            and isinstance(declared.type.item, NestedType)
-            and isinstance(member, list | tuple)
-        ):
-            target = resolve(declared.type.item.contract)
-            if target is not None:
-                for index, item in enumerate(member):
-                    if isinstance(item, Mapping):
-                        _closed(
-                            item,
-                            target,
-                            resolve=resolve,
-                            path=f"{path}{name}[{index}].",
-                            problems=problems,
-                        )
+                _closed(value, target, resolve=resolve, path=f"{path}.", problems=problems)
+        return
+    if isinstance(field_type, VariantType):
+        if isinstance(value, Mapping):
+            tag = value.get("tag")
+            ref = field_type.arms.get(tag) if isinstance(tag, str) else None
+            if ref is not None:
+                target = resolve(ref)
+                if target is not None:
+                    # "tag" selects the arm; it is not one of the arm
+                    # Contract's own fields (matches check_value's variant
+                    # body, which strips it the same way).
+                    body = {key: item for key, item in value.items() if key != "tag"}
+                    _closed(body, target, resolve=resolve, path=f"{path}.", problems=problems)
+        return
 
 
 class OperationItemBudgetExceeded(ValueError):
