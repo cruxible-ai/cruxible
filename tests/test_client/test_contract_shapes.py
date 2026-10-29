@@ -21,6 +21,7 @@ from cruxible_client.contracts.shapes import (
     contract_digest,
     contract_path,
     edge_refusal,
+    evaluate_contract_law,
     evaluate_predicate,
     parse_contract,
     parse_predicate,
@@ -234,3 +235,75 @@ def test_absent_required_fields_are_unknown() -> None:
 def test_predicates_outside_the_closed_grammar_are_refused(text: str) -> None:
     with pytest.raises((ContractFormatError, ValueError)):
         parse_predicate(text)
+
+
+# -- F1: the acceptance law validates every pinned occurrence, not only the first --------
+
+
+def test_the_contract_law_checks_every_pinned_occurrence_not_only_the_first() -> None:
+    target = validate_contract({"name": "security.target", "version": 1, "fields": {"x": "string"}})
+    target_path = contract_path("security.target", 1)
+    target_bytes = render_contract(target)
+    correct_digest = contract_digest(target).tagged
+    wrong_digest = "sha256:" + "0" * 64
+    outer = validate_contract(
+        {
+            "name": "security.outer",
+            "version": 1,
+            "fields": {
+                # Two fields pin the same Contract version. The first carries the
+                # right digest; the second -- which a naive dedupe-by-(name,version)
+                # would drop -- carries a wrong one.
+                "a": {
+                    "type": {
+                        "kind": "record",
+                        "contract": {"name": "security.target", "version": 1, "digest": correct_digest},
+                    }
+                },
+                "b": {
+                    "type": {
+                        "kind": "record",
+                        "contract": {"name": "security.target", "version": 1, "digest": wrong_digest},
+                    }
+                },
+            },
+        }
+    )
+    # refs() still dedupes for dependency listing (get/orient/closure consumers).
+    assert len(outer.refs()) == 1
+    outer_path = contract_path("security.outer", 1)
+    problems = evaluate_contract_law(
+        outer,
+        path=outer_path,
+        lookup=lambda path: target_bytes if path == target_path else None,
+        parent_content=None,
+        content=render_contract(outer),
+    )
+    assert any(p.code == "cruxible.contract.pin_digest_mismatch" for p in problems)
+
+
+def test_parse_contract_requires_a_digest_on_every_occurrence() -> None:
+    correct_digest = "sha256:" + "1" * 64
+    outer = validate_contract(
+        {
+            "name": "security.outer2",
+            "version": 1,
+            "fields": {
+                "a": {
+                    "type": {
+                        "kind": "record",
+                        "contract": {"name": "security.target", "version": 1, "digest": correct_digest},
+                    }
+                },
+                # The second occurrence of the same pin carries no digest at all.
+                "b": {
+                    "type": {
+                        "kind": "record",
+                        "contract": {"name": "security.target", "version": 1},
+                    }
+                },
+            },
+        }
+    )
+    with pytest.raises(ContractFormatError):
+        parse_contract(render_contract(outer), path=contract_path("security.outer2", 1))

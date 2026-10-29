@@ -755,12 +755,16 @@ class Contract(_Shape):
         return ContractRef(name=self.name, version=self.version)
 
     def refs(self) -> tuple[ContractRef, ...]:
-        """Every Contract version this shape pins, in field order, without repeats."""
+        """Every Contract version this shape pins, in field order, without repeats.
+
+        For dependency listing only (``get``, ``orient``, closure): use
+        :func:`all_field_refs` to judge the acceptance law, which must see
+        every occurrence, not just the first.
+        """
 
         found: dict[tuple[str, int], ContractRef] = {}
-        for item in self.fields.values():
-            for ref in type_refs(item.type):
-                found.setdefault((ref.name, ref.version), ref)
+        for ref in all_field_refs(self):
+            found.setdefault((ref.name, ref.version), ref)
         return tuple(found.values())
 
 
@@ -771,6 +775,20 @@ def coerce_field_type(value: FieldType | str | Mapping[str, object]) -> FieldTyp
         return parse_type(value)
     _refuse_structured(value)
     return cast(FieldType, _FIELD_TYPE.validate_python(value))
+
+
+def all_field_refs(contract: Contract) -> tuple[ContractRef, ...]:
+    """Every Contract pin this shape names, in field order, including repeats.
+
+    Two fields may pin the same ``name@N`` with different (or missing) digest
+    annotations; the acceptance law and :func:`parse_contract` must judge each
+    occurrence on its own, not just the first one found.
+    """
+
+    found: list[ContractRef] = []
+    for item in contract.fields.values():
+        found.extend(type_refs(item.type))
+    return tuple(found)
 
 
 def type_refs(field_type: FieldType) -> tuple[ContractRef, ...]:
@@ -902,7 +920,7 @@ def parse_contract(
     except (UnicodeDecodeError, ValueError) as exc:
         raise ContractFormatError("Contract is not canonical JSON") from exc
     contract = validate_contract(data)
-    if any(ref.digest is None for ref in contract.refs()):
+    if any(ref.digest is None for ref in all_field_refs(contract)):
         raise ContractFormatError("an accepted Contract pins every nested Contract by digest")
     if not artifact_path_matches(contract_path(contract.name, contract.version), path, codec=codec):
         raise ContractFormatError("Contract identity/path disagreement")
@@ -963,7 +981,7 @@ def evaluate_contract_law(
                         f"{contract.ref.spelling} must name {expected} as its predecessor.",
                     )
                 )
-    for ref in contract.refs():
+    for ref in all_field_refs(contract):
         if (ref.name, ref.version) == (contract.name, contract.version):
             problems.append(
                 ContractLawProblem(
@@ -989,7 +1007,9 @@ def evaluate_contract_law(
                     f"{ref.spelling} pins {ref.digest}, but the accepted version is {digest}.",
                 )
             )
-    return tuple(problems)
+    # Several occurrences of the same pin can earn the identical problem; keep
+    # one of each so a repeated reference does not multiply the diagnostics.
+    return tuple(dict.fromkeys(problems))
 
 
 # -- runtime values ------------------------------------------------------------------------
