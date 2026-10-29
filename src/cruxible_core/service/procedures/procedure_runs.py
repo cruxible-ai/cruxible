@@ -775,6 +775,28 @@ def _resolve_coordinate(
     )
 
 
+def _claim_type_enum_resolver(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> Callable[[str], tuple[str, ...] | None]:
+    """F07: every ``enum_of<ClaimType>`` field's members, read at this run's
+    admitted (immutable) coordinate.
+
+    The coordinate never changes once admitted, so a replay's read is the
+    same read: nothing needs separately retaining for determinism.
+    """
+
+    def resolve(claim_type_name: str) -> tuple[str, ...] | None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            claim_type = projection.typed.source(f"ClaimType:{claim_type_name}")
+        if claim_type is None or getattr(claim_type, "literal_schema", None) is None:
+            return None
+        members = claim_type.literal_schema.get("enum")
+        return tuple(members) if isinstance(members, list) else None
+
+    return resolve
+
+
 def _accepted_procedure(
     instance: PlaybillInstance,
     *,
@@ -3397,6 +3419,7 @@ def service_run_playbill_procedure(
             effective_rung=direct_effective_rung,
             egress_sink=direct_egress_sink,
             ephemeral_spec_digest=ephemeral_spec_digest,
+            enum_resolver=_claim_type_enum_resolver(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -4494,6 +4517,7 @@ def _run_playbill_line(
                 workspace_file_reader=workspace_file_reader,
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
+                enum_resolver=_claim_type_enum_resolver(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,

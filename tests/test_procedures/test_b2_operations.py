@@ -16,11 +16,15 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.support.operation_world import (
     LINE,
     NOW,
+    REFUSAL,
+    VALUE,
     Invoker,
     Operator,
     actor,
     author_line,
     author_procedure,
+    build_files,
+    contract_files,
     operation,
     operation_build,
     slotted_spec,
@@ -837,6 +841,161 @@ def test_an_output_outside_the_operation_contract_is_refused(tmp_path):
     instance = slotted_world(tmp_path)
     author_line(instance)
     state, _ = run_line(instance, invoker=Invoker(output=lambda context: {"value": "seven"}))
+    assert state.status == "node_refused"
+    assert state.terminal.code == "contract_output_refused"
+
+
+def _severity_claim_type():  # type: ignore[no-untyped-def]
+    from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
+    from tests.core_support._claim_type_support import claim_type_input_example
+
+    record = claim_type_input_example().model_copy(
+        update={
+            "predicate": "test.severity",
+            "literal_schema": {"type": "string", "enum": ["low", "high"]},
+        }
+    )
+    return lower_claim_type_input(record, tree={}, identity_rules=True)
+
+
+def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
+    """A world whose ``compute`` slot's operation outputs ``enum_of<test.severity>``."""
+
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.providers import (
+        ProviderDistributionRef,
+        ProviderImplementationManifest,
+        ProviderLocalDistributionPin,
+        ProviderLocalEnvBackendPin,
+        ProviderRuntimeManifest,
+    )
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
+    from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
+    from tests.core_support._identity_support import accept_tree
+
+    severity_value = Contract.model_validate(
+        {
+            "name": "test.severity_value",
+            "version": 1,
+            "fields": {"severity": {"type": "enum_of:test.severity"}},
+        }
+    )
+    served = (
+        operation(
+            "compute",
+            signature=("test.value@1", "test.severity_value@1"),
+        ),
+    )
+    manifest = ProviderRuntimeManifest(
+        provider_id="demo-provider",
+        distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifest(
+                interface_id="compute",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                declared_input_buckets=(),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
+    )
+    document = PackageRegistrationDocumentV1(schema_version=2, manifest=manifest, operations=served)
+
+    def digests(ref):  # type: ignore[no-untyped-def]
+        for contract in (VALUE, REFUSAL, severity_value):
+            if (ref.name, ref.version) == (contract.name, contract.version):
+                return contract_digest(contract).tagged
+        return None
+
+    build = document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name="demo-provider",
+            version="1.0.0",
+            filename="demo_provider-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + ("a" * 64),
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "b" * 64,
+            materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
+        ),
+        control_domain="demo-provider",
+        operations=document.pinned_operations(digests),
+    )
+    # The severity Contract and ClaimType must be accepted before the build
+    # that pins them: the install law resolves every operation Contract pin
+    # against what is already accepted. ``world()`` always seeds a default
+    # build under the same provider identity, so this instance is built from
+    # scratch instead of through it.
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    severity_type = _severity_claim_type()
+    accept_tree(
+        instance,
+        {
+            **contract_files(),
+            contract_path(severity_value.name, severity_value.version): render_contract(
+                severity_value
+            ),
+            claim_type_path(severity_type.predicate): render_claim_type(severity_type),
+        },
+        name="severity",
+    )
+    accept_tree(instance, build_files(build), name="build")
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    author_procedure(
+        instance,
+        ProcedureSpec.model_validate(
+            {
+                "procedure": "test.slotted",
+                "input": {"value": "integer"},
+                "output": {"severity": "string"},
+                "slots": {
+                    "compute": {
+                        "in": "test.value@1",
+                        "out": "test.severity_value@1",
+                        "effect": "pure",
+                    }
+                },
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                ],
+                "returns": "result",
+                "budget": {"provider_calls": 1},
+            }
+        ),
+    )
+    author_line(instance)
+    return instance
+
+
+def test_an_accepted_enum_of_claim_type_member_is_not_refused(tmp_path):
+    """F07: the executor resolves enum_of<ClaimType> members at the admitted
+    coordinate; a declared member (``high``) must not refuse not_in_enum."""
+
+    instance = _severity_world(tmp_path)
+    state, _ = run_line(instance, invoker=Invoker(output=lambda context: {"severity": "high"}))
+    assert state.status == "succeeded", state.terminal
+    assert state.result == {"severity": "high"}
+
+
+def test_an_unaccepted_enum_of_claim_type_member_is_refused(tmp_path):
+    """The flip side of F07: a value outside the declared ClaimType members
+    still refuses, so the resolver is not merely a pass-through."""
+
+    instance = _severity_world(tmp_path)
+    state, _ = run_line(
+        instance, invoker=Invoker(output=lambda context: {"severity": "catastrophic"})
+    )
     assert state.status == "node_refused"
     assert state.terminal.code == "contract_output_refused"
 

@@ -148,6 +148,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
+from cruxible_client.contracts.shapes import EnumResolver
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -2695,6 +2696,7 @@ class ProcedureExecutor:
         nested_runner: NestedProcedureRunner | None = None,
         parent_context: ParentInvocationContext | None = None,
         ephemeral_spec_digest: str | None = None,
+        enum_resolver: EnumResolver | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2723,6 +2725,10 @@ class ProcedureExecutor:
         # it (PC-E1 reserves line/mandate/calibration coordinates for Line
         # runs), so this is its only retained, verifiable record.
         self.ephemeral_spec_digest = ephemeral_spec_digest
+        # F07: resolves enum_of<ClaimType> members at the admitted (immutable)
+        # coordinate; replay re-reads the same pinned coordinate and so sees
+        # the same members deterministically -- nothing extra needs retaining.
+        self.enum_resolver = enum_resolver
 
     def _pin(
         self,
@@ -5257,6 +5263,7 @@ class ProcedureExecutor:
                 value,
                 contract,
                 resolve=resolve,
+                enum_members=self.enum_resolver,
                 max_items=_effective_max_items(admission),
                 observe_items=lambda count, path: state.observe_items(count, boundary, path),
             )
@@ -5296,7 +5303,9 @@ class ProcedureExecutor:
         try:
             if contract is None:
                 raise OperationValueRefused((f"{declared.contract.spelling} is not in the plan",))
-            validate_operation_value(detail, contract, resolve=resolve)
+            validate_operation_value(
+                detail, contract, resolve=resolve, enum_members=self.enum_resolver
+            )
         except OperationValueRefused as exc:
             raise _RunRefusal(
                 "contract_output_refused",
