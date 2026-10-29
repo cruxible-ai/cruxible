@@ -19,18 +19,11 @@ import ast
 import base64
 import hashlib
 import json
-from importlib.resources import files
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-from cruxible_client.contracts.provider_interfaces import (
-    ProviderBucketConformanceFixture,
-    evaluate_provider_interface_law,
-    provider_bucket_fixture_digest,
-    provider_external_interface_definition_digest,
-    render_provider_interface,
-)
 
 import cruxible_core.providers.builtin_workspace_file as adapter_module
 from cruxible_client.contracts.providers import (
@@ -38,14 +31,15 @@ from cruxible_client.contracts.providers import (
     provider_path,
     render_provider,
 )
-from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
+from cruxible_client.contracts.shapes import Contract, contract_digest
+from cruxible_client.contracts.workspace_file import workspace_file_contracts
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_DEPLOYMENT_DIGEST,
     WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST,
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_REVISION,
-    workspace_file_accepted_registration,
+    WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
     workspace_file_builtin_identity,
     workspace_file_builtin_provider,
 )
@@ -64,8 +58,6 @@ from cruxible_core.providers.provider_runtime_contract import (
 from tests.support.provider_checkout import provider_checkout_path
 
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures/workspace_file_parity.json").read_text())
-# sha256 of the package's contracts/workspace.file.json, as its registration.json pins it.
-PACKAGE_DEFINITION_FILE_DIGEST = "fe0762d929330c30a3c307d645cfd08ef0f87038a1bc826945ce2fd8f317c9eb"
 
 
 def _text_lines(count: int, *, newline: str, trailing: bool, bom: bool = False) -> bytes:
@@ -101,8 +93,23 @@ _FIXTURE_BYTES: dict[str, bytes] = {
 }
 
 
-def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixture:
-    return ProviderBucketConformanceFixture(
+@dataclass(frozen=True)
+class _ConformanceFixture:
+    """Local stand-in for the removed ``ProviderBucketConformanceFixture``.
+
+    Bucket conformance is now just an inert ``{selector: fixture_id}`` string
+    mapping on the manifest (no embedded fixture bytes/digest object survives
+    in the current model); this file keeps the shape only to drive the parity
+    golden below, which exercises the adapter directly.
+    """
+
+    fixture_id: str
+    canonical_input: dict[str, object]
+    measured_bucket_id: str
+
+
+def _fixture(fixture_id: str, data: bytes) -> _ConformanceFixture:
+    return _ConformanceFixture(
         fixture_id=fixture_id,
         canonical_input={
             "logical_source": f"fixtures/{fixture_id}",
@@ -127,7 +134,7 @@ def _context(payload: object, bucket: str) -> ProviderRuntimeRunContextV1:
         protocol_version="1.0",
         run_id="parity",
         interface_id="workspace.file",
-        interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+        interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
         implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
         entrypoint="cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
         coordinates={},
@@ -228,51 +235,44 @@ def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
     )
 
 
-def test_the_registration_keeps_the_package_definition_and_fixtures_exactly() -> None:
-    definition = files("cruxible_core.governance.seed_artifacts").joinpath(
-        "workspace-file-interface.json"
-    )
-    assert hashlib.sha256(definition.read_bytes()).hexdigest() == PACKAGE_DEFINITION_FILE_DIGEST
-    accepted = workspace_file_accepted_registration()
-    registration = accepted.registration
-    assert registration.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    assert (
-        provider_external_interface_definition_digest(
-            registration.interface_bytes_hex, domain="cruxible.interface.stub.v1"
-        )
-        == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    )
-    assert registration.effect_class == "none"
-    # The seeded proofs are inert, but they still name exactly these fixtures, so
-    # the parity golden above runs over the package's own registration inputs.
+def test_the_seeded_provider_declares_exactly_the_fixtures_bucket_conformance_names() -> None:
+    """The seeded provider's inert bucket claims still name exactly these fixtures.
+
+    ProviderInterfaceRegistration (with its own standalone definition file and
+    conformance-proof digests) is removed (B2 C12); bucket conformance is now
+    just an inert ``{selector: fixture_id}`` string mapping straight on the
+    manifest (``_INERT_BUCKETS`` in seed_artifacts/workspace_file.py), so
+    there is no surviving fixture-byte-digest proof to check -- only that the
+    claimed fixture ids are exactly these fixtures (the parity golden above
+    runs over the same fixture inputs).
+    """
+
+    provider = workspace_file_builtin_provider()
+    (manifest_implementation,) = provider.runtime_artifact.manifest.implementations
     fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
-    assert {proof.fixture_id for proof in registration.conformance_proofs} == set(fixtures)
-    for proof in registration.conformance_proofs:
-        fixture = fixtures[proof.fixture_id]
-        assert provider_bucket_fixture_digest(fixture) == proof.fixture_digest
-        assert fixture.measured_bucket_id == proof.measured_bucket_id
+    assert set(manifest_implementation.bucket_conformance.values()) == set(fixtures)
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
     """A builder change that moves seeded bytes needs a new genesis seed set."""
 
-    seeded = next(item for item in GENESIS_SEED_SETS if item.set_id == "triggers-4-workspace-file")
-    seeds = genesis_seed_files(seeded)
-    accepted = workspace_file_accepted_registration()
-    provider = workspace_file_builtin_provider(interface_artifact_digest=accepted.artifact_digest)
-    assert seeds[accepted.path] == render_provider_interface(accepted.registration)
-    assert seeds[provider_path(provider.identity.name)] == render_provider(provider)
-    law = evaluate_provider_interface_law(
-        accepted.registration,
-        path=accepted.path,
-        predecessor=None,
+    seeded = next(
+        item for item in GENESIS_SEED_SETS if item.set_id == "triggers-3-workspace-file-operation"
     )
-    assert law.verdict == "accepted"
+    seeds = genesis_seed_files(seeded)
+    provider = workspace_file_builtin_provider()
+    path = provider_path(provider.identity.name)
+    assert seeds[path] == render_provider(provider)
+    contracts = {
+        (contract.name, contract.version): contract_digest(contract).tagged
+        for contract in workspace_file_contracts()
+        if isinstance(contract, Contract)
+    }
     provider_law = evaluate_provider_law(
         provider,
-        path=provider_path(provider.identity.name),
+        path=path,
         predecessor=None,
-        interface_registrations={accepted.registration.identity.qualified: accepted},
+        contracts=contracts,
     )
     assert provider_law.verdict == "accepted"
     (record,) = provider.implementations
@@ -354,7 +354,7 @@ def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
             ProviderRunContext(
                 run_id="parity",
                 interface_id="workspace.file",
-                interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
+                interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
                 implementation_digest="sha256:" + "0" * 64,
                 input_bucket=bucket,
                 input=payload,  # type: ignore[arg-type]
@@ -388,6 +388,6 @@ def test_provider_list_names_the_providers_installed_here(tmp_path) -> None:  # 
 
     (builtin,) = catalog.installed
     assert builtin.provider == "cruxible-builtin"
-    assert builtin.interfaces == ("workspace.file",)
+    assert builtin.operations == ("workspace.file",)
     assert catalog.packages == ()
     assert catalog.detail is not None and "No provider repository configured" in catalog.detail
