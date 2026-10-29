@@ -111,23 +111,21 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
 
 
 def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) -> None:
-    from cruxible_client.contracts.acquisition_policies import (
-        acquisition_policy_path,
-        render_acquisition_policy,
-    )
+    from datetime import datetime, timezone
 
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
     from cruxible_client.contracts.procedure_mandates import (
+        ProcedureMandate,
         procedure_mandate_path,
         render_procedure_mandate,
     )
-    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-    from tests.test_procedures.test_procedure_source_runs import (
-        _accept_more,
-        _line_mandate,
-        _policy,
-        _run_line,
-        _served_line,
+    from cruxible_client.contracts.procedures.line_specs import (
+        LineSpec,
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
     )
+    from tests.test_procedures.test_procedure_source_runs import _accept_more, _run_line
 
     instance, owner = initialize_local(tmp_path)
     child_blueprint, parent_blueprint = blueprints()
@@ -166,16 +164,43 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         name="inbox-children",
     )
     accepted_grand = _accepted(instance, "grand")
-    policy = _policy()
-    line = _served_line(accepted_grand, policy).model_copy(
-        update={"parameters": {"positive": True}}
+    caps = accepted_grand.definition.hard_caps
+    # "grand"/"relay"/"inbox_child" are a pure invoke-chain graph (no provider
+    # slots), unlike the workspace.file advisory procedure _served_line/
+    # _line_mandate are built for -- a plain, slot-free Line and Mandate here.
+    line = LineSpec(
+        identity=ArtifactIdentity(kind="Line", name="nested-inbox-line"),
+        occurrence_epoch=1,
+        procedure=ArtifactPin(
+            role="procedure",
+            target=accepted_grand.identity,
+            artifact_digest=procedure_artifact_digest(accepted_grand).tagged,
+        ),
+        parameters={"positive": True},
+        max_authority="observe",
+        budgets={
+            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
+            "max_provider_calls": caps.max_provider_calls,
+            "max_capture_bytes": caps.max_capture_bytes,
+            "max_items": caps.max_items,
+        },
+        epsilon={"$decimal": "0"},
     )
-    mandate = _line_mandate(accepted_grand)
+    mandate = ProcedureMandate(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name="nested-inbox-line-mandate"),
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
+        grants="propose",
+        resource_ceiling=caps,
+        namespace=("claims",),
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
+    )
     _accept_more(
         instance,
         owner,
         {
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
