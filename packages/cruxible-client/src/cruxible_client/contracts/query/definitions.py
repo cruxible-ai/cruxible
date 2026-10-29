@@ -70,7 +70,6 @@ from cruxible_client.contracts.shapes import (
     FieldType,
     IntType,
     StringType,
-    assignable,
     check_value,
     contract_digest,
     parse_contract_ref,
@@ -798,10 +797,8 @@ def query_contract_problems(
         return found
 
     declared = {item.name: item for item in query.parameters}
-    parameter_shape: Contract | None = None
     if query.parameter_contract is not None:
         shape = contract(query.parameter_contract, "parameter")
-        parameter_shape = shape
         if shape is not None:
             if set(declared) != set(shape.fields):
                 problems.append(
@@ -842,7 +839,7 @@ def query_contract_problems(
                 field = shape.fields.get(name)
                 if field is None:
                     continue
-                problem = _projected_value_problem(value, field, declared, parameter_shape)
+                problem = _projected_value_problem(value, field, declared)
                 if problem is not None:
                     problems.append(
                         (
@@ -872,35 +869,36 @@ def _projected_value_problem(
     value: object,
     field: ContractField,
     declared: Mapping[str, QueryParameterDeclaration],
-    parameter_shape: Contract | None,
 ) -> str | None:
+    """Why ``value`` cannot be trusted to satisfy ``field``, or ``None`` if it can.
+
+    Only a literal is fully known at acceptance time; every other source is
+    bound at run time, and ``query/engine.py`` enforces none of a Contract's
+    refinements on it (``resolve_query_parameters`` checks only a supplied
+    parameter's bare ``value_type``; a Subject ID's length and a Claim's role
+    or verdict are read as-is). Trusting a declared parameter_contract field's
+    refinement here -- even one that matches the row field exactly -- would
+    claim a guarantee nothing enforces, so any refined field sourced from a
+    dynamic reference fails closed. A later slice that enforces Contract
+    refinements at run time can lift this for the sources it enforces.
+    """
+
     kind = field.type.kind
     if isinstance(value, QueryParameterRef):
         parameter = declared.get(value.parameter)
         if parameter is None:
             return None
-        # A declared parameter_contract field is fully typed, refinements
-        # included: judge it with the same edge rule any other flow uses.
-        param_field = (
-            None if parameter_shape is None else parameter_shape.fields.get(value.parameter)
-        )
-        if param_field is not None:
-            return (
-                None
-                if assignable(param_field.type, field.type)
-                else f"is parameter {value.parameter!r}, typed {param_field.spelling}"
-            )
+        if not parameter.required and not field.optional:
+            # An optional parameter may be absent at call time; a required
+            # field never is.
+            return f"is optional parameter {value.parameter!r}, which may be absent"
         allowed = _VALUE_TYPE_KINDS[parameter.value_type]
         if kind not in allowed:
             return f"is a {parameter.value_type} parameter"
         if _has_refinement(field.type):
-            # No parameter_contract exists to bound this parameter's value, so
-            # a refined row field (a range, a pattern, a bounded length) can
-            # never be verified against it. Fail closed rather than let an
-            # out-of-bound value through unchecked at run time.
             return (
-                f"is parameter {value.parameter!r}, declared only as "
-                f"{parameter.value_type} with no Contract bounding it; its field "
+                f"is parameter {value.parameter!r}; execution checks only its declared "
+                f"{parameter.value_type} type, never a Contract refinement, so "
                 f"{field.spelling} cannot be verified"
             )
         return None
@@ -912,7 +910,14 @@ def _projected_value_problem(
         checked = check_value(value.value, field.type, at="/literal")
         return None if isinstance(checked, FieldPresent) else "is a literal outside its type"
     if isinstance(value, QuerySubjectFieldRef):
-        return None if kind in _VALUE_TYPE_KINDS["string"] else "is a Subject identity string"
+        if kind not in _VALUE_TYPE_KINDS["string"]:
+            return "is a Subject identity string"
+        if _has_refinement(field.type):
+            return (
+                f"is a Subject identity string of unverified shape; "
+                f"{field.spelling} cannot be verified"
+            )
+        return None
     if isinstance(value, QueryEvaluationTimeRef):
         return None if kind == "datetime" else "is the evaluation time (a datetime)"
     if isinstance(value, QueryClaimFieldRef):

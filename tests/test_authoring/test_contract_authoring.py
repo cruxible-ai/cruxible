@@ -412,6 +412,145 @@ def test_an_unbounded_parameter_cannot_satisfy_a_refined_row_field() -> None:
     assert "cruxible.query_definition.row_disagrees" in problems
 
 
+def test_a_matching_parameter_contract_still_cannot_satisfy_a_refined_row_field() -> None:
+    """A parameter_contract's refinement is a paper guarantee: execution never enforces it.
+
+    resolve_query_parameters only checks a supplied value's bare value_type,
+    never a Contract refinement, so trusting the parameter_contract field's
+    agreement with the row field (even when both declare int{0..1}) would
+    let an out-of-bound caller value (99) through unchecked at run time.
+    """
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.bounded-row2",
+            "version": 1,
+            "fields": {"item_id": "string", "rank": "int{0..1}"},
+        }
+    )
+    params = validate_contract(
+        {"name": "project.bounded-params", "version": 1, "fields": {"rank": "int{0..1}"}}
+    )
+
+    def resolve(ref: object) -> object:
+        return row if ref.name == "project.bounded-row2" else params  # type: ignore[attr-defined]
+
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "rank", "value_type": "integer"}],
+            "parameter_contract": "project.bounded-params@1",
+            "row_contract": "project.bounded-row2@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                    {"name": "rank", "value": {"kind": "parameter", "parameter": "rank"}},
+                ]
+            },
+        }
+    )
+    problems = tuple(code for code, _message in query_contract_problems(spec, resolve=resolve))
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_an_optional_parameter_cannot_satisfy_a_required_row_field() -> None:
+    """An optional parameter may be absent at call time; a required field never is."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.required-row",
+            "version": 1,
+            "fields": {"item_id": "string", "status": "string"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "parameters": [{"name": "status", "value_type": "string", "required": False}],
+            "row_contract": "project.required-row@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                    {"name": "status", "value": {"kind": "parameter", "parameter": "status"}},
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
+def test_a_subject_id_cannot_satisfy_a_length_bounded_row_field() -> None:
+    """A Subject ID's length is not statically known; a bounded string field cannot verify it."""
+
+    from cruxible_client.contracts.query.definitions import (
+        QueryDefinitionSpec,
+        query_contract_problems,
+    )
+    from cruxible_client.contracts.shapes import validate_contract
+
+    data = query_claims_by_type_example().query_definition.model_dump(mode="json")
+    row = validate_contract(
+        {
+            "name": "project.short-id-row",
+            "version": 1,
+            "fields": {"item_id": "string{max_len: 1}"},
+        }
+    )
+    spec = QueryDefinitionSpec.model_validate(
+        {
+            **data,
+            "row_contract": "project.short-id-row@1",
+            "projection": {
+                "fields": [
+                    {
+                        "name": "item_id",
+                        "value": {
+                            "kind": "subject_field",
+                            "binding": "item",
+                            "field": "subject_id",
+                        },
+                    },
+                ]
+            },
+        }
+    )
+    problems = tuple(
+        code for code, _message in query_contract_problems(spec, resolve=lambda _ref: row)
+    )
+    assert "cruxible.query_definition.row_disagrees" in problems
+
+
 def test_a_query_definitions_row_contract_pins_an_exact_digest(tmp_path: Path) -> None:
     """Lowering pins row_contract/parameter_contract the same way a Contract pins a nested one."""
 
