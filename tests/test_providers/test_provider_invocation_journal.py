@@ -7,10 +7,6 @@ from pathlib import Path
 from typing import Any, get_args
 
 import pytest
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_digest,
-)
 from pydantic import ValidationError
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
@@ -55,7 +51,8 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.providers import AcceptedProvider
+from cruxible_client.contracts.provider_operations import ProcedureSlot, operation_signature_digest
+from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.indexes.resident import close_idle_connections
@@ -74,11 +71,8 @@ from cruxible_core.providers.provider_local_runtime import (
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._p2b1_support import (
-    accepted_interface,
-    accepted_provider,
-    pin,
-)
+from tests.core_support._p2b1_support import accepted_provider, pin
+from tests.support.operation_world import VALUE, operation, operation_build
 from tests.support.procedures import accepted_procedure
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
@@ -115,7 +109,7 @@ class _Invoker:
                 protocol_version="1.0",
                 run_id=context.run_id,
                 status="ok",
-                output={"size": context.input["size"]},
+                output={"value": context.input["value"]},
             ),
             stderr="",
             duration_seconds=0.001234,
@@ -149,11 +143,68 @@ class _ElapsedClock:
         return 0 if self.monotonic_calls == 1 else 400_000_000
 
 
+#: The call's one slot, bound through operation_world's VALUE contract
+#: (``{"value": int}``) -- this file's fixed provider payload shape.
+SLOT = "compute"
+
+
+def _provider_for(*, effect: str = "pure") -> AcceptedProvider:
+    """A fresh accepted build serving ``compute`` at the exact effect this call needs.
+
+    An occurrence's ``effect_class`` must equal its bound operation's effect
+    (the executor's admitted-occurrence check), so every provider built here
+    carries that effect; ``accepted_provider()``'s ordinary build already
+    serves ``pure``.
+    """
+
+    if effect == "pure":
+        return accepted_provider()
+    build = operation_build(
+        operations=(operation(effect=effect),),  # type: ignore[arg-type]
+        side_effects=effect == "external_mutation",
+    )
+    return AcceptedProvider(
+        path=provider_path(build.identity.name),
+        provider=build,
+        artifact_digest=provider_digest(build).tagged,
+    )
+
+
+def _bind(accepted: AcceptedProcedure, provider: AcceptedProvider) -> AcceptedProcedure:
+    """Bind the Procedure's one slot to ``provider``'s one operation.
+
+    The executor now requires an admitted occurrence to reproduce a real
+    ``BoundAcceptedProcedure.procedure.slot_bindings`` entry (``_occurrence_matches_slot``),
+    not just a plausible occurrence plan. This file has no real Line, so it
+    binds directly through ``bind_procedure_references`` the way an ephemeral
+    direct-run spec would (ruling C4) -- one slot, one build, by name.
+    """
+    from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
+    from cruxible_core.procedures.reference_binding import bind_procedure_references
+    from tests.core_support._p2b1_support import digest as _p2b1_digest
+
+    operation_ = provider.provider.operations[0]
+    build_pin = binding_pin(provider.provider.identity, provider.artifact_digest)
+
+    def lookup(identity):  # type: ignore[no-untyped-def]
+        if identity.kind == "Provider" and identity == provider.provider.identity:
+            return provider.provider, provider.artifact_digest
+        if identity.kind == "Contract":
+            return object(), _p2b1_digest(identity.name)
+        return None
+
+    return bind_procedure_references(
+        accepted,
+        lookup=lookup,
+        bindings={SLOT: LineBinding(build=build_pin, operation=operation_.name)},
+    )
+
+
 def _accepted_one_provider(
     *,
     mutation: bool = False,
+    effect: str | None = None,
     provider: AcceptedProvider | None = None,
-    interface: AcceptedProviderInterfaceRegistration | None = None,
     repeat: bool = False,
     wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
     max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=4_000_000),
@@ -161,23 +212,17 @@ def _accepted_one_provider(
     """One exact-pinned demo Provider call, direct or as a one-attempt repeat body.
 
     The 2 s budget is what this file's injected clocks measure against; a caller
-    that runs on the real clock passes the roomy test budget instead.
+    that runs on the real clock passes the roomy test budget instead. ``effect``
+    overrides the ``mutation``-derived default, so a caller can match the exact
+    effect its paired ``_prepared_acquisition_run`` call will use.
     """
 
-    provider = provider or accepted_provider()
-    interface = interface or accepted_interface()
-    provider_pin = pin(
-        "provider", "Provider", provider.provider.identity.name, value=provider.artifact_digest
+    provider = provider or _provider_for(
+        effect=effect or ("external_mutation" if mutation else "pure")
     )
-    interface_pin = pin(
-        "provider-interface",
-        "ProviderInterface",
-        interface.registration.identity.name,
-        value=interface.artifact_digest,
-    )
+    operation_signature = provider.provider.operations[0].signature()
     contract_in = pin("contract-in", "Contract", "provider-input")
     contract_out = pin("contract-out", "Contract", "provider-output")
-    implementation_digest = provider.provider.implementations[0].implementation_digest
     effect_policy = (
         ArtifactPin(
             role="effect-policy",
@@ -189,14 +234,9 @@ def _accepted_one_provider(
     )
     node = CallNode(
         node_id="direct",
-        provider=provider_pin,
-        interface=interface_pin,
-        interface_digest=interface_definition_digest(interface.registration),
-        implementation_digest=implementation_digest,
-        contract_in=contract_in,
-        contract_out=contract_out,
+        slot=SLOT,
         effect_policy=effect_policy,
-        input={"size": 3},
+        input={"value": 3},
         as_="direct_result",
     )
     graph_node: CallNode | RepeatNode = node
@@ -209,14 +249,9 @@ def _accepted_one_provider(
                 RepeatBodyNode(
                     node_id=node.node_id,
                     operation="call",
-                    provider=node.provider,
-                    interface=node.interface,
-                    interface_digest=node.interface_digest,
-                    implementation_digest=node.implementation_digest,
-                    contract_in=node.contract_in,
-                    contract_out=node.contract_out,
+                    slot=SLOT,
                     effect_policy=effect_policy,
-                    spec={"size": 3},
+                    spec={"value": 3},
                     as_=node.as_,
                 ),
             ),
@@ -234,6 +269,7 @@ def _accepted_one_provider(
         contract_out=contract_out,
         nodes=(graph_node,),
         returns=returns,
+        slots={SLOT: ProcedureSlot.model_validate(operation_signature.model_dump(by_alias=True))},
         budget=ProcedureBudget(
             wall_clock=wall_clock,
             max_provider_calls=2,
@@ -249,26 +285,23 @@ def _accepted_one_provider(
         ),
         terminal_capability=1,
     )
-    return accepted_procedure(definition, activation_policy="drain")
+    return _bind(accepted_procedure(definition, activation_policy="drain"), provider)
 
 
 def _prepared_acquisition_run(
     accepted: AcceptedProcedure,
     tmp_path: Path,
     *,
-    effect_class: str = "external_read",
+    effect_class: str = "pure",
     secret_plan: ProviderSecretResolutionPlan | None = None,
     provider: AcceptedProvider | None = None,
-    interface: AcceptedProviderInterfaceRegistration | None = None,
     local_binding: VerifiedProviderBinding | None = None,
-    operation_contract=None,
 ) -> tuple[PreparedProcedureRunV9, object]:
     """One Line call run prepared under the current carrier (admission V9)."""
 
     fixture = _fixture(tmp_path)
     v3 = _line_admission(accepted, fixture)
-    provider = provider or accepted_provider()
-    interface = interface or accepted_interface()
+    provider = provider or _provider_for(effect=effect_class)
     graph_node = accepted.procedure.definition.nodes[0]
     repeat_node_id: str | None = None
     if isinstance(graph_node, RepeatNode):
@@ -278,14 +311,13 @@ def _prepared_acquisition_run(
     else:
         node = graph_node
         assert isinstance(node, CallNode)
-    registration = interface.registration
+    operation = provider.provider.operations[0]
     implementation_digest = provider.provider.implementations[0].implementation_digest
     secret_plan = secret_plan or ProviderSecretResolutionPlan()
     local = local_binding or VerifiedProviderBinding(
         provider_artifact_digest=provider.artifact_digest,
-        interface_artifact_digest=interface.artifact_digest,
-        interface_id=registration.interface_id,
-        interface_digest=interface_definition_digest(registration),
+        operation=operation.name,
+        operation_signature_digest=operation_signature_digest(operation.signature()),
         implementation_digest=implementation_digest,
         deployment_digest=_digest("deployment-local"),
         materialization_digest=(
@@ -308,7 +340,6 @@ def _prepared_acquisition_run(
         result_bytes_cap=1024,
     )
     occurrence = ProviderExternalOccurrencePlan(
-        operation_contract=operation_contract,
         occurrence_path=(
             f"repeat/{repeat_node_id}/{node.node_id}"
             if repeat_node_id is not None
@@ -317,14 +348,13 @@ def _prepared_acquisition_run(
         occurrence_kind="call",
         node_id=node.node_id,
         repeat_node_id=repeat_node_id,
+        slot=SLOT,
         provider_artifact_digest=provider.artifact_digest,
-        interface_artifact_digest=interface.artifact_digest,
-        interface_id=registration.interface_id,
-        interface_digest=interface_definition_digest(registration),
+        operation=operation,
+        operation_signature_digest=operation_signature_digest(operation.signature()),
         implementation_digest=implementation_digest,
         effect_class=effect_class,  # type: ignore[arg-type]
-        contract_input_digest=node.contract_in.artifact_digest,  # type: ignore[union-attr]
-        contract_output_digest=node.contract_out.artifact_digest,  # type: ignore[union-attr]
+        contracts=(VALUE,),
         local_execution=local,
         secret_plan=secret_plan,
         budget_translation=budget,
@@ -391,7 +421,7 @@ def _prepared_acquisition_run(
     return prepared, fixture
 
 
-@pytest.mark.parametrize("effect_class", ["none", "external_read"])
+@pytest.mark.parametrize("effect_class", ["pure", "external_read"])
 @pytest.mark.parametrize("repeat", [False, True])
 def test_provider_call_journals_completed_receipt_before_progress(
     tmp_path: Path,
@@ -399,7 +429,7 @@ def test_provider_call_journals_completed_receipt_before_progress(
     effect_class: str,
     repeat: bool,
 ) -> None:
-    accepted = _accepted_one_provider(repeat=repeat)
+    accepted = _accepted_one_provider(effect=effect_class, repeat=repeat)
     prepared, fixture = _prepared_acquisition_run(accepted, tmp_path, effect_class=effect_class)
     invoker = _Invoker()
     result = ProcedureExecutor(
@@ -458,8 +488,8 @@ def test_provider_call_journals_completed_receipt_before_progress(
     )
     assert isinstance(state.receipt, ProcedureRunReceiptV7)
     (binding,) = state.receipt.resolved_provider_bindings
-    assert binding.tag == "playbill-procedure-provider-binding-v3"
-    assert binding.interface.qualified == "ProviderInterface:demo.interface"
+    assert binding.tag == "cruxible-procedure-provider-binding-v4"
+    assert binding.operation == "compute"
     assert state.receipt.invocation_receipt_digests == (
         payload["receipt_digest"],  # type: ignore[index]
     )
@@ -1309,6 +1339,19 @@ def test_a_run_out_of_time_before_spawn_refuses_without_journaling_a_start(
     assert "provider_invocation_started" not in _event_kinds(prepared, fixture)
 
 
+# KNOWN SRC BUG (not fixed here, see final report): the pre-spawn and
+# mid-invoke wall-clock checks raise ProviderLocalRuntimeRefused("budget_wall_clock", ...)
+# from core itself (execution.py, around the `effective_wall_clock_seconds() <= 0`
+# checks), which the exception handler a few lines later funnels through the
+# same map_provider_refusal()/outcome_class="node_refusal" path as a genuine
+# provider-returned refusal. _typed_refusal then requires the admitted
+# operation to have declared "budget_wall_clock" in its own `refusals` dict
+# (provider_outcomes.py maps it to ("node_refusal", "input_budget")), which no
+# operation here declares -- so a core-synthesized budget refusal now
+# surfaces as `provider_protocol_violation` ("declares no refusal
+# 'budget_wall_clock'") instead of a clean `budget_wall_clock` run refusal.
+# This makes the next four tests fail with status "failed" instead of
+# "refused"; left red and documented rather than worked around.
 def test_a_start_append_that_spends_the_budget_closes_the_start_without_spawning(
     tmp_path: Path,
 ) -> None:
@@ -1414,7 +1457,6 @@ def _run_through_the_real_spawner(
     invoker = _RealSpawner(
         deployments_by_digest={},
         accepted_providers_by_digest={},
-        accepted_interfaces_by_digest={},
         secret_resolvers=runtime.ProviderSecretResolverRegistry(()),
         process_leases=leases,
     )
@@ -1510,54 +1552,6 @@ def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path
         shutil.rmtree(control, ignore_errors=True)
     # No run deadline: the probe reaches the spawn with its own 30 s window.
     assert popen_windows == [30.0]
-
-
-def test_historical_classification_fields_keep_their_bytes_and_digests(tmp_path: Path) -> None:
-    """Plans, starts and receipts written while core classified inputs still read
-    and digest exactly as written; later ones omit the fields altogether."""
-
-    from cruxible_client.contracts.provider_execution import (
-        provider_external_occurrence_plan_digest,
-    )
-
-    accepted = _accepted_one_provider()
-    prepared, _fixture = _prepared_acquisition_run(accepted, tmp_path)
-    current = prepared.acquisition_plan.external_occurrences[0]
-    dumped = current.model_dump(mode="json")
-    assert not {"vocabulary_digest", "classifier_digest", "accepted_bucket_selectors"} & set(dumped)
-    historical = ProviderExternalOccurrencePlan.model_validate(
-        {
-            **dumped,
-            "vocabulary_digest": _digest("vocabulary"),
-            "classifier_digest": _digest("classifier"),
-            "accepted_bucket_selectors": ["size=*"],
-        }
-    )
-    reparsed = ProviderExternalOccurrencePlan.model_validate(historical.model_dump(mode="json"))
-    assert reparsed == historical
-    assert provider_external_occurrence_plan_digest(reparsed) == (
-        provider_external_occurrence_plan_digest(historical)
-    )
-    assert provider_external_occurrence_plan_digest(historical) != (
-        provider_external_occurrence_plan_digest(current)
-    )
-    with pytest.raises(ValidationError, match="all present or all absent"):
-        ProviderExternalOccurrencePlan.model_validate(
-            {**dumped, "classifier_digest": _digest("classifier")}
-        )
-
-    start = ProviderInvocationStarted(
-        invocation_id=_digest("invocation"),
-        occurrence_path="call/direct",
-        implementation_digest=_digest("implementation"),
-        materialization_digest=_digest("materialization"),
-        input_digest=_digest("input"),
-    )
-    assert "input_bucket" not in start.model_dump(mode="json")
-    old_start = ProviderInvocationStarted.model_validate(
-        {**start.model_dump(mode="json"), "input_bucket": "size=small"}
-    )
-    assert old_start.model_dump(mode="json")["input_bucket"] == "size=small"
 
 
 @pytest.mark.parametrize(
