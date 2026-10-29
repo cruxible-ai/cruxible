@@ -476,8 +476,10 @@ def projection_registry_for_compiler(
         CLAIM_REBIND_COMPILER,
         LIGHT_ARTIFACTS_COMPILER,
     }:
+        # F13 (C12 noun removal): Blueprint is gone, so the current compiler's
+        # registry (LIGHT_ARTIFACTS_COMPILER) declares no "blueprint" kind.
         return p2c_extension_registry().with_artifact_kinds(
-            "attestation", "resolution-contract", "trigger", "blueprint", "subject-kind"
+            "attestation", "resolution-contract", "trigger", "subject-kind"
         )
     if compiler == GOVERNED_TRIGGERS_COMPILER:
         return p2c_extension_registry().with_artifact_kinds(

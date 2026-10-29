@@ -26,6 +26,7 @@ from cruxible_core.compiler.compiler import (
     SUPPORTED_COMPILERS,
     artifact_kinds_for_compiler,
     current_compiler_coordinate,
+    projection_registry_for_compiler,
 )
 from cruxible_core.compiler.projection_artifacts import (
     P2_B0_ARTIFACT_KINDS,
@@ -65,6 +66,16 @@ def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> 
         )
         == "provider-interface"
     )
+
+
+def test_the_current_compilers_projection_registry_declares_no_removed_noun() -> None:
+    """F13: ProviderInterface and Blueprint are gone (C12); the current
+    compiler's *projection extension* registry (additive-fact permission,
+    not the path-kind registry above) must not still permit either kind."""
+
+    registry = projection_registry_for_compiler(current_compiler_coordinate())
+    assert not registry.supports_artifact_kind("provider-interface")
+    assert not registry.supports_artifact_kind("blueprint")
 
 
 def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:

@@ -644,12 +644,17 @@ def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
             "cruxible.provider_interface.classifier",
         )
     )
+    # F13 (C12 noun removal): ProviderInterface is gone, so the current
+    # compiler's registry declares no "provider-interface" artifact kind.
+    # Its fact schemas stay declared (never written by current admission;
+    # inventoried under C13 for the historical/bootstrap replay they still
+    # may serve).
     return ProjectionExtensionRegistry(
         (
             *prior.declarations("semantic"),
             *provider_runtime,
         ),
-        artifact_kinds=("procedure-runtime-policy", "provider-interface"),
+        artifact_kinds=("procedure-runtime-policy",),
     )
 
 
@@ -665,7 +670,7 @@ def p2c_extension_registry() -> ProjectionExtensionRegistry:
     )
     return ProjectionExtensionRegistry(
         (*prior.declarations("semantic"), mandate),
-        artifact_kinds=("procedure-runtime-policy", "provider-interface", "procedure-mandate"),
+        artifact_kinds=("procedure-runtime-policy", "procedure-mandate"),
     )
 
 
