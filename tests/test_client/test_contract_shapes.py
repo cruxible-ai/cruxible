@@ -378,11 +378,45 @@ def test_key_type_refuses_untyped_nested_data() -> None:
     checked = check_value({"undeclared": [{"opaque": True}]}, field_type, at="/k")
     assert isinstance(checked, FieldInvalid)
     assert checked.problem.code == "key_unparseable"
-    # A plain string key spelling is still accepted; full SubjectKind
-    # canonicalization is deferred past B1 (no identity rule invented here).
-    assert check_value("CVE-2024-1234", field_type, at="/k") == FieldPresent(
-        value="CVE-2024-1234", at="/k"
-    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "CVE-2024-1234",
+        "   ",
+        "é",  # not NFC; a canonical key spelling must already be NFC.
+    ],
+)
+def test_key_type_refuses_every_value_until_canonicalization_exists(value: str) -> None:
+    """No SubjectKind identity rule exists yet (B1 scope): key<K> fails closed completely.
+
+    A plain string cannot be confirmed as a valid key without that rule, so
+    every value -- not only untyped nested data -- refuses key_unparseable.
+    The spelling itself keeps parsing and rendering (the grammar stays
+    available); only value validation and Contract acceptance fail closed.
+    """
+
+    field_type = parse_type("key<security.vulnerability>")
+    checked = check_value(value, field_type, at="/k")
+    assert isinstance(checked, FieldInvalid)
+    assert checked.problem.code == "key_unparseable"
+
+
+def test_a_contract_declaring_a_key_field_is_refused_at_acceptance() -> None:
+    """No SubjectKind canonicalization hook exists yet; key<K> is refused at definition time."""
+
+    with pytest.raises(ContractTypeRefused) as caught:
+        validate_contract({**ROW, "fields": {"x": "key<security.vulnerability>"}})
+    assert caught.value.code == "contract_type_refused"
+
+
+def test_a_contract_declaring_a_nested_key_field_is_refused_at_acceptance() -> None:
+    with pytest.raises(ContractTypeRefused) as caught:
+        validate_contract(
+            {**ROW, "fields": {"x": "list<key<security.vulnerability>>{max_items: 10}"}}
+        )
+    assert caught.value.code == "contract_type_refused"
 
 
 # -- F10: an unresolved enum_of fails closed, never open ---------------------------------

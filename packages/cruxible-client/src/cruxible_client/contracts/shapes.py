@@ -703,6 +703,24 @@ class ContractField(_Shape):
         return render_type(self.type) + ("?" if self.optional else "")
 
 
+def _contains_key_type(field_type: FieldType) -> bool:
+    """Whether ``field_type`` is, or nests, a ``key<K>``.
+
+    No SubjectKind identity rule exists yet (B1 scope): a Contract field may
+    not declare one, bare or nested inside a list or a field_result. The
+    spelling itself keeps parsing and rendering; only Contract acceptance
+    (here) and value validation (``check_value``) fail closed.
+    """
+
+    if isinstance(field_type, KeyType):
+        return True
+    if isinstance(field_type, ListType):
+        return _contains_key_type(field_type.item)
+    if isinstance(field_type, FieldResultType):
+        return _contains_key_type(field_type.value)
+    return False
+
+
 class Contract(_Shape):
     """One immutable data shape. A successor version names its predecessor's digest."""
 
@@ -720,8 +738,13 @@ class Contract(_Shape):
     @field_validator("fields")
     @classmethod
     def _fields(cls, value: dict[str, ContractField]) -> dict[str, ContractField]:
-        for name in value:
+        for name, item in value.items():
             _nfc_identifier(name, _FIELD_NAME_RE, label="Contract field name")
+            if _contains_key_type(item.type):
+                raise ContractTypeRefused(
+                    f"field {name!r}: key<SubjectKind> is not yet supported; SubjectKind "
+                    "canonicalization is a later slice. Declare a string field instead."
+                )
         return value
 
     @field_validator("predecessor_digest")
@@ -1265,18 +1288,20 @@ def check_value(
                     )
                 )
         return FieldPresent(value=dict(value), at=at)
-    if isinstance(field_type, KeyType | SubjectType):
+    if isinstance(field_type, KeyType):
         # Core canonicalizes a key with its SubjectKind's identity rule; that
-        # hook is not built yet (deferred past B1, no identity rule invented
-        # here). A plain non-empty string -- the key's written spelling -- is
-        # accepted unchanged until then. Untyped nested data (a mapping) names
-        # no identity rule at all, so it fails closed rather than passing
-        # through as an opaque blob.
+        # hook is not built yet (B1 scope). Without it no string or structure
+        # can be confirmed as a valid key -- not a non-empty string, not a
+        # canonical spelling -- so key<K> fails closed on every value.
+        # Contract acceptance already refuses any field declaring key<K> (see
+        # Contract's validator); this is defense in depth for a hand-built
+        # type reaching check_value some other way. A later slice lifts this
+        # once the identity rule exists.
+        return _invalid("key_unparseable", field, value)
+    if isinstance(field_type, SubjectType):
         if isinstance(value, str) and value:
             return FieldPresent(value=value, at=at)
-        return _invalid(
-            "key_unparseable" if isinstance(field_type, KeyType) else "type_mismatch", field, value
-        )
+        return _invalid("type_mismatch", field, value)
     if isinstance(field_type, CaptureType):
         if isinstance(value, str) and _DIGEST_RE.fullmatch(value):
             return FieldPresent(value=value, at=at)
