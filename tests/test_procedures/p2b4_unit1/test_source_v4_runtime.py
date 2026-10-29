@@ -7,27 +7,24 @@ import hashlib
 import subprocess
 import sys
 import textwrap
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
-from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
-    SourceAcquisitionPolicy,
-    SourceAcquisitionPolicyV1,
-    acquisition_policy_digest,
-)
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
+    CaptureContract,
     CaptureEnvelope,
     CaptureFormatError,
     ProviderInvocationCaptureEvidence,
     ProviderProducerReceiptResolution,
     ProviderResultToExternalCapture,
+    SourceEffectiveTime,
     capture_contract_digest,
     capture_digest,
     parse_capture_envelope,
@@ -39,13 +36,17 @@ from cruxible_client.contracts.errors import (
     ExecutionError,
     JournalError,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionDefault,
+    acquisition_rules_digest,
+    resolve_acquisition_rules,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    CallNode,
     CaptureEgressNode,
     SourceNode,
 )
@@ -65,6 +66,18 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_invocation_receipt_digest,
 )
+from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    ProviderDistributionRef,
+    ProviderImplementationManifest,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeManifest,
+    provider_digest,
+    provider_path,
+)
+from cruxible_client.contracts.shapes import Contract, contract_digest
 from cruxible_core.exhaust import journal_payload_bytes, parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import (
     ProducerReceiptJournalNote,
@@ -86,6 +99,7 @@ from cruxible_core.procedures.execution import (
     procedure_pin_set_digest,
     procedure_semantic_replay_key_digest,
 )
+from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -106,6 +120,127 @@ from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _prepared_acquisition_run,
 )
+
+# F02: an external-read Source's provider output is checked against its own
+# operation Contract (execution.py, "every operation output is checked
+# against its own pinned Contract, call or Source ... alike"). There is no
+# shortcut for a free-form envelope: the Contract below mirrors
+# ProviderResultToExternalCapture's own fields exactly, closed, so this
+# fixture's provider validates the same way a real external-read provider
+# would.
+_COORDINATE_CONTRACT = Contract.model_validate(
+    {"name": "test.source-coordinate", "version": 1, "fields": {"lsn": {"type": "string"}}}
+)
+_SELECTOR_CONTRACT = Contract.model_validate(
+    {
+        "name": "test.source-selector",
+        "version": 1,
+        "fields": {"id": {"type": "int"}, "relation": {"type": "string"}},
+    }
+)
+_EFFECTIVE_CONTRACT = Contract.model_validate(
+    {
+        "name": "test.source-effective",
+        "version": 1,
+        "fields": {
+            "tag": {"type": "string"},
+            "effective_from": {"type": "datetime"},
+            "effective_until": {"type": "datetime"},
+        },
+    }
+)
+_ENVELOPE_CONTRACT = Contract.model_validate(
+    {
+        "name": "test.source-envelope",
+        "version": 1,
+        "fields": {
+            "tag": {"type": "string"},
+            "source_identity": {"type": "string"},
+            "coordinate_type": {"type": "string"},
+            "coordinate": {"type": f"{_COORDINATE_CONTRACT.name}@{_COORDINATE_CONTRACT.version}"},
+            "selector_type": {"type": "string"},
+            "selector": {"type": f"{_SELECTOR_CONTRACT.name}@{_SELECTOR_CONTRACT.version}"},
+            "replayability": {"type": "string"},
+            "content_encoding": {"type": "string"},
+            "content_base64": {"type": "string"},
+            "byte_length": {"type": "int"},
+            "bytes_digest": {"type": "string"},
+            "observed_at": {"type": "datetime"},
+            "source_effective_time": {
+                "type": f"{_EFFECTIVE_CONTRACT.name}@{_EFFECTIVE_CONTRACT.version}"
+            },
+        },
+    }
+)
+_VALUE_CONTRACT = Contract.model_validate(
+    {"name": "test.source-value", "version": 1, "fields": {"value": {"type": "int"}}}
+)
+_SOURCE_CONTRACTS = (
+    _VALUE_CONTRACT,
+    _COORDINATE_CONTRACT,
+    _SELECTOR_CONTRACT,
+    _EFFECTIVE_CONTRACT,
+    _ENVELOPE_CONTRACT,
+)
+
+
+def _source_contract_digest(ref: Any) -> str | None:
+    for item in _SOURCE_CONTRACTS:
+        if (ref.name, ref.version) == (item.name, item.version):
+            return contract_digest(item).tagged
+    return None
+
+
+def _source_provider() -> AcceptedProvider:
+    """A ``read`` operation: ``test.source-value@1 -> test.source-envelope@1`` (external_read)."""
+
+    operation = ProviderOperation.model_validate(
+        {
+            "name": "read",
+            "in": f"{_VALUE_CONTRACT.name}@{_VALUE_CONTRACT.version}",
+            "out": f"{_ENVELOPE_CONTRACT.name}@{_ENVELOPE_CONTRACT.version}",
+            "effect": "external_read",
+            "entrypoint": "demo.runtime:Provider",
+        }
+    )
+    manifest = ProviderRuntimeManifest(
+        provider_id="source-demo-provider",
+        distribution=ProviderDistributionRef(name="source-demo-provider", version="1.0.0"),
+        supported_protocol_majors=(1,),
+        implementations=(
+            ProviderImplementationManifest(
+                interface_id="read",
+                interface_digest="sha256:" + "9" * 64,
+                entrypoint="demo.runtime:Provider",
+                backends=("local_env",),
+                declared_input_buckets=(),
+                deterministic=True,
+                side_effects=False,
+            ),
+        ),
+    )
+    document = PackageRegistrationDocumentV1(
+        schema_version=2, manifest=manifest, operations=(operation,)
+    )
+    build = document.provider_definition(
+        distribution=ProviderLocalDistributionPin(
+            name="source-demo-provider",
+            version="1.0.0",
+            filename="source_demo_provider-1.0.0-py3-none-any.whl",
+            sha256="sha256:" + ("a" * 64),
+        ),
+        local_env=ProviderLocalEnvBackendPin(
+            lock_sha256="sha256:" + "b" * 64,
+            materialization_digests={"linux-cp311": "sha256:" + "c" * 64},
+        ),
+        control_domain="source-demo-provider",
+        operations=document.pinned_operations(_source_contract_digest),
+    )
+    return AcceptedProvider(
+        path=provider_path(build.identity.name),
+        provider=build,
+        artifact_digest=provider_digest(build).tagged,
+    )
 
 
 class _SourceInvoker:
@@ -131,7 +266,7 @@ class _SourceInvoker:
     ):
         self.spawn_calls += 1
         self.coordinates = context.coordinates
-        assert context.input == {"size": 3}
+        assert context.input == {"value": 3}
         body = canonical_bytes({"size": self.result_size})
         output = ProviderResultToExternalCapture(
             source_identity="commerce.production.orders",
@@ -144,6 +279,10 @@ class _SourceInvoker:
             byte_length=len(body),
             bytes_digest="sha256:" + hashlib.sha256(body).hexdigest(),
             observed_at=self.observed_at,
+            source_effective_time=SourceEffectiveTime(
+                effective_from=self.observed_at,
+                effective_until=self.observed_at + timedelta(microseconds=1),
+            ),
         )
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelopeV1(
@@ -162,40 +301,45 @@ class _SourceInvoker:
         )
 
 
+def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result"):
+    from cruxible_core.procedures.ports import ResolvedAcquisitionRules
+
+    return ResolvedAcquisitionRules(
+        rules=resolve_acquisition_rules((alias,), defaults={alias: policy}, overrides={})
+    )
+
+
 def _source_fixture(
     tmp_path: Path,
     *,
-    rule: InputAcquisitionRule | None = None,
     include_terminal: bool = False,
     capture_budget: int | None = None,
-    contract=None,
-    terminal_contract=None,
-    historical_provider=None,
-    historical_interface=None,
+    contract: CaptureContract | None = None,
+    terminal_contract: CaptureContract | None = None,
 ) -> tuple[
     AcceptedProcedure,
     PreparedProcedureRunV9,
     object,
-    SourceAcquisitionPolicy | SourceAcquisitionPolicyV1,
-    object,
+    AcquisitionDefault,
+    CaptureContract,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.
-    if rule is not None and historical_provider is None:
-        from tests.core_support._p2b1_support import provider_v2
-        from tests.support.provider_builds import accepted_build
+    from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
+    from cruxible_core.procedures.reference_binding import (
+        authored_procedure,
+        bind_procedure_references,
+    )
+    from tests.test_providers.test_provider_invocation_journal import SLOT as PROVIDER_SLOT
 
-        historical_provider = accepted_build(provider_v2())
+    historical_provider = _source_provider()
     provider_accepted = _accepted_one_provider(
         wall_clock=RUN_WALL_CLOCK,
         max_wall_clock=MAX_WALL_CLOCK,
         provider=historical_provider,
-        interface=historical_interface,
     )
     provider_prepared, fixture = _prepared_acquisition_run(
-        provider_accepted, tmp_path, provider=historical_provider, interface=historical_interface
+        provider_accepted, tmp_path, provider=historical_provider, effect_class="external_read"
     )
-    provider_node = provider_accepted.procedure.definition.nodes[0]
-    assert isinstance(provider_node, CallNode)
     contract = capture_contract() if contract is None else contract
     contract_pin = ArtifactPin(
         role="capture-contract",
@@ -209,13 +353,10 @@ def _source_fixture(
         artifact_digest=capture_contract_digest(terminal_contract).tagged,
     )
     source_node = SourceNode(
-        node_id=provider_node.node_id,
+        node_id="direct",
         capture_contract=contract_pin,
-        provider=provider_node.provider,
-        interface=provider_node.interface,
-        interface_digest=provider_node.interface_digest,
-        implementation_digest=provider_node.implementation_digest,
-        request={"size": "$input.size"},
+        slot=PROVIDER_SLOT,
+        request={"value": "$input.value"},
         as_="source_result",
         next="capture-output" if include_terminal else None,
     )
@@ -232,13 +373,12 @@ def _source_fixture(
         if include_terminal
         else (source_node,)
     )
-    definition = provider_accepted.procedure.definition.model_copy(
-        update={"nodes": nodes, "returns": source_node.as_}
-    )
+    authored = authored_procedure(provider_accepted)
+    definition = authored.definition.model_copy(update={"nodes": nodes, "returns": source_node.as_})
     pins = tuple(
         sorted(
             (
-                *provider_accepted.procedure.pins,
+                *authored.pins,
                 contract_pin,
                 *((terminal_pin,) if terminal_pin != contract_pin else ()),
             ),
@@ -249,76 +389,48 @@ def _source_fixture(
             ),
         )
     )
-    procedure = provider_accepted.procedure.model_copy(
+    policy = AcquisitionDefault(max_age=CanonicalDuration(microseconds=60_000_000))
+    procedure = authored.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "artifact_format": "playbill-procedure-v2",
             "pins": pins,
+            "acquisition_defaults": {source_node.as_: policy},
         }
     )
-    if rule is None:
-        from cruxible_client.contracts.procedures.names import name_procedure
-
-        procedure = name_procedure(procedure)
-    accepted = AcceptedProcedure(
+    plain = AcceptedProcedure(
         path=provider_accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy = (
-        SourceAcquisitionPolicyV1(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
-            inputs=(rule,),
-            coherence=IndependentCoherence(),
-        )
-        if rule is not None
-        else SourceAcquisitionPolicy(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
-            max_age=CanonicalDuration(microseconds=60_000_000),
-        )
-    )
-    # Fresh Procedures name the policy; the explicit legacy omission fixture
-    # retains the exact pin its historical world consumed.
-    if rule is None:
-        procedure = procedure.model_copy(update={"acquisition_policy": policy.identity.name})
-    else:
-        policy_pin = ArtifactPin(
-            role="acquisition-policy",
-            target=policy.identity,
-            artifact_digest=acquisition_policy_digest(policy).tagged,
-        )
-        procedure = procedure.model_copy(
-            update={
-                "pins": tuple(
-                    sorted(
-                        (*procedure.pins, policy_pin),
-                        key=lambda pin: (pin.role, pin.target.qualified),
-                    )
-                )
-            }
-        )
-    accepted = accepted.model_copy(
-        update={
-            "procedure": procedure,
-            "artifact_digest": procedure_artifact_digest(procedure).tagged,
-        }
-    )
-    if rule is None:
-        from cruxible_core.procedures.reference_binding import bind_procedure_references
-        from tests.core_support._p2b1_support import accepted_interface, accepted_provider
 
-        provider = accepted_provider()
-        interface = accepted_interface()
-        targets = {
-            provider.provider.identity: (provider.provider, provider.artifact_digest),
-            interface.registration.identity: (interface.registration, interface.artifact_digest),
-            contract.identity: (contract, contract_pin.artifact_digest),
-            terminal_contract.identity: (terminal_contract, terminal_pin.artifact_digest),
-            policy.identity: (policy, acquisition_policy_digest(policy).tagged),
-        }
-        accepted = bind_procedure_references(accepted, lookup=targets.get)
-    policy_digest = acquisition_policy_digest(policy).tagged
+    def lookup(identity):  # type: ignore[no-untyped-def]
+        if identity.kind == "Provider" and identity == historical_provider.provider.identity:
+            return historical_provider.provider, historical_provider.artifact_digest
+        if identity.kind == "CaptureContract":
+            for candidate in (contract, terminal_contract):
+                if candidate.identity == identity:
+                    return candidate, capture_contract_digest(candidate).tagged
+        return None
+
+    operation = historical_provider.provider.operations[0]
+    accepted = bind_procedure_references(
+        plain,
+        lookup=lookup,
+        bindings={
+            PROVIDER_SLOT: LineBinding(
+                build=binding_pin(
+                    historical_provider.provider.identity, historical_provider.artifact_digest
+                ),
+                operation=operation.name,
+            )
+        },
+    )
+    policy_digest = acquisition_rules_digest(
+        resolve_acquisition_rules(
+            (source_node.as_,), defaults={source_node.as_: policy}, overrides={}
+        )
+    )
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]
     occurrence = ProviderExternalOccurrencePlan.model_validate(
@@ -328,8 +440,13 @@ def _source_fixture(
             "occurrence_kind": "source",
             "input_name": source_node.as_,
             "capture_contract_digest": contract_pin.artifact_digest,
-            "contract_input_digest": None,
-            "contract_output_digest": None,
+            "contracts": (
+                _VALUE_CONTRACT,
+                _ENVELOPE_CONTRACT,
+                _COORDINATE_CONTRACT,
+                _SELECTOR_CONTRACT,
+                _EFFECTIVE_CONTRACT,
+            ),
             "source_runtime_plan_digest": digest("source-runtime-plan", "unit1"),
         }
     )
@@ -355,7 +472,7 @@ def _source_fixture(
         {
             "procedure_artifact_digest": accepted.artifact_digest,
             "definition_digest": accepted.procedure.definition_digest,
-            "invocation_input": {"size": 3},
+            "invocation_input": {"value": 3},
             "full_pins": accepted.procedure.pins,
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
@@ -488,7 +605,7 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
     )
     original_append = executor._append_event  # noqa: SLF001
     reservation_observations: list[tuple[str, ...]] = []
@@ -530,7 +647,7 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         payloads[kinds.index("source_request_derived")]
     )
     assert derived.admission_binding_digest == prepared.admission.admission_binding_digest
-    assert derived.request == {"size": 3}
+    assert derived.request == {"value": 3}
     admission_wire = canonical_bytes(prepared.admission.model_dump(mode="json")).decode("utf-8")
     assert "source_result" not in admission_wire
     started = ProviderInvocationStarted.model_validate(
@@ -543,7 +660,13 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         ProviderInvocationOutputDigest.model_validate(completed.receipt.output),
         ProviderInvocationOutputDigest,
     )
-    assert b"content_base64" not in canonical_bytes(payloads)
+    # Only the journal records from provider_invocation_completed onward could
+    # carry a leaked raw output value; admission_bound legitimately carries the
+    # operation's own out Contract schema, which (matching the real envelope,
+    # F02) declares a field literally named "content_base64".
+    assert b"content_base64" not in canonical_bytes(
+        payloads[kinds.index("provider_invocation_completed") :]
+    )
     assert started.invocation_id == completed.invocation_id
     produced = payloads[kinds.index("produced_capture")]
     assert isinstance(produced, dict)
@@ -588,13 +711,12 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         contract_validator=_Contracts(),
         provider_runtime_invoker=first_invoker,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
     ).execute(prepared, accepted)
     accepted_path = tmp_path / "accepted.json"
     prepared_path = tmp_path / "prepared.json"
     marker_path = tmp_path / "invoker-constructed"
     from cruxible_core.procedures.reference_binding import authored_procedure
-    from tests.core_support._p2b1_support import accepted_interface, accepted_provider
 
     authored = AcceptedProcedure(
         path=accepted.path,
@@ -602,12 +724,8 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         artifact_digest=accepted.artifact_digest,
     )
     accepted_path.write_text(authored.model_dump_json(), encoding="utf-8")
-    (tmp_path / "binding-provider.json").write_text(accepted_provider().provider.model_dump_json())
-    (tmp_path / "binding-interface.json").write_text(
-        accepted_interface().registration.model_dump_json()
-    )
+    (tmp_path / "binding-provider.json").write_text(_source_provider().provider.model_dump_json())
     (tmp_path / "binding-contract.json").write_text(contract.model_dump_json())
-    (tmp_path / "binding-policy.json").write_text(policy.model_dump_json())
     prepared_path.write_text(prepared.model_dump_json(), encoding="utf-8")
     fixture.run_index.close()
     script = textwrap.dedent(
@@ -627,30 +745,36 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         root, accepted_path, prepared_path, marker_path = map(Path, sys.argv[1:])
         accepted = AcceptedProcedure.model_validate_json(accepted_path.read_text())
         prepared = PreparedProcedureRunV9.model_validate_json(prepared_path.read_text())
-        from cruxible_client.contracts.providers import ProviderV2, provider_digest
-        from cruxible_client.contracts.provider_interfaces import (
-            ProviderInterfaceRegistrationV1, provider_interface_digest,
-        )
+        from cruxible_client.contracts.providers import NamedProviderBuild, provider_digest
         from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
-        from cruxible_client.contracts.acquisition_policies import (
-            SourceAcquisitionPolicy, acquisition_policy_digest,
-        )
+        from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
         from cruxible_core.procedures.reference_binding import replay_procedure_references
 
         material = {}
+        provider_artifact = None
         for name, model, digest in (
-            ("provider", ProviderV2, provider_digest),
-            ("interface", ProviderInterfaceRegistrationV1, provider_interface_digest),
+            ("provider", NamedProviderBuild, provider_digest),
             ("contract", CaptureContractV1, capture_contract_digest),
-            ("policy", SourceAcquisitionPolicy, acquisition_policy_digest),
         ):
             artifact = model.model_validate_json((root / ("binding-" + name + ".json")).read_text())
             material[(artifact.identity, digest(artifact).tagged)] = artifact
+            if name == "provider":
+                provider_artifact = artifact
+        operation = provider_artifact.operations[0]
+        bindings = {
+            "compute": LineBinding(
+                build=binding_pin(
+                    provider_artifact.identity, provider_digest(provider_artifact).tagged
+                ),
+                operation=operation.name,
+            )
+        }
         accepted = replay_procedure_references(
             accepted, pins=prepared.admission.full_pins,
             lookup_exact=lambda identity, digest: (
                 (material[(identity, digest)], digest) if (identity, digest) in material else None
             ),
+            bindings=bindings,
         )
 
         def construct_invoker():
@@ -732,7 +856,7 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
         capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
     )
     original_append = executor._append_event  # noqa: SLF001
 
@@ -751,48 +875,13 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
     assert all(fixture.bodies.verify(item.body_digest) for item in active)
 
 
-def test_only_input_attributed_provider_refusal_uses_the_declared_source_default(
-    tmp_path: Path,
-) -> None:
-    default_rule = InputAcquisitionRule(
-        input_name="source_result",
-        requirement="conservative_default",
-        permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDuration(microseconds=60_000_000),
-        on_unavailable="declared_conservative_default",
-        on_stale="refuse",
-        on_oversized="refuse",
-        on_conflict="preserve",
-        conservative_default=False,
-    )
-    accepted, prepared, fixture, policy, contract = _source_fixture(
-        tmp_path,
-        rule=default_rule,
-    )
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-        provider_runtime_invoker=_RefusingSourceInvoker(
-            observed_at=prepared.admission.occurrence_evaluation_time
-        ),
-        capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
-        default_authorizations=("source_result",),
-    ).execute(prepared, accepted)
-
-    assert result.status == "succeeded"
-    assert result.output is False
-    records, payloads = _payloads(prepared, fixture)
-    kinds = [item.record.event_kind for item in records]
-    assert kinds.index("provider_invocation_completed") < kinds.index("source_acquisition")
-    acquisition = payloads[kinds.index("source_acquisition")]
-    assert isinstance(acquisition, dict)
-    assert acquisition["decision"]["disposition"] == "defaulted"  # type: ignore[index]
-    assert "produced_capture" not in kinds
+# NOTE: the former `test_only_input_attributed_provider_refusal_uses_the_declared_source_default`
+# exercised a provider refusal defaulting through `requirement=conservative_default`
+# / `default_authorized`. That eligibility model has no replacement in the new
+# `AcquisitionRule` (`apply_acquisition_result` never returns "defaulted"; B2
+# carried forward only max_age/on_unavailable/on_stale/on_oversized/
+# permitted_replayability, per F05) -- there is no "succeeded with a defaulted
+# output" outcome to reproduce.
 
 
 def test_incomplete_source_closure_refuses_before_attempt_or_invoker_construction(
@@ -808,7 +897,7 @@ def test_incomplete_source_closure_refuses_before_attempt_or_invoker_constructio
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         capture_contracts={},
     )
 
@@ -834,7 +923,7 @@ def test_currency_refusal_precedes_source_closure_preflight(tmp_path: Path) -> N
             fencing_token="writer",
             activation_authority=authority,
             contract_validator=_Contracts(),
-            acquisition_policy=policy,
+            acquisition_rules=_acquisition_rules(policy),
             capture_contracts={},
         ).execute(prepared, accepted)
 
@@ -869,7 +958,7 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
                 result_size=result_size,
             ),
             capture_contracts={capture_contract_digest(contract).tagged: contract},
-            acquisition_policy=policy,
+            acquisition_rules=_acquisition_rules(policy),
         ).execute(prepared, accepted)
 
     first = execute(first_prepared, 3)
@@ -931,7 +1020,7 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
         capture_contracts={contract_digest: contract},
-        acquisition_policy=policy,
+        acquisition_rules=_acquisition_rules(policy),
         effective_rung=rung,
         egress_sink=CaptureTerminalEgressSink(
             store=fixture.bodies,
@@ -1026,13 +1115,11 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         resolver_kind="environment",
     )
     forged_provider_captures = {
-        "interface_artifact_digest": provider_capture.model_copy(
+        "provider_artifact_digest": provider_capture.model_copy(
             update={
                 "production_evidence": provider_evidence.model_copy(
                     update={
-                        "interface_artifact_digest": digest(
-                            "forged-interface-artifact", "unit1-fix2"
-                        )
+                        "provider_artifact_digest": digest("forged-provider-artifact", "unit1-fix2")
                     }
                 )
             }
