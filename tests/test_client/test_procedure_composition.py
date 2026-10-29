@@ -3,7 +3,6 @@
 from dataclasses import replace
 
 import pytest
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 
 from cruxible_client.authoring.inputs import CarriedContractInput, lower_authoring_input
 from cruxible_client.authoring.procedures import (
@@ -15,14 +14,13 @@ from cruxible_client.authoring.procedures import (
     Previous,
     ProcedureCompositionError,
     Project,
-    ProviderBinding,
     Sequence,
     Source,
     Transform,
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
@@ -30,6 +28,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     TransformAdapterSpec,
 )
+from cruxible_client.contracts.provider_operations import ProcedureSlot
 from tests.support.procedures import RUN_WALL_CLOCK
 
 EMPTY = CarriedContractInput(name="empty", fields={})
@@ -46,13 +45,32 @@ CAPS = ProcedureHardCaps(
     max_items=100,
     max_repeat_attempts=1,
 )
-PROVIDER = ProviderBinding(
-    provider="example",
-    interface="example.call",
-)
+#: The one slot every sequence below declares for its Call/Source steps. A
+#: Line binds a slot to an exact {build, operation} later (ruling C3);
+#: nothing about which Provider serves it is an authoring-time concern any
+#: more (ProviderBinding/.bind()/ProviderInterface discovery are gone, B2
+#: noun removal), so every sequence here declares it directly.
+PROVIDER_SLOT = "backend"
+SLOTS = {
+    PROVIDER_SLOT: ProcedureSlot(
+        **{
+            "in": "test.procedure-composition.request@1",
+            "out": "test.procedure-composition.response@1",
+            "effect": "external_read",
+        }
+    )
+}
+
+
+def _node_field(node, name):
+    """A preview node is a typed model when it fully validates, else a dict."""
+
+    return node["as" if name == "as_" else name] if isinstance(node, dict) else getattr(node, name)
 
 
 def sequence(*steps, **kwargs):
+    if any(isinstance(step, (Call, Source)) for step in steps):
+        kwargs.setdefault("slots", SLOTS)
     return Sequence(
         steps,
         name="demo",
@@ -65,107 +83,95 @@ def sequence(*steps, **kwargs):
 
 
 def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
-    blueprint = sequence(
+    plan = sequence(
         Project("first", fields={"count": 1}, contract_out=NUMBER),
-        Call("second"),
+        Call("second", slot=PROVIDER_SLOT),
     )
-    assert not blueprint.preview().ready_for_prepare
-    assert "provider" not in blueprint.preview().nodes[1]
-    bound = blueprint.bind(second=PROVIDER)
-    assert blueprint.steps[1].provider is None
-    preview = bound.preview()
+    preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.edges == {"first": {"next": "second"}, "second": {}}
-    assert preview.nodes[1]["input"] == "$steps.first"
+    second = preview.nodes[1]
+    assert second.slot == PROVIDER_SLOT
+    assert second.input == "$steps.first"
     assert preview.terminals == ("second",)
     assert preview.pending_checks
     assert "sha256:" not in str(preview.nodes[0])  # No synthetic pins escape.
-    draft = Cruxible.procedure(object(), definition=bound)
-    assert draft.payload == lower_authoring_input(bound.build())
-    assert (
-        lower_authoring_input(lower_procedure_spec(bound.build().spec, named=False)).definition[
-            "nodes"
-        ][1]["provider"]["resolution"]
-        == "accepted_at_intent_base"
-    )
+    draft = Cruxible.procedure(object(), definition=plan)
+    assert draft.payload == lower_authoring_input(plan.build())
 
-    current = lower_authoring_input(lower_procedure_spec(bound.build().spec))
-    assert current.definition["nodes"][1]["provider"] == {
-        "target": {"kind": "Provider", "name": "example"},
-    }
+    current = lower_authoring_input(lower_procedure_spec(plan.build().spec))
+    assert current.definition["nodes"][1]["slot"] == PROVIDER_SLOT
     assert current.definition["graph_format"] == 7
 
 
 def test_source_project_emit_matches_security_dogfood_shape():
     plan = sequence(
-        Source("fetch", capture_contract="security.http", request={"url": "https://example.org"}),
+        Source(
+            "fetch",
+            capture_contract="security.http",
+            request={"url": "https://example.org"},
+            slot=PROVIDER_SLOT,
+        ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
         EmitCapture("emit", capture_contract="security.evidence", input=Output("fetch")),
-    ).bind(fetch=PROVIDER)
+    )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("emit",)
-    assert preview.nodes[-1]["input"] == "$steps.fetch"
+    assert _node_field(preview.nodes[-1], "input") == "$steps.fetch"
     assert preview.returns == "summary"
     assert plan.build().spec is not None
     assert len(lower_procedure_spec(plan.build().spec).contracts) == 2
 
 
-def test_unbound_provider_refuses_before_authoring():
-    plan = sequence(Call("call"))
-    with pytest.raises(ProcedureCompositionError, match="Bind an accepted"):
+def test_undeclared_slot_refuses_before_authoring():
+    plan = Sequence(
+        (Call("call", slot="missing"),),
+        name="demo",
+        contract_in=EMPTY,
+        contract_out=NUMBER,
+        budget=BUDGET,
+        hard_caps=CAPS,
+    )
+    preview = plan.preview()
+    assert not preview.ready_for_prepare
+    assert any(d.code == "slot_undeclared" for d in preview.errors)
+    with pytest.raises(ProcedureCompositionError):
         Cruxible.procedure(object(), definition=plan)
-    with pytest.raises(ValueError, match="not a provider-backed"):
-        plan.bind(typo=PROVIDER)
 
 
 def test_existing_node_identities_survive_sequence_adoption():
     plan = sequence(
-        Source("observation", node_id="fetch", next="retain", capture_contract="http"),
+        Source(
+            "observation",
+            node_id="fetch",
+            next="retain",
+            capture_contract="http",
+            slot=PROVIDER_SLOT,
+        ),
         Project("result", node_id="retain", next="emit", fields={"count": 1}, contract_out=NUMBER),
         EmitCapture("emit", capture_contract="evidence", input=Output("observation")),
-    ).bind(observation=PROVIDER)
+    )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.edges == {"fetch": {"next": "retain"}, "retain": {"next": "emit"}, "emit": {}}
-    assert preview.nodes[0]["as"] == "observation"
-    assert preview.nodes[1]["as"] == "result"
-    assert preview.nodes[2]["input"] == "$steps.observation"
+    assert _node_field(preview.nodes[0], "as_") == "observation"
+    assert _node_field(preview.nodes[1], "as_") == "result"
+    assert _node_field(preview.nodes[2], "input") == "$steps.observation"
     assert preview.returns == "result"
 
     # Existing whole-output wiring still follows aliases, not node identities.
     calls = sequence(
         Project("value", node_id="produce", fields={"count": 1}, contract_out=NUMBER),
-        Call("answer", node_id="consume", provider=PROVIDER),
+        Call("answer", node_id="consume", slot=PROVIDER_SLOT),
     )
     assert calls.preview().ready_for_prepare
-    assert calls.preview().nodes[1]["input"] == "$steps.value"
+    assert calls.preview().nodes[1].input == "$steps.value"
     assert (
         not replace(calls, steps=(calls.steps[0], replace(calls.steps[1], node_id="produce")))
         .preview()
         .ready_for_prepare
     )
-
-
-def test_auto_wiring_rejects_incompatible_carried_contracts():
-    text = CarriedContractInput(name="text", fields={"count": PropertySchema(type="string")})
-    plan = sequence(
-        Project("first", fields={"count": 1}, contract_out=NUMBER),
-        Call(
-            "second",
-            provider=PROVIDER.model_copy(
-                update={
-                    "operation_contract": ProviderOperationContract(
-                        input=ContractSchema(fields=text.fields),
-                        output=ContractSchema(fields=NUMBER.fields),
-                    )
-                }
-            ),
-        ),
-    )
-    assert any(d.code == "contract_mismatch" and d.step == "second" for d in plan.preview().errors)
-    with pytest.raises(ProcedureCompositionError):
-        plan.build()
 
 
 def test_literal_fields_use_existing_contract_validator():
@@ -241,14 +247,6 @@ def test_invalid_graphs_use_shared_validator(steps):
         sequence(*steps).build()
 
 
-def test_new_binding_does_not_mutate_existing_preview():
-    plan = sequence(Call("call")).bind(call=PROVIDER)
-    before = plan.preview().model_dump(mode="json")
-    after = plan.bind(call=PROVIDER.model_copy(update={"provider": "example-successor"}))
-    assert plan.preview().model_dump(mode="json") == before
-    assert after.preview().nodes != plan.preview().nodes
-
-
 def test_conflicting_owned_contracts_refused():
     different = NUMBER.model_copy(update={"fields": {"count": PropertySchema(type="string")}})
     plan = sequence(Project("result", fields={"count": "one"}, contract_out=different))
@@ -264,53 +262,6 @@ def test_contract_budget_checked_by_existing_graph_model():
     assert any("hard cap" in d.message for d in plan.preview().errors)
 
 
-def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
-    from cruxible_client.contracts import (
-        ProviderInterfaceEntry,
-        ProviderInterfaceImplementation,
-    )
-
-    entry = ProviderInterfaceEntry(
-        tag="playbill-provider-interface-entry-v1",
-        identity="ProviderInterface:web.fetch",
-        artifact_digest="sha256:" + "a" * 64,
-        artifact_kind="ProviderInterface",
-        pin_role="provider-interface",
-        effect_class="external_read",
-        interface_basis="accepted_registration",
-        providers=[
-            ProviderInterfaceImplementation(
-                provider_identity="Provider:" + name,
-                provider_artifact_digest="sha256:" + "d" * 64,
-            )
-            for name in ("first", "second")
-        ],
-    )
-    with pytest.raises(ValueError, match="exactly one"):
-        ProviderBinding.from_interface(entry)
-    binding = ProviderBinding.from_interface(entry, provider="second")
-    assert binding.provider == "Provider:second"
-    assert binding.effect_class == "external_read"
-    from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-
-    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-
-    typed_entry = entry.model_copy(
-        update={
-            "operation_contract": ProviderOperationContract(
-                input=ContractSchema(fields={"url": PropertySchema(type="string")}),
-                output="playbill-provider-result-to-external-capture-v1",
-            )
-        }
-    )
-    selected = ProviderBinding.from_interface(typed_entry, provider="second")
-    assert selected.input(url="https://example.test").url == "https://example.test"
-    with pytest.raises(ValueError, match="url"):
-        selected.input(url=False)
-    with pytest.raises(ValueError, match="no declared"):
-        binding.input()
-
-
 def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     from datetime import UTC, datetime
 
@@ -323,13 +274,13 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     changes = (
         ChangeSetDraft(pb)
         .procedure(definition=plan)
-        .line(name="demo", procedure="demo", acquisition_policy="demo", max_authority="observe")
+        .line(name="demo", procedure="demo", max_authority="observe")
     )
     changes.procedure_mandate(
         ProcedureMandateInput(
             kind="procedure_mandate",
             name="demo",
-            procedure_name="demo",
+            line_name="demo",
             grants="propose",
             resource_ceiling=CAPS,
             namespace=("captures",),
@@ -406,20 +357,25 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
     plan = sequence(
-        Source("result", capture_contract="security.http", request={"url": "https://example.org"}),
+        Source(
+            "result",
+            capture_contract="security.http",
+            request={"url": "https://example.org"},
+            slot=PROVIDER_SLOT,
+        ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
         SettleChangeSet("settle", candidate_templates=(item_template(),)),
-    ).bind(result=PROVIDER)
+    )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("settle",)
-    last = preview.nodes[-1]
-    assert (last["kind"] if isinstance(last, dict) else last.kind) == "settle_change_set"
+    assert preview.nodes[-1].kind == "settle_change_set"
     assert lower_procedure_spec(plan.build().spec).definition["terminal_capability"] == 3
 
 
 def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
     """The original fixture's nonexistent items field must be refused."""
+
     from cruxible_client.authoring.procedures import PostInbox
 
     plan = sequence(
@@ -512,10 +468,15 @@ def test_typed_item_builders_emit_the_frozen_tags_and_item_references():
     assert request["tag"] == "playbill-workspace-file-source-request-v2"
 
     plan = sequence(
-        Source("result", capture_contract="security.http", request={"url": "https://example.org"}),
+        Source(
+            "result",
+            capture_contract="security.http",
+            request={"url": "https://example.org"},
+            slot=PROVIDER_SLOT,
+        ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
         SettleChangeSet("settle", candidate_templates=(item,)),
-    ).bind(result=PROVIDER)
+    )
     assert plan.preview().ready_for_prepare
     (node,) = [
         n
