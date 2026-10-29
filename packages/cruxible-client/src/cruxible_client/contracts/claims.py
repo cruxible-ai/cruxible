@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias, cast
@@ -44,6 +44,7 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
+    LazyKeyedOverlay,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
     ProducerVersions,
@@ -2234,6 +2235,28 @@ def _inverse_rules_admit(
     )
 
 
+class _ProviderHeadDigests(Mapping[str, str]):
+    """Each resolved Provider's head digest, computed only for a looked-up key.
+
+    ``providers`` is often a lazily-resolving Mapping over every Provider this
+    evaluation resolved; ``provider_digest`` is only ever charged for a
+    Provider a cited Capture's envelope actually names (F08), never the whole
+    resolved population.
+    """
+
+    def __init__(self, providers: Mapping[str, ProviderV1]) -> None:
+        self._providers = providers
+
+    def __getitem__(self, key: str) -> str:
+        return provider_digest(self._providers[key]).tagged
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._providers)
+
+    def __len__(self) -> int:
+        return len(self._providers)
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -2948,14 +2971,16 @@ def evaluate_claim_law(
         envelope = None
         resolved_contract = None
         if known_producer_digests is None:
-            provider_heads = {
-                identity: provider_digest(provider).tagged
-                for identity, provider in resolved_providers.items()
-            }
+            # F08: resolved_providers may be a lazy Mapping over every
+            # Provider this evaluation resolved; neither it nor
+            # producer_artifact_digests is enumerated here -- only a cited
+            # identity's digest is ever actually computed, by LazyKeyedOverlay
+            # resolving each key on demand.
+            provider_heads = _ProviderHeadDigests(resolved_providers)
             known_producer_digests = (
                 producer_artifact_digests.overlay(provider_heads)
                 if isinstance(producer_artifact_digests, ProducerVersions)
-                else provider_heads | dict(producer_artifact_digests or {})
+                else LazyKeyedOverlay(provider_heads, producer_artifact_digests or {})
             )
         if contracts_by_digest is None:
             contracts_by_digest = {}
@@ -3125,10 +3150,15 @@ def evaluate_claim_law(
         }
         executable = envelope.run_coordinate
         for required_provider in required_providers.values():
-            versions = {provider_digest(required_provider).tagged}
-            if required_provider.identity == executable.executable_identity:
-                # The exact build version that ran, which retirement never unpins (F08).
-                versions.add(executable.executable_digest)
+            # F03: the exact build version that ran is the only acceptable
+            # pin once it is known (retirement, a build move, or any other
+            # head change never unpins it, F08); the provider's current head
+            # is never an alternative to it.
+            versions = (
+                {executable.executable_digest}
+                if required_provider.identity == executable.executable_identity
+                else {provider_digest(required_provider).tagged}
+            )
             if not any(
                 _required_pin(
                     claim, role="provider", identity=required_provider.identity, digest=version
@@ -3145,23 +3175,29 @@ def evaluate_claim_law(
             for identity in (envelope.producer, envelope.run_coordinate.executable_identity)
             if identity.kind == "Procedure"
         }:
-            # The exact Procedure version that ran, as the envelope records and
-            # accepted history admits; a successor never unpins it (F08).
-            procedure_versions = {
-                version
-                for version in (
-                    (producer_artifact_digests or {}).get(procedure_identity.qualified),
-                    executable.executable_digest
-                    if procedure_identity == executable.executable_identity
-                    and producer_version_admitted(
-                        producer_artifact_digests,
-                        procedure_identity.qualified,
-                        executable.executable_digest,
-                    )
-                    else None,
+            # F03: the exact Procedure version the envelope records, verified
+            # admitted by retained accepted history, is the only acceptable
+            # pin once it is known; a successor's head is never an
+            # alternative to it (F08). The head is the only version ever
+            # available to pin only for an identity this envelope names
+            # without an executable digest of its own (a self-asserted v1
+            # Capture's producer, distinct from its executable).
+            procedure_versions = (
+                {executable.executable_digest}
+                if procedure_identity == executable.executable_identity
+                and producer_version_admitted(
+                    producer_artifact_digests,
+                    procedure_identity.qualified,
+                    executable.executable_digest,
                 )
-                if version is not None
-            }
+                else {
+                    version
+                    for version in (
+                        (producer_artifact_digests or {}).get(procedure_identity.qualified),
+                    )
+                    if version is not None
+                }
+            )
             if not any(
                 _required_pin(claim, role="procedure", identity=procedure_identity, digest=version)
                 for version in procedure_versions

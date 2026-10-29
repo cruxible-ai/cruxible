@@ -3181,6 +3181,40 @@ def capture_erasure_authorized(
     )
 
 
+class LazyKeyedOverlay(Mapping[str, str]):
+    """``primary`` shadows ``fallback``, key by key, neither ever enumerated.
+
+    F08: a producer-digest union built eagerly (``{**extra, **head}``, or a
+    dict comprehension over every resolved Provider) costs O(every resolved
+    producer), however few a citation actually names. Every lookup this
+    overlay serves is a point lookup by the cited identity, so ``__getitem__``
+    is the only path that matters; ``__iter__``/``__len__`` exist only for the
+    ``Mapping`` protocol and are never called on the verification hot path.
+    """
+
+    def __init__(self, primary: Mapping[str, str], fallback: Mapping[str, str]) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    def __getitem__(self, key: str) -> str:
+        try:
+            return self._primary[key]
+        except KeyError:
+            return self._fallback[key]
+
+    def __iter__(self) -> Iterator[str]:
+        seen: set[str] = set()
+        for key in self._primary:
+            seen.add(key)
+            yield key
+        for key in self._fallback:
+            if key not in seen:
+                yield key
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
 class ProducerVersions(Mapping[str, str]):
     """Producer digests at the head, plus each exact version accepted history admits.
 
@@ -3188,6 +3222,12 @@ class ProducerVersions(Mapping[str, str]):
     resolves that version, not the producer's head: a Procedure or Line
     successor, or a build move, never unverifies a Capture or a Claim citing it
     (F08). ``admits(identity, digest)`` reads retained accepted history.
+
+    ``head`` is read key by key: it may be a cheap dict, or a lazily-resolving
+    Mapping over an unbounded producer population (every resolved Provider or
+    Procedure); either way, nothing here enumerates it (F08). Only a point
+    lookup -- ``__getitem__``, ``.get``, ``admits_version`` -- is on the
+    verification path.
     """
 
     def __init__(self, head: Mapping[str, str], admits: Callable[[str, str], bool]) -> None:
@@ -3207,7 +3247,7 @@ class ProducerVersions(Mapping[str, str]):
         return self._head.get(qualified) == digest or self._admits(qualified, digest)
 
     def overlay(self, extra: Mapping[str, str]) -> "ProducerVersions":
-        return ProducerVersions({**extra, **self._head}, self._admits)
+        return ProducerVersions(LazyKeyedOverlay(extra, self._head), self._admits)
 
 
 def producer_version_admitted(
@@ -3756,6 +3796,7 @@ def _verify_capture_once(
 
 
 __all__ = [
+    "LazyKeyedOverlay",
     "ProducerVersions",
     "producer_version_admitted",
     "CaptureObservedContentMismatch",
