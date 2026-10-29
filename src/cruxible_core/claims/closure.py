@@ -1248,12 +1248,22 @@ def _closure_facts(
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
 ) -> _ClosureFacts:
-    """Judge one scope over two indexes built from scratch: the cold path."""
+    """Judge one scope over two indexes built from scratch: the cold path.
+
+    Production settlement and replay both resolve dependency pins by name
+    (``by_name=True``, see ``proposals.py``'s ``judge_dependency_closure``
+    calls): an unpinned reference follows the current artifact under its
+    name rather than the exact artifact the pin last recorded. A cold
+    evaluation that defaulted to ``by_name=False`` would judge a name-
+    following dependency as missing when the served evaluator judges it
+    complete, so the two paths must share this interpretation exactly.
+    """
 
     return judge_dependency_closure(
-        parent=build_dependency_index(parent_tree),
-        candidate=build_dependency_index(candidate_tree),
+        parent=build_dependency_index(parent_tree, by_name=True),
+        candidate=build_dependency_index(candidate_tree, by_name=True),
         scope=scope,
+        by_name=True,
     )
 
 

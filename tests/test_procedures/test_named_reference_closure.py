@@ -15,6 +15,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_core.claims.closure import (
     build_dependency_index,
+    evaluate_dependency_closure,
     judge_dependency_closure,
     update_dependency_index,
 )
@@ -425,6 +426,59 @@ def test_reverse_index_survives_a_target_revision_without_repinning():
     assert result.verdict == "complete"
     assert result.missing_dependents == ()
     assert candidate[PPATH] == parent[PPATH]
+
+
+def test_cold_closure_evaluator_follows_names_like_served_settlement():
+    """Cold and served closure evaluation must judge name-following identically.
+
+    A current named Procedure references a Query by name, unpinned. The Query
+    is revised, compatibly, outside the Procedure's own candidate scope:
+    production settlement/replay (``judge_dependency_closure`` called with
+    ``by_name=True``, see ``proposals.py``) treats the Procedure as a
+    satisfied name-follower rather than a dependent requiring invalidation.
+    The cold-from-scratch evaluator (``evaluate_dependency_closure``) must
+    reach the same verdict. Before this fix, ``_closure_facts`` built its
+    indexes and judged the scope with the default ``by_name=False``, which
+    disagrees: it names the Procedure as a missing dependent instead of a
+    satisfied name-follower, shown below by calling the same primitives the
+    served path uses with ``by_name=False``.
+    """
+
+    query, _, parent = world()
+    successor = query.model_copy(
+        update={
+            "description": "A compatible description.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    candidate_tree = {**parent, QPATH: render_query_definition(successor)}
+    scope = (QPATH,)
+
+    served = judge_dependency_closure(
+        parent=build_dependency_index(parent, by_name=True),
+        candidate=build_dependency_index(candidate_tree, by_name=True),
+        scope=scope,
+        by_name=True,
+    )
+    cold = evaluate_dependency_closure(
+        parent_tree=parent, candidate_tree=candidate_tree, scope=scope
+    )
+
+    assert served.verdict == "complete"
+    assert served.missing_dependents == ()
+    assert cold.verdict == served.verdict == "complete"
+    assert cold.missing_dependents == served.missing_dependents == ()
+
+    historical_served = judge_dependency_closure(
+        parent=build_dependency_index(parent, by_name=True),
+        candidate=build_dependency_index(candidate_tree, by_name=True),
+        scope=scope,
+        by_name=False,
+    )
+    assert historical_served.verdict == "refused"
+    assert [item.path for item in historical_served.missing_dependents] == [PPATH]
 
 
 def test_proposal_lists_compatible_referrers_and_names_broken_ones(tmp_path):
