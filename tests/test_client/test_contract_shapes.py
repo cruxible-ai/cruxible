@@ -258,13 +258,21 @@ def test_the_contract_law_checks_every_pinned_occurrence_not_only_the_first() ->
                 "a": {
                     "type": {
                         "kind": "record",
-                        "contract": {"name": "security.target", "version": 1, "digest": correct_digest},
+                        "contract": {
+                            "name": "security.target",
+                            "version": 1,
+                            "digest": correct_digest,
+                        },
                     }
                 },
                 "b": {
                     "type": {
                         "kind": "record",
-                        "contract": {"name": "security.target", "version": 1, "digest": wrong_digest},
+                        "contract": {
+                            "name": "security.target",
+                            "version": 1,
+                            "digest": wrong_digest,
+                        },
                     }
                 },
             },
@@ -293,7 +301,11 @@ def test_parse_contract_requires_a_digest_on_every_occurrence() -> None:
                 "a": {
                     "type": {
                         "kind": "record",
-                        "contract": {"name": "security.target", "version": 1, "digest": correct_digest},
+                        "contract": {
+                            "name": "security.target",
+                            "version": 1,
+                            "digest": correct_digest,
+                        },
                     }
                 },
                 # The second occurrence of the same pin carries no digest at all.
@@ -308,6 +320,54 @@ def test_parse_contract_requires_a_digest_on_every_occurrence() -> None:
     )
     with pytest.raises(ContractFormatError):
         parse_contract(render_contract(outer), path=contract_path("security.outer2", 1))
+
+
+# -- F2: the generic envelopes enforce their type parameter ------------------------------
+
+
+def test_check_value_enforces_the_generic_type_parameter() -> None:
+    demo = validate_contract({"name": "security.demo", "version": 1, "fields": {"n": "int"}})
+
+    def resolve(ref: object) -> object:
+        return demo if (ref.name, ref.version) == ("security.demo", 1) else None  # type: ignore[attr-defined]
+
+    bad_field_result = {"tag": "present", "value": "not-an-int", "at": "/x"}
+    checked = check_value(
+        bad_field_result, parse_type("field_result<int>"), at="/x", resolve=resolve
+    )
+    assert isinstance(checked, FieldInvalid)
+
+    ok_field_result = {"tag": "present", "value": 3, "at": "/x"}
+    checked = check_value(
+        ok_field_result, parse_type("field_result<int>"), at="/x", resolve=resolve
+    )
+    assert isinstance(checked, FieldPresent)
+
+    empty_record = {"record": "/r/0", "key": {}, "fields": {}}
+    checked = check_value(
+        empty_record, parse_type("record<security.demo@1>"), at="/r", resolve=resolve
+    )
+    assert isinstance(checked, FieldInvalid)
+
+    other_contract_refusal = {
+        "code": "any_code",
+        "contract": {"name": "security.other", "version": 9},
+        "body": {"whatever": True},
+    }
+    checked = check_value(
+        other_contract_refusal, parse_type("refusal<security.demo@1>"), at="/f", resolve=resolve
+    )
+    assert isinstance(checked, FieldInvalid)
+
+    valid_refusal = {
+        "code": "any_code",
+        "contract": {"name": "security.demo", "version": 1},
+        "body": {"n": 3},
+    }
+    checked = check_value(
+        valid_refusal, parse_type("refusal<security.demo@1>"), at="/f", resolve=resolve
+    )
+    assert isinstance(checked, FieldPresent)
 
 
 # -- F4: key<K> fails closed on untyped nested data ----------------------------------------

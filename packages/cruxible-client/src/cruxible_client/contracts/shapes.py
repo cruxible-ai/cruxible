@@ -1283,16 +1283,187 @@ def check_value(
         if isinstance(value, str) and _DIGEST_RE.fullmatch(value):
             return FieldPresent(value=value, at=at)
         return _invalid("type_mismatch", field, value)
-    model: Any = {
-        "field_result": _FIELD_RESULT,
-        "record": _RECORD,
-        "result": _RESULT,
-        "refusal": _REFUSAL,
-    }[field_type.kind]
-    try:
-        return FieldPresent(value=model.validate_python(value), at=at)
-    except ValidationError:
+    if isinstance(field_type, FieldResultType):
+        return _check_field_result(
+            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+        )
+    if isinstance(field_type, RecordType):
+        target = None if resolve is None else resolve(field_type.contract)
+        if target is None:
+            return _invalid("type_mismatch", field, value)
+        checked = _check_record_envelope(
+            value, target, at=at, resolve=resolve, enum_members=enum_members
+        )
+        if checked is None:
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(value=checked, at=at)
+    if isinstance(field_type, ResultType):
+        return _check_result(
+            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+        )
+    if isinstance(field_type, RefusalType):
+        return _check_refusal(
+            value, field_type, at=at, field=field, resolve=resolve, enum_members=enum_members
+        )
+    raise AssertionError(f"unreachable field type {field_type!r}")  # pragma: no cover
+
+
+def _check_field_result(
+    value: object,
+    field_type: FieldResultType,
+    *,
+    at: str,
+    field: str | None,
+    resolve: ContractResolver | None,
+    enum_members: EnumResolver | None,
+) -> FieldPresent | FieldInvalid:
+    """``field_result<T>``: the ``present`` arm's value is checked against ``T``."""
+
+    if not isinstance(value, Mapping) or "tag" not in value:
         return _invalid("type_mismatch", field, value)
+    tag = value.get("tag")
+    if tag == "present":
+        inner_at = value.get("at")
+        if "value" not in value or not isinstance(inner_at, str):
+            return _invalid("type_mismatch", field, value)
+        inner = check_value(
+            value["value"],
+            field_type.value,
+            at=inner_at,
+            field=field,
+            resolve=resolve,
+            enum_members=enum_members,
+        )
+        if isinstance(inner, FieldInvalid):
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(value={"tag": "present", "value": inner.value, "at": inner.at}, at=at)
+    if tag == "absent":
+        if set(value) - {"tag"}:
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(value={"tag": "absent"}, at=at)
+    if tag == "invalid":
+        try:
+            problem = Problem.model_validate(value.get("problem"))
+        except ValidationError:
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(
+            value={"tag": "invalid", "problem": problem.model_dump(mode="json")}, at=at
+        )
+    return _invalid("type_mismatch", field, value)
+
+
+def _check_record_envelope(
+    value: object,
+    contract: Contract,
+    *,
+    at: str,
+    resolve: ContractResolver | None,
+    enum_members: EnumResolver | None,
+) -> dict[str, Any] | None:
+    """``{record, key, fields: {f: field_result<C.f>}}`` against ``contract``'s own fields.
+
+    ``None`` on any structural or per-field mismatch; the caller turns that
+    into the one ``type_mismatch`` the field earns.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    record_locator = value.get("record")
+    fields_data = value.get("fields")
+    if not isinstance(record_locator, str) or not isinstance(fields_data, Mapping):
+        return None
+    if set(fields_data) != set(contract.fields):
+        return None
+    key = value.get("key", {})
+    if not isinstance(key, Mapping):
+        return None
+    checked_fields: dict[str, Any] = {}
+    for name, declared in contract.fields.items():
+        checked = _check_field_result(
+            fields_data[name],
+            FieldResultType(value=declared.type),
+            at=f"{at}/fields/{name}",
+            field=name,
+            resolve=resolve,
+            enum_members=enum_members,
+        )
+        if isinstance(checked, FieldInvalid):
+            return None
+        checked_fields[name] = checked.value
+    return {"record": record_locator, "key": dict(key), "fields": checked_fields}
+
+
+def _check_result(
+    value: object,
+    field_type: ResultType,
+    *,
+    at: str,
+    field: str | None,
+    resolve: ContractResolver | None,
+    enum_members: EnumResolver | None,
+) -> FieldPresent | FieldInvalid:
+    """``result<C>``: the ``record`` arm is checked against ``C``; the other arms are shape-only."""
+
+    if not isinstance(value, Mapping) or "tag" not in value:
+        return _invalid("type_mismatch", field, value)
+    tag = value.get("tag")
+    if tag == "record":
+        target = None if resolve is None else resolve(field_type.contract)
+        if target is None:
+            return _invalid("type_mismatch", field, value)
+        checked = _check_record_envelope(
+            value.get("record"), target, at=at, resolve=resolve, enum_members=enum_members
+        )
+        if checked is None:
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(value={"tag": "record", "record": checked}, at=at)
+    if tag in ("invalid_record", "duplicate"):
+        model = InvalidRecordArm if tag == "invalid_record" else DuplicateArm
+        try:
+            validated = model.model_validate(value)
+        except ValidationError:
+            return _invalid("type_mismatch", field, value)
+        return FieldPresent(value=validated.model_dump(mode="json"), at=at)
+    return _invalid("type_mismatch", field, value)
+
+
+def _check_refusal(
+    value: object,
+    field_type: RefusalType,
+    *,
+    at: str,
+    field: str | None,
+    resolve: ContractResolver | None,
+    enum_members: EnumResolver | None,
+) -> FieldPresent | FieldInvalid:
+    """``refusal<C>``: the body is checked against the exact ``C`` the type names."""
+
+    if not isinstance(value, Mapping) or "code" not in value or "body" not in value:
+        return _invalid("type_mismatch", field, value)
+    contract_ref = value.get("contract")
+    if not isinstance(contract_ref, Mapping) or (
+        contract_ref.get("name"),
+        contract_ref.get("version"),
+    ) != (field_type.contract.name, field_type.contract.version):
+        return _invalid("type_mismatch", field, value)
+    target = None if resolve is None else resolve(field_type.contract)
+    if target is None:
+        return _invalid("type_mismatch", field, value)
+    body = value["body"]
+    if not isinstance(body, Mapping):
+        return _invalid("type_mismatch", field, value)
+    nested = check_record(
+        body, target, record=at, resolve=resolve, enum_members=enum_members, base=at
+    )
+    for result in nested.fields.values():
+        if isinstance(result, FieldInvalid):
+            return _invalid("type_mismatch", field, value)
+    code = value["code"]
+    if not isinstance(code, str):
+        return _invalid("type_mismatch", field, value)
+    return FieldPresent(
+        value={"code": code, "contract": dict(contract_ref), "body": dict(body)}, at=at
+    )
 
 
 def check_record(
@@ -1325,12 +1496,6 @@ def check_record(
             enum_members=enum_members,
         )
     return RecordValue(record=record, key=dict(key or {}), fields=fields)
-
-
-_FIELD_RESULT: Any = TypeAdapter(FieldResult)
-_RECORD: Any = TypeAdapter(RecordValue)
-_RESULT: Any = TypeAdapter(ResultValue)
-_REFUSAL: Any = TypeAdapter(RefusalValue)
 
 
 # -- casts ----------------------------------------------------------------------------------
