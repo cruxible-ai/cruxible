@@ -129,7 +129,6 @@ def _artifacts(*, named=False) -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
-        pins=(procedure_pin,),
     )
     if named:
         from cruxible_client.contracts.named_references import name_line
