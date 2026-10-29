@@ -28,8 +28,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlot,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposeChangeSetNode,
     RepeatBodyNode,
@@ -60,12 +58,16 @@ def _predicate(alias: str) -> GuardPredicate:
     )
 
 
+def _slot_signature(*, effect: str = "external_mutation") -> dict[str, object]:
+    return {"in": "test.worker-input@1", "out": "test.worker-output@1", "effect": effect}
+
+
 def _definition(
     nodes: Iterable[object],
     *,
     returns: str,
     terminal_capability: int = 3,
-    pin_slots: tuple[ProcedurePinSlot, ...] = (),
+    slots: dict[str, object] | None = None,
     parameter_contract: ArtifactPin | None = None,
 ) -> ProcedureDefinition:
     return ProcedureDefinition(
@@ -75,7 +77,7 @@ def _definition(
         parameter_contract=parameter_contract,
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
-        pin_slots=pin_slots,
+        slots=slots or {},
         budget=ProcedureBudget(
             wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=10,
@@ -96,14 +98,6 @@ def _definition(
 def _kitchen_sink_definition() -> ProcedureDefinition:
     contract_in = _pin("contract-in", "Contract", "node-input")
     contract_out = _pin("contract-out", "Contract", "node-output")
-    provider = _pin("provider", "Provider", "worker")
-    interface = _pin("provider-interface", "ProviderInterface", "worker.interface")
-    provider_binding = {
-        "provider": provider,
-        "interface": interface,
-        "interface_digest": _digest("worker-interface"),
-        "implementation_digest": _digest("worker-implementation"),
-    }
     return _definition(
         (
             StateTapNode(
@@ -115,7 +109,7 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             SourceNode(
                 node_id="source",
                 capture_contract=_pin("capture-contract", "CaptureContract", "source-capture"),
-                **provider_binding,
+                slot="fetch",
                 request={"state": "$steps.state_rows"},
                 as_="source_rows",
             ),
@@ -127,9 +121,7 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ),
             CallNode(
                 node_id="provider",
-                **provider_binding,
-                contract_in=contract_in,
-                contract_out=contract_out,
+                slot="worker",
                 effect_policy=_pin("effect-policy", "EffectPolicy", "provider-effects"),
                 input={"source": "$steps.source_rows"},
                 as_="provider_rows",
@@ -172,9 +164,8 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                     RepeatBodyNode(
                         node_id="body-provider",
                         operation="call",
-                        **provider_binding,
-                        contract_in=contract_in,
-                        contract_out=contract_out,
+                        slot="worker",
+                        effect_policy=_pin("effect-policy", "EffectPolicy", "repeat-effects"),
                         spec={"rows": "$steps.body_rows"},
                         as_="body_result",
                     ),
@@ -191,6 +182,10 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
         ),
         returns="repeated_rows",
         parameter_contract=_pin("parameter-contract", "Contract", "parameters"),
+        slots={
+            "worker": _slot_signature(),
+            "fetch": _slot_signature(effect="external_read"),
+        },
     )
 
 
@@ -209,23 +204,13 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("parameter_contract",),
         ("nodes", 0, "query"),
         ("nodes", 1, "capture_contract"),
-        ("nodes", 1, "provider"),
-        ("nodes", 1, "interface"),
         ("nodes", 2, "reducer_or_query"),
-        ("nodes", 3, "provider"),
-        ("nodes", 3, "interface"),
-        ("nodes", 3, "contract_in"),
-        ("nodes", 3, "contract_out"),
         ("nodes", 3, "effect_policy"),
         ("nodes", 4, "contract_in"),
         ("nodes", 4, "contract_out"),
         ("nodes", 5, "contract_out"),
         ("nodes", 6, "body", 0, "contract_in"),
         ("nodes", 6, "body", 0, "contract_out"),
-        ("nodes", 6, "body", 1, "provider"),
-        ("nodes", 6, "body", 1, "interface"),
-        ("nodes", 6, "body", 1, "contract_in"),
-        ("nodes", 6, "body", 1, "contract_out"),
         ("nodes", 7, "capture_contract"),
     ),
 )
@@ -240,25 +225,15 @@ def test_semantic_pin_expectations_cover_every_exact_field(
         ProcedureDefinition.model_validate(payload)
 
 
-def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings() -> None:
-    wrong_slot = ProcedurePinSlot(
-        slot_name="query",
-        pin_role="provider",
-        artifact_kind="Provider",
-        interface_digest=_digest("provider-interface"),
-    )
-    with pytest.raises(ValidationError, match="slot 'query'.*requires role='query'"):
-        _definition(
-            (
-                StateTapNode(
-                    node_id="state",
-                    query=ProcedurePinSlotRef(slot_name="query"),
-                    as_="rows",
-                ),
-            ),
-            returns="rows",
-            pin_slots=(wrong_slot,),
-        )
+# NOTE: test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings
+# tested the old generic pin_slots mechanism, where any node field could be
+# declared as a cross-checked slot reference (ProcedurePinSlotRef) with its
+# own independent role declaration (ProcedurePinSlot) that could disagree
+# with how it was actually used. Slots are now type-fixed to provider-calling
+# nodes only (SourceNode/CallNode/the call arm of RepeatBodyNode), named
+# directly as a plain `slot: str`, with no indirection and so no possible
+# role mismatch to validate -- the test had no surviving behavior to migrate
+# to and is deleted.
 
 
 def test_branch_join_tracks_must_availability_separately_from_may_reachability() -> None:
@@ -621,18 +596,12 @@ def test_terminal_kinds_cannot_exceed_the_declared_capability(
 
 
 def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
-    contract_in = _pin("contract-in", "Contract", "provider-input")
     contract_out = _pin("contract-out", "Contract", "provider-output")
     definition = _definition(
         (
             CallNode(
                 node_id="provider",
-                provider=_pin("provider", "Provider", "external"),
-                interface=_pin("provider-interface", "ProviderInterface", "external.interface"),
-                interface_digest=_digest("external-interface"),
-                implementation_digest=_digest("external-implementation"),
-                contract_in=contract_in,
-                contract_out=contract_out,
+                slot="external",
                 effect_policy=_pin("effect-policy", "EffectPolicy", "external-effects"),
                 input={},
                 as_="provider_result",
@@ -646,6 +615,7 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
         ),
         returns="result",
         terminal_capability=1,
+        slots={"external": _slot_signature()},
     )
     assert definition.terminal_capability == 1
 
