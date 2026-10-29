@@ -26,7 +26,7 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
     descendant_is_live,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from tests.support.invocation_ids import unique_invocation_id
@@ -58,7 +58,7 @@ if MODE == "flood":
     sys.stdout.write("A" * 65536)
     sys.stdout.flush()
 envelope = {
-    "protocol_version": "1.0", "run_id": document["run_id"], "status": "ok",
+    "protocol_version": "2.0", "run_id": document["run_id"], "status": "ok",
     "output": {"echo": document["input"]["value"]}, "refusal": None, "error": None,
     "trace": {"endpoints_contacted": [], "events": [], "metrics": {}},
 }
@@ -124,7 +124,7 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
                 interpreter,
                 entrypoint="demo:Provider",
                 context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=10, output_bytes=65_536),
                 secret_fd=fd,
                 invocation_id=unique_invocation_id(),
                 process_leases=store,
@@ -176,7 +176,7 @@ def test_ui1_the_child_scratch_lives_under_the_state_root_and_is_private(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=10, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,
@@ -412,7 +412,7 @@ def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=30, output_bytes=4096),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=30, output_bytes=4096),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,
@@ -433,7 +433,7 @@ def test_k1_the_r1_escape_shape_is_still_dead(short_root: Path) -> None:
                 interpreter,
                 entrypoint="demo:Provider",
                 context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=65_536),
                 secret_fd=None,
                 invocation_id=unique_invocation_id(),
                 process_leases=store,
@@ -690,12 +690,10 @@ def test_l7_all_five_fence_codes_are_public_and_map_exactly() -> None:
 def test_c14_wire_law_guards_still_hold() -> None:
     from cruxible_core.providers.provider_outcomes import (
         _MAPPING,
-        ABSORBABLE_PROVIDER_REFUSALS,
         PROVIDER_RUNTIME_REFUSAL_CODES,
     )
 
     assert set(_MAPPING) == PROVIDER_RUNTIME_REFUSAL_CODES
-    assert all(_MAPPING[code] == ("node_refusal", "input") for code in ABSORBABLE_PROVIDER_REFUSALS)
     from cruxible_client.contracts.provider_execution import ProviderInvocationReceipt
 
     assert ProviderInvocationReceipt.model_config["extra"] == "forbid"
@@ -732,7 +730,7 @@ def test_m1_the_wnowait_kill_window_is_real_on_every_path(
         interpreter,
         entrypoint="demo:Provider",
         context=CONTEXT,
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=10, output_bytes=65_536),
         secret_fd=None,
         invocation_id=unique_invocation_id(),
         process_leases=store,

@@ -255,7 +255,7 @@ class VerifiedProviderBinding(_StrictProviderExecutionModel):
     materialization_digest: str
     environment_manifest_digest: str
     entrypoint: str
-    protocol_version: Literal["1.0"] = "1.0"
+    protocol_version: Literal["2.0"] = "2.0"
     declared_endpoints: tuple[str, ...] = ()
     # Omitted when it is the subprocess default, so every binding digested
     # before core built-ins existed keeps its bytes.

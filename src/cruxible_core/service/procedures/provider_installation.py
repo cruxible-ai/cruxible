@@ -35,6 +35,7 @@ from cruxible_client.contracts.providers import (
     ProviderLocalDistributionPin,
     evaluate_provider_law,
     parse_provider,
+    provider_digest,
     provider_path,
     render_provider,
 )
@@ -358,13 +359,15 @@ def _refuse_unproven_provider(
 ) -> None:
     """The Provider law, before anything is proposed, against the Contracts it pins.
 
-    Every operation pin resolves to an accepted Contract version, its refusal
-    codes are ones the runtime can return, and a new build joins its name's
-    control domain: a disagreement is refused here, typed, rather than as a
-    blocked proposal.
+    Every operation pin resolves to an accepted Contract version, no refusal
+    code it declares is one the runtime reserves, and a new build joins its
+    name's control domain: a disagreement is refused here, typed, rather than as
+    a blocked proposal.
     """
 
-    from cruxible_core.providers.provider_runtime_contract import provider_runtime_refusal_codes
+    from cruxible_core.providers.provider_runtime_contract import (
+        PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
+    )
 
     digests = tree_contract_digests(tree)
     contracts: dict[tuple[str, int], str] = {}
@@ -379,7 +382,7 @@ def _refuse_unproven_provider(
         path=path,
         predecessor=None,
         contracts=contracts,
-        refusal_codes=frozenset(provider_runtime_refusal_codes()),
+        reserved_refusal_codes=PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
         sibling_control_domains=sibling_control_domains,
     )
     if law.verdict == "accepted":
@@ -965,7 +968,9 @@ def _install_locked(
             registered = activation.status == "accepted"
             activation_blocked = not registered
     operations: list[ProviderOperationReadiness] = []
-    prepared_entrypoints = {item.entrypoint for item in provider.implementations}
+    prepared_entrypoints = {
+        item.entrypoint: item.implementation_digest for item in provider.implementations
+    }
     served = {
         item.entrypoint: sorted(
             op.name for op in document.operations if op.entrypoint == item.entrypoint
@@ -992,8 +997,8 @@ def _install_locked(
                 output = run_package_probe(
                     deployment,
                     operator.process_leases,
-                    kind="resource",
-                    digest=implementation.interface_digest,
+                    build_digest=provider_digest(provider).tagged,
+                    implementation_digest=prepared_entrypoints[implementation.entrypoint],
                     value={"entrypoint": requirement.probe_entrypoint},
                 )
                 available = output.get("available") is True

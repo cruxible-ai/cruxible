@@ -113,9 +113,9 @@ INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER = frozenset(
         "provider_refusal_taxonomy_unknown",
         "unknown_manifest_field",
         "manifest_divergence",
-        "interface_digest_mismatch",
-        "bucket_fixture_missing",
-        "invalid_bucket_vocabulary",
+        # Produced only by the outcome map's translation of a code the bound
+        # operation does not declare (provider_outcomes.map_operation_refusal).
+        "undeclared_refusal",
         "unknown_run_context_field",
         "lock_mismatch",
         "lock_missing_hash",
@@ -123,7 +123,6 @@ INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER = frozenset(
         "index_not_pinned",
         "index_redirect",
         "non_finite_output",
-        "non_finite_result",
         "image_provenance_mismatch",
     }
 )

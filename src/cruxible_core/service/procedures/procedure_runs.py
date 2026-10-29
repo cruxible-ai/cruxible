@@ -2475,13 +2475,14 @@ def _state_from_records(
                             ),
                             "node_id": str(refusal.get("node_id") or last_node_id),
                             "journal_coordinate": _journal_coordinate(final_record),
-                            # `detail_code` is the PROCEDURE-AUTHORED guard code
-                            # and nothing else. A daemon-authored classification
-                            # -- the workspace path class, say -- travels in
-                            # `details`, where the refusal already puts it.
+                            # `detail_code` is an AUTHORED code and nothing else:
+                            # the Procedure's guard code, or the code the bound
+                            # operation declares. A daemon-authored
+                            # classification -- the workspace path class, say --
+                            # travels in `details`, where the refusal puts it.
                             "detail_code": (
                                 raw_detail_code
-                                if refusal_code == "guard_refused"
+                                if refusal_code in ("guard_refused", "operation_refused")
                                 and isinstance(raw_detail_code, str)
                                 else None
                             ),

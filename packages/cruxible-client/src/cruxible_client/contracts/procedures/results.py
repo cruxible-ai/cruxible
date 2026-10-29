@@ -151,8 +151,6 @@ ProcedureNodeRefusalCode: TypeAlias = Literal[
     "procedure_authority_admission_invalid",
     "procedure_authority_admission_mismatch",
     "provider_unavailable",
-    "unclassified_input",
-    "unclaimed_bucket",
     "cruxible.acquisition.unavailable",
     "cruxible.acquisition.stale",
     "cruxible.acquisition.oversized",
@@ -170,29 +168,12 @@ ProcedureNodeRefusalCode: TypeAlias = Literal[
     "provider_acquisition_plan_mismatch",
     "workspace_file_read_refused",
     "provider_effect_declaration_mismatch",
-    "classifier_not_installed",
-    "classifier_digest_mismatch",
     "unknown_extra",
     "budget_wall_clock",
     "budget_output_size",
     "budget_cost",
-    "provider_declined",
     "secret_bundle_too_large",
-    "insufficient_series_length",
-    "non_finite_input",
-    "degenerate_scale",
-    "mismatched_lengths",
-    "unknown_method",
-    "unknown_test_name",
-    "declared_family_mismatch",
-    "unsupported_aggregation",
-    "unknown_column",
-    "malformed_model_ref",
-    "undeclared_match_parameters",
-    "invalid_parameter",
-    "cross_origin_credentialed_redirect",
-    "unsupported_redirect_scheme",
-    "redirect_limit",
+    "operation_refused",
     "provider_protocol_violation",
 ]
 ProcedureOperationalFailureCode: TypeAlias = Literal[
@@ -231,12 +212,8 @@ ProcedureInternalFailureCode: TypeAlias = Literal[
     "manifest_divergence",
     "acceptance_divergence",
     "unaccepted_provider",
-    "undeclared_interface",
-    "ambiguous_implementation",
-    "unknown_interface",
-    "interface_digest_mismatch",
-    "bucket_fixture_missing",
-    "invalid_bucket_vocabulary",
+    "undeclared_operation",
+    "undeclared_refusal",
     "unknown_run_context_field",
     "provider_protocol_violation",
     "lock_mismatch",
@@ -251,7 +228,6 @@ ProcedureInternalFailureCode: TypeAlias = Literal[
     "undeclared_egress",
     "secret_leak",
     "non_finite_output",
-    "non_finite_result",
     "image_provenance_mismatch",
     "provider_runtime_not_in_materialization",
     "provider_process_lease_invalid",
@@ -346,7 +322,19 @@ class ProcedureAdmissionRefusal(_StrictResultModel):
         return normalize_canonical(value)
 
 
+#: The node refusals whose ``detail_code`` is an authored code: a Procedure's
+#: guard code, or the code the bound provider operation declares and returned.
+_AUTHORED_DETAIL_CODES: frozenset[str] = frozenset({"guard_refused", "operation_refused"})
+
+
 class ProcedureNodeRefusal(_StrictResultModel):
+    """One node's refusal.
+
+    ``detail_code`` carries an authored code: for ``guard_refused`` the guard's,
+    for ``operation_refused`` the refusal code the bound provider operation
+    declares (its own vocabulary, with ``details`` its declared detail).
+    """
+
     tag: Literal["playbill-procedure-node-refusal-v1"] = "playbill-procedure-node-refusal-v1"
     classification: Literal["node_refusal"] = "node_refusal"
     code: ProcedureNodeRefusalCode
@@ -390,10 +378,14 @@ class ProcedureNodeRefusal(_StrictResultModel):
     def _typed_detail(self) -> "ProcedureNodeRefusal":
         if self.code == "guard_refused" and self.detail_code is None:
             raise ValueError("guard refusal requires the Procedure-authored detail code")
+        if self.code == "operation_refused" and self.detail_code is None:
+            raise ValueError("an operation refusal requires the operation-declared code")
         if self.code == "budget_exhausted" and self.budget is None:
             raise ValueError("budget refusal requires typed budget detail")
-        if self.code != "guard_refused" and self.detail_code is not None:
-            raise ValueError("only a guard refusal carries a Procedure-authored detail code")
+        if self.code not in _AUTHORED_DETAIL_CODES and self.detail_code is not None:
+            raise ValueError(
+                "only a guard or operation refusal carries an authored detail code"
+            )
         if self.code != "budget_exhausted" and self.budget is not None:
             raise ValueError("only a budget refusal carries typed budget detail")
         return self

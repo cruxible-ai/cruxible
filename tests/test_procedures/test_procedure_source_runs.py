@@ -98,9 +98,9 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeProviderErrorPayloadV1,
-    ProviderRuntimeRefusalV1,
-    ProviderRuntimeResultEnvelopeV1,
+    ProviderRuntimeProviderErrorPayload,
+    ProviderRuntimeRefusal,
+    ProviderRuntimeResultEnvelope,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import (
@@ -155,12 +155,12 @@ class _WorkspaceInvoker:
         assert context.input["bytes_digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
         self.observed_bytes_digest = str(context.input["bytes_digest"])
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
                 output={
-                    "input_bucket": context.input_bucket,
+                    "input_bucket": "content_kind=text;byte_size=tiny",
                     "source": {
                         "logical_source": context.input["logical_source"],
                         "commitment_digest": context.input["commitment_digest"],
@@ -1002,11 +1002,11 @@ class _DecliningInvoker(_WorkspaceInvoker):
     def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="refused",
-                refusal=ProviderRuntimeRefusalV1(
+                refusal=ProviderRuntimeRefusal(
                     code="provider_declined",
                     message="the adapter declined this material",
                 ),
@@ -1026,16 +1026,15 @@ def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
 ) -> None:
     """The other direction of the same execution-time application.
 
-    F10 (`execution.py:_typed_refusal`) makes an operation's declared
-    ``refusals`` its complete domain vocabulary: any other code is a protocol
-    violation, not a pass-through. The genesis-seeded ``workspace.file``
-    operation (`governance/seed_artifacts/workspace_file.py:workspace_file_
-    operation`) now declares the real built-in's (`providers/
-    builtin_workspace_file.py`) own typed refusals --
-    ``provider_declined``/``invalid_parameter``/``mismatched_lengths`` (its
-    oversized-file and length/digest-mismatch guards) -- so they surface as
-    typed node refusals through this executor path instead of an
-    undeclared-code protocol violation.
+    An operation's declared ``refusals`` are its complete domain vocabulary
+    (F10): any other code is ``undeclared_refusal``, never a pass-through. The
+    genesis-seeded ``workspace.file`` operation
+    (`governance/seed_artifacts/workspace_file.py:workspace_file_operation`)
+    declares the built-in's (`providers/builtin_workspace_file.py`) own typed
+    refusals -- ``provider_declined``/``invalid_parameter``/
+    ``mismatched_lengths`` (its oversized-file and length/digest-mismatch
+    guards) -- so they surface as ``operation_refused`` node refusals naming
+    the operation's code.
     """
 
     instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
@@ -1044,7 +1043,10 @@ def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
 
     assert invoker.spawn_calls == 1
     assert state.status == "node_refused", state.terminal
-    assert state.terminal.code == "provider_declined"
+    assert (state.terminal.code, state.terminal.detail_code) == (
+        "operation_refused",
+        "provider_declined",
+    )
 
 
 class _UnreachableInvoker(_WorkspaceInvoker):
@@ -1053,11 +1055,11 @@ class _UnreachableInvoker(_WorkspaceInvoker):
     def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="error",
-                error=ProviderRuntimeProviderErrorPayloadV1(
+                error=ProviderRuntimeProviderErrorPayload(
                     kind="ConnectError",
                     message=(
                         "[Errno 8] nodename nor servname provided: "

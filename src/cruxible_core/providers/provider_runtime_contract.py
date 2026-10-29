@@ -1,22 +1,30 @@
-"""Exact local mirror of the cruxible-provider-runtime v1 wire contract.
+"""Exact local mirror of the cruxible-provider-runtime protocol 2.0 wire contract.
 
-Core deliberately does not import ``cruxible_provider_runtime``.  The committed
-contract fixture and its guard are the coupling point: provider code produces
-the reviewed vectors, while this module speaks and validates those bytes.
+Core deliberately does not import ``cruxible_provider_runtime``. The vendored
+contract fixture (``tests/fixtures/provider_runtime_contract_v2.json``, taken
+from cruxible-providers at ``PROVIDER_RUNTIME_CONTRACT_COMMIT``) and its guard
+are the coupling point: provider code produces the reviewed vectors, while this
+module speaks and validates those bytes.
+
+A run context names one operation of one accepted build. Any other protocol
+major refuses ``unsupported_protocol`` before anything else in the document is
+read. A refusal code is either one the runtime reserves for its own machinery
+(``PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES``) or one the bound operation
+declares; the two vocabularies are disjoint, so the spelling decides.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterator, Mapping
-from typing import Any, Literal, Self, TypeAlias
+from typing import Any, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    TypeAdapter,
     ValidationError,
     field_validator,
     model_validator,
@@ -24,86 +32,83 @@ from pydantic import (
 
 from cruxible_client.contracts.errors import ExecutionError
 
-PROVIDER_RUNTIME_PROTOCOL = "1.0"
-PROVIDER_RUNTIME_CONTRACT_COMMIT = "389e9f44de56c1adebae731228cf4628c6fbeca8"
-PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS = ("dynamic:target-from-run-input",)
-MAX_PROVIDER_SECRET_BUNDLE_BYTES = 65_536
-#: What core sends as ``RunContextV1.input_bucket``. It carries no meaning: core
-#: classifies no input. Protocol 1.x children (cruxible-provider-runtime 0.2.x)
-#: still require the field, and some adapters (cruxible-provider-web 0.2.x) parse
-#: it as ``key=value`` pairs, so it keeps that shape and names no real dimension.
-#: The field leaves the run context only with protocol 2.0.
-PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET = "legacy=none"
-
-ProviderRuntimeRefusalCodeV1: TypeAlias = Literal[
-    "unknown_manifest_field",
-    "manifest_divergence",
-    "acceptance_divergence",
-    "unaccepted_provider",
-    "undeclared_interface",
-    "ambiguous_implementation",
-    "unknown_interface",
-    "interface_digest_mismatch",
-    "bucket_fixture_missing",
-    "invalid_bucket_vocabulary",
-    "unsupported_protocol",
-    "unknown_run_context_field",
-    "provider_protocol_violation",
-    "unsupported_backend",
-    "lock_mismatch",
-    "lock_bytes_mismatch",
-    "lock_missing_hash",
-    "lock_ambiguous_fork",
-    "no_compatible_artifact",
-    "unresolvable_source",
-    "unknown_extra",
-    "index_not_pinned",
-    "index_redirect",
-    "artifact_hash_mismatch",
-    "air_gapped_cache_miss",
-    "network_disabled",
-    "cache_permissions",
-    "cache_integrity",
-    "environment_divergence",
-    "unclaimed_bucket",
-    "unclassified_input",
-    "budget_wall_clock",
-    "budget_output_size",
-    "budget_cost",
-    "undeclared_egress",
-    "secret_leak",
-    "provider_declined",
-    "unresolved_secret_ref",
-    "secret_bundle_too_large",
-    "non_finite_output",
-    "insufficient_series_length",
-    "non_finite_input",
-    "non_finite_result",
-    "degenerate_scale",
-    "mismatched_lengths",
-    "unknown_method",
-    "unknown_test_name",
-    "declared_family_mismatch",
-    "unsupported_aggregation",
-    "unknown_column",
-    "malformed_model_ref",
-    "undeclared_match_parameters",
-    "invalid_parameter",
-    "cross_origin_credentialed_redirect",
-    "unsupported_redirect_scheme",
-    "redirect_limit",
-    "image_provenance_mismatch",
-]
-
-_REFUSAL_CODE_ADAPTER: TypeAdapter[ProviderRuntimeRefusalCodeV1] = TypeAdapter(
-    ProviderRuntimeRefusalCodeV1
+PROVIDER_RUNTIME_PROTOCOL = "2.0"
+#: The cruxible-providers commit the vendored contract fixture was taken from
+#: (``tests/fixtures/provider_runtime_contract_v2.json``).
+PROVIDER_RUNTIME_CONTRACT_COMMIT = "1961ce24f056784890e40849ba447e80542e3469"
+PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS = (
+    "dynamic:target-from-configuration",
+    "dynamic:target-from-run-input",
 )
+MAX_PROVIDER_SECRET_BUNDLE_BYTES = 65_536
+_OPERATION_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+#: The spelling of every refusal code, the runtime's or an operation's.
+PROVIDER_REFUSAL_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+#: The codes the provider runtime reserves for its own machinery. No operation
+#: may declare one, so a refusal's spelling alone says whose it is.
+PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES: frozenset[str] = frozenset(
+    {
+        "acceptance_divergence",
+        "air_gapped_cache_miss",
+        "artifact_hash_mismatch",
+        "budget_cost",
+        "budget_output_size",
+        "budget_wall_clock",
+        "cache_integrity",
+        "cache_permissions",
+        "environment_divergence",
+        "image_provenance_mismatch",
+        "index_not_pinned",
+        "index_redirect",
+        "lock_ambiguous_fork",
+        "lock_bytes_mismatch",
+        "lock_mismatch",
+        "lock_missing_hash",
+        "manifest_divergence",
+        "network_disabled",
+        "no_compatible_artifact",
+        "non_finite_output",
+        "provider_protocol_violation",
+        "secret_bundle_too_large",
+        "secret_leak",
+        "unaccepted_provider",
+        "undeclared_egress",
+        "undeclared_operation",
+        "undeclared_refusal",
+        "unknown_extra",
+        "unknown_manifest_field",
+        "unknown_run_context_field",
+        "unresolvable_source",
+        "unresolved_secret_ref",
+        "unsupported_backend",
+        "unsupported_protocol",
+    }
+)
+
+#: The runtime codes the child harness itself produces: the only runtime codes
+#: a result envelope may carry. Every other runtime code is an executor's own
+#: observation, and an envelope naming one is a protocol violation.
+PROVIDER_RUNTIME_HARNESS_REFUSAL_CODES: frozenset[str] = frozenset(
+    {
+        "non_finite_output",
+        "provider_protocol_violation",
+        "undeclared_operation",
+        "unknown_run_context_field",
+        "unresolved_secret_ref",
+        "unsupported_protocol",
+    }
+)
+if not PROVIDER_RUNTIME_HARNESS_REFUSAL_CODES <= PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES:
+    raise RuntimeError("the harness refusal codes are runtime codes")  # pragma: no cover
 
 
 class ProviderRuntimeWireError(ExecutionError):
     """A runtime context or envelope failed the frozen provider wire contract."""
 
-    def __init__(self, code: ProviderRuntimeRefusalCodeV1, message: str) -> None:
+    def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(f"{code}: {message}")
 
@@ -160,12 +165,12 @@ def _reject_non_finite(value: Any, *, where: str) -> None:
         )
 
 
-class ProviderRuntimeProtocolVersionV1(_StrictRuntimeModel):
+class ProviderRuntimeProtocolVersion(_StrictRuntimeModel):
     major: int
     minor: int
 
     @classmethod
-    def parse(cls, value: str) -> ProviderRuntimeProtocolVersionV1:
+    def parse(cls, value: str) -> ProviderRuntimeProtocolVersion:
         major, separator, minor = value.partition(".")
         if separator != ".":
             raise ProviderRuntimeWireError(
@@ -182,7 +187,19 @@ class ProviderRuntimeProtocolVersionV1(_StrictRuntimeModel):
         return f"{self.major}.{self.minor}"
 
 
-class ProviderRuntimeBudgetsV1(_StrictRuntimeModel):
+def require_supported_protocol(value: str, *, where: str) -> ProviderRuntimeProtocolVersion:
+    """Parse ``value`` and refuse any major other than the one core speaks."""
+
+    requested = ProviderRuntimeProtocolVersion.parse(value)
+    if requested.major != ProviderRuntimeProtocolVersion.parse(PROVIDER_RUNTIME_PROTOCOL).major:
+        raise ProviderRuntimeWireError(
+            "unsupported_protocol",
+            f"{where} is protocol {value}; core speaks {PROVIDER_RUNTIME_PROTOCOL}",
+        )
+    return requested
+
+
+class ProviderRuntimeBudgets(_StrictRuntimeModel):
     """Child-process budgets whose ``wall_clock_seconds`` reads VALIDITY WINDOW."""
 
     wall_clock_seconds: float
@@ -204,15 +221,15 @@ class ProviderRuntimeBudgetsV1(_StrictRuntimeModel):
         return value
 
 
-class ProviderRuntimeSecretRefV1(_StrictRuntimeModel):
+class ProviderRuntimeSecretRef(_StrictRuntimeModel):
     ref: str
     purpose: str = ""
 
 
-class ProviderRuntimeSecretChannelSpecV1(_StrictRuntimeModel):
+class ProviderRuntimeSecretChannelSpec(_StrictRuntimeModel):
     kind: Literal["fd"] = "fd"
     fd: int
-    refs: tuple[ProviderRuntimeSecretRefV1, ...] = ()
+    refs: tuple[ProviderRuntimeSecretRef, ...] = ()
 
     @field_validator("fd")
     @classmethod
@@ -222,20 +239,27 @@ class ProviderRuntimeSecretChannelSpecV1(_StrictRuntimeModel):
         return value
 
 
-class ProviderRuntimeRunContextV1(_StrictRuntimeModel):
+class ProviderRuntimeRunContext(_StrictRuntimeModel):
+    """One operation of one accepted build: everything core passes a provider process.
+
+    ``operation`` and ``operation_signature_digest`` are the exact operation and
+    ``{in, out, effect}`` signature the Line bound; ``build_digest`` is the
+    accepted Provider build; ``entrypoint`` is the object that serves it.
+    """
+
     protocol_version: str
     run_id: str
-    interface_id: str
-    interface_digest: str
+    operation: str
+    operation_signature_digest: str
+    build_digest: str
     implementation_digest: str
     entrypoint: str
     coordinates: dict[str, Any] = Field(default_factory=dict)
     input: dict[str, Any] = Field(default_factory=dict)
-    input_bucket: str
     capture_contract: str | None = None
-    budgets: ProviderRuntimeBudgetsV1
+    budgets: ProviderRuntimeBudgets
     declared_endpoints: tuple[str, ...] = ()
-    secret_channel: ProviderRuntimeSecretChannelSpecV1 | None = None
+    secret_channel: ProviderRuntimeSecretChannelSpec | None = None
     additive: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -244,41 +268,68 @@ class ProviderRuntimeRunContextV1(_StrictRuntimeModel):
         _reject_non_string_keys(value, where="provider run context")
         return value
 
+    @field_validator("operation_signature_digest", "build_digest", "implementation_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        if not _SHA256_RE.fullmatch(value):
+            raise ValueError(f"expected a sha256:<hex> digest, got {value!r}")
+        return value
+
+    @field_validator("operation")
+    @classmethod
+    def _operation_name(cls, value: str) -> str:
+        if not _OPERATION_NAME_RE.fullmatch(value):
+            raise ValueError(f"operation {value!r} is not a canonical operation name")
+        return value
+
     @model_validator(mode="after")
     def _version(self) -> Self:
-        ProviderRuntimeProtocolVersionV1.parse(self.protocol_version)
+        require_supported_protocol(self.protocol_version, where="the run context")
         return self
 
     def to_json(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
 
 
-class ProviderRuntimeTraceV1(_StrictRuntimeModel):
+class ProviderRuntimeTrace(_StrictRuntimeModel):
     endpoints_contacted: list[str] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
     metrics: dict[str, float] = Field(default_factory=dict)
 
 
-class ProviderRuntimeRefusalV1(_StrictRuntimeModel):
-    code: ProviderRuntimeRefusalCodeV1
+class ProviderRuntimeRefusal(_StrictRuntimeModel):
+    """A runtime code (reserved) or a code the bound operation declares."""
+
+    code: str
     message: str
     detail: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("code")
+    @classmethod
+    def _canonical_code(cls, value: str) -> str:
+        if not PROVIDER_REFUSAL_CODE_RE.fullmatch(value):
+            raise ValueError(f"refusal code {value!r} is not a canonical identifier")
+        return value
 
-class ProviderRuntimeProviderErrorPayloadV1(_StrictRuntimeModel):
+    @property
+    def is_runtime(self) -> bool:
+        return self.code in PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES
+
+
+class ProviderRuntimeProviderErrorPayload(_StrictRuntimeModel):
     kind: str
     message: str
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProviderRuntimeResultEnvelopeV1(_StrictRuntimeModel):
+class ProviderRuntimeResultEnvelope(_StrictRuntimeModel):
     protocol_version: str
     run_id: str
     status: Literal["ok", "refused", "error"]
     output: dict[str, Any] | None = None
-    refusal: ProviderRuntimeRefusalV1 | None = None
-    error: ProviderRuntimeProviderErrorPayloadV1 | None = None
-    trace: ProviderRuntimeTraceV1 = Field(default_factory=ProviderRuntimeTraceV1)
+    refusal: ProviderRuntimeRefusal | None = None
+    error: ProviderRuntimeProviderErrorPayload | None = None
+    trace: ProviderRuntimeTrace = Field(default_factory=ProviderRuntimeTrace)
 
     @model_validator(mode="before")
     @classmethod
@@ -296,7 +347,7 @@ class ProviderRuntimeResultEnvelopeV1(_StrictRuntimeModel):
             raise ValueError("an error result must carry an error")
         if self.status != "ok" and self.output is not None:
             raise ValueError("only an ok result may carry output")
-        ProviderRuntimeProtocolVersionV1.parse(self.protocol_version)
+        require_supported_protocol(self.protocol_version, where="the result envelope")
         _reject_non_finite(self.output, where="provider output")
         _reject_non_finite(self.trace.metrics, where="provider trace metrics")
         _reject_non_finite(self.trace.events, where="provider trace events")
@@ -310,15 +361,29 @@ class ProviderRuntimeResultEnvelopeV1(_StrictRuntimeModel):
         return self.model_dump_json().encode("utf-8")
 
 
-def parse_provider_runtime_context(raw: bytes) -> ProviderRuntimeRunContextV1:
+def _version_first(document: Any, *, where: str) -> None:
+    """Refuse another major before the strict schema reads anything else.
+
+    A 1.x document carries fields 2.0 does not know; the version is the fault,
+    so it is the refusal.
+    """
+
+    if isinstance(document, Mapping):
+        version = document.get("protocol_version")
+        if isinstance(version, str):
+            require_supported_protocol(version, where=where)
+
+
+def parse_provider_runtime_context(raw: bytes) -> ProviderRuntimeRunContext:
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderRuntimeWireError(
             "provider_protocol_violation", "run context is not valid UTF-8 JSON"
         ) from exc
+    _version_first(document, where="the run context")
     try:
-        return ProviderRuntimeRunContextV1.model_validate(document)
+        return ProviderRuntimeRunContext.model_validate(document)
     except ProviderRuntimeWireError:
         raise
     except ValidationError as exc:
@@ -327,21 +392,20 @@ def parse_provider_runtime_context(raw: bytes) -> ProviderRuntimeRunContextV1:
             for item in exc.errors()
             if item["type"] == "extra_forbidden"
         ]
-        code: ProviderRuntimeRefusalCodeV1 = (
-            "unknown_run_context_field" if extras else "provider_protocol_violation"
-        )
+        code = "unknown_run_context_field" if extras else "provider_protocol_violation"
         raise ProviderRuntimeWireError(code, "run context failed schema validation") from exc
 
 
-def parse_provider_runtime_result(raw: bytes) -> ProviderRuntimeResultEnvelopeV1:
+def parse_provider_runtime_result(raw: bytes) -> ProviderRuntimeResultEnvelope:
     try:
         document = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderRuntimeWireError(
             "provider_protocol_violation", "provider did not return valid UTF-8 JSON"
         ) from exc
+    _version_first(document, where="the result envelope")
     try:
-        return ProviderRuntimeResultEnvelopeV1.model_validate(document)
+        return ProviderRuntimeResultEnvelope.model_validate(document)
     except ProviderRuntimeWireError:
         raise
     except ValidationError as exc:
@@ -351,31 +415,33 @@ def parse_provider_runtime_result(raw: bytes) -> ProviderRuntimeResultEnvelopeV1
 
 
 def provider_runtime_refusal_codes() -> tuple[str, ...]:
-    """Return the exact closed runtime vocabulary in byte order."""
+    """The runtime's reserved codes in byte order."""
 
-    schema = _REFUSAL_CODE_ADAPTER.json_schema()
-    values = schema.get("enum", ())
-    return tuple(sorted((str(value) for value in values), key=lambda value: value.encode("utf-8")))
+    return tuple(
+        sorted(PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES, key=lambda value: value.encode("utf-8"))
+    )
 
 
 __all__ = [
     "MAX_PROVIDER_SECRET_BUNDLE_BYTES",
     "PROVIDER_RUNTIME_CONTRACT_COMMIT",
     "PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS",
-    "PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET",
+    "PROVIDER_REFUSAL_CODE_RE",
+    "PROVIDER_RUNTIME_HARNESS_REFUSAL_CODES",
     "PROVIDER_RUNTIME_PROTOCOL",
-    "ProviderRuntimeBudgetsV1",
-    "ProviderRuntimeProtocolVersionV1",
-    "ProviderRuntimeProviderErrorPayloadV1",
-    "ProviderRuntimeRefusalCodeV1",
-    "ProviderRuntimeRefusalV1",
-    "ProviderRuntimeResultEnvelopeV1",
-    "ProviderRuntimeRunContextV1",
-    "ProviderRuntimeSecretChannelSpecV1",
-    "ProviderRuntimeSecretRefV1",
-    "ProviderRuntimeTraceV1",
+    "PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES",
+    "ProviderRuntimeBudgets",
+    "ProviderRuntimeProtocolVersion",
+    "ProviderRuntimeProviderErrorPayload",
+    "ProviderRuntimeRefusal",
+    "ProviderRuntimeResultEnvelope",
+    "ProviderRuntimeRunContext",
+    "ProviderRuntimeSecretChannelSpec",
+    "ProviderRuntimeSecretRef",
+    "ProviderRuntimeTrace",
     "ProviderRuntimeWireError",
     "parse_provider_runtime_context",
     "parse_provider_runtime_result",
     "provider_runtime_refusal_codes",
+    "require_supported_protocol",
 ]

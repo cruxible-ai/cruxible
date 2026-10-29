@@ -32,10 +32,7 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     provider_environment_secret_key,
 )
-from cruxible_core.providers.provider_outcomes import (
-    ABSORBABLE_PROVIDER_REFUSALS,
-    map_provider_refusal,
-)
+from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
 )
@@ -136,19 +133,18 @@ def test_c8_custody_store_permissions_and_traversal(short_root: Path) -> None:
 def test_c14_wire_law_guards_still_hold() -> None:
     from cruxible_core.providers import provider_outcomes
     from cruxible_core.providers.provider_runtime_contract import (
-        ProviderRuntimeResultEnvelopeV1,
-        ProviderRuntimeRunContextV1,
+        ProviderRuntimeResultEnvelope,
+        ProviderRuntimeRunContext,
     )
 
-    for model in (ProviderRuntimeResultEnvelopeV1, ProviderRuntimeRunContextV1):
+    for model in (ProviderRuntimeResultEnvelope, ProviderRuntimeRunContext):
         assert model.model_config["extra"] == "forbid"
         assert model.model_config["frozen"] is True
     guard = inspect.getsource(provider_outcomes)
     assert "Provider outcome mapping does not equal the mirrored runtime vocabulary" in guard
-    assert all(
-        provider_outcomes._MAPPING[code] == ("node_refusal", "input")
-        for code in ABSORBABLE_PROVIDER_REFUSALS
-    )
+    # Absorbability is each operation's declaration; the runtime map has no
+    # input-attributed declines of its own.
+    assert all(value[1] != "input" for value in provider_outcomes._MAPPING.values())
 
 
 # ------------------------------------------------------------------ N-4 / task 7

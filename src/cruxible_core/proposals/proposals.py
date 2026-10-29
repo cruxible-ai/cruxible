@@ -1978,16 +1978,16 @@ def _verify_source(context: _MemberContext, procedure: Any) -> None:
     )
 
 
-def _provider_refusal_codes() -> frozenset[str]:
-    from typing import get_args
+def _reserved_provider_refusal_codes() -> frozenset[str]:
+    from cruxible_core.providers.provider_runtime_contract import (
+        PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
+    )
 
-    from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeRefusalCodeV1
-
-    return frozenset(get_args(ProviderRuntimeRefusalCodeV1))
+    return PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES
 
 
-#: The closed vocabulary a provider runtime can refuse with (protocol 1.x).
-_PROVIDER_REFUSAL_CODES: Final = _provider_refusal_codes()
+#: The codes the provider runtime reserves: no operation may declare one.
+_RESERVED_PROVIDER_REFUSAL_CODES: Final = _reserved_provider_refusal_codes()
 
 _PRODUCER_FAMILIES: Final = {"Procedure": "procedures/", "Provider": "providers/", "Line": "lines/"}
 
@@ -2678,7 +2678,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
                 for ref in operation.contract_refs()
             ),
         ),
-        refusal_codes=_PROVIDER_REFUSAL_CODES,
+        reserved_refusal_codes=_RESERVED_PROVIDER_REFUSAL_CODES,
         by_name=True,
         sibling_control_domains=(
             _sibling_control_domains(

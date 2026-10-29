@@ -50,7 +50,7 @@ from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.case_folding import volume_folds_case
 from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import (
@@ -89,7 +89,7 @@ class _WorkspaceInvoker:
         }
         assert base64.b64decode(context.input["bytes"], validate=True) == b"hello\n"
         output = {
-            "input_bucket": context.input_bucket,
+            "input_bucket": "content_kind=text;byte_size=tiny",
             "source": {
                 "logical_source": context.input["logical_source"],
                 "commitment_digest": context.input["commitment_digest"],
@@ -104,8 +104,8 @@ class _WorkspaceInvoker:
             },
         }
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
                 output=output,

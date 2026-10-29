@@ -1045,15 +1045,16 @@ def evaluate_provider_law(
     path: str,
     predecessor: AcceptedProvider | None,
     contracts: Mapping[tuple[str, int], str] | None = None,
-    refusal_codes: frozenset[str] | None = None,
+    reserved_refusal_codes: frozenset[str] = frozenset(),
     sibling_control_domains: frozenset[str] = frozenset(),
     by_name: bool = False,
 ) -> ProviderLawResult:
     """Identity, path, succession and the operation law.
 
     ``contracts`` maps each accepted Contract ``(name, version)`` to its
-    digest: every operation pin must resolve to it exactly. ``refusal_codes``
-    is the closed vocabulary a provider may refuse with.
+    digest: every operation pin must resolve to it exactly.
+    ``reserved_refusal_codes`` are the provider runtime's own codes: an
+    operation declares its own refusals, never one of these.
     ``sibling_control_domains`` are the control domains of the other builds of
     this provider name: a new build joins its name's one control domain.
     """
@@ -1127,7 +1128,7 @@ def evaluate_provider_law(
         )
     if isinstance(provider, ProviderV2):
         problem = operation_law_problem(
-            provider, contracts=contracts or {}, refusal_codes=refusal_codes
+            provider, contracts=contracts or {}, reserved_refusal_codes=reserved_refusal_codes
         )
         if problem is not None:
             return _law_refusal(problem[0], problem[1], path=path)
@@ -1143,7 +1144,7 @@ def operation_law_problem(
     provider: ProviderV2,
     *,
     contracts: Mapping[tuple[str, int], str],
-    refusal_codes: frozenset[str] | None,
+    reserved_refusal_codes: frozenset[str] = frozenset(),
 ) -> tuple[str, str] | None:
     """The install law for one build's operations: ``(code, message)`` or ``None``.
 
@@ -1170,14 +1171,14 @@ def operation_law_problem(
                     "cruxible.provider.operation_contract_unresolved",
                     f"Operation {operation.name!r} must pin {ref.spelling} at {accepted}.",
                 )
-        if refusal_codes is not None:
-            unknown = sorted(set(operation.refusals) - refusal_codes)
-            if unknown:
-                return (
-                    "cruxible.provider.operation_refusal_unknown",
-                    f"Operation {operation.name!r} declares refusal codes the provider "
-                    f"runtime cannot return: {unknown}.",
-                )
+        reserved = sorted(set(operation.refusals) & reserved_refusal_codes)
+        if reserved:
+            return (
+                "cruxible.provider.operation_refusal_reserved",
+                f"Operation {operation.name!r} declares refusal codes the provider "
+                f"runtime reserves for its own machinery: {reserved}. An operation "
+                "declares its own refusal codes.",
+            )
         implementation = by_entrypoint.get(operation.entrypoint)
         if implementation is None:
             return (

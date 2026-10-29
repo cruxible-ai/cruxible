@@ -10,7 +10,7 @@ import pytest
 import cruxible_core.providers.provider_local_runtime as runtime_module
 from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
@@ -43,7 +43,7 @@ def test_a_raising_terminate_sink_cannot_replace_success_or_strand_the_lease(
         _fake_interpreter(short_root / "provider.py"),
         entrypoint="demo:Provider",
         context=b'{"run_id":"RUN-r8","input":{"value":"ok"}}',
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
         invocation_id=invocation_id,
         process_leases=store,

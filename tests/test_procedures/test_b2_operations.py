@@ -74,7 +74,7 @@ def test_a_line_binds_its_slot_at_acceptance_and_runs_it(tmp_path):
     assert line.bindings["compute"].build.target == build.identity
     state, invoker = run_line(instance)
     assert state.status == "succeeded", state
-    assert invoker.contexts[0].additive["operation"] == "compute"
+    assert invoker.contexts[0].operation == "compute"
 
 
 # --- helpers -----------------------------------------------------------------
@@ -150,7 +150,7 @@ def test_installing_a_newer_build_never_changes_an_accepted_lines_binding(tmp_pa
     assert accepted_line(instance).bindings["compute"].build.target == first.identity
     state, invoker = run_line(instance)
     assert state.status == "succeeded", state
-    assert invoker.contexts[0].additive["build_digest"] == provider_digest(first).tagged
+    assert invoker.contexts[0].build_digest == provider_digest(first).tagged
 
 
 # --- 2. slot_ambiguous / slot_unfilled at Line acceptance ---------------------
@@ -740,9 +740,7 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
     assert line.bindings["child.compute"].build.target == second.identity
     state, invoker = run_line(instance, name="test.parent-line")
     assert state.status == "succeeded", state
-    assert [item.additive["build_digest"] for item in invoker.contexts] == [
-        provider_digest(second).tagged
-    ]
+    assert [item.build_digest for item in invoker.contexts] == [provider_digest(second).tagged]
 
 
 # --- Source worlds: the core-seeded workspace.file operation ------------------
@@ -935,7 +933,12 @@ def test_a_declared_typed_refusal_is_a_node_refusal_with_its_code(tmp_path, abso
     instance = _refusing_world(tmp_path, {"provider_declined": absorbable})
     state, _ = run_line(instance, invoker=Invoker(refusal=("provider_declined", {"reason": "x"})))
     assert state.status == "node_refused"
-    assert state.terminal.code == "provider_declined"
+    # The operation's own code, served under the one operation-refusal code.
+    assert (state.terminal.code, state.terminal.detail_code) == (
+        "operation_refused",
+        "provider_declined",
+    )
+    assert state.terminal.details == {"reason": "x"}
 
 
 def test_a_typed_refusal_detail_outside_its_contract_is_refused(tmp_path):
@@ -972,7 +975,11 @@ def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(tmp_path, on_u
     assert len(invoker.contexts) == 1
     if on_unavailable == "refuse":
         assert state.status == "node_refused"
-        assert (state.terminal.code, state.terminal.node_id) == ("provider_declined", "doc")
+        assert (state.terminal.code, state.terminal.detail_code, state.terminal.node_id) == (
+            "operation_refused",
+            "provider_declined",
+            "doc",
+        )
     else:
         # Absorbed: the Source is omitted, and the run moves past it.
         assert getattr(state.terminal, "node_id", None) != "doc", state.terminal
@@ -1141,7 +1148,7 @@ def test_an_unaccepted_enum_of_claim_type_member_is_refused(tmp_path):
     assert state.terminal.code == "contract_output_refused"
 
 
-def test_an_undeclared_provider_refusal_is_a_protocol_violation(tmp_path):
+def test_an_undeclared_provider_refusal_is_an_undeclared_refusal(tmp_path):
     """F10: an operation that declares no refusals cannot have a provider
     refusal pass through as if it were a declared, typed domain refusal."""
 
@@ -1149,8 +1156,24 @@ def test_an_undeclared_provider_refusal_is_a_protocol_violation(tmp_path):
     state, _ = run_line(instance, invoker=Invoker(refusal=("provider_declined", {"reason": "x"})))
     assert state.status != "succeeded"
     assert state.terminal is not None
-    assert state.terminal.code != "provider_declined"
-    assert state.terminal.code == "provider_protocol_violation"
+    assert state.terminal.code == "undeclared_refusal"
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        # Only the executor observes a budget or an egress breach.
+        ("budget_output_size", "provider_protocol_violation"),
+        ("undeclared_egress", "provider_protocol_violation"),
+        # The child harness itself observes an undelivered secret.
+        ("unresolved_secret_ref", "unresolved_secret_ref"),
+    ],
+)
+def test_an_envelope_runtime_code_is_believed_only_from_the_harness(tmp_path, code, expected):
+    instance = _refusing_world(tmp_path, {"provider_declined": False})
+    state, _ = run_line(instance, invoker=Invoker(refusal=(code, {})))
+    assert state.status != "succeeded"
+    assert state.terminal.code == expected
 
 
 def _fetch_world(
@@ -1617,7 +1640,7 @@ def test_a_format_7_slotted_procedure_is_accepted_and_executes(tmp_path):
     state, invoker = run_line(instance)
     assert state.status == "succeeded", state
     assert state.result == {"value": 2}
-    assert invoker.contexts[0].interface_id == "compute"
+    assert invoker.contexts[0].operation == "compute"
 
 
 def _produced_captures(instance, run_id):  # type: ignore[no-untyped-def]

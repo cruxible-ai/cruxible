@@ -345,7 +345,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         from cruxible_client.contracts.provider_execution import ProviderEgressObservation
         from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
         from cruxible_core.providers.provider_runtime_contract import (
-            ProviderRuntimeResultEnvelopeV1,
+            ProviderRuntimeResultEnvelope,
         )
 
         self.spawn_calls += 1
@@ -358,8 +358,8 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
             assert occurrence.occurrence_kind == "call"
             assert context.input == (self.expected_input or {"size": 1})
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0", run_id=context.run_id, status="ok", output=self.output
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0", run_id=context.run_id, status="ok", output=self.output
             ),
             stderr="",
             duration_seconds=0.001,

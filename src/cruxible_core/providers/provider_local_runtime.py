@@ -63,11 +63,11 @@ from cruxible_core.providers.provider_runtime_contract import (
     MAX_PROVIDER_SECRET_BUNDLE_BYTES,
     PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
     PROVIDER_RUNTIME_PROTOCOL,
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeResultEnvelopeV1,
-    ProviderRuntimeRunContextV1,
-    ProviderRuntimeSecretChannelSpecV1,
-    ProviderRuntimeSecretRefV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeResultEnvelope,
+    ProviderRuntimeRunContext,
+    ProviderRuntimeSecretChannelSpec,
+    ProviderRuntimeSecretRef,
     ProviderRuntimeWireError,
     parse_provider_runtime_result,
 )
@@ -413,7 +413,7 @@ class ProviderSpawnDeadline:
 class ProviderDriverOutcomeV1:
     """Local result whose ``duration_seconds`` reads VALIDITY WINDOW."""
 
-    envelope: ProviderRuntimeResultEnvelopeV1
+    envelope: ProviderRuntimeResultEnvelope
     stderr: str
     duration_seconds: float
     egress: ProviderEgressObservation
@@ -562,7 +562,7 @@ class ProviderLocalRuntimeInvoker:
             occurrence.operation.signature()
         ):
             raise ProviderLocalRuntimeRefused(
-                "unknown_interface",
+                "acceptance_divergence",
                 "the admitted operation's signature does not reproduce its recorded digest",
             )
         bound = self._driver.bind(
@@ -582,7 +582,7 @@ class ProviderLocalRuntimeInvoker:
         self,
         *,
         occurrence: ProviderExternalOccurrencePlan,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         invocation_id: str,
         bound: BoundLocalProviderV1,
         deadline: ProviderSpawnDeadline,
@@ -686,7 +686,7 @@ class LocalProviderExecutionDriver:
             )
         if operation not in provider.operations:
             raise ProviderLocalRuntimeRefused(
-                "undeclared_interface", "the bound operation is not declared by this build"
+                "undeclared_operation", "the bound operation is not declared by this build"
             )
         implementation_record = next(
             (
@@ -712,7 +712,7 @@ class LocalProviderExecutionDriver:
         )
         if manifest is None or operation.entrypoint != implementation_record.entrypoint:
             raise ProviderLocalRuntimeRefused(
-                "ambiguous_implementation", "implementation is absent from accepted closure"
+                "acceptance_divergence", "implementation is absent from accepted closure"
             )
         local_ref = next(
             (
@@ -867,7 +867,7 @@ class LocalProviderExecutionDriver:
     def invoke(
         self,
         binding: BoundLocalProviderV1,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         *,
         secret_plan: ProviderSecretResolutionPlan,
         secret_resolvers: ProviderSecretResolverRegistry,
@@ -906,10 +906,10 @@ class LocalProviderExecutionDriver:
             join_timeout_seconds=process_leases.secret_writer_join_timeout_seconds,
         ) as secret_fd:
             channel = (
-                ProviderRuntimeSecretChannelSpecV1(
+                ProviderRuntimeSecretChannelSpec(
                     fd=secret_fd,
                     refs=tuple(
-                        ProviderRuntimeSecretRefV1(ref=item.ref, purpose=item.purpose)
+                        ProviderRuntimeSecretRef(ref=item.ref, purpose=item.purpose)
                         for item in secret_plan.references
                     ),
                 )
@@ -1339,7 +1339,7 @@ def _run_child(
     *,
     entrypoint: str,
     context: bytes,
-    budgets: ProviderRuntimeBudgetsV1,
+    budgets: ProviderRuntimeBudgets,
     secret_fd: int | None,
     invocation_id: str,
     process_leases: ProviderProcessLeaseStore,
@@ -1508,7 +1508,7 @@ def _collect_child_output(
     process: subprocess.Popen[bytes],
     *,
     context: bytes,
-    budgets: ProviderRuntimeBudgetsV1,
+    budgets: ProviderRuntimeBudgets,
     started: float,
     writer_join_timeout_seconds: float,
     observe_descendants: Callable[[], None] | None = None,

@@ -66,10 +66,10 @@ from cruxible_core.providers.provider_local_runtime import (
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_PROTOCOL,
-    ProviderRuntimeProtocolVersionV1,
-    ProviderRuntimeProviderErrorPayloadV1,
-    ProviderRuntimeResultEnvelopeV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeProtocolVersion,
+    ProviderRuntimeProviderErrorPayload,
+    ProviderRuntimeResultEnvelope,
+    ProviderRuntimeRunContext,
 )
 
 BUILTIN_EGRESS_OBSERVER = "core.in-process"
@@ -85,7 +85,7 @@ class BuiltinImplementation:
     """
 
     identity: BuiltinProviderIdentity
-    adapter: Callable[[ProviderRuntimeRunContextV1], ProviderRuntimeResultEnvelopeV1]
+    adapter: Callable[[ProviderRuntimeRunContext], ProviderRuntimeResultEnvelope]
 
     @property
     def implementation_digest(self) -> str:
@@ -220,7 +220,7 @@ class BuiltinProviderInvoker:
         self,
         *,
         occurrence: ProviderExternalOccurrencePlan,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         invocation_id: str,
         bound: BoundBuiltinProviderV1,
         deadline: ProviderSpawnDeadline | None = None,
@@ -239,11 +239,8 @@ class BuiltinProviderInvoker:
             raise ProviderLocalRuntimeRefused(
                 "provider_protocol_violation", "run context names another implementation"
             )
-        requested = ProviderRuntimeProtocolVersionV1.parse(context.protocol_version)
-        if (
-            requested.major
-            != ProviderRuntimeProtocolVersionV1.parse(PROVIDER_RUNTIME_PROTOCOL).major
-        ):
+        requested = ProviderRuntimeProtocolVersion.parse(context.protocol_version)
+        if requested.major != ProviderRuntimeProtocolVersion.parse(PROVIDER_RUNTIME_PROTOCOL).major:
             raise ProviderLocalRuntimeRefused(
                 "unsupported_protocol", "run context protocol is unsupported"
             )
@@ -254,11 +251,11 @@ class BuiltinProviderInvoker:
         try:
             envelope = adapter(context)
         except Exception as exc:  # the child harness reports a raise the same way
-            envelope = ProviderRuntimeResultEnvelopeV1(
+            envelope = ProviderRuntimeResultEnvelope(
                 protocol_version=PROVIDER_RUNTIME_PROTOCOL,
                 run_id=context.run_id,
                 status="error",
-                error=ProviderRuntimeProviderErrorPayloadV1(
+                error=ProviderRuntimeProviderErrorPayload(
                     kind=type(exc).__name__, message=str(exc)
                 ),
             )

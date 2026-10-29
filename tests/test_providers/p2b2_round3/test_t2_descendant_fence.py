@@ -28,7 +28,7 @@ from cruxible_core.providers.provider_process_leases import (
     _process_start_time,
     descendant_is_live,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.p2b2_round3._child import write_child
 
@@ -74,7 +74,7 @@ def test_the_success_path_kills_the_group_so_a_plain_child_cannot_survive(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,
@@ -108,7 +108,7 @@ def test_a_child_running_past_its_envelope_is_refused_for_wall_clock(
                 interpreter,
                 entrypoint="demo:Provider",
                 context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=65_536),
                 secret_fd=None,
                 invocation_id=unique_invocation_id(),
                 process_leases=store,
@@ -159,7 +159,7 @@ def test_a_descendant_cannot_read_the_secret_bundle_after_the_parent_close(
                 interpreter,
                 entrypoint="demo:Provider",
                 context=context,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
                 secret_fd=fd,
                 invocation_id=unique_invocation_id(),
                 process_leases=store,
@@ -312,7 +312,7 @@ def test_the_success_path_still_has_a_safe_window_to_kill_the_group(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,

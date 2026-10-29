@@ -106,8 +106,8 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessRecoveryResultV1,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
 )
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager, get_playbill_manager
 from cruxible_core.runtime.provider_runtime import (
@@ -539,16 +539,16 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         implementation_digest=implementation.implementation_digest,
         secret_plan=ProviderSecretResolutionPlan(),
     )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="RUN-daemon-operator",
-        interface_id=operation.name,
-        interface_digest=operation_signature_digest(operation.signature()),
+        operation=operation.name,
+        operation_signature_digest=operation_signature_digest(operation.signature()),
+        build_digest=accepted_provider.artifact_digest,
         implementation_digest=implementation.implementation_digest,
         entrypoint=admitted_binding.entrypoint,
         input={"value": "served"},
-        input_bucket="legacy=none",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
     )
 
     outcome = invoker.invoke_provider(

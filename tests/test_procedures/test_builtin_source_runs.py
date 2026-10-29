@@ -25,8 +25,8 @@ from cruxible_core.providers.builtin_runtime import (
 )
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.procedures.procedure_runs import (
@@ -56,16 +56,16 @@ def _accepted() -> tuple[AcceptedProvider, Any]:
 
 
 def _context(binding: Any, payload: dict[str, object], *, output_bytes: int = 1 << 20) -> Any:
-    return ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    return ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="run-1",
-        interface_id=binding.operation,
-        interface_digest=binding.operation_signature_digest,
+        operation=binding.operation,
+        operation_signature_digest=binding.operation_signature_digest,
+        build_digest=binding.provider_artifact_digest,
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input=payload,
-        input_bucket="legacy=none",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5.0, output_bytes=output_bytes),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=5.0, output_bytes=output_bytes),
     )
 
 

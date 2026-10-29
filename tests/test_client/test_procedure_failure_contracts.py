@@ -134,12 +134,12 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "procedure_authority_admission_invalid",
         "procedure_authority_admission_mismatch",
         "provider_unavailable",
-        "unclassified_input",
-        "unclaimed_bucket",
         "cruxible.acquisition.unavailable",
         "cruxible.acquisition.stale",
         "cruxible.acquisition.oversized",
         "cruxible.acquisition.refused",
+        "cruxible.acquisition.replayability_ineligible",
+        "cruxible.acquisition.origin_ineligible",
         "effect_grant_unrecognized",
         "effect_dispatch_requires_actor",
         "effect_dispatch_requires_authenticated_actor",
@@ -151,29 +151,12 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "provider_acquisition_plan_mismatch",
         "workspace_file_read_refused",
         "provider_effect_declaration_mismatch",
-        "classifier_not_installed",
-        "classifier_digest_mismatch",
         "unknown_extra",
         "budget_wall_clock",
         "budget_output_size",
         "budget_cost",
-        "provider_declined",
         "secret_bundle_too_large",
-        "insufficient_series_length",
-        "non_finite_input",
-        "degenerate_scale",
-        "mismatched_lengths",
-        "unknown_method",
-        "unknown_test_name",
-        "declared_family_mismatch",
-        "unsupported_aggregation",
-        "unknown_column",
-        "malformed_model_ref",
-        "undeclared_match_parameters",
-        "invalid_parameter",
-        "cross_origin_credentialed_redirect",
-        "unsupported_redirect_scheme",
-        "redirect_limit",
+        "operation_refused",
         "provider_protocol_violation",
     }
     assert set(get_args(ProcedureNodeRefusalCode)) == expected
@@ -186,6 +169,8 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         }
         if code == "guard_refused":
             values["detail_code"] = "procedure.guard"
+        if code == "operation_refused":
+            values["detail_code"] = "too_long"
         if code == "budget_exhausted":
             values["budget"] = {
                 "budget_kind": "max_provider_calls",

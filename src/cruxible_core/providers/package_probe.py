@@ -1,6 +1,6 @@
 """Run a package's install-time probes in the existing supervised provider process."""
 
-from typing import Any, Literal
+from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_digest
 from cruxible_client.contracts.errors import ExecutionError
@@ -11,12 +11,21 @@ from cruxible_core.providers.provider_local_runtime import (
 )
 from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    PROVIDER_RUNTIME_PROTOCOL,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
     parse_provider_runtime_result,
 )
 
 _PROBE_WALL_CLOCK_SECONDS = 30
+#: The runtime's own resource-probe operation and the entrypoint that serves it
+#: (``cruxible_provider_runtime.package_probe``).
+RESOURCE_PROBE_OPERATION = "cruxible.package.resource"
+RESOURCE_PROBE_ENTRYPOINT = "cruxible_provider_runtime.package_probe:ResourceProbe"
+#: A probe binds no Contracts; its run context names this fixed signature digest.
+RESOURCE_PROBE_SIGNATURE_DIGEST = "sha256:" + canonical_digest(
+    "cruxible-package-probe-signature-v1", {"operation": RESOURCE_PROBE_OPERATION}
+)
 
 
 class PackageProbeFailed(ExecutionError):
@@ -27,31 +36,32 @@ def run_package_probe(
     deployment: LocalProviderDeploymentV1,
     leases: ProviderProcessLeaseStore,
     *,
-    kind: Literal["resource"],
-    digest: str,
+    build_digest: str,
+    implementation_digest: str,
     value: dict[str, Any],
 ) -> dict[str, Any]:
     """Run one package probe child: a runtime-resource readiness probe.
 
     Probes run at installation, outside any Procedure run, within the probe's
-    own wall-clock window.
+    own wall-clock window. The child runs the runtime's ``ResourceProbe`` under
+    its own operation, in the environment of the build and implementation the
+    requirement belongs to.
     """
     if deployment.installation_verification is None:
         raise ValueError("package probes require a verified installation")
     identifier = "sha256:" + canonical_digest("provider-package-probe-v1", {"id": new_id("probe")})
-    entrypoint = f"cruxible_provider_runtime.package_probe:{kind.title()}Probe"
-    budgets = ProviderRuntimeBudgetsV1(
+    entrypoint = RESOURCE_PROBE_ENTRYPOINT
+    budgets = ProviderRuntimeBudgets(
         wall_clock_seconds=float(_PROBE_WALL_CLOCK_SECONDS), output_bytes=1_048_576
     )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version=PROVIDER_RUNTIME_PROTOCOL,
         run_id=identifier,
-        interface_id=f"cruxible.package.{kind}",
-        interface_digest=digest,
-        implementation_digest=digest,
+        operation=RESOURCE_PROBE_OPERATION,
+        operation_signature_digest=RESOURCE_PROBE_SIGNATURE_DIGEST,
+        build_digest=build_digest,
+        implementation_digest=implementation_digest,
         entrypoint=entrypoint,
-        # The probe protocol's own fixed label; it names the probe kind.
-        input_bucket=f"package={kind}",
         coordinates={},
         input=value,
         budgets=budgets,
@@ -67,8 +77,14 @@ def run_package_probe(
     )
     result = parse_provider_runtime_result(outcome.stdout)
     if result.run_id != identifier or result.status != "ok" or not isinstance(result.output, dict):
-        raise PackageProbeFailed(f"package {kind} probe refused or returned invalid output")
+        raise PackageProbeFailed("package resource probe refused or returned invalid output")
     return result.output
 
 
-__all__ = ["PackageProbeFailed", "run_package_probe"]
+__all__ = [
+    "RESOURCE_PROBE_ENTRYPOINT",
+    "RESOURCE_PROBE_OPERATION",
+    "RESOURCE_PROBE_SIGNATURE_DIGEST",
+    "PackageProbeFailed",
+    "run_package_probe",
+]

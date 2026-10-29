@@ -14,7 +14,7 @@ import pytest
 import cruxible_core.runtime.playbill_manager as manager_module
 from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from tests.support.invocation_ids import unique_invocation_id
@@ -55,7 +55,7 @@ subprocess.Popen(
     stderr=subprocess.DEVNULL,
 )
 envelope = {
-    "protocol_version": "1.0", "run_id": document["run_id"], "status": "ok",
+    "protocol_version": "2.0", "run_id": document["run_id"], "status": "ok",
     "output": {"echo": document["input"]["value"]}, "refusal": None, "error": None,
     "trace": {"endpoints_contacted": [], "events": [], "metrics": {}},
 }
@@ -88,7 +88,7 @@ def test_c5_a_same_group_descendant_dies_with_the_group_on_the_success_path(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=10, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,

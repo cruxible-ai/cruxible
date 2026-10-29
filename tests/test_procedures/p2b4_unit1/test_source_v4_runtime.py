@@ -105,8 +105,8 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeRefusalV1,
-    ProviderRuntimeResultEnvelopeV1,
+    ProviderRuntimeRefusal,
+    ProviderRuntimeResultEnvelope,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import (
@@ -308,8 +308,8 @@ class _SourceInvoker:
             ),
         )
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
                 output=output.model_dump(mode="json"),
@@ -553,11 +553,11 @@ class _RefusingSourceInvoker(_SourceInvoker):
     ):
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="refused",
-                refusal=ProviderRuntimeRefusalV1(
+                refusal=ProviderRuntimeRefusal(
                     code="provider_declined",
                     message="the requested row is temporarily absent",
                 ),
