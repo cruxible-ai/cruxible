@@ -7,11 +7,21 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-#: The Contracts ``local.increment`` names: the built-in workspace.file request
-#: and result, which every new instance accepts at genesis, so a test package
-#: installs without first accepting Contracts of its own.
-LOCAL_CALL_IN = "workspace.file.request@1"
-LOCAL_CALL_OUT = "workspace.file.result@1"
+#: The one Contract ``local.increment`` reads and returns: ``{n: int}``. An
+#: install pins it, so a world accepts it (``local_call_contract_files``) before
+#: installing the package.
+LOCAL_CALL_VALUE = {"name": "local.increment.value", "version": 1, "fields": {"n": {"type": "int"}}}
+LOCAL_CALL_IN = "local.increment.value@1"
+LOCAL_CALL_OUT = "local.increment.value@1"
+
+
+def local_call_contract_files() -> dict[str, bytes]:
+    """The accepted-tree member of ``local.increment``'s Contract."""
+
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+    contract = Contract.model_validate(LOCAL_CALL_VALUE)
+    return {contract_path(contract.name, contract.version): render_contract(contract)}
 
 
 def build_local_call(

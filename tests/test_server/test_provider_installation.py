@@ -48,11 +48,36 @@ def installer_http(tmp_path, monkeypatch, request, provider_checkout):
             }
         )
     )
+    from tests.support.provider_installation import local_call_contract_files
     from tests.test_server.conftest import _playbill_http
 
-    yield from _playbill_http(
+    world = _playbill_http(
         tmp_path, monkeypatch, require_independent_approval=getattr(request, "param", False)
     )
+    http, instance_id, reviewer = next(world)
+    # The Contract the local-call package's operation pins, accepted before it installs.
+    _accept(http, instance_id, reviewer, local_call_contract_files(), name="local-call-contracts")
+    yield http, instance_id, reviewer
+    for _ in world:
+        pass
+
+
+def _accept(http, instance_id, reviewer, members, *, name):
+    """Accept ``members`` over the head: one proposal, the reviewer's approval."""
+
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+
+    proposal = submit_member_candidate(
+        get_playbill_manager().get(instance_id),
+        members=members,
+        actor_id="operator",
+        proposal_name=name,
+        proposal_family="procedure",
+        timestamp="2026-10-29T11:00:00.000000Z",
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
 
 
 def test_transfer_install_and_restart_reuse(
@@ -92,98 +117,102 @@ def test_transfer_install_and_restart_reuse(
     assert again.registered and again.status == "ready"
 
 
-def _run_call(
-    client,
-    http,
-    instance_id,
-    reviewer,
-    tmp_path,
-    interface_id,
-    value,
-    fields_in,
-    fields_out,
-    *,
-    provider_identity=None,
-    name="installed-package-call",
-):
-    from cruxible_client import Cruxible
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+def _run_call(http, instance_id, reviewer, *, build, value, name="installed-package-call"):
+    """Run ``local.increment`` of the installed ``build`` through a Line bound to it.
 
-    interface = interface_entry(client, instance_id, interface_id)
-    provider = next(
-        item
-        for item in interface["providers"]
-        if provider_identity is None
-        or item["provider_identity"].partition("/")[0] == provider_identity
+    The Procedure declares one slot of the operation's exact signature; the Line
+    binds it to the installed build's operation at acceptance, and the run goes
+    through the daemon's real provider operator to the installed runtime child.
+    """
+
+    from cruxible_client.contracts.authoring.inputs import (
+        LineInput,
+        ProcedureInput,
+        lower_authoring_input,
     )
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.lowering import lower_authoring
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-    def carried(name, role):
-        return {"kind": "carried_contract", "name": name, "role": role}
-
-    example = procedure_example()
-    raw = {
-        **example.definition,
-        "name": name,
-        "graph_format": 6,
-        "returns": "result",
-        "contract_out": carried("result", "contract-out"),
-        "nodes": [
-            {
-                "kind": "call",
-                "node_id": "invoke",
-                "as": "result",
-                "input": value,
-                "provider": {
-                    "kind": "accepted",
-                    "role": "provider",
-                    "target": provider["provider_identity"],
-                },
-                "interface": {
-                    "kind": "accepted",
-                    "role": "provider-interface",
-                    "target": interface["identity"],
-                },
-            }
-        ],
-        "budget": {
-            **example.definition["budget"],
-            "wall_clock": _RUN_WALL_CLOCK,
-            "max_items": None,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 1048576,
-        },
-        "hard_caps": {
-            **example.definition["hard_caps"],
-            "max_wall_clock": _MAX_WALL_CLOCK,
-            "max_provider_calls": 2,
-            "max_capture_bytes": 2097152,
-        },
-    }
-    authored = example.model_copy(
-        update={
-            "definition": raw,
-            "contracts": (
-                next(row for row in example.contracts if row.name == "empty-input"),
-                CarriedContractInput(
-                    name="result",
-                    fields={key: PropertySchema.model_validate(v) for key, v in fields_out.items()},
+    instance = get_playbill_manager().get(instance_id)
+    procedure = f"test.{name}"
+    line = f"test.{name}-line"
+    for kind, payload in (
+        (
+            "procedure",
+            ProcedureInput(
+                kind="procedure",
+                spec=ProcedureSpec.model_validate(
+                    {
+                        "procedure": procedure,
+                        "input": {"n": "integer"},
+                        "output": {"n": "integer"},
+                        "slots": {
+                            "increment": {
+                                "in": LOCAL_CALL_IN,
+                                "out": LOCAL_CALL_OUT,
+                                "effect": "pure",
+                            }
+                        },
+                        "steps": [
+                            {"call": "result", "slot": "increment", "input": {"n": "$input.n"}}
+                        ],
+                        "returns": "result",
+                        "budget": {"provider_calls": 1},
+                    }
                 ),
             ),
-        }
+        ),
+        (
+            "line",
+            LineInput.model_validate(
+                {
+                    "kind": "line",
+                    "name": line,
+                    "procedure_name": procedure,
+                    "bindings": {"increment": build},
+                    "parameters": value,
+                    "occurrence_epoch": 1,
+                }
+            ),
+        ),
+    ):
+        intent = (
+            AuthoringIntentCoordinator.for_instance(instance)
+            .create(
+                actor=AuthenticatedActor(actor_id="operator"),
+                payload=lower_authoring_input(payload),
+                canonical_timestamp="2026-10-29T11:00:00.000000Z",
+            )
+            .intent
+        )
+        lowered = lower_authoring(instance, intent=intent, actor_id="operator")
+        _accept(http, instance_id, reviewer, dict(lowered.changed_members), name=f"{name}-{kind}")
+    return _run_line(instance_id, line)
+
+
+def _run_line(instance_id, line):
+    """One manual run of an accepted Line through the daemon's real provider operator."""
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
     )
-    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
-    intent = pb.procedure(definition=authored).prepare()
-    assert not intent.refused, intent.diagnostics
-    intent.submit(accept="never")
-    _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
-    run = pb.accepted_procedure(name).run()
-    state = client.get_procedure_run(instance_id, run.run_id)
-    assert run.status == "succeeded", state.model_dump_json(indent=2)
-    assert state.receipt_digest
-    return run.result.model_dump()
+    from tests.support.operation_world import actor
+
+    manager = get_playbill_manager()
+    state = service_run_playbill_line(
+        manager.get(instance_id),
+        path_identity_digest=line,
+        request=LineRunRequest(line=line),
+        actor_context=actor(),
+        caller_rung=2,
+        provider_runtime_operator=manager.provider_runtime_operator(),
+    )
+    assert state.status == "succeeded", state.terminal
+    return state.result
 
 
 @pytest.mark.parametrize("legacy_proof", [False, True])
@@ -259,17 +288,7 @@ def test_relocated_installation_reverifies_and_runs_after_restart(
     assert json.loads(prepared.read_bytes())["deployment"]["installation_verification"] == (
         current.installation_verification.model_dump(mode="json")
     )
-    assert _run_call(
-        client,
-        http,
-        instance_id,
-        reviewer,
-        tmp_path,
-        "local.increment",
-        {"n": 2},
-        {"n": {"type": "int"}},
-        {"n": {"type": "int"}},
-    ) == {"n": 3}
+    assert _run_call(http, instance_id, reviewer, build=installed.build, value={"n": 2}) == {"n": 3}
 
 
 @pytest.fixture(scope="session")
@@ -345,17 +364,7 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
         client, instance_id, wheel=wheel, lock=lock, dependency_wheels=local_call_dependency_wheels
     )
     assert result.status == "ready"
-    assert _run_call(
-        client,
-        http,
-        instance_id,
-        reviewer,
-        tmp_path,
-        "local.increment",
-        {"n": 2},
-        {"n": {"type": "int"}},
-        {"n": {"type": "int"}},
-    ) == {"n": 3}
+    assert _run_call(http, instance_id, reviewer, build=result.build, value={"n": 2}) == {"n": 3}
     operator = get_playbill_manager().provider_runtime_operator()
     second, second_lock = build_local_call(tmp_path, repository, name="other-local-call")
     shared = install_provider_wheel(
@@ -365,9 +374,9 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
         lock=second_lock,
         dependency_wheels=local_call_dependency_wheels,
     )
-    assert shared.status == "ready"
-    interface = interface_entry(client, instance_id, "local.increment")
-    assert len(interface["providers"]) == 2
+    assert shared.status == "ready" and shared.registered
+    # Another provider's build serving the same operation signature, beside it.
+    assert shared.build != result.build
     old = dict(operator.deployments)
     updated, lock = build_local_call(tmp_path, repository, increment=2)
     result2 = install_provider_wheel(
@@ -380,11 +389,12 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert result2.status == "ready", result2
     assert result2.installed and result2.registered
     assert result2.build != result.build
-    # The already authored Procedure still runs its exact original build.
-    from cruxible_client import Cruxible
-
-    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
-    assert pb.accepted_procedure("installed-package-call").run().result.model_dump() == {"n": 3}
+    # The accepted Line still runs its exact original build; a Line bound to the
+    # new build runs that one.
+    assert _run_line(instance_id, "test.installed-package-call-line") == {"n": 3}
+    assert _run_call(
+        http, instance_id, reviewer, build=result2.build, value={"n": 2}, name="updated-call"
+    ) == {"n": 4}
     assert result2.installation_id != result.installation_id
     assert old.items() <= operator.deployments.items()
     assert len(operator.deployments) == 3
