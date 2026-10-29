@@ -24,7 +24,7 @@ from pydantic import (
 from cruxible_client.contracts import ProviderLaneUnavailableCode
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
-from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
+from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
@@ -273,24 +273,19 @@ def pinned_provider_catalogs(
     instance: PlaybillInstance,
     coordinate: Any,
     pins: Sequence[ArtifactPin],
-) -> tuple[
-    dict[str, AcceptedProvider],
-    dict[str, AcceptedProviderInterfaceRegistration],
-]:
-    """The live Providers and registrations ``pins`` name, keyed by artifact digest.
+) -> dict[str, AcceptedProvider]:
+    """The live builds ``pins`` name, keyed by artifact digest.
 
     One indexed row per pinned version: O(pins), whatever else is installed.
     """
 
     providers: dict[str, AcceptedProvider] = {}
-    interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
         for pin in dict.fromkeys(pins):
-            if pin.target.kind not in {"Provider", "ProviderInterface"}:
+            if pin.target.kind != "Provider":
                 continue
-            table = "providers" if pin.target.kind == "Provider" else "provider_interfaces"
             row = projection.typed.connection.execute(
-                f"SELECT path FROM {table} "
+                "SELECT path FROM providers "
                 "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
                 (pin.target.qualified, pin.artifact_digest),
             ).fetchone()
@@ -298,15 +293,10 @@ def pinned_provider_catalogs(
                 continue
             source = projection.typed.source(pin.target.qualified)
             assert source is not None
-            if pin.target.kind == "Provider":
-                providers[pin.artifact_digest] = AcceptedProvider(
-                    path=row[0], provider=source, artifact_digest=pin.artifact_digest
-                )
-            else:
-                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistration(
-                    path=row[0], registration=source, artifact_digest=pin.artifact_digest
-                )
-    return providers, interfaces
+            providers[pin.artifact_digest] = AcceptedProvider(
+                path=row[0], provider=source, artifact_digest=pin.artifact_digest
+            )
+    return providers
 
 
 class ProviderRuntimeOperator:
@@ -760,12 +750,12 @@ class ProviderRuntimeOperator:
         accepted_oid: str,
         pins: Sequence[ArtifactPin] = (),
     ) -> Any:
-        """An invoker for one Procedure: only the Providers and registrations it pins.
+        """An invoker for one run: only the builds its bindings pin.
 
-        ``pins`` are the Procedure's own pins, so the invoker reads one typed row
-        per pinned version and never every Provider (several builds of one name
-        can be live; each Procedure runs the build it pins). With no Provider
-        pins it serves the core built-ins alone.
+        ``pins`` are the run's build pins (its Line's bindings), so the invoker
+        reads one typed row per bound build and never every Provider (several
+        builds of one name can be live; each Line runs the builds it binds).
+        With no Provider pins it serves the core built-ins alone.
         """
 
         with self._lock:
@@ -776,18 +766,15 @@ class ProviderRuntimeOperator:
                     _UnavailableProviderRuntimeInvoker(refusal=self.lane_refusal())
                 )
             assert self.process_leases is not None
-        selected = tuple(
-            pin for pin in pins if pin.target.kind in {"Provider", "ProviderInterface"}
-        )
-        providers, interfaces = (
+        selected = tuple(pin for pin in pins if pin.target.kind == "Provider")
+        providers = (
             pinned_provider_catalogs(instance, instance.coordinate_for_oid(accepted_oid), selected)
             if selected
-            else ({}, {})
+            else {}
         )
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,
-            accepted_interfaces_by_digest=interfaces,
             secret_resolvers=self.secret_resolvers,
             process_leases=self.process_leases,
             driver=self.driver,
@@ -797,20 +784,18 @@ class ProviderRuntimeOperator:
     def admit_line_provider(
         self,
         accepted_provider: AcceptedProvider,
-        accepted_interface: AcceptedProviderInterfaceRegistration,
+        operation: ProviderOperation,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
     ) -> VerifiedProviderBinding:
-        """Resolve one accepted Line closure against operator-owned deployments.
+        """Resolve one bound operation against operator-owned deployments.
 
         A core built-in resolves to its constant in-process binding without a
         deployment, and regardless of the subprocess lane's availability.
         """
 
-        builtin = builtin_provider_binding(
-            accepted_provider, accepted_interface, implementation_digest
-        )
+        builtin = builtin_provider_binding(accepted_provider, operation, implementation_digest)
         if builtin is not None:
             return builtin
         with self._lock:
@@ -827,7 +812,7 @@ class ProviderRuntimeOperator:
             try:
                 return self.driver.bind(
                     accepted_provider,
-                    accepted_interface,
+                    operation,
                     implementation_digest,
                     deployment,
                 ).binding

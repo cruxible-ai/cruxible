@@ -42,15 +42,14 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_digest,
+from cruxible_client.contracts.provider_operations import (
+    ProviderOperation,
+    operation_signature_digest,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     Provider,
     ProviderV2,
-    provider_interface_pin,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderDescendantProcessV1,
@@ -530,14 +529,12 @@ class ProviderLocalRuntimeInvoker:
         *,
         deployments_by_digest: Mapping[str, LocalProviderDeploymentV1],
         accepted_providers_by_digest: Mapping[str, AcceptedProvider],
-        accepted_interfaces_by_digest: Mapping[str, AcceptedProviderInterfaceRegistration],
         secret_resolvers: ProviderSecretResolverRegistry,
         process_leases: ProviderProcessLeaseStore,
         driver: LocalProviderExecutionDriver | None = None,
     ) -> None:
         self._deployments = dict(deployments_by_digest)
         self._accepted_providers = dict(accepted_providers_by_digest)
-        self._accepted_interfaces = dict(accepted_interfaces_by_digest)
         self._secret_resolvers = secret_resolvers
         self._process_leases = process_leases
         self._driver = driver or LocalProviderExecutionDriver()
@@ -561,16 +558,16 @@ class ProviderLocalRuntimeInvoker:
                 "unaccepted_provider",
                 "the admitted Provider artifact is unavailable at the bound coordinate",
             ) from exc
-        try:
-            accepted_interface = self._accepted_interfaces[occurrence.interface_artifact_digest]
-        except KeyError as exc:
+        if occurrence.operation_signature_digest != operation_signature_digest(
+            occurrence.operation.signature()
+        ):
             raise ProviderLocalRuntimeRefused(
                 "unknown_interface",
-                "the admitted Provider interface is unavailable at the bound coordinate",
-            ) from exc
+                "the admitted operation's signature does not reproduce its recorded digest",
+            )
         bound = self._driver.bind(
             accepted_provider,
-            accepted_interface,
+            occurrence.operation,
             occurrence.implementation_digest,
             deployment,
         )
@@ -674,7 +671,7 @@ class LocalProviderExecutionDriver:
     def bind(
         self,
         accepted_provider: AcceptedProvider,
-        accepted_interface: AcceptedProviderInterfaceRegistration,
+        operation: ProviderOperation,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
     ) -> BoundLocalProviderV1:
@@ -687,7 +684,10 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(
                 "acceptance_divergence", "Provider runtime artifact is not accepted"
             )
-        registration = accepted_interface.registration
+        if operation not in provider.operations:
+            raise ProviderLocalRuntimeRefused(
+                "undeclared_interface", "the bound operation is not declared by this build"
+            )
         implementation_record = next(
             (
                 item
@@ -704,13 +704,13 @@ class LocalProviderExecutionDriver:
             (
                 item
                 for item in provider.runtime_artifact.manifest.implementations
-                if item.interface_id == registration.interface_id
-                and item.interface_digest == interface_definition_digest(registration)
-                and item.entrypoint == implementation_record.entrypoint
+                if item.entrypoint == implementation_record.entrypoint
+                and item.interface_id == implementation_record.interface_id
+                and item.interface_digest == implementation_record.interface_digest
             ),
             None,
         )
-        if manifest is None:
+        if manifest is None or operation.entrypoint != implementation_record.entrypoint:
             raise ProviderLocalRuntimeRefused(
                 "ambiguous_implementation", "implementation is absent from accepted closure"
             )
@@ -754,7 +754,7 @@ class LocalProviderExecutionDriver:
                 )
             return self._bound_result(
                 accepted_provider,
-                accepted_interface,
+                operation,
                 implementation_digest,
                 deployment,
                 entrypoint=manifest.entrypoint,
@@ -828,7 +828,7 @@ class LocalProviderExecutionDriver:
         )
         return self._bound_result(
             accepted_provider,
-            accepted_interface,
+            operation,
             implementation_digest,
             deployment,
             entrypoint=manifest.entrypoint,
@@ -840,7 +840,7 @@ class LocalProviderExecutionDriver:
     @staticmethod
     def _bound_result(
         accepted_provider: AcceptedProvider,
-        accepted_interface: AcceptedProviderInterfaceRegistration,
+        operation: ProviderOperation,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
         *,
@@ -849,20 +849,11 @@ class LocalProviderExecutionDriver:
         materialization_digest: str,
         environment_manifest_digest: str,
     ) -> BoundLocalProviderV1:
-        provider = accepted_provider.provider
-        registration = accepted_interface.registration
-        provider_artifact_digest = accepted_provider.artifact_digest
-        interface_pin = provider_interface_pin(provider, registration.interface_id)
-        if interface_pin is None or interface_pin.target != registration.identity:
-            raise ProviderLocalRuntimeRefused(
-                "undeclared_interface", "Provider does not pin this accepted interface"
-            )
         return BoundLocalProviderV1(
             binding=VerifiedProviderBinding(
-                provider_artifact_digest=provider_artifact_digest,
-                interface_artifact_digest=accepted_interface.artifact_digest,
-                interface_id=registration.interface_id,
-                interface_digest=interface_definition_digest(registration),
+                provider_artifact_digest=accepted_provider.artifact_digest,
+                operation=operation.name,
+                operation_signature_digest=operation_signature_digest(operation.signature()),
                 implementation_digest=implementation_digest,
                 deployment_digest=deployment.deployment_digest,
                 materialization_digest=materialization_digest,

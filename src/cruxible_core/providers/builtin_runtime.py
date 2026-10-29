@@ -48,9 +48,9 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlan,
     VerifiedProviderBinding,
 )
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    interface_definition_digest,
+from cruxible_client.contracts.provider_operations import (
+    ProviderOperation,
+    operation_signature_digest,
 )
 from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -103,15 +103,13 @@ class BuiltinImplementation:
         self,
         *,
         provider_artifact_digest: str,
-        interface_artifact_digest: str,
-        interface_id: str,
-        interface_digest: str,
+        operation: str,
+        operation_signature_digest: str,
     ) -> VerifiedProviderBinding:
         return VerifiedProviderBinding(
             provider_artifact_digest=provider_artifact_digest,
-            interface_artifact_digest=interface_artifact_digest,
-            interface_id=interface_id,
-            interface_digest=interface_digest,
+            operation=operation,
+            operation_signature_digest=operation_signature_digest,
             implementation_digest=self.identity.implementation_digest,
             deployment_digest=self.identity.deployment_digest,
             materialization_digest=self.identity.materialization_digest,
@@ -147,20 +145,20 @@ if WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST not in BUILTIN_IMPLEMENTATIONS:
 
 def builtin_provider_binding(
     accepted_provider: AcceptedProvider,
-    accepted_interface: AcceptedProviderInterfaceRegistration,
+    operation: ProviderOperation,
     implementation_digest: str,
 ) -> VerifiedProviderBinding | None:
     """The constant binding for a built-in implementation, or None for any other.
 
     The accepted Provider must carry the implementation row exactly as the
-    built-in defines it (entrypoint, interface and materialization); a row that
-    names the built-in digest with anything else refuses rather than running.
+    built-in defines it (entrypoint and materialization) and declare the bound
+    operation on that entrypoint; anything else that names the built-in digest
+    refuses rather than running.
     """
 
     builtin = BUILTIN_IMPLEMENTATIONS.get(implementation_digest)
     if builtin is None:
         return None
-    registration = accepted_interface.registration
     provider = accepted_provider.provider
     record = (
         next(
@@ -177,8 +175,9 @@ def builtin_provider_binding(
     if (
         record is None
         or record.entrypoint != builtin.entrypoint
-        or record.interface_id != registration.interface_id
-        or record.interface_digest != interface_definition_digest(registration)
+        or operation.entrypoint != builtin.entrypoint
+        or not isinstance(provider, ProviderV2)
+        or operation not in provider.operations
         or {item.materialization_digest for item in record.materialization_references}
         != {builtin.materialization_digest}
     ):
@@ -188,9 +187,8 @@ def builtin_provider_binding(
         )
     return builtin.binding(
         provider_artifact_digest=accepted_provider.artifact_digest,
-        interface_artifact_digest=accepted_interface.artifact_digest,
-        interface_id=registration.interface_id,
-        interface_digest=interface_definition_digest(registration),
+        operation=operation.name,
+        operation_signature_digest=operation_signature_digest(operation.signature()),
     )
 
 
@@ -209,9 +207,8 @@ class BuiltinProviderInvoker:
         builtin = BUILTIN_IMPLEMENTATIONS.get(binding.implementation_digest)
         if builtin is None or binding != builtin.binding(
             provider_artifact_digest=binding.provider_artifact_digest,
-            interface_artifact_digest=binding.interface_artifact_digest,
-            interface_id=binding.interface_id,
-            interface_digest=binding.interface_digest,
+            operation=binding.operation,
+            operation_signature_digest=binding.operation_signature_digest,
         ):
             raise ProviderLocalRuntimeRefused(
                 "acceptance_divergence",

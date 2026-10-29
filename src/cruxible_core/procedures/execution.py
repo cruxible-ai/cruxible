@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable, Literal, Protocol, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, TypeVar, cast, overload
 
 from cruxible_client.contracts.captures import capture_retention_policy
 
@@ -19,14 +19,6 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionInputDecision,
-    AcquisitionRuleAny,
-    InputAcquisitionRule,
-)
-from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
-)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
@@ -62,6 +54,10 @@ from cruxible_client.contracts.line_inbox import (
 from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
 )
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    AcquisitionInputDecision,
+    AcquisitionRule,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
@@ -91,7 +87,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedurePinSlotRef,
     ProjectNode,
     ProposalItemsFanOut,
     ProposeChangeSetNode,
@@ -130,7 +125,6 @@ from cruxible_client.contracts.procedures.results import (
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.procedures.windows import LineTriggerBinding
-from cruxible_client.contracts.provider_contracts import validate_provider_value
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
     ProviderExternalOccurrencePlan,
@@ -145,6 +139,12 @@ from cruxible_client.contracts.provider_execution import (
     provider_invocation_output_digest,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
+)
+from cruxible_client.contracts.provider_operations import (
+    OperationItemBudgetExceeded,
+    OperationValueRefused,
+    closure_lookup,
+    validate_operation_value,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
@@ -221,7 +221,6 @@ from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.ports import (
     AcquisitionRules,
     bound_operation,
-    policy_acquisition_rules,
 )
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.procedures.terminal_dependencies import (
@@ -257,7 +256,6 @@ from cruxible_core.providers.provider_outcomes import (
     map_provider_envelope,
     map_provider_refusal,
     provider_canonical_value,
-    provider_refusal_is_absorbable,
 )
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET,
@@ -819,9 +817,9 @@ class ProcedureRunAdmissionV9(ProcedureRunAdmissionV7):
     One carrier holds every role V5, V7 and V8 split between them: a direct or
     Line run, with or without an investigation or trigger binding, and a nested
     child, which carries ``parent_binding``. Its bindings name each node's
-    interface and implementation and nothing about buckets, because core
-    classifies no input. V5, V7 and V8 stay readable for the runs admitted under
-    them.
+    slot, its exact build and operation, and the implementation that serves it;
+    nothing about buckets, because core classifies no input. V5, V7 and V8 stay
+    readable for the runs admitted under them.
     """
 
     tag: Literal["playbill-procedure-run-admission-v9"] = "playbill-procedure-run-admission-v9"  # type: ignore[assignment]
@@ -1583,9 +1581,9 @@ def verify_line_admission_spec(
     accepted_line: AcceptedLineSpec,
     *,
     procedure_binding: ArtifactPin | None = None,
-    acquisition_policy_binding: ArtifactPin | None = None,
+    acquisition_rules_digest: str | None = None,
 ) -> None:
-    """Bind admission to exact Line bytes and its coordinate-resolved references."""
+    """Bind admission to exact Line bytes, its exact Procedure and its acquisition rules."""
 
     if (
         admission.line_identity != accepted_line.line.identity
@@ -1593,24 +1591,20 @@ def verify_line_admission_spec(
     ):
         raise ExecutionError("Line admission names another accepted LineSpec")
     procedure = accepted_line.line.procedure
-    if isinstance(procedure, ArtifactNameRef):
-        if procedure_binding is None or procedure_binding.target != procedure.target:
-            raise ExecutionError("Line Procedure name requires a coordinate-resolved binding")
-        procedure = procedure_binding
+    if procedure_binding is not None and procedure_binding != procedure:
+        raise ExecutionError("Line Procedure pin differs from the coordinate-resolved binding")
     if (
         admission.procedure_identity != procedure.target
         or admission.procedure_artifact_digest != procedure.artifact_digest
     ):
         raise ExecutionError("Line admission names another Procedure artifact")
-    policy = accepted_line.line.acquisition_policy
-    if isinstance(policy, ArtifactNameRef):
-        if acquisition_policy_binding is None or acquisition_policy_binding.target != policy.target:
-            raise ExecutionError("Line policy name requires a coordinate-resolved binding")
-        policy = acquisition_policy_binding
-    # A Source-free Line pins no acquisition policy; its admission binds the
-    # accepted runtime policy digest instead, which the admission digest seals.
-    if policy is not None and admission.acquisition_policy_digest != policy.artifact_digest:
-        raise ExecutionError("Line admission names another acquisition policy")
+    # A Source-free Line acquires nothing; its admission binds the accepted
+    # runtime policy digest instead, which the admission digest seals.
+    if (
+        acquisition_rules_digest is not None
+        and admission.acquisition_policy_digest != acquisition_rules_digest
+    ):
+        raise ExecutionError("Line admission names other acquisition rules")
 
 
 def procedure_line_partition(line_identity: ArtifactIdentity) -> str:
@@ -2124,13 +2118,9 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(
-    binding: ArtifactPin | ArtifactNameRef | ProcedurePinSlotRef, *, label: str
-) -> ArtifactPin:
+def _exact_pin(binding: ArtifactPin | ArtifactNameRef, *, label: str) -> ArtifactPin:
     """An execution plan resolves every dependency before execution."""
 
-    if isinstance(binding, ProcedurePinSlotRef):
-        raise ExecutionError(f"{label} has an open slot {binding.slot_name!r}")
     if isinstance(binding, ArtifactNameRef):
         raise ExecutionError(f"{label} has not been resolved at admission")
     return binding
@@ -2161,7 +2151,7 @@ def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, 
     return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
 
 
-def resolve_procedure_pin(binding: ArtifactPin | ProcedurePinSlotRef, *, label: str) -> ArtifactPin:
+def resolve_procedure_pin(binding: ArtifactPin, *, label: str) -> ArtifactPin:
     """Public seam for resolving one node binding to its exact pin."""
 
     return _exact_pin(binding, label=label)
@@ -2647,6 +2637,20 @@ class _RunState:
         return frozenset() if found is None else found.item(index)
 
 
+def provider_operation_context(occurrence: ProviderExternalOccurrencePlan) -> dict[str, object]:
+    """The run context's additive region: the bound operation, signature and build.
+
+    Protocol 1.x children ignore it; a provider serving several operations from
+    one entrypoint reads ``operation`` here.
+    """
+
+    return {
+        "operation": occurrence.operation.name,
+        "operation_signature_digest": occurrence.operation_signature_digest,
+        "build_digest": occurrence.provider_artifact_digest,
+    }
+
+
 def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
     return (
         admission.hard_caps.max_items
@@ -2681,7 +2685,6 @@ class ProcedureExecutor:
         provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
         | None = None,
         capture_contracts: Mapping[str, CaptureContract] | None = None,
-        acquisition_policy: SourceAcquisitionPolicy | None = None,
         acquisition_rules: AcquisitionRules | None = None,
         default_authorizations: tuple[str, ...] = (),
         effective_rung: EffectiveRungV1 | None = None,
@@ -2692,8 +2695,6 @@ class ProcedureExecutor:
         nested_runner: NestedProcedureRunner | None = None,
         parent_context: ParentInvocationContext | None = None,
     ) -> None:
-        if acquisition_policy is not None and acquisition_rules is not None:
-            raise ValueError("pass acquisition rules or the policy they adapt, not both")
         self.journal = journal
         self.bodies = bodies
         self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
@@ -2705,11 +2706,9 @@ class ProcedureExecutor:
         self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
         self.capture_contracts = dict(capture_contracts or {})
         # Execution reads acquisition only through the port.
-        self.acquisition_rules = (
-            acquisition_rules
-            if acquisition_rules is not None
-            else policy_acquisition_rules(acquisition_policy)
-        )
+        self.acquisition_rules = acquisition_rules
+        # Each slot's exact build and operation, from the execution plan.
+        self.slot_bindings: dict[str, Any] = {}
         self.default_authorizations = default_authorizations
         self.effective_rung = effective_rung
         self.egress_sink = egress_sink
@@ -2721,7 +2720,7 @@ class ProcedureExecutor:
 
     def _pin(
         self,
-        binding: ArtifactPin | ProcedurePinSlotRef,
+        binding: ArtifactPin,
         *,
         label: str,
     ) -> ArtifactPin:
@@ -2736,6 +2735,9 @@ class ProcedureExecutor:
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
+        self.slot_bindings = {
+            item.slot: item for item in getattr(accepted.procedure, "slot_bindings", ())
+        }
         try:
             existing_records = self.journal.select_records(
                 admission.journal_stream,
@@ -3179,18 +3181,11 @@ class ProcedureExecutor:
                 node.capture_contract,
                 label=f"source {node.node_id!r}",
             )
-            provider_pin = self._pin(
-                node.provider,
-                label=f"source {node.node_id!r} provider",
-            )
             contract = self.capture_contracts.get(contract_pin.artifact_digest)
             if (
                 occurrence.input_name != node.as_
                 or occurrence.capture_contract_digest != contract_pin.artifact_digest
-                or occurrence.provider_artifact_digest != provider_pin.artifact_digest
-                or occurrence.interface_artifact_digest != node.interface.artifact_digest
-                or occurrence.interface_digest != node.interface_digest
-                or occurrence.implementation_digest != node.implementation_digest
+                or not self._occurrence_matches_slot(occurrence, node.slot)
                 or occurrence.effect_class == "external_mutation"
                 or contract is None
                 or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
@@ -4010,14 +4005,10 @@ class ProcedureExecutor:
             occurrence_kind="source",
         )
         contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
-        provider_pin = self._pin(node.provider, label=f"source {node.node_id!r} provider")
         if (
             occurrence.input_name != node.as_
             or occurrence.capture_contract_digest != contract_pin.artifact_digest
-            or occurrence.provider_artifact_digest != provider_pin.artifact_digest
-            or occurrence.interface_artifact_digest != node.interface.artifact_digest
-            or occurrence.interface_digest != node.interface_digest
-            or occurrence.implementation_digest != node.implementation_digest
+            or not self._occurrence_matches_slot(occurrence, node.slot)
             or occurrence.effect_class == "external_mutation"
         ):
             raise _RunRefusal(
@@ -4095,6 +4086,7 @@ class ProcedureExecutor:
         try:
             output, invocation_receipt, invocation_receipt_digest = self._invoke_provider_v4(
                 node_id=node.node_id,
+                slot=node.slot,
                 repeat_node_id=None,
                 effect_policy=None,
                 payload=provider_payload,
@@ -4105,17 +4097,11 @@ class ProcedureExecutor:
                 occurrence=occurrence,
             )
         except _ProviderNodeRefusal as exc:
+            declared = occurrence.operation.refusals.get(exc.outcome.code or "")
+            # Only a typed refusal the operation declares absorbable, under a
+            # rule that omits an unavailable input, is absorbed.
             absorbable = (
-                isinstance(rule, InputAcquisitionRule)
-                and provider_refusal_is_absorbable(exc.outcome)
-                and (
-                    (rule.requirement == "optional" and rule.on_unavailable == "omit_optional")
-                    or (
-                        rule.requirement == "conservative_default"
-                        and rule.on_unavailable == "declared_conservative_default"
-                        and rule.input_name in self.default_authorizations
-                    )
-                )
+                declared is not None and declared.absorbable and rule.on_unavailable == "omit"
             )
             if not absorbable:
                 raise
@@ -4197,7 +4183,7 @@ class ProcedureExecutor:
                 result=provider_result,
                 receipt=invocation_receipt,
                 occurrence=occurrence,
-                producer=provider_pin.target,
+                producer=self.slot_bindings[node.slot].build.target,
                 bound_generation=admission.accepted_coordinate.generation_root,
                 source_read_receipt=source_read_receipt,
             )
@@ -4297,7 +4283,22 @@ class ProcedureExecutor:
             )
         reserved_store.release()
 
-    def _acquisition_rule(self, node: SourceNode) -> AcquisitionRuleAny | None:
+    def _occurrence_matches_slot(
+        self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
+    ) -> bool:
+        """Whether an admitted occurrence is its node's slot binding, exactly."""
+
+        binding = self.slot_bindings.get(slot or "")
+        return (
+            slot is not None
+            and binding is not None
+            and occurrence.slot == slot
+            and occurrence.provider_artifact_digest == binding.build_digest
+            and occurrence.operation == binding.operation
+            and occurrence.operation_signature_digest == binding.operation_signature_digest
+        )
+
+    def _acquisition_rule(self, node: SourceNode) -> AcquisitionRule | None:
         if self.acquisition_rules is None:
             return None
         # A Source node's one Capture output is named by its alias.
@@ -4310,7 +4311,7 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-        rule: AcquisitionRuleAny,
+        rule: AcquisitionRule,
         result: ProcedureSourceAcquisitionResultV1,
         decision: AcquisitionInputDecision,
         occurrence_path: str | None = None,
@@ -5205,12 +5206,86 @@ class ProcedureExecutor:
             )
         return matches[0]
 
+    def _validate_operation_value(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        value: CanonicalValue,
+        *,
+        direction: Literal["in", "out"],
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        node_id: str,
+    ) -> CanonicalValue:
+        """Check one value against the bound operation's exact in or out Contract."""
+
+        ref = occurrence.operation.in_ if direction == "in" else occurrence.operation.out
+        resolve = closure_lookup(occurrence.contracts)
+        contract = resolve(ref)
+        boundary = f"operation-{direction}:{occurrence.operation.name}"
+        if contract is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={"node_id": node_id, "reason": f"{ref.spelling} is not in the plan"},
+            )
+        try:
+            validate_operation_value(
+                value,
+                contract,
+                resolve=resolve,
+                max_items=_effective_max_items(admission),
+                observe_items=lambda count, path: state.observe_items(count, boundary, path),
+            )
+        except OperationItemBudgetExceeded as exc:
+            state.observe_items(exc.observed, boundary, exc.field_path)
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=exc.limit,
+                observed=exc.observed,
+                node_id=node_id,
+                boundary=boundary,
+                field_path=exc.field_path,
+            ) from exc
+        except OperationValueRefused as exc:
+            raise _RunRefusal(
+                "contract_input_refused" if direction == "in" else "contract_output_refused",
+                f"{ref.spelling}: {exc}",
+                node_id=node_id,
+            ) from exc
+        return normalize_canonical(value)
+
+    def _typed_refusal(
+        self,
+        occurrence: ProviderExternalOccurrencePlan,
+        outcome: ProviderInvocationOutcome,
+        *,
+        node_id: str,
+    ) -> None:
+        """A refusal code the operation declares carries a detail of its Contract."""
+
+        declared = occurrence.operation.refusals.get(outcome.code or "")
+        if declared is None:
+            return
+        resolve = closure_lookup(occurrence.contracts)
+        contract = resolve(declared.contract)
+        detail = outcome.detail if isinstance(outcome.detail, dict) else {}
+        try:
+            if contract is None:
+                raise OperationValueRefused((f"{declared.contract.spelling} is not in the plan",))
+            validate_operation_value(detail, contract, resolve=resolve)
+        except OperationValueRefused as exc:
+            raise _RunRefusal(
+                "contract_output_refused",
+                f"typed refusal {outcome.code!r} detail is not {declared.contract.spelling}: {exc}",
+                node_id=node_id,
+            ) from exc
+
     def _invoke_provider_v4(
         self,
         *,
         node_id: str,
+        slot: str | None,
         repeat_node_id: str | None,
-        effect_policy: ArtifactPin | ProcedurePinSlotRef | None,
+        effect_policy: ArtifactPin | None,
         payload: CanonicalValue,
         contract_out: ArtifactPin | None,
         admission: ProcedureRunAdmissionV1,
@@ -5224,41 +5299,20 @@ class ProcedureExecutor:
             repeat_node_id=repeat_node_id,
             occurrence_kind="provider",
         )
-        if occurrence.operation_contract is not None:
-            try:
-                payload = normalize_canonical(
-                    validate_provider_value(
-                        occurrence.operation_contract,
-                        payload,
-                        direction="input",
-                        normalize_call=occurrence.occurrence_kind == "call",
-                        max_items=(
-                            _effective_max_items(admission)
-                            if occurrence.occurrence_kind == "call"
-                            else None
-                        ),
-                        observe_items=(
-                            lambda count, path: state.observe_items(
-                                count, f"interface-in:{occurrence.interface_id}", path
-                            )
-                        )
-                        if occurrence.occurrence_kind == "call"
-                        else None,
-                    )
-                )
-            except ProcedureContractItemBudgetExceeded as exc:
-                boundary = "interface-in:" + occurrence.interface_id
-                state.observe_items(exc.observed, boundary, exc.field_path or "")
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=exc.limit,
-                    observed=exc.observed,
-                    node_id=node_id,
-                    boundary=boundary,
-                    field_path=exc.field_path or "",
-                ) from exc
-            except ValueError as exc:
-                raise _RunRefusal("contract_input_refused", str(exc), node_id=node_id) from exc
+        if not self._occurrence_matches_slot(occurrence, slot):
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted occurrence is not its node's slot binding.",
+                node_id=node_id,
+            )
+        payload = self._validate_operation_value(
+            occurrence,
+            payload,
+            direction="in",
+            admission=admission,
+            state=state,
+            node_id=node_id,
+        )
         if (
             self.provider_runtime_invoker is None
             and self.provider_runtime_invoker_factory is not None
@@ -5273,7 +5327,7 @@ class ProcedureExecutor:
         # The run's deadline, in this executor's clock, goes with the Provider
         # child spawned for this occurrence: the spawner refuses or clips
         # against it immediately before the child exists. Core classifies no
-        # input: every input that passes the interface's input contract reaches
+        # input: every input that passes the operation's input Contract reaches
         # the Provider, whose own typed refusals decline what it cannot serve.
         deadline = ProviderSpawnDeadline(
             deadline_ns=state.run_started_monotonic_ns
@@ -5290,7 +5344,7 @@ class ProcedureExecutor:
         if effectful != (effect_policy is not None):
             raise _RunRefusal(
                 "provider_effect_declaration_mismatch",
-                "The node effect-policy presence differs from governed interface authority.",
+                "The node effect-policy presence differs from its bound operation's effect.",
                 node_id=node_id,
             )
         input_digest = run_value_digest("provider-input", payload)
@@ -5427,8 +5481,10 @@ class ProcedureExecutor:
             context = ProviderRuntimeRunContextV1(
                 protocol_version=occurrence.local_execution.protocol_version,
                 run_id=admission.run_id,
-                interface_id=occurrence.interface_id,
-                interface_digest=occurrence.interface_digest,
+                # Protocol 1.x names the served operation in its interface
+                # fields; the bound build and signature ride in ``additive``.
+                interface_id=occurrence.operation.name,
+                interface_digest=occurrence.operation_signature_digest,
                 implementation_digest=occurrence.implementation_digest,
                 entrypoint=occurrence.local_execution.entrypoint,
                 coordinates={
@@ -5445,6 +5501,7 @@ class ProcedureExecutor:
                     cost_units=None,
                 ),
                 declared_endpoints=occurrence.local_execution.declared_endpoints,
+                additive=provider_operation_context(occurrence),
             )
             driver_result = self.provider_runtime_invoker.invoke_provider(
                 occurrence=occurrence,
@@ -5520,8 +5577,8 @@ class ProcedureExecutor:
             implementation_digest=verified_binding.implementation_digest,
             materialization_digest=verified_binding.materialization_digest,
             deployment_digest=verified_binding.deployment_digest,
-            interface_id=verified_binding.interface_id,
-            interface_digest=verified_binding.interface_digest,
+            operation=verified_binding.operation,
+            operation_signature_digest=verified_binding.operation_signature_digest,
             protocol_version=verified_binding.protocol_version,
             capture_contract_digest=occurrence.capture_contract_digest,
             input_digest=input_digest,
@@ -5569,6 +5626,7 @@ class ProcedureExecutor:
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":
             if outcome.outcome_class == "node_refusal":
+                self._typed_refusal(occurrence, outcome, node_id=node_id)
                 raise _ProviderNodeRefusal(outcome, node_id=node_id)
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
@@ -5580,41 +5638,20 @@ class ProcedureExecutor:
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             )
         assert output is not None
-        if occurrence.operation_contract is not None:
-            try:
-                output = normalize_canonical(
-                    validate_provider_value(
-                        occurrence.operation_contract,
-                        output,
-                        direction="output",
-                        normalize_call=occurrence.occurrence_kind == "call",
-                        max_items=(
-                            _effective_max_items(admission)
-                            if occurrence.occurrence_kind == "call"
-                            else None
-                        ),
-                        observe_items=(
-                            lambda count, path: state.observe_items(
-                                count, f"interface-out:{occurrence.interface_id}", path
-                            )
-                        )
-                        if occurrence.occurrence_kind == "call"
-                        else None,
-                    )
-                )
-            except ProcedureContractItemBudgetExceeded as exc:
-                boundary = "interface-out:" + occurrence.interface_id
-                state.observe_items(exc.observed, boundary, exc.field_path or "")
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=exc.limit,
-                    observed=exc.observed,
-                    node_id=node_id,
-                    boundary=boundary,
-                    field_path=exc.field_path or "",
-                ) from exc
-            except ValueError as exc:
-                raise _RunRefusal("contract_output_refused", str(exc), node_id=node_id) from exc
+        if occurrence.occurrence_kind == "call" or (
+            occurrence.occurrence_kind == "source" and occurrence.effect_class == "pure"
+        ):
+            # A Source over a pure operation (the workspace.file structuring)
+            # returns the material itself; an external_read Source returns the
+            # acquisition envelope core captures, checked when it is built.
+            output = self._validate_operation_value(
+                occurrence,
+                output,
+                direction="out",
+                admission=admission,
+                state=state,
+                node_id=node_id,
+            )
         validated = (
             _validate_node_contract(
                 self.contract_validator,
@@ -5659,6 +5696,7 @@ class ProcedureExecutor:
         )
         output, _receipt, _receipt_digest = self._invoke_provider_v4(
             node_id=node.node_id,
+            slot=node.slot,
             repeat_node_id=None,
             effect_policy=node.effect_policy,
             payload=resolved,
@@ -5830,6 +5868,7 @@ class ProcedureExecutor:
         if body.operation == "call":
             local_outputs[body.as_], _receipt, _receipt_digest = self._invoke_provider_v4(
                 node_id=body.node_id,
+                slot=body.slot,
                 repeat_node_id=repeat_node_id,
                 effect_policy=body.effect_policy,
                 payload=spec,

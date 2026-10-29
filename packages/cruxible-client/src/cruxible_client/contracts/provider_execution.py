@@ -13,7 +13,8 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+from cruxible_client.contracts.provider_operations import ProviderOperation
+from cruxible_client.contracts.shapes import Contract
 
 
 class _StrictProviderExecutionModel(BaseModel):
@@ -244,11 +245,11 @@ ProviderFenceScope = Literal["process_group+descendant_sweep", "in_process"]
 
 
 class VerifiedProviderBinding(_StrictProviderExecutionModel):
-    tag: Literal["playbill-verified-provider-binding-v1"] = "playbill-verified-provider-binding-v1"
+    tag: Literal["cruxible-verified-provider-binding-v2"] = "cruxible-verified-provider-binding-v2"
+    #: The bound build: the exact accepted Provider build artifact digest.
     provider_artifact_digest: str
-    interface_artifact_digest: str
-    interface_id: str
-    interface_digest: str
+    operation: str
+    operation_signature_digest: str
     implementation_digest: str
     deployment_digest: str
     materialization_digest: str
@@ -265,13 +266,16 @@ class VerifiedProviderBinding(_StrictProviderExecutionModel):
 
     _digests = field_validator(
         "provider_artifact_digest",
-        "interface_artifact_digest",
-        "interface_digest",
+        "operation_signature_digest",
         "implementation_digest",
         "deployment_digest",
         "materialization_digest",
         "environment_manifest_digest",
     )(_digest)
+
+    @property
+    def build_digest(self) -> str:
+        return self.provider_artifact_digest
 
     @field_validator("declared_endpoints")
     @classmethod
@@ -282,103 +286,89 @@ class VerifiedProviderBinding(_StrictProviderExecutionModel):
 
 
 class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
-    """Complete static Provider closure for one graph-v4 external occurrence."""
+    """Complete static closure for one external occurrence: its slot's exact bound operation.
 
-    tag: Literal["playbill-provider-external-occurrence-plan-v1"] = (
-        "playbill-provider-external-occurrence-plan-v1"
+    ``operation`` is the bound build's declaration, with exact Contract pins;
+    ``contracts`` is the exact Contract closure those pins reach, so the
+    executor validates input, output and typed refusals without reading state.
+    """
+
+    tag: Literal["cruxible-provider-external-occurrence-plan-v2"] = (
+        "cruxible-provider-external-occurrence-plan-v2"
     )
     occurrence_path: str
     occurrence_kind: Literal["provider", "source", "call"]
     node_id: str
     repeat_node_id: str | None = None
     input_name: str | None = None
+    slot: str
+    #: The bound build: the exact accepted Provider build artifact digest.
     provider_artifact_digest: str
-    interface_artifact_digest: str
-    interface_id: str
-    interface_digest: str
-    # Historical: the classification an occurrence planned before core stopped
-    # classifying inputs. Omitted from every later plan, so a plan digests as
-    # it was written either way.
-    vocabulary_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    classifier_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    accepted_bucket_selectors: tuple[str, ...] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    operation: ProviderOperation
+    operation_signature_digest: str
     implementation_digest: str
-    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
+    effect_class: Literal["pure", "external_read", "external_mutation"]
     capture_contract_digest: str | None = None
-    contract_input_digest: str | None = None
-    contract_output_digest: str | None = None
+    contracts: tuple[Contract, ...] = ()
     local_execution: VerifiedProviderBinding
     secret_plan: ProviderSecretResolutionPlan
     budget_translation: ProviderBudgetTranslation
     source_runtime_plan_digest: str | None = None
-    operation_contract: ProviderOperationContract | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
 
     _digests = field_validator(
         "provider_artifact_digest",
-        "interface_artifact_digest",
-        "interface_digest",
-        "vocabulary_digest",
-        "classifier_digest",
+        "operation_signature_digest",
         "implementation_digest",
         "capture_contract_digest",
-        "contract_input_digest",
-        "contract_output_digest",
         "source_runtime_plan_digest",
     )(_digest)
 
-    @field_validator("accepted_bucket_selectors")
-    @classmethod
-    def _selectors(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
-        if value is None:
-            return None
-        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("accepted bucket selectors must be sorted and unique")
-        return value
+    @property
+    def build_digest(self) -> str:
+        return self.provider_artifact_digest
+
+    @property
+    def contract_input_digest(self) -> str | None:
+        return self.operation.in_.digest
+
+    @property
+    def contract_output_digest(self) -> str | None:
+        return self.operation.out.digest
 
     @model_validator(mode="after")
     def _correspondence(self) -> ProviderExternalOccurrencePlan:
-        historical = (
-            self.vocabulary_digest,
-            self.classifier_digest,
-            self.accepted_bucket_selectors,
-        )
-        if any(item is None for item in historical) and any(
-            item is not None for item in historical
-        ):
-            raise ValueError("a historical occurrence classification is all present or all absent")
         local = self.local_execution
         for label, expected, actual in (
-            ("Provider", self.provider_artifact_digest, local.provider_artifact_digest),
-            ("interface artifact", self.interface_artifact_digest, local.interface_artifact_digest),
-            ("interface id", self.interface_id, local.interface_id),
-            ("interface", self.interface_digest, local.interface_digest),
+            ("build", self.provider_artifact_digest, local.provider_artifact_digest),
+            ("operation", self.operation.name, local.operation),
+            (
+                "operation signature",
+                self.operation_signature_digest,
+                local.operation_signature_digest,
+            ),
             ("implementation", self.implementation_digest, local.implementation_digest),
         ):
             if expected != actual:
                 raise ValueError(f"external occurrence {label} differs from local binding")
+        if self.effect_class != self.operation.effect:
+            raise ValueError("external occurrence effect differs from its operation")
+        if not self.operation.pinned:
+            raise ValueError("an external occurrence binds an operation with exact Contract pins")
         if self.occurrence_kind == "source":
             if (
                 self.input_name is None
                 or self.capture_contract_digest is None
                 or self.source_runtime_plan_digest is None
-                or self.contract_input_digest is not None
-                or self.contract_output_digest is not None
             ):
-                raise ValueError("Source occurrence requires only its Source runtime fields")
+                raise ValueError("Source occurrence requires its Source runtime fields")
+            if self.effect_class == "external_mutation":
+                raise ValueError("a Source occurrence cannot mutate")
         elif (
             self.input_name is not None
             or self.capture_contract_digest is not None
             or self.source_runtime_plan_digest is not None
-            or (
-                self.operation_contract is None
-                and (self.contract_input_digest is None or self.contract_output_digest is None)
-            )
         ):
-            raise ValueError("Provider occurrence requires only its contract fields")
+            raise ValueError("Provider occurrence requires only its operation fields")
         return self
 
 
@@ -404,7 +394,7 @@ ProviderInvocationAttribution = Literal[
     "implementation",
     "governed_binding",
     "closure_mirror_drift",
-    "interface_registration",
+    "operation_declaration",
     "runtime_compatibility",
     "executor",
     "local_deployment_binding",
@@ -474,8 +464,8 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     implementation_digest: str
     materialization_digest: str
     deployment_digest: str
-    interface_id: str
-    interface_digest: str
+    operation: str
+    operation_signature_digest: str
     protocol_version: str
     # The measured input bucket of a call admitted before core stopped
     # classifying inputs; omitted on every later call, so both digest as written.
@@ -510,7 +500,7 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
         "implementation_digest",
         "materialization_digest",
         "deployment_digest",
-        "interface_digest",
+        "operation_signature_digest",
         "capture_contract_digest",
         "input_digest",
     )(_digest)
