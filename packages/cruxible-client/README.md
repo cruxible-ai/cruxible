@@ -4528,19 +4528,19 @@ Wall-clock budget must be nonzero. Omitted optional result/item limits do not di
 
 Import: `cruxible_client.ProcedureDefinition`. [Source](src/cruxible_client/contracts/procedures/models.py)
 
-The one Procedure graph format (6), which `Sequence` and `@procedure` sources also emit. Slots (`pin_slots`, and slot references in node pins) are interface-typed binding points that only a Blueprint may leave open; an accepted Procedure pins every Provider exactly.
+The one Procedure graph format (7), which `Sequence` and `@procedure` sources also emit. Every dependency field names a governed identity; an execution plan resolves each to its exact pin at the run's accepted coordinate. `slots` declares each provider-calling node's signature `{in, out, effect}` by name; the Procedure never names a provider, and a Line binds every slot to one exact build and operation when it is accepted.
 
 | Field | Type | Default / validation |
 |---|---|---|
-| `graph_format` | `Literal[6]` | `6` |
+| `graph_format` | `Literal[7]` | `7` |
 | `name` | `str` | `Required` |
 | `description` | `str \| None` | `None` |
-| `contract_in` | `ProcedurePinBinding` | `Required` |
-| `contract_out` | `ProcedurePinBinding` | `Required` |
-| `parameter_contract` | `ProcedurePinBinding \| None` | `None` |
+| `contract_in` | `ArtifactNameRef` | `Required` |
+| `contract_out` | `ArtifactNameRef` | `Required` |
+| `parameter_contract` | `ArtifactNameRef \| None` | `None` |
 | `nodes` | `tuple[ProcedureNode, ...]` | `Required` |
 | `returns` | `str \| None` | `None` |
-| `pin_slots` | `tuple[ProcedurePinSlot, ...]` | `()` |
+| `slots` | `dict[str, ProcedureSlot]` | `Field(default_factory=dict)`; omitted when empty |
 | `measurements` | `tuple[ProcedureMeasurementDeclaration, ...]` | `()` |
 | `budget` | `ProcedureBudget` | `Required` |
 | `hard_caps` | `ProcedureHardCaps` | `Required` |
