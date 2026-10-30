@@ -21,7 +21,7 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
-from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_references
+from cruxible_client.contracts.procedures.models import ProcedureDefinition
 from tests.support.procedures import named
 
 
@@ -44,7 +44,10 @@ def spec(**changes):
 
 def test_typed_extra_forbidden_and_no_numeric_coercion():
     with pytest.raises(ValidationError):
-        spec(steps=[{"call": "result", "interface": "test@1", "input": {}, "typo": 1}])
+        spec(
+            slots={"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
+            steps=[{"call": "result", "slot": "compute", "input": {}, "typo": 1}],
+        )
     with pytest.raises(ValidationError):
         spec(budget={"provider_calls": True})
     with pytest.raises(ValidationError):
@@ -133,104 +136,54 @@ CORPUS = json.loads(
 )
 
 
+OPERATIONS = json.loads(
+    (Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json").read_text()
+)
+
+
+def _corpus_resolver(original):
+    """Independent schema metadata for unbound operation signatures, not providers."""
+    by_request = {entry["signature"]["in"]["name"]: entry for entry in OPERATIONS.values()}
+    sources = {node.as_: node for node in original.definition.nodes if node.kind == "source"}
+
+    def resolve(kind, value):
+        if kind == "slot":
+            return value
+        signature = original.definition.slots[value.slot]
+        entry = by_request[signature.in_.name]
+        schema = (
+            (entry.get("source_view") or entry["output"])
+            if hasattr(value, "source")
+            else entry["output"]
+        )
+        return {
+            "output": ContractSchema.model_validate(schema).fields,
+            "input": None,
+            "request_defaults": sources[value.source].request if hasattr(value, "source") else {},
+        }
+
+    return resolve
+
+
 @pytest.mark.parametrize("filename", sorted(CORPUS))
 def test_every_kit_procedure_lowers_to_stored_bytes(filename):
     original = ProcedureArtifact.model_validate(CORPUS[filename])
     authored = decompile_procedure(original)
-    originals = {node.as_: node for node in original.definition.nodes if hasattr(node, "as_")}
-    contracts = {c.identity.name: c.contract_schema for c in original.owned_contracts}
-
-    def resolve(kind, step):
-        node = originals[getattr(step, "call", None) or getattr(step, "source", None)]
-        output = (
-            contracts.get(node.contract_out.target.name)
-            if hasattr(node, "contract_out") and node.contract_out
-            else None
-        )
-        if node.kind in {"source", "call"}:
-            from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-
-            operations = json.loads(
-                (
-                    Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json"
-                ).read_text()
-            )
-            operation = ProviderOperationContract.model_validate(
-                operations[node.interface.target.name]
-            )
-            output = (operation.material if node.kind == "source" else None) or (
-                operation.output if isinstance(operation.output, ContractSchema) else None
-            )
-        return {
-            "bindings": {
-                key: {"target": getattr(node, key).target.model_dump(mode="json")}
-                for key in ("provider", "interface")
-            },
-            "output": output.fields
-            if output
-            else {"content": PropertySchema(type="json"), "source": PropertySchema(type="json")},
-            "input": None,
-        }
-
-    lowered = lower_procedure_spec(authored, resolve=resolve)
-    # The daemon's unchanged binder owns exact references and owner contracts.
-    # Rebind by the original names to compare typed tree and actual v3 bytes.
-    pins = {(p.role, p.target.qualified): p for p in original.pins}
-
-    def rebind(value):
-        if isinstance(value, dict):
-            if value.get("kind") == "accepted":
-                return pins[value["role"], value["target"]].model_dump(mode="json")
-            if value.get("kind") == "carried_contract":
-                return pins[value["role"], "Contract:" + value["name"]].model_dump(mode="json")
-            return {k: rebind(v) for k, v in value.items()}
-        if isinstance(value, (tuple, list)):
-            return [rebind(v) for v in value]
-        return value
-
-    definition = ProcedureDefinition.model_validate(rebind(lowered.definition))
-    # Omitted fallthrough edges have exactly the same typed graph semantics;
-    # v3's renderer omits them from both sides.
+    lowered = lower_procedure_spec(authored, resolve=_corpus_resolver(original))
+    definition = ProcedureDefinition.model_validate(lowered.definition)
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
-    actual = original.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "artifact_format": "cruxible-procedure-v3",
-        }
+    actual = ProcedureArtifact(
+        identity=original.identity,
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        owned_contracts=lower_authoring_input(lowered).owned_contracts,
+        activation_policy=lowered.activation_policy,
     )
-    from cruxible_client.contracts.procedures.models import CallNode
-
-    # The corpus predates N1a: Call I/O copies are now interface-owned (N1b's
-    # parallel area), so omit those mirrors from the reference v3 rendering.
-    expected_definition = original.definition.model_copy(
-        update={
-            "nodes": tuple(
-                n.model_copy(update={"contract_in": None, "contract_out": None})
-                if isinstance(n, CallNode)
-                else n
-                for n in original.definition.nodes
-            )
-        }
-    )
-    expected = original.model_copy(
-        update={
-            "definition": expected_definition,
-            "definition_digest": compute_procedure_definition_digest(expected_definition).tagged,
-            "artifact_format": "cruxible-procedure-v3",
-        }
-    )
-    assert render_procedure(actual) == render_procedure(expected)
-    used = set(iter_references(definition))
-    actual = actual.model_copy(
-        update={
-            "pins": tuple(p for p in actual.pins if p in used),
-            "owned_contracts": tuple(
-                c for c in actual.owned_contracts if any(p.target == c.identity for p in used)
-            ),
-        }
-    )
+    # The stored expectation was migrated structurally from independent fields,
+    # never generated by the decompiler or the authored lowerer under test.
+    assert actual.definition_digest == original.definition_digest
+    assert render_procedure(actual) == render_procedure(original)
     rendered = render_procedure(actual)
     parsed = parse_procedure(rendered, path="procedures/" + original.identity.name + ".json")
     assert render_procedure(parsed) == rendered
@@ -240,18 +193,21 @@ def test_every_kit_procedure_lowers_to_stored_bytes(filename):
 
 def _inventory_import_worked_example():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
-    call = next(node for node in original.definition.nodes if node.kind == "call")
-    from cruxible_client.contracts.provider_contracts import ProviderOperationContract
-
-    operations = json.loads(
-        (Path(__file__).parents[1] / "fixtures/procedures/security-p1-operations.json").read_text()
-    )
-    call_schema = ProviderOperationContract.model_validate(
-        operations[call.interface.target.name]
-    ).output
     authored = spec(
         procedure="security.inventory-import",
         description=original.definition.description,
+        slots={
+            "inventory": {
+                "in": "fixture.workspace.file.request@1",
+                "out": "fixture.workspace.file.result@1",
+                "effect": "external_read",
+            },
+            "parse": {
+                "in": "fixture.security.runtime-inventory.request@1",
+                "out": "fixture.security.runtime-inventory.result@1",
+                "effect": "pure",
+            },
+        },
         input={"scope": "string"},
         input_contract="security-inventory-import-input",
         output_contract="security-runtime-inventory-summary",
@@ -269,7 +225,7 @@ def _inventory_import_worked_example():
             {
                 "source": "inventory",
                 "contract": "security.runtime-inventory-v1",
-                "interface": "workspace.file",
+                "slot": "inventory",
                 "request": {
                     "logical_source": "security.inventory",
                     "relative_path": "inventory.json",
@@ -292,10 +248,7 @@ def _inventory_import_worked_example():
             },
             {
                 "call": "parse",
-                "interface": (
-                    "security.runtime-inventory/"
-                    "8853e9eed2307a0f1dcf5f2e2dc6ba120a554050b1f5e6b8fc6ccb7f3248ec71"
-                ),
+                "slot": "parse",
                 "input": {
                     "inventory_text": "$inventory.content.text",
                     "held": "$held.result.rows",
@@ -309,52 +262,34 @@ def _inventory_import_worked_example():
                     "scope": "$input.scope",
                 },
             },
-            {"guard": "parse.mine > 0", "else": "halt(other_scope)"},
-            {"guard": "parse.proposes > 0", "else": "halt(no_change)"},
+            {
+                "guard": "parse.mine > 0",
+                "id": "mine",
+                "else": "halt(other_scope)",
+                "else_id": "other",
+                "refusal_code": "other_scope",
+                "message": "The landed inventory is another scope's.",
+            },
+            {
+                "guard": "parse.proposes > 0",
+                "id": "changed",
+                "else": "halt(no_change)",
+                "else_id": "nochange",
+                "refusal_code": "no_change",
+                "message": "The scan changes nothing inventory holds.",
+            },
             {"propose": "$parse.items"},
         ],
     )
 
-    def resolve(kind, step):
-        node = next(
-            node
-            for node in original.definition.nodes
-            if getattr(node, "as_", None) == getattr(step, "call", getattr(step, "source", None))
-        )
-        return {
-            "bindings": {
-                key: {"target": getattr(node, key).target.model_dump(mode="json")}
-                for key in ("provider", "interface")
-            },
-            "request_defaults": node.request if node.kind == "source" else {},
-            "output": call_schema.fields
-            if hasattr(step, "call")
-            else {"content": PropertySchema(type="json")},
-            "input": None,
-        }
-
-    return original, authored, resolve
+    return original, authored, _corpus_resolver(original)
 
 
 def test_handwritten_inventory_import_matches_the_stored_definition_digest():
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-    from cruxible_client.contracts.procedures.models import CallNode, GuardNode
 
     original, authored, resolve = _inventory_import_worked_example()
     lowered = lower_procedure_spec(authored, resolve=resolve)
-    pins = {(pin.role, pin.target.qualified): pin for pin in original.pins}
-
-    def rebind(value):
-        if isinstance(value, dict):
-            if value.get("kind") == "accepted":
-                return pins[value["role"], value["target"]].model_dump(mode="json")
-            if value.get("kind") == "carried_contract":
-                return pins[value["role"], "Contract:" + value["name"]].model_dump(mode="json")
-            return {key: rebind(member) for key, member in value.items()}
-        if isinstance(value, (tuple, list)):
-            return [rebind(member) for member in value]
-        return value
-
     contracts = {
         contract.identity.name: contract.contract_schema for contract in original.owned_contracts
     }
@@ -367,24 +302,10 @@ def test_handwritten_inventory_import_matches_the_stored_definition_digest():
             )
             == contracts[contract.name]
         )
-    actual = ProcedureDefinition.model_validate(rebind(lowered.definition))
-    # Only the explicitly retired guard diagnostics and Call I/O mirrors differ.
-    # No decompiler or graph normalizer participates in the authored side.
-    expected = original.definition.model_copy(
-        update={
-            "nodes": tuple(
-                node.model_copy(update={"refusal_code": None, "message": None})
-                if isinstance(node, GuardNode)
-                else node.model_copy(update={"contract_in": None, "contract_out": None})
-                if isinstance(node, CallNode)
-                else node
-                for node in original.definition.nodes
-            )
-        }
-    )
-    assert compute_procedure_definition_digest(actual) == compute_procedure_definition_digest(
-        expected
-    )
+    actual = ProcedureDefinition.model_validate(lowered.definition)
+    # Independent handwritten steps, literal signatures and diagnostics. Neither
+    # decompile nor a graph normalizer constructs the authored side.
+    assert compute_procedure_definition_digest(actual).tagged == original.definition_digest
 
 
 def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values():
@@ -436,7 +357,7 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
     }
     assert "items" not in lowered.definition["nodes"][5]["fields"]
     assert lowered.definition["nodes"][8]["result"] == "$steps.summary"
-    assert lowered.definition["nodes"][6].get("refusal_code") is None
+    assert lowered.definition["nodes"][6]["refusal_code"] == "other_scope"
     assert lowered.definition["budget"]["max_capture_bytes"] == 1048576
 
 
@@ -669,7 +590,7 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
             {
                 "source": "read",
                 "contract": "security.invenotry",
-                "interface": "workspace.file",
+                "slot": "read",
                 "request": {},
             },
             "contract",
@@ -704,7 +625,18 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
     tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
     _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="named-candidates")
 
-    authored = spec(steps=[step, {"project": "result", "fields": {"value": 1}}])
+    authored = spec(
+        slots={
+            "read": {
+                "in": "workspace.file.request@1",
+                "out": "workspace.file.result@1",
+                "effect": "external_read",
+            }
+        }
+        if "source" in step
+        else {},
+        steps=[step, {"project": "result", "fields": {"value": 1}}],
+    )
     result = AuthoringIntentCoordinator.for_instance(instance).compile(
         actor=AuthenticatedActor(actor_id="owner"),
         payload=lower_authoring_input(ProcedureInput(kind="procedure", spec=authored)),
@@ -956,12 +888,17 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
             "procedure": "test.slotted",
             "input": {"value": "integer"},
             "output": {"value": "integer"},
-            "slots": {"compute": "test.compute@1"},
+            "slots": {
+                "compute": {
+                    "in": "test.compute-input@1",
+                    "out": "test.compute-output@1",
+                    "effect": "pure",
+                }
+            },
             "steps": [
                 {
                     "call": "result",
-                    "interface": "test.compute@1",
-                    "provider": "compute",
+                    "slot": "compute",
                     "input": {"value": "$input.value"},
                 }
             ],
@@ -970,8 +907,10 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
     )
     lowered = lower_procedure_spec(authored)
     definition = ProcedureDefinition.model_validate(lowered.definition)
-    assert definition.open_slots == ("compute",)
-    assert definition.pin_slots[0].interface.target.name == "test.compute/v1"
+    assert tuple(definition.slots) == ("compute",)
+    assert definition.slots["compute"].in_.spelling == "test.compute-input@1"
+    assert definition.slots["compute"].out.spelling == "test.compute-output@1"
+    assert definition.slots["compute"].effect == "pure"
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
     original = ProcedureArtifact(
@@ -983,7 +922,7 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
     )
     restored = decompile_procedure(original)
     assert restored.slots == authored.slots
-    assert restored.steps[0].provider == "compute"
+    assert restored.steps[0].slot == "compute"
     assert (
         ProcedureDefinition.model_validate(lower_procedure_spec(restored).definition) == definition
     )
@@ -993,18 +932,20 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
 
 
 def test_slots_cannot_stand_in_non_provider_positions():
-    with pytest.raises(ValueError, match="requires role='contract-in'"):
+    with pytest.raises(ValidationError) as refused:
         ProcedureDefinition.model_validate(
             {
                 **lower_procedure_spec(spec()).definition,
                 "contract_in": {"slot_name": "compute"},
-                "pin_slots": [
-                    {
-                        "slot_name": "compute",
-                        "interface": {
-                            "target": {"kind": "ProviderInterface", "name": "test.compute/v1"}
-                        },
+                "slots": {
+                    "compute": {
+                        "in": "test.compute-input@1",
+                        "out": "test.compute-output@1",
+                        "effect": "pure",
                     }
-                ],
+                },
             }
         )
+    locations = {item["loc"] for item in refused.value.errors()}
+    assert ("contract_in", "target") in locations
+    assert ("contract_in", "slot_name") in locations

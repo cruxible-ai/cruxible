@@ -42,19 +42,7 @@
             }
           },
           "id": "credential",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -68,7 +56,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "credential"
         },
         {
           "contract_out": {
@@ -86,9 +75,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "credential": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:6f36f5b7fae226a7873c1a808ce8ce968211ecc53edb4d0ac239c2f63b45d83f",
+    "definition_digest": "sha256:36fd4d1360472a1f0a7c1d7ce5737ecf703bff5ddceaee34df1eaaf1a4d67a16",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -168,19 +170,7 @@
             }
           },
           "id": "credential",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -194,7 +184,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "credential"
         },
         {
           "id": "held",
@@ -213,19 +204,8 @@
             "state_text": "$steps.credential.content.text",
             "truncated": "$steps.held.truncated"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.credential-state/d9c341b880eea08f1ca3dd687ad96c39d26ac1104e9dfe88319e953b18e9e97f"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -308,9 +288,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "credential": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        },
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.credential-state.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.credential-state.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:59602ddb816adf86990b17bd652b19da138c22bdb3f1dd9144fdb6cf1fc5d3a1",
+    "definition_digest": "sha256:975af71ee7012c1b032f6c15edc75513d4362bd98a1916443f9e04512b26a25e",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -410,19 +414,7 @@
             }
           },
           "id": "record",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "web.fetch/39b2b0bf01fe44bcbacf533344bfaeeeff70a04480135b1085708956bb9d6a3c"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-provider-web/ddc99c153ce3ca4226d991f11ab40f1d96fa0ad4364c8918f8aa82b0c840218b"
-            }
-          },
           "request": {
             "expected_format": "json",
             "extract": false,
@@ -430,7 +422,8 @@
             "max_bytes": 1048576,
             "render": false,
             "url": "https://cveawg.mitre.org/api/cve/"
-          }
+          },
+          "slot": "record"
         },
         {
           "id": "releases",
@@ -583,19 +576,8 @@
             "sources": "$steps.sources.result.rows",
             "watched": "$steps.watched.result.rows"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.cve-applicability/96b855ba21b61401619f6355f450ffd8ae488b6322d58ede173b0e2a0f66107f"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "decide"
         },
         {
           "contract_out": {
@@ -649,9 +631,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "decide": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.cve-applicability.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.cve-applicability.result",
+            "version": 1
+          }
+        },
+        "record": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.web.fetch.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.web.fetch.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:1075ec9f2831635a3d271a360fa48d0a184f92ba3bbbba8021996017972ae288",
+    "definition_digest": "sha256:ebd05d66f52eb462c89b87fb2d58f246d9b0b0428940fd4edc159746aecb8afb",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -742,20 +748,9 @@
             }
           },
           "id": "epss",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.epss-daily/5f7b04d392fc9a1264721b96a0f609f8e5a7c8846f9c9673b1dca8766377a9b8"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-sources-provider/56caaa4d2c2b4e95421ca1927fdce2c4a6132ca237d2db12c1e9ca046d0c75e3"
-            }
-          },
-          "request": {}
+          "request": {},
+          "slot": "epss"
         },
         {
           "id": "watched",
@@ -773,19 +768,8 @@
             "daily_base64": "$steps.epss.retrieved.body_base64",
             "watched": "$steps.watched.result.rows"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.epss-scores/449662d06f51954b811871dd37b9bb4494d017388f75bfd257edc672088b660b"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -837,9 +821,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "epss": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.security.epss-daily.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.epss-daily.result",
+            "version": 1
+          }
+        },
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.epss-scores.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.epss-scores.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:1f4d6819255de3ce35bd38fdbc9a2d0120e80155ca76e8996ef3f0af4b7e44d6",
+    "definition_digest": "sha256:cba63a7ca4f9e7e4dd71f992e46d532162a92c1b4350f20ee8606e6f85eaa049",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -924,19 +932,7 @@
             }
           },
           "id": "evidence",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -950,7 +946,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "evidence"
         },
         {
           "contract_out": {
@@ -968,9 +965,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "evidence": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8f3b13563c4256c3c9806e14473687cbdc1ac829d0d8f6826f331e4dbe3fec2e",
+    "definition_digest": "sha256:f642243e3a6a1b51e78d643b77512969f10d9b20562d0c70796211b76381098c",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -1121,19 +1131,8 @@
               "hq6": "$steps.hq6.truncated"
             }
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.harden/347d8213dd7265610dcd6b3a5397246573f6dd061974f366343aff2dafb0b408"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "classify"
         },
         {
           "contract_out": {
@@ -1187,9 +1186,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "classify": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.harden.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.harden.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:1a2378491c57edbb69c5697f5ae45154a7e026e575b9822cb027ec1e35e6c43d",
+    "definition_digest": "sha256:00e9a0704e95f05c37a3e0b0e915c1ff14928d02fd34b55e0e5e66bd4b56fb05",
     "identity": {
       "kind": "Procedure",
       "name": "security.harden"
@@ -1296,19 +1308,7 @@
             }
           },
           "id": "inventory",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -1322,7 +1322,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "inventory"
         },
         {
           "contract_out": {
@@ -1340,9 +1341,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "inventory": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:d77f94d842fbe1222e5b03b2cf670982bde36185bc3c590caafa4661ddc8f749",
+    "definition_digest": "sha256:360bba622178dec8f92cbf2a82137a14bd048fd6f701fe30d37782113eb701aa",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1422,19 +1436,7 @@
             }
           },
           "id": "inventory",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -1448,7 +1450,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "inventory"
         },
         {
           "id": "held",
@@ -1503,19 +1506,8 @@
               "runs": "$steps.runs.truncated"
             }
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.runtime-inventory/8853e9eed2307a0f1dcf5f2e2dc6ba120a554050b1f5e6b8fc6ccb7f3248ec71"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -1603,9 +1595,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "inventory": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        },
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.runtime-inventory.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.runtime-inventory.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:857e24dda4f3e94b032b769d65f44663bff68601099c8f25695fbeab361a8727",
+    "definition_digest": "sha256:51ca80493a868429fc512cdee22eccf8ddb33ed1fe28e9a448edde7818300a68",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1733,19 +1749,7 @@
             }
           },
           "id": "catalog",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "web.fetch/39b2b0bf01fe44bcbacf533344bfaeeeff70a04480135b1085708956bb9d6a3c"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-provider-web/ddc99c153ce3ca4226d991f11ab40f1d96fa0ad4364c8918f8aa82b0c840218b"
-            }
-          },
           "request": {
             "expected_format": "json",
             "extract": false,
@@ -1753,7 +1757,8 @@
             "max_bytes": 4194304,
             "render": false,
             "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-          }
+          },
+          "slot": "catalog"
         },
         {
           "id": "releases",
@@ -1793,19 +1798,8 @@
             "releases": "$steps.releases.result.rows",
             "watched": "$steps.watched.result.rows"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.kev-attention/d08d48a4915284f7ddc3c5be4693ec15a439563d56610c93a1145090be15d0fa"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "match"
         },
         {
           "contract_out": {
@@ -1855,9 +1849,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "catalog": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.web.fetch.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.web.fetch.result",
+            "version": 1
+          }
+        },
+        "match": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.kev-attention.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.kev-attention.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:be211d7031e3feb9e07ae4463ccff76ea9a0c2c2c50d0e10a5b723df1a0de432",
+    "definition_digest": "sha256:5c52d7692ef1ecb695746b2f4b61eca57b90939b936ca23dd612d9ded79423cc",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -1973,19 +1991,7 @@
             }
           },
           "id": "catalog",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "web.fetch/39b2b0bf01fe44bcbacf533344bfaeeeff70a04480135b1085708956bb9d6a3c"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-provider-web/ddc99c153ce3ca4226d991f11ab40f1d96fa0ad4364c8918f8aa82b0c840218b"
-            }
-          },
           "request": {
             "expected_format": "json",
             "extract": false,
@@ -1993,7 +1999,8 @@
             "max_bytes": 4194304,
             "render": false,
             "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-          }
+          },
+          "slot": "catalog"
         },
         {
           "id": "watched",
@@ -2011,19 +2018,8 @@
             "catalog_base64": "$steps.catalog.retrieved.body_base64",
             "watched": "$steps.watched.result.rows"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.kev-catalog/dcccdc811dca2b383a9c3a32c7d5ba107db7c8703deb461925b942c67eb4b4ac"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -2074,9 +2070,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "catalog": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.web.fetch.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.web.fetch.result",
+            "version": 1
+          }
+        },
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.kev-catalog.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.kev-catalog.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:a6d1600106e9ad9d291eb8a9765f20eff88089afa862d811f062c54cfd80618f",
+    "definition_digest": "sha256:a1eab2c7b83517554ffed3207eced1c3800cdb7a89be92f1791e5dfa61e1f301",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -2158,19 +2178,7 @@
             }
           },
           "id": "log",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -2184,7 +2192,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "log"
         },
         {
           "contract_out": {
@@ -2202,9 +2211,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "log": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:37d3a1e60b74ca67378821b47804a155ec98cfd86a2773299205ba1a77933072",
+    "definition_digest": "sha256:df4f094950e4b8703a53670ef8efc841d9128375c82edce3e0c63a06507c6dfc",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -2284,19 +2306,7 @@
             }
           },
           "id": "log",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -2310,7 +2320,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "log"
         },
         {
           "id": "held",
@@ -2333,19 +2344,8 @@
             "read_text": "$steps.log.content.text",
             "truncated": "$steps.held.truncated"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.log-reads/9f14fd8f5c2bce87cc3246e850c39c4bc8140293118382aff34b108194d1c599"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -2451,9 +2451,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "log": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        },
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.log-reads.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.log-reads.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:78e3cfa4807b59538788626afc46a02150ed62e22be5639591799697ee2c29bd",
+    "definition_digest": "sha256:3ad4916d46ecd120732f14ab8a20c579b6e770fc33a79cdd0c16262188485285",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -2557,23 +2581,12 @@
             }
           },
           "id": "registry",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.pypi-release/ec5ddc209b8f1dd632230bd2c45a7f51ca87c5085154d6c6164981d2b808c009"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-sources-provider/56caaa4d2c2b4e95421ca1927fdce2c4a6132ca237d2db12c1e9ca046d0c75e3"
-            }
-          },
           "request": {
             "project": "$input.project",
             "versions": "$input.versions"
-          }
+          },
+          "slot": "registry"
         },
         {
           "id": "mine",
@@ -2631,19 +2644,8 @@
             "held": "$steps.held.result.rows",
             "release": "$steps.registry"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.registry-facts/f6b4c74b65bc775bccd87d205e0f391f76c1c5a74d085b79062f27f2dc3f5238"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -2680,9 +2682,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.registry-facts.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.registry-facts.result",
+            "version": 1
+          }
+        },
+        "registry": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.security.pypi-release.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.pypi-release.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:65a9bf935250c8288a69a30f43ecf7e2ae50e6dde2dce1330f2c7a897259d9eb",
+    "definition_digest": "sha256:77a8794dfcf1456c910d8088622cf9ad0e52b524108350802153f5a67c390408",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -2786,26 +2812,15 @@
             }
           },
           "id": "snapshot",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.repo-snapshot/dbcd6c261d8edb31cd3850fc457a02cf88f1d48607eace54a2b63e441b8dcaf0"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-sources-provider/56caaa4d2c2b4e95421ca1927fdce2c4a6132ca237d2db12c1e9ca046d0c75e3"
-            }
-          },
           "request": {
             "forge_host": "$input.forge_host",
             "full_name": "$input.full_name",
             "path": "$input.path",
             "ref": "$input.ref",
             "scope": "$input.scope"
-          }
+          },
+          "slot": "snapshot"
         },
         {
           "id": "mine",
@@ -2892,19 +2907,8 @@
             "snapshot": "$steps.snapshot",
             "targets": "$steps.targets.result.rows"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.workflow-facts/e3200100ece5ebb6c4278201a00b17df146ac15504be8745cbc472bc526f558f"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -2944,9 +2948,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.workflow-facts.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.workflow-facts.result",
+            "version": 1
+          }
+        },
+        "snapshot": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.security.repo-snapshot.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.repo-snapshot.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:cf83409c408f136be888e85c1250be0a6017cc5fbcb92521d9dce6c51c695aa3",
+    "definition_digest": "sha256:81cc1daaf2522cbbaf551a3f8c951a4a2b09d3cd8c3b7d5a32fbd81edc0bd58d",
     "identity": {
       "kind": "Procedure",
       "name": "security.repo-parse"
@@ -3071,19 +3099,7 @@
             }
           },
           "id": "reproduction",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -3097,7 +3113,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "reproduction"
         },
         {
           "contract_out": {
@@ -3115,9 +3132,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "reproduction": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:6e52af7f383652116b69d59ce9703fc9aaca0852ec61ea299f2f1a5c83e9c724",
+    "definition_digest": "sha256:1452b8a0a20746a16b47724caa1b84304a55cf989283c36e96c93e8230f083de",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -3310,19 +3340,8 @@
               "patches": "$steps.patches.truncated"
             }
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.respond/01aacb08c6427cdd8e2086827381936c4651625cc45eeafe3251373887bf669e"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "classify"
         },
         {
           "contract_out": {
@@ -3377,9 +3396,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "classify": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.respond.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.respond.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:1feef418a3992b8bb2466be1365087cf59d7948933ac71ca90f36c6e0fba0e12",
+    "definition_digest": "sha256:badb150735540bf76bda5f602942df395ea7156f758c76a52f8502379c5a38c5",
     "identity": {
       "kind": "Procedure",
       "name": "security.respond"
@@ -3493,19 +3525,7 @@
             }
           },
           "id": "sarif",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -3519,7 +3539,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "sarif"
         },
         {
           "contract_out": {
@@ -3537,9 +3558,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "sarif": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:0ef155d81f2ce6e50a52c4d2fb461a82ee34a62a20c6432b3a83d671cb2957aa",
+    "definition_digest": "sha256:a32fd29c806c103b4e24a1cbd5aeb6f5ad4eecffd0855772755bf5c84b857af7",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -3619,19 +3653,7 @@
             }
           },
           "id": "sarif",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -3645,7 +3667,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "sarif"
         },
         {
           "id": "held",
@@ -3668,19 +3691,8 @@
             "sarif_text": "$steps.sarif.content.text",
             "truncated": "$steps.held.truncated"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.sarif-findings/b9161d9145b565f105b37d6b62ffd7fb16e96a4dc327e761c0f0fbd91bb9745f"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -3765,9 +3777,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.sarif-findings.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.sarif-findings.result",
+            "version": 1
+          }
+        },
+        "sarif": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:6cd64a9e33abbd129b67eb98a7a5e68cbf77e0e564356699a11bfd321282db6a",
+    "definition_digest": "sha256:4bf54b9fb376ebcb4cbb551fd12e2a308bc0f02614fe9c1520aec0a8bd09751a",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-attention"
@@ -3886,19 +3922,7 @@
             }
           },
           "id": "sarif",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -3912,7 +3936,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "sarif"
         },
         {
           "id": "held",
@@ -3935,19 +3960,8 @@
             "sarif_text": "$steps.sarif.content.text",
             "truncated": "$steps.held.truncated"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.sarif-findings/b9161d9145b565f105b37d6b62ffd7fb16e96a4dc327e761c0f0fbd91bb9745f"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -4032,9 +4046,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.sarif-findings.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.sarif-findings.result",
+            "version": 1
+          }
+        },
+        "sarif": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:372f57caa9617f134eb65b2f93d7e59f541e340579a7ca56aa163cc6fa58648a",
+    "definition_digest": "sha256:0218ea5f2eaa627c2536cde837a0da754355a08c155f1ad12fa1fad6767b7d09",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-import"
@@ -4153,19 +4191,7 @@
             }
           },
           "id": "sbom",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -4179,7 +4205,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "sbom"
         },
         {
           "contract_out": {
@@ -4197,9 +4224,22 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "sbom": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8fb57dc93acd2e244582438ade60385ac01b4ed2c5cc569e30a380aef1bba6c8",
+    "definition_digest": "sha256:272c6960fa9eedbea0e7d6fd5d20bc21e76f1556b227db81de10b714deed2b46",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -4279,19 +4319,7 @@
             }
           },
           "id": "sbom",
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "workspace.file"
-            }
-          },
           "kind": "source",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "cruxible-builtin"
-            }
-          },
           "request": {
             "coordinate": {
               "revision": "working"
@@ -4305,7 +4333,8 @@
             },
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
-          }
+          },
+          "slot": "sbom"
         },
         {
           "id": "releases",
@@ -4323,19 +4352,8 @@
             "releases": "$steps.releases.result.rows",
             "sbom_text": "$steps.sbom.content.text"
           },
-          "interface": {
-            "target": {
-              "kind": "ProviderInterface",
-              "name": "security.cyclonedx-components/c711c19cc83515ce9bf5f2b3c2f6bb649fee93af71aea655438dd82474ea638e"
-            }
-          },
           "kind": "call",
-          "provider": {
-            "target": {
-              "kind": "Provider",
-              "name": "security-analysis-provider/ae3c5b61e9f4be86c8de916bc5a118430a5ccc5ef8f410e0330ddeb0f14fee97"
-            }
-          }
+          "slot": "parse"
         },
         {
           "contract_out": {
@@ -4388,9 +4406,33 @@
         }
       ],
       "returns": "summary",
+      "slots": {
+        "parse": {
+          "effect": "pure",
+          "in": {
+            "name": "fixture.security.cyclonedx-components.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.security.cyclonedx-components.result",
+            "version": 1
+          }
+        },
+        "sbom": {
+          "effect": "external_read",
+          "in": {
+            "name": "fixture.workspace.file.request",
+            "version": 1
+          },
+          "out": {
+            "name": "fixture.workspace.file.result",
+            "version": 1
+          }
+        }
+      },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:7869813573d1b08aa88667860acde3611b71575eb1ef1734931f088cb0c4cd96",
+    "definition_digest": "sha256:4cf4165a3a1b24e24c74de2dacb0801aa65a0172243bfdcb8a594573995f909a",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"
