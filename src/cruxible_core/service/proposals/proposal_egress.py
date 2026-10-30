@@ -147,10 +147,11 @@ def _fold_partition(
             continue
         kind = stored.record.event_kind
         if kind == "admission_bound" and isinstance(payload, dict):
-            admitted = parse_admission_payload(payload).admission
-            # Terminal recovery covers runs that planned Provider occurrences.
-            if admitted.plans_providers:
-                fold.admission = admitted
+            # Terminal recovery covers every current admission: a provider-free
+            # direct Procedure can deliver a real proposal just as a
+            # provider-planning run can, so eligibility never turns on
+            # `plans_providers`.
+            fold.admission = parse_admission_payload(payload).admission
         elif kind == "provider_invocation_completed" and isinstance(payload, dict):
             fold.provider_calls += 1
             digest = payload.get("receipt_digest")

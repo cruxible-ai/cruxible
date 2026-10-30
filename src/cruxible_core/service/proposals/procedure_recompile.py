@@ -76,10 +76,10 @@ def _retained_run(
     ):
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if not isinstance(payload, UnavailablePayload):
-            parsed = parse_admission_payload(payload)
-            # A Procedure proposal recompiles from a run that planned its occurrences.
-            if parsed.admission.plans_providers:
-                admission = parsed.admission
+            # A Procedure proposal recompiles from its run's one current
+            # admission, provider-planning or not: a provider-free direct
+            # Procedure recompiles the same way as one that planned occurrences.
+            admission = parse_admission_payload(payload).admission
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="terminal_egress"
     ):

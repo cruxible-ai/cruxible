@@ -545,6 +545,34 @@ def _crash_after(monkeypatch: pytest.MonkeyPatch, *, after_submit: bool) -> None
     monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
 
 
+def _crash_after_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kill the process right after the door's ref is created.
+
+    A ``propose`` terminal's ``deliver`` calls ``submit`` directly; a
+    ``settle`` terminal's fallback (``_deliver_settle``) calls ``submit`` too,
+    without ever going through ``deliver``. Patching ``submit`` crashes both
+    the same way, after the ref durably exists and before either terminal's
+    resolving record is journaled.
+    """
+
+    original_submit = terminal_services.ProposalTerminalAdapter.submit
+    original_append = ProcedureExecutor._append_event
+    crashed = {"value": False}
+
+    def crashing_submit(self, **kwargs):  # type: ignore[no-untyped-def]
+        original_submit(self, **kwargs)
+        crashed["value"] = True
+        raise _Crash()
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if crashed["value"]:
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "submit", crashing_submit)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+
+
 @pytest.mark.parametrize("after_submit", [True, False], ids=["after-proposal", "before-proposal"])
 def test_a_crash_at_the_proposal_door_recovers_one_proposal_and_publishes_its_receipt(
     tmp_path: Path,
@@ -587,6 +615,78 @@ def test_a_crash_at_the_proposal_door_recovers_one_proposal_and_publishes_its_re
     accept_proposal(instance, owner, inspection)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert egress.children[0].path in tree
+
+
+@pytest.mark.parametrize("verb", ["propose", "settle"])
+def test_a_crash_after_a_provider_free_directs_proposal_recovers_it_without_redispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verb: str,
+) -> None:
+    """Terminal recovery never gates eligibility on ``plans_providers``.
+
+    A provider-free direct Procedure (no Call, no Source: ``budget.provider_calls
+    == 0``) delivers a real proposal exactly like a run that planned Provider
+    occurrences (C3: one admitted-run family for every run kind), and a crash
+    after the proposal door kept its ref recovers it the same way -- one
+    proposal, no redispatch. A ``settle`` terminal in a direct run falls back
+    to the same ``propose`` delivery (ruling C4).
+    """
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+    from tests.support import operation_world
+    from tests.test_procedures.test_b2_operations import (
+        _author_widget_kind,
+        _plain_terminal_spec,
+    )
+
+    instance = operation_world.world(tmp_path)
+    _author_widget_kind(instance)
+    name = f"test.{verb}-plain-direct-recovery"
+    operation_world.author_procedure(instance, _plain_terminal_spec(name=name, verb=verb))
+    _crash_after_submit(monkeypatch)
+    with pytest.raises(_Crash):
+        service_run_playbill_procedure(
+            instance,
+            name=name,
+            request=ProcedureRunRequest(input={}, evaluation_time=operation_world.NOW),
+            actor_context=operation_world.actor(),
+        )
+    monkeypatch.undo()
+    refs_after_crash = _proposal_refs(instance)
+    assert len(refs_after_crash) == 1
+
+    # The run is recoverable: a provider-free direct run is read back from its
+    # one current admission exactly like a provider-planned one.
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=operation_world.NOW + timedelta(minutes=1)
+    )
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    # Exactly one proposal exists; redriving the idempotent door did not
+    # dispatch a second one.
+    assert _proposal_refs(instance) == refs_after_crash
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    assert state.status == "operational_failed"
+    assert state.terminal is not None and state.terminal.code == "terminal_egress_recovered"
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered"
+    assert egress.proposal_id is not None and egress.candidate_digest is not None
+    if verb == "settle":
+        assert egress.settle_outcome == "proposed"
+        assert egress.accepted_git_oid is None
+    inspection = service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    assert inspection.proposal.candidate is not None
+    assert inspection.proposal.candidate.candidate_digest == egress.candidate_digest
+    # Recovery is idempotent: a second sweep finds nothing to do.
+    assert (
+        service_recover_proposal_egress(
+            instance, recorded_at=operation_world.NOW + timedelta(minutes=2)
+        )
+        == {}
+    )
 
 
 def test_a_duplicate_delivery_of_one_operation_returns_the_same_receipt(

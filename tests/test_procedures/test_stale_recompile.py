@@ -146,6 +146,64 @@ def test_missing_prepared_journal_leaves_the_proposal_unchanged(
     assert instance.proposal_evidence().read_withdrawal(egress.proposal_id) is None
 
 
+def test_a_provider_free_directs_proposal_readmits_instead_of_input_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A provider-free direct run's stale proposal readmits at the moved head.
+
+    Before the fix, ``_retained_run`` in ``procedure_recompile.py`` filtered
+    its ``admission_bound`` fold on ``plans_providers``, so a provider-free
+    direct Procedure's admission was never read back and every readmission of
+    its proposal refused ``input_unavailable`` even though the run's
+    admission and prepared terminal were both intact. Eligibility is the
+    run's terminal records and authority, never whether it planned a
+    Provider.
+    """
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput
+    from cruxible_core.service.procedures.procedure_runs import (
+        ProcedureRunRequest,
+        service_run_playbill_procedure,
+    )
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+    from tests.support import operation_world
+    from tests.test_procedures.test_b2_operations import (
+        _author_widget_kind,
+        _plain_terminal_spec,
+    )
+
+    instance = operation_world.world(tmp_path)
+    _author_widget_kind(instance)
+    name = "test.propose-plain-direct-readmit"
+    operation_world.author_procedure(instance, _plain_terminal_spec(name=name, verb="propose"))
+    result = service_run_playbill_procedure(
+        instance,
+        name=name,
+        request=ProcedureRunRequest(input={}, evaluation_time=operation_world.NOW),
+        actor_context=operation_world.actor(),
+    )
+    assert result.status == "succeeded", result.terminal
+    (egress,) = result.terminal_egress
+    assert egress.verdict == "delivered"
+    pid = egress.proposal_id
+    assert pid is not None
+
+    # An unrelated acceptance moves the head behind the still-open proposal.
+    operation_world.author(
+        instance,
+        SubjectKindInput(
+            kind="subject_kind", name="test.widget_unrelated_readmit_head", minted=True
+        ),
+        name="unrelated-head",
+    )
+
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=pid, actor_id="owner", dry_run=False
+    )
+    admission = readmitted.proposal.proposal.admission
+    assert admission.readmits is not None and admission.readmits.source_proposal_id == pid
+    assert admission.proposal_id != pid
+
+
 def test_procedure_recompile_matches_fresh_prepare_at_head_and_never_lowers_at_old_base(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
