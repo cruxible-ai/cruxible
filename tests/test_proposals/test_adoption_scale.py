@@ -13,6 +13,7 @@ from pathlib import Path
 
 from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_core.compiler.projection_tree import TreeReadLimits
+from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
 from cruxible_core.proposals.proposals import ProposalReceiveLimits
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposal_receive import ProposalReceiveOperationalConfigV1
@@ -41,9 +42,13 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
         "documents/": MINIATURE.documents,
         "query-definitions/": MINIATURE.query_definitions,
         "capture-contracts/": 1,
+        "contracts/": sum(path.startswith("contracts/") for path, _ in GENESIS_SEEDS),
+        "providers/": 1,
+        "subject-kinds/": 0,
         "triggers/": 3,
         "claims/": MINIATURE.seed_claims + MINIATURE.generations * MINIATURE.claims_per_generation,
     }
+    assert {path for path, _ in GENESIS_SEEDS} <= tree.keys()
     for prefix, expected in kinds.items():
         assert sum(1 for path in tree if path.startswith(prefix)) == expected, prefix
     triggers = [

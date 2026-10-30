@@ -104,6 +104,7 @@ from cruxible_client.contracts.subjects import (
 from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
 from cruxible_core.ledger.checkpoints import (
     DEFAULT_CHECKPOINT_INTERVAL,
     checkpoint_body,
@@ -164,15 +165,9 @@ class AdoptionFixtureProfile:
             + 1  # the governed Procedure runtime-policy singleton
             + 1  # the coordinator self-source capture contract
             + 3  # the daemon, owner, and independent reviewer principal records
-            # The default evidence.sweep, floor.refresh and prediction.anchor_retry
-            # Triggers (curation.detect is opt-in, never seeded).
-            + 3
-            # The built-in workspace.file ProviderInterface and its Provider.
-            + 2
-            # The builtin semantic.alias ClaimType.
-            + 1
-            # The SubjectKind declaring the fixture's one Subject kind.
-            + 1
+            # The current seed manifest declares ClaimTypes, operation Contracts,
+            # the built-in Provider and Triggers. The generator adds no SubjectKind.
+            + len(GENESIS_SEEDS)
         )
 
 
