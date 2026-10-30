@@ -135,7 +135,6 @@ def _author(world: Any) -> None:
     definition = {
         **example.definition,
         "name": BLUEPRINT,
-        "graph_format": 6,
         "returns": "result",
         "contract_out": carried,
         "nodes": [

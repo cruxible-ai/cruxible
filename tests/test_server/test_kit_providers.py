@@ -267,7 +267,6 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
     definition = {
         **example.definition,
         "name": PROCEDURE if provider is not None else BLUEPRINT,
-        "graph_format": 6,
         "returns": "result",
         "contract_in": carried("request", "contract-in"),
         "contract_out": carried("result", "contract-out"),

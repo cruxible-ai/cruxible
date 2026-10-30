@@ -45,7 +45,6 @@
       "role": "contract-out"
     },
     "description": "Read governed work-item state through the accepted query.",
-    "graph_format": 6,
     "hard_caps": {
       "max_capture_bytes": 0,
       "max_items": 200,
@@ -86,7 +85,6 @@
       }
     ],
     "parameter_contract": null,
-    "pin_slots": [],
     "returns": "result",
     "terminal_capability": 1
   },

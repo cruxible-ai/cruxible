@@ -986,6 +986,39 @@ def test_caller_originated_exact_procedure_pin_is_typed_refusal(tmp_path: Path) 
     assert diagnostic.repairs[0].kind == "replace_reference"
 
 
+@pytest.mark.parametrize("graph_format", [6, 5, "7"])
+def test_an_authored_procedure_stating_a_removed_graph_format_refuses_typed(
+    tmp_path: Path, graph_format: object
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = {**_triage_definition(), "graph_format": graph_format}
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "cruxible.authoring.procedure_definition_invalid"
+    )
+    assert diagnostic.offending_element == "definition.graph_format"
+    assert "the one Procedure graph format is 7" in diagnostic.message
+    assert diagnostic.repairs[0].kind == "replace_definition"
+    # The same authored spelling without a stated format lowers to graph format 7.
+    (tmp_path / "unstated").mkdir()
+    fresh, fresh_actor = _coordinator(tmp_path / "unstated")
+    unstated = fresh.compile(
+        actor=fresh_actor,
+        payload=_payload(_triage_definition()),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert unstated.verdict == "passed"
+
+
 def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker(
     tmp_path: Path,
 ) -> None:

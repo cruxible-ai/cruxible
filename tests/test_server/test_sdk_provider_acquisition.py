@@ -554,7 +554,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
 
     raw = {
         **example.definition,
-        "graph_format": 6,
         "returns": "result",
         "contract_out": carried("contract-out"),
         "slots": {

@@ -389,7 +389,6 @@ def _assess_procedure(query: str) -> ProcedureInput:
     return ProcedureInput(
         kind="procedure",
         definition={
-            "graph_format": 6,
             "name": "secops.vuln.assess",
             "description": "Classify a vulnerability from governed policy and service facts.",
             "contract_in": contract_in,

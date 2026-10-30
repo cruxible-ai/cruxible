@@ -2659,6 +2659,19 @@ def _lower_procedure(
         _refuse_unserved_procedure(payload.definition)
     if payload.definition.get("graph_format") == 7:
         return _lower_named_procedure(instance, payload, base=base, base_tree=base_tree)
+    if "graph_format" in payload.definition:
+        # The authored spelling carries no graph coordinate: lowering states the
+        # one current format (7). Any other stated format is a removed one.
+        _refuse(
+            "cruxible.authoring.procedure_definition_invalid",
+            "definition.graph_format",
+            f"Procedure graph format {payload.definition['graph_format']!r} is not "
+            "supported; the one Procedure graph format is 7.",
+            repair_kind="replace_definition",
+            repair_description=(
+                "Remove graph_format from the authored Procedure; lowering states it."
+            ),
+        )
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
     candidate_artifacts: dict[str, tuple[str, str]] = {}

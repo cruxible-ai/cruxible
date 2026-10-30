@@ -128,7 +128,6 @@ def _run_call(
     raw = {
         **example.definition,
         "name": name,
-        "graph_format": 6,
         "returns": "result",
         "contract_out": carried("result", "contract-out"),
         "nodes": [
@@ -675,7 +674,6 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     raw = {
         **example.definition,
         "name": "installed-web-fetch",
-        "graph_format": 6,
         "returns": "result",
         "contract_out": carried,
         "nodes": [
