@@ -14,19 +14,101 @@ from cruxible_client.contracts.read_values import ShownObject, TruncatedText
 from cruxible_client.errors import CoreError as CruxibleError
 from cruxible_core.cli.commands import playbill as commands
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.test_procedures.test_line_inbox_delivery import ROWS, inbox_world
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import NOW
+
+ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
+
+
+def _inbox_world(tmp_path):
+    """Real current posting and a real pending Document proposal, independent of extract."""
+    from cruxible_client.contracts.documents import (
+        DocumentAuthority,
+        DocumentLifecycle,
+        DocumentShell,
+    )
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
+    from cruxible_core.service.authoring.documents import service_propose_playbill_document
+    from tests.core_support._support import initialize_local
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
+    from tests.test_server.test_playbill_line_run_refusals import _served_line
+
+    instance, owner = initialize_local(tmp_path)
+    template = _slotless_procedure("http-inbox").procedure
+    (shape,) = template.definition.nodes
+    definition = template.definition.model_copy(
+        update={
+            "nodes": (
+                shape.model_copy(update={"next": "inbox"}),
+                InboxEgressNode(node_id="inbox", input={"items": ROWS}),
+            ),
+            "terminal_capability": 1,
+        }
+    )
+    procedure = template.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    accepted = AcceptedProcedure(
+        path="procedures/http-inbox.json",
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    line = _served_line("http-inbox", accepted=accepted).model_copy(
+        update={"max_authority": "observe"}
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            accepted.path: render_procedure(procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
+        },
+        timestamp="2026-08-21T12:00:00.000000Z",
+        proposal_name="http-inbox",
+    )
+    root = tmp_path / "workspace"
+    root.mkdir(exist_ok=True)
+    body = instance.store_document_body(b"Inbox linking prerequisite\n")
+    pending = service_propose_playbill_document(
+        instance,
+        shell=DocumentShell(
+            identity="document:http-inbox-link",
+            document_kind="design",
+            title="Inbox link",
+            media_type="text/markdown",
+            body_digest=body.digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        actor_id="owner",
+        proposal_name="http-inbox-link",
+        timestamp=NOW.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    )
+    assert pending.proposal.candidate is not None
+    return instance, root, line
 
 
 def _served_inbox(playbill_http, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     http, instance_id, _ = playbill_http
-    (tmp_path / "inbox-world").mkdir()
-    instance, root, line = inbox_world(tmp_path / "inbox-world")
-    state = manual_run(instance, line, at=NOW, root=root)
-    assert state.status == "succeeded", state.terminal
     manager = get_playbill_manager()
     manager.consumer_runner.close()
+    (tmp_path / "inbox-world").mkdir()
+    instance, root, line = _inbox_world(tmp_path / "inbox-world")
+    state = manual_run(instance, line, at=NOW, root=root)
+    assert state.status == "succeeded", state.terminal
     original_get = manager.get
     monkeypatch.setattr(
         manager, "get", lambda key: instance if key == instance_id else original_get(key)
@@ -74,6 +156,7 @@ def test_the_sdk_lists_reads_and_judges_inbox_items(playbill_http, tmp_path, mon
     assert dismissed.item.disposition.disposition == "dismissed"
 
     proposals = sdk.proposals(limit=1).entries
+    assert len(proposals) == 1
     linked = inbox.link(third, proposal=proposals[0].proposal_id[:20])
     assert linked.item.status == "linked"
     assert linked.item.disposition is not None
