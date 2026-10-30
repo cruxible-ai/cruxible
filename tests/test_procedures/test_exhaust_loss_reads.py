@@ -117,6 +117,62 @@ def test_missing_admission_does_not_authorize_repeating_an_admitted_event(tmp_pa
         assert cached is prior
 
 
+def _inbox_loss_world(tmp_path):
+    """Payload-loss recovery is independent of source decoding or extraction."""
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
+    from tests.core_support._support import initialize_local
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
+    from tests.test_server.test_playbill_line_run_refusals import _served_line
+
+    instance, owner = initialize_local(tmp_path)
+    template = _slotless_procedure("inbox-loss").procedure
+    (shape,) = template.definition.nodes
+    definition = template.definition.model_copy(
+        update={
+            "nodes": (
+                shape.model_copy(update={"next": "inbox"}),
+                InboxEgressNode(node_id="inbox", input={"items": [{"note": "review"}]}),
+            )
+        }
+    )
+    procedure = template.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    accepted = AcceptedProcedure(
+        path="procedures/inbox-loss.json",
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    line = _served_line("inbox-loss", accepted=accepted).model_copy(
+        update={"max_authority": "observe"}
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            accepted.path: render_procedure(procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
+        },
+        timestamp="2026-08-21T12:00:00.000000Z",
+        proposal_name="inbox-loss",
+    )
+    root = tmp_path / "workspace"
+    root.mkdir(exist_ok=True)
+    return instance, root, line
+
+
 def test_missing_inbox_posting_does_not_break_surviving_disposition(tmp_path):
     from cruxible_client.contracts.line_inbox import InboxDismissed
     from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -125,11 +181,11 @@ def test_missing_inbox_posting_does_not_break_surviving_disposition(tmp_path):
         service_get_inbox_item,
         service_list_inbox,
     )
-    from tests.test_procedures.test_line_inbox_delivery import _entries, inbox_world
+    from tests.test_procedures.test_line_inbox_delivery import _entries
     from tests.test_procedures.test_manual_line_runs import manual_run
     from tests.test_procedures.test_procedure_source_runs import NOW, _actor
 
-    instance, root, line = inbox_world(tmp_path, items={"items": [{"note": "review"}]})
+    instance, root, line = _inbox_loss_world(tmp_path)
     first = manual_run(instance, line, at=NOW, root=root)
     assert first.status == "succeeded"
     (entry,) = _entries(instance)
