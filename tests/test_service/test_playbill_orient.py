@@ -485,19 +485,29 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
     assert "migrated to a new host" in you.authoring_refusal.detail
 
 
-def test_orient_of_a_new_instance_counts_only_the_built_in_interface(
+def test_orient_counts_and_reads_the_built_in_operation(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
-    instance = seeded
-    result = service_playbill_orient(instance, surface="mcp")
+    from cruxible_client.contracts.workspace_file import workspace_file_signature_digest
 
-    assert result.artifacts is not None and result.artifacts.interfaces == 1
-    assert 'cruxible_orient(section="interfaces")' in result.next
-    section = service_playbill_orient(instance, section="interfaces")
-    assert section.interfaces is not None
-    (workspace,) = section.interfaces
-    assert (workspace.name, workspace.effect) == ("workspace.file", "pure")
-    assert [item.provider for item in workspace.providers] == ["cruxible-builtin"]
+    result = service_playbill_orient(seeded, surface="mcp")
+    assert result.artifacts is not None and result.artifacts.operations == 1
+    assert 'cruxible_orient(section="operations")' in result.next
+    section = service_playbill_orient(seeded, section="operations")
+    assert section.operations is not None
+    (workspace,) = section.operations
+    assert (workspace.build, workspace.operation, workspace.effect) == (
+        "Provider:cruxible-builtin",
+        "workspace.file",
+        "pure",
+    )
+    assert (workspace.input, workspace.output) == (
+        "workspace.file.request@1",
+        "workspace.file.result@1",
+    )
+    assert workspace.refusals == ("invalid_parameter", "mismatched_lengths", "provider_declined")
+    assert workspace.signature_digest == workspace_file_signature_digest()
+    assert section.truncated is False and section.next_cursor is None
 
 
 def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
@@ -612,67 +622,127 @@ def test_attention_summary_preserves_complete_orient_bytes(
     )
 
 
-def test_orient_and_get_show_the_sources_an_interface_produces(tmp_path: Path) -> None:
-    from cruxible_client.contracts.provider_interfaces import (
-        ProviderInterfaceDefinition,
-        provider_interface_contract,
-        provider_interface_path,
-        render_provider_interface,
+def test_orient_and_get_show_operation_contracts_and_source_parsing_declarations(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+    from cruxible_client.contracts.get_reads import GetContractCard, GetProviderCard, GetRequest
+    from cruxible_client.contracts.provider_operations import (
+        ProviderOperation,
+        operation_signature_digest,
     )
-
-    from cruxible_client.contracts.get_reads import GetRequest
-    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+    from cruxible_client.contracts.shapes import (
+        Contract,
+        contract_digest,
+        contract_path,
+        render_contract,
+    )
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._identity_support import accept_tree
+    from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
+    from tests.support.operation_world import build_files, operation, operation_build
 
-    instance, owner = initialize_local(tmp_path)
-    interface = provider_interface_contract(
-        interface=ProviderInterfaceDefinition.model_validate(
-            {
-                "interface_id": "demo.release",
-                "version": 1,
-                "effect_class": "external_read",
-                "contracts": {
-                    "input": {"fields": {"project": {"type": "string"}}},
-                    "output": "playbill-provider-result-to-external-capture-v1",
-                },
-                "produces": ["demo.release", "demo.advisory"],
-            }
-        )
+    instance, _owner = initialize_local(tmp_path)
+    capture_kind = record_contract()
+    request = Contract.model_validate(
+        {
+            "name": "demo.parse.request",
+            "version": 1,
+            "fields": {"document": {"type": f"capture<{capture_kind.identity.name}>"}},
+        }
     )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[provider_interface_path(interface.identity.name)] = render_provider_interface(interface)
-    proposed = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/interface-produces",
-            proposed_base_oid=instance.accepted_coordinate().git_oid,
-        ),
-        candidate_tree=tree,
-        timestamp=TIMESTAMP,
+    output = Contract.model_validate(
+        {
+            "name": "demo.parse.result",
+            "version": 1,
+            "fields": {"advisory": {"type": "string"}, "release": {"type": "string"}},
+        }
     )
-    assert proposed.evaluation.verdict == "candidate", proposed.evaluation.diagnostics
-    accept_proposal(
+    declaration = {
+        "capture": "document",
+        "selector": "/records/*",
+        "fields": {"advisory": {"at": "/advisory"}, "release": {"at": "/release"}},
+    }
+    parse = ProviderOperation.model_validate(
+        {
+            "name": "demo.parse",
+            "effect": "pure",
+            "entrypoint": "demo.runtime:Provider",
+            "in": {"name": request.name, "version": 1, "digest": contract_digest(request).tagged},
+            "out": {"name": output.name, "version": 1, "digest": contract_digest(output).tagged},
+            "enumerates": declaration,
+        }
+    )
+    # Reuse the valid runtime/build fixture; this test exercises accepted reads,
+    # not provider execution or package installation.
+    build = operation_build(operations=(operation(name="demo.parse"),)).model_copy(
+        update={"operations": (parse,)}
+    )
+    accept_tree(
         instance,
-        owner,
-        service_inspect_playbill_proposal(instance, proposal_id=proposed.admission.proposal_id),
+        {
+            capture_contract_path(capture_kind.identity.name): render_capture_contract(
+                capture_kind
+            ),
+            contract_path(request.name, 1): render_contract(request),
+            contract_path(output.name, 1): render_contract(output),
+            **build_files(build),
+        },
+        name="operation-parsing-declaration",
     )
 
-    page = service_playbill_orient(instance, section="interfaces", surface="mcp")
-    rows = {row.name: row for row in page.interfaces or ()}
-    assert rows["demo.release"].produces == ("demo.advisory", "demo.release")
-    # The caller names workspace.file's source, so it declares none.
-    assert rows["workspace.file"].produces == ()
-    assert rows["workspace.file"].model_dump(mode="json")["produces"] == []
+    page = service_playbill_orient(instance, section="operations", surface="mcp")
+    assert page.operations is not None and len(page.operations) == 2
+    rows = {(row.build, row.operation): row for row in page.operations}
+    assert set(rows) == {
+        ("Provider:cruxible-builtin", "workspace.file"),
+        (build.identity.qualified, "demo.parse"),
+    }
+    parsed = rows[(build.identity.qualified, "demo.parse")]
+    assert (parsed.input, parsed.output, parsed.effect, parsed.refusals) == (
+        "demo.parse.request@1",
+        "demo.parse.result@1",
+        "pure",
+        (),
+    )
+    assert parsed.signature_digest == operation_signature_digest(parse.signature())
+    assert page.truncated is False and page.next_cursor is None
 
     access = BodyAccessContext(principal_id="reader", can_read_body=False)
-    card = service_playbill_get(
-        instance, request=GetRequest(ref="ProviderInterface:demo.release"), access=access
-    ).card
-    assert card is not None and card.produces == ("demo.advisory", "demo.release")
-    builtin = service_playbill_get(
-        instance, request=GetRequest(ref="ProviderInterface:workspace.file"), access=access
-    ).card
-    assert builtin is not None and builtin.produces == ()
+
+    def get(ref, detail="summary"):
+        return service_playbill_get(
+            instance, request=GetRequest(ref=ref, detail=detail), access=access
+        )
+
+    card = get(build.identity.qualified).card
+    assert isinstance(card, GetProviderCard)
+    assert card.build == build.identity.name
+    assert card.operations == ("demo.parse: demo.parse.request@1 -> demo.parse.result@1 (pure)",)
+    input_card = get("Contract:demo.parse.request@1").card
+    assert isinstance(input_card, GetContractCard)
+    assert [(field.name, field.type) for field in input_card.fields] == [
+        ("document", f"capture<{capture_kind.identity.name}>")
+    ]
+    output_card = get("Contract:demo.parse.result@1").card
+    assert isinstance(output_card, GetContractCard)
+    assert [(field.name, field.type) for field in output_card.fields] == [
+        ("advisory", "string"),
+        ("release", "string"),
+    ]
+    # Logical source names are chosen by Procedure calls, not a ProviderInterface
+    # produces list. Current provider-parsed source declarations live on each
+    # operation and remain inspectable in the accepted Provider proof.
+    proof = get(build.identity.qualified, "proof").proof
+    assert proof is not None
+    assert proof["envelope"]["operations"][0]["enumerates"] == declaration
+    builtin = get("Provider:cruxible-builtin").card
+    assert isinstance(builtin, GetProviderCard)
+    assert builtin.operations == (
+        "workspace.file: workspace.file.request@1 -> workspace.file.result@1 (pure)",
+    )
+    builtin_proof = get("Provider:cruxible-builtin", "proof").proof
+    assert builtin_proof is not None
+    assert all("enumerates" not in op for op in builtin_proof["envelope"]["operations"])
