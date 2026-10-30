@@ -366,9 +366,7 @@ def register_tools(
         ] = None,
         keep_build: Annotated[
             list[str] | None,
-            Field(
-                description="Lines (Line:NAME) to keep on their current provider builds."
-            ),
+            Field(description="Lines (Line:NAME) to keep on their current provider builds."),
         ] = None,
         allow_downgrade: bool = False,
         dry_run: DryRun = None,
