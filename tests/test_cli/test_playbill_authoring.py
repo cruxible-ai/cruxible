@@ -626,21 +626,6 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
     # a bare `claim_retirement` was satisfied by the sentence *below* the list.
     unwrapped = " ".join(help_result.output.split())
     member_family = unwrapped.split("Change-set member kind family: ", 1)[1].split(". ", 1)[0]
-    assert member_family.split(" | ") == [
-        "claim",
-        "claim_type",
-        "claim_type_succession",
-        "claim_retirement",
-        "subject",
-        "subject_kind",
-        "subject_succession",
-        "query_definition",
-        "procedure_mandate",
-        "acquisition_policy",
-        "line",
-        "trigger",
-        "procedure",
-    ]
     assert (
         "approval_policy and procedure_runtime_policy are the reverse: the member union "
         "parses either, but a change set refuses either" in unwrapped
@@ -657,7 +642,6 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-mandate",
         "line",
         "trigger",
-        "acquisition-policy",
         "query-claims-by-type",
         "change-set",
         "claim-type-succession",
@@ -666,6 +650,7 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         assert result.exit_code == 0, result.output
         # A note (cron's UTC reading) goes to stderr: stdout is one JSON document.
         payload = json.loads(result.stdout)
+        TypeAdapter(AuthoringInput).validate_python(payload)
         assert payload["kind"] in {
             "claim",
             "change_set",
@@ -677,10 +662,9 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
             "query_definition",
             "line",
             "trigger",
-            "acquisition_policy",
         }
         if name == "procedure-mandate":
-            assert payload["tag"] == "playbill-procedure-mandate-input-v1"
+            assert payload["tag"] == "cruxible-procedure-mandate-input-v2"
         else:
             assert "tag" not in payload
         if name == "procedure":
@@ -694,6 +678,17 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
             ]
         note = authoring_example_note(name)
         assert result.stderr == ("" if note is None else f"# {note}\n")
+
+    for removed in ("acquisition-policy", "provider-interface", "blueprint"):
+        refused = runner.invoke(cli, ["authoring", "example", removed])
+        assert refused.exit_code == 2
+    for removed_kind in ("acquisition_policy", "provider_interface", "blueprint"):
+        with pytest.raises(ValidationError):
+            TypeAdapter(AuthoringInput).validate_python({"kind": removed_kind})
+    assert set(member_family.split(" | ")) == (
+        _input_kinds(AuthoringChangeSetMemberInput)
+        - {item.kind for item in CHANGE_SET_SINGLETON_ONLY_MEMBERS}
+    )
 
 
 def _input_kinds(union: object) -> set[str]:
