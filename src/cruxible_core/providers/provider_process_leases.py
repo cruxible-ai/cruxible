@@ -243,7 +243,7 @@ def _process_start_time(pid: int) -> str:
 def _process_rows() -> tuple[_ProviderProcessRow, ...]:
     try:
         completed = subprocess.run(
-            ["ps", "-Ao", "pid=,ppid=,pgid=,sess=,command="],
+            ["ps", "-ww", "-Ao", "pid=,ppid=,pgid=,sess=,command="],
             capture_output=True,
             text=True,
             check=False,
