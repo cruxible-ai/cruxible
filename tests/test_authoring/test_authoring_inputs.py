@@ -168,7 +168,7 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     )
 
     assert [member.tag for member in lowered.members] == [
-        "playbill-procedure-authoring-payload-v2",
+        "cruxible-procedure-authoring-payload-v3",
         "playbill-query-definition-authoring-payload-v1",
     ]
     with pytest.raises(AuthoringInputError) as raised:
@@ -236,7 +236,9 @@ def test_create_and_compile_refuse_working_selection_with_bind_repair(
     assert "authoring bind" in raised.value.repair
 
 
-def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: Path) -> None:
+def test_carried_contract_input_computes_owned_digests_in_the_current_procedure(
+    tmp_path: Path,
+) -> None:
 
     instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
@@ -291,7 +293,7 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     payload = (
         coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
     )
-    assert payload.tag == "playbill-procedure-authoring-payload-v2"
+    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
     encoded = payload.model_dump_json(by_alias=True)
     assert "playbill-procedure-owned-contract-v1" in encoded
     assert "carried_contract" in encoded
@@ -319,9 +321,11 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
             contracts["query-result"]
         ).tagged,
     } == expected_pins
-    assert {
-        (pin.role, pin.target.qualified): pin.artifact_digest for pin in procedure.pins
-    } == expected_pins
+    # Owned Contract bytes and digests live in this envelope; only external
+    # references belong in its exact pins.
+    assert procedure.pins == ()
+    assert procedure.definition.contract_in.target == contracts["empty-input"].identity
+    assert procedure.definition.contract_out.target == contracts["query-result"].identity
 
 
 def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
@@ -639,16 +643,10 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
     ]
 
 
-def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_digest(
+def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_source(
     tmp_path: Path,
 ) -> None:
-    """The change-set member's spelling of the Procedure's policy binding.
-
-    An author names the policy; they never supply its digest. So the member
-    below carries a name, the lowered payload carries the same name, and the
-    envelope pin only ever exists once lowering has resolved that name against
-    accepted state -- which this world does not hold, so it refuses by name.
-    """
+    """Inline acquisition rules stay typed and must name a declared Source alias."""
 
     instance, _owner = initialize_local(tmp_path)
     coordinator = _coordinator(instance)
@@ -660,12 +658,13 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
             CarriedContractInput(name="empty-input", fields={}),
             CarriedContractInput(name="rows-output", fields={"rows": PropertySchema(type="json")}),
         ),
-        acquisition_policy="advisory-reads",
+        acquisition_defaults={"advisory": {"max_age": "PT10M", "on_unavailable": "refuse"}},
     )
     payload = lower_authoring_input(member)
-    # The payload carries the policy NAME: no caller ever supplies the digest.
-    assert payload.tag == "playbill-procedure-authoring-payload-v2"
-    assert payload.acquisition_policy == "advisory-reads"
+    # The payload carries the rule itself; no standalone policy or digest relay.
+    assert payload.tag == "cruxible-procedure-authoring-payload-v3"
+    assert payload.acquisition_defaults["advisory"].max_age.microseconds == 600_000_000
+    assert payload.acquisition_defaults["advisory"].on_unavailable == "refuse"
 
     result = coordinator.compile_input(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -675,13 +674,17 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
 
     assert result.verdict == "refused"
     diagnostics = {item.code for item in result.frontier.diagnostics}
-    assert "cruxible.authoring.artifact_reference_unresolved" in diagnostics
+    assert "cruxible.authoring.procedure_definition_invalid" in diagnostics
     offending = {
         item.offending_element
         for item in result.frontier.diagnostics
-        if item.code == "cruxible.authoring.artifact_reference_unresolved"
+        if item.code == "cruxible.authoring.procedure_definition_invalid"
     }
-    assert offending == {"acquisition_policy"}
+    assert offending == {"procedure"}
+    assert any(
+        "acquisition_defaults name no Source alias" in item.message
+        for item in result.frontier.diagnostics
+    )
 
 
 def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:
