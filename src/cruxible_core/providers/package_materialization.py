@@ -259,7 +259,12 @@ def prepare_provider_package(
         url=pin.url,
     )
     builder = backend.UvSyncBuilder(uv_executable(), python_executable=sys.executable)
-    cache = toolchain("cache").MaterializationCache(cache_root)
+    # The frozen materialization identity names the resolved code, not raw lock
+    # bytes. Physical custody also retains uv.lock in its sealed inventory, so
+    # distinct locks need distinct environments even for equivalent resolution.
+    cache = toolchain("cache").MaterializationCache(
+        cache_root / "raw-locks" / lock.lock_sha256.removeprefix("sha256:")
+    )
     # Never repair an existing environment in place: an admitted run may still
     # name it. Explicit re-verification reports drift rather than deleting it.
     if cache.path_for(materialization).exists():
@@ -278,9 +283,10 @@ def prepare_provider_package(
             ),
         )
     deployment_digest = "sha256:" + canonical_digest(
-        "playbill-provider-package-deployment-v1",
+        "playbill-provider-package-deployment-v2",
         {
             "distribution": pin.artifact_id,
+            "lock_sha256": lock.lock_sha256,
             "materialization": materialization,
             "environment_pin_key": resolved.pin_key(),
         },
