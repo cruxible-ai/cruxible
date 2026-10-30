@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
+    CaptureProductionUnproven,
     capture_contract_digest,
     capture_contract_path,
     evaluate_capture_contract_law,
@@ -40,7 +41,6 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._subject_kind_support import core_assigned
-from tests.support.capture_receipts import admit_legacy_v1_citations
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject
 
@@ -100,6 +100,18 @@ def test_general_contract_and_exact_external_capture_do_not_copy_a_table(tmp_pat
         require_production_proof=False,
     )
     assert verified.source == result.envelope.source
+    assert reader.replay_available(verified.source)
+    # Replaying fixture bytes is distinct from admitting a new citation.
+    with pytest.raises(CaptureProductionUnproven) as refused:
+        verify_capture(
+            result.capture_digest,
+            store=store,
+            contract=contract,
+            producer_artifact_digests={
+                provider_artifact.identity.qualified: provider_digest(provider_artifact).tagged
+            },
+        )
+    assert refused.value.reason == "v1_envelope"
 
 
 def test_attested_only_acquisition_remains_honest_when_source_cannot_replay(
@@ -176,12 +188,10 @@ def test_external_coordinates_refuse_secrets_and_unpinned_schemas() -> None:
 @pytest.mark.parametrize("light", [False, True], ids=["v1-unmaterialized", "v2-retained"])
 def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     light: bool,
 ) -> None:
-    # The fixture reader builds v1 envelopes; this pins the mapping law that
-    # judges such evidence once accepted, not whether a new citation is admitted.
-    admit_legacy_v1_citations(monkeypatch)
+    # New citations must prove production; no legacy-admission monkeypatch.
+    # The unmaterialized legacy-success premise remains pending disposition.
     from cruxible_client.contracts.policies import (
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionPolicyV1,
@@ -191,11 +201,8 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
 
-    instance, _owner = initialize_local(tmp_path)
-    base = instance.accepted_coordinate()
     contract = record_contract() if light else capture_contract()
     coordinate_type = "database-snapshot-v1" if light else "postgres-lsn-v1"
-    provider_artifact = capture_provider_build(contract)
     shell = _subject()
     subject_address = SemanticAddress.whole_artifact(
         subject_path(shell.subject_kind, shell.subject_id)
@@ -205,36 +212,106 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
         "key": {"order_id": "ord-482"},
         "semantic_subject": subject_address.model_dump(mode="json"),
     }
-    reader = FakeVersionedExternalSourceReader()
-    reader.seed(
-        source_identity="commerce.production.orders",
-        coordinate_type=coordinate_type,
-        coordinate="0/16B6C50",
-        selector_type="relation-primary-key-v1",
-        selector=selector,
-        value={"order_id": "ord-482", "status": "ready"},
-    )
-    binding = ProducerBindingV1(
-        provider=provider_artifact.identity,
-        logical_source_identity="commerce.production.orders",
-        adapter_digest=digest("test-adapter", "postgres-v1"),
-    )
-    acquired = reader.acquire(
-        ExternalSourceReadRequestV1(
-            contract=contract,
-            provider=provider_artifact,
-            binding=binding,
+    value = {"order_id": "ord-482", "status": "ready"}
+    if light:
+        import json
+
+        from cruxible_client.contracts.canonical import canonical_bytes
+        from cruxible_client.contracts.captures import CaptureEnvelope, parse_capture_envelope
+        from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+        from cruxible_client.contracts.providers import parse_provider
+        from cruxible_core.storage.cas import BodyAccessContext
+        from tests.support.procedures import revalidated
+        from tests.test_procedures import test_procedure_source_runs as fixtures
+
+        # Real current Source planning, exact workspace bytes, provider receipt
+        # and produced-Capture journal record, without provider-side JSON parsing.
+        instance, owner, procedure, root, _policy = fixtures._world(
+            tmp_path, contents=canonical_bytes(value), contract=contract, accept_procedure=False
+        )
+        source, shape = procedure.definition.nodes
+        request = {**source.request, "coordinate": "0/16B6C50", "selector": selector}
+        definition = procedure.definition.model_copy(
+            update={"nodes": (source.model_copy(update={"request": request}), shape)}
+        )
+        procedure = revalidated(
+            procedure.model_copy(
+                update={
+                    "definition": definition,
+                    "definition_digest": compute_procedure_definition_digest(definition).tagged,
+                }
+            )
+        )
+        fixtures._accept_more(
+            instance,
+            owner,
+            {procedure_path(procedure.identity.name): render_procedure(procedure)},
+            name="external-source-mapping",
+        )
+        state, invoker = fixtures._run(instance, root, evaluation_time=NOW)
+        assert state.status == "succeeded", state.terminal
+        assert invoker.spawn_calls == 1
+        (observation,) = state.source_observations
+        assert observation.capture_digest is not None
+        capture_digest_value = observation.capture_digest
+        access = BodyAccessContext(principal_id="external-source-test", can_read_body=True)
+        envelope = parse_capture_envelope(
+            instance.body_store().read(capture_digest_value, access=access)
+        )
+        assert isinstance(envelope, CaptureEnvelope)
+        assert envelope.source.source_identity == "commerce.production.orders"
+        assert envelope.source.coordinate_type == coordinate_type
+        assert envelope.source.coordinate == "0/16B6C50"
+        assert envelope.source.selector == selector
+        assert envelope.source.replayability == "exact"
+        assert envelope.run_coordinate.run_id == state.run_id
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        path = provider_path(envelope.producer.name)
+        provider_artifact = parse_provider(tree[path], path=path)
+        assert (
+            envelope.run_coordinate.executable_digest == provider_digest(provider_artifact).tagged
+        )
+        material = json.loads(instance.body_store().read(envelope.commitment.digest, access=access))
+        assert material["content"]["text"] == canonical_bytes(value).decode("utf-8")
+        assert observation.source_read_receipt is not None
+        assert material["source"]["bytes_digest"] == observation.source_read_receipt.bytes_digest
+    else:
+        instance, _owner = initialize_local(tmp_path)
+        provider_artifact = capture_provider_build(contract)
+        reader = FakeVersionedExternalSourceReader()
+        reader.seed(
+            source_identity="commerce.production.orders",
             coordinate_type=coordinate_type,
             coordinate="0/16B6C50",
             selector_type="relation-primary-key-v1",
             selector=selector,
-            materialization="cas" if light else "external",
-            run_coordinate=provider_run(provider_artifact),
-            observed_at=NOW,
-            resource_budget=contract.selection_budget,
-        ),
-        store=instance.body_store(),
-    )
+            value=value,
+        )
+        binding = ProducerBindingV1(
+            provider=provider_artifact.identity,
+            logical_source_identity="commerce.production.orders",
+            adapter_digest=digest("test-adapter", "postgres-v1"),
+        )
+        acquired = reader.acquire(
+            ExternalSourceReadRequestV1(
+                contract=contract,
+                provider=provider_artifact,
+                binding=binding,
+                coordinate_type=coordinate_type,
+                coordinate="0/16B6C50",
+                selector_type="relation-primary-key-v1",
+                selector=selector,
+                materialization="external",
+                run_coordinate=provider_run(provider_artifact),
+                observed_at=NOW,
+                resource_budget=contract.selection_budget,
+            ),
+            store=instance.body_store(),
+        )
+        capture_digest_value = acquired.capture_digest
+        envelope = acquired.envelope
+    base = instance.accepted_coordinate()
     contract_digest = capture_contract_digest(contract).tagged
     claim_type = _claim_type().model_copy(
         update={
@@ -279,8 +356,8 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     claim_type_digest_value = claim_type_digest(claim_type).tagged
     claim = _claim(
         claim_id="CLM-0123456789abcdef0123456789abcdef",
-        capture_digest=acquired.capture_digest,
-        source_digest=acquired.envelope.commitment.digest,
+        capture_digest=capture_digest_value,
+        source_digest=envelope.commitment.digest,
         source_length=1,
     )
     claim = claim.model_copy(
@@ -293,11 +370,11 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
             ),
             "backing": ClaimBacking(
                 referent_context=claim.backing.referent_context,
-                capture_digests=(acquired.capture_digest,),
+                capture_digests=(capture_digest_value,),
                 citations=(
                     build_claim_citation(
                         claim.identity,
-                        capture_digest=acquired.capture_digest,
+                        capture_digest=capture_digest_value,
                         role="evidence",
                         origin="independent",
                     ),
@@ -355,7 +432,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
         candidate_tree=candidate_tree,
         timestamp=TIMESTAMP,
     )
-    assert not proposed.evaluation.diagnostics
+    assert not proposed.evaluation.diagnostics, proposed.evaluation.diagnostics
     assert isinstance(proposed.candidate, CandidateRecord)
     evidence = ClaimLawEvidenceV1.model_validate(
         next(
@@ -368,13 +445,25 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     assert evidence.evidence_basis == ("direct",)
     assert claim.backing.source_mappings == ()
     if not light:
-        assert acquired.envelope.commitment.materialization == "external"
+        assert envelope.commitment.materialization == "external"
         assert acquired.canonical_material is None
-        assert not instance.body_store().verify(acquired.envelope.commitment.digest)
+        assert not instance.body_store().verify(envelope.commitment.digest)
         return
-    assert acquired.envelope.commitment.materialization == "cas"
-    assert acquired.canonical_material == {"order_id": "ord-482", "status": "ready"}
-    assert instance.body_store().verify(acquired.envelope.commitment.digest)
+    assert envelope.commitment.materialization == "cas"
+    assert json.loads(material["content"]["text"]) == value
+    assert instance.body_store().verify(envelope.commitment.digest)
+    assert (
+        verify_capture(
+            capture_digest_value,
+            store=instance.body_store(),
+            contract=contract,
+            producer_artifact_digests={
+                provider_artifact.identity.qualified: provider_digest(provider_artifact).tagged
+            },
+            producer_receipt_resolver=instance.capture_verification_context(),
+        )
+        == envelope
+    )
 
     # Retention is not subject binding: without the declared record mapping,
     # or with a different source label, these bytes cannot support this Claim.
@@ -429,3 +518,22 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
         assert "cruxible.claim.captured_evidence_required" in {
             diagnostic.code for diagnostic in refused.evaluation.diagnostics
         }
+
+    # Lose only the material through the CAS API: the real envelope and
+    # production journal remain, but a new citation cannot use missing bytes.
+    assert instance.body_store().erase(envelope.commitment.digest)
+    assert instance.body_store().verify(capture_digest_value)
+    assert not instance.body_store().verify(envelope.commitment.digest)
+    unavailable = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/missing-material", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=TIMESTAMP,
+    )
+    assert unavailable.candidate is None
+    assert "cruxible.claim.capture_unverified" in {
+        diagnostic.code for diagnostic in unavailable.evaluation.diagnostics
+    }
+    assert instance.accepted_coordinate() == base
