@@ -261,7 +261,7 @@ def _provider_bundle() -> KitBundle:
         wheel=file("kit_call-0.2.0-py3-none-any.whl"),
         lock=file("kit-call-0.2.0.uv.lock"),
         dependencies=(file("cruxible_provider_runtime-0.2.0-py3-none-any.whl"),),
-        interfaces=("local.increment",),
+        operations=("local.increment",),
     )
     return KitBundle(
         manifest=base.manifest.model_copy(update={"providers": (provider,)}),

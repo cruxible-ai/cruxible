@@ -141,6 +141,13 @@ def test_a_zero_field_contract_is_accepted_and_nests(tmp_path: Path) -> None:
     selected_path = contract_path("security.selected", 1)
     (ref,) = parse_contract(tree[selected_path], path=selected_path).refs()
     assert ref.digest == contract_digest(empty).tagged
+    # Orient lists it with its field count, zero.
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    rows = service_playbill_orient(instance, section="contracts").contracts or ()
+    listed = {row.contract: row for row in rows}
+    assert listed["security.empty@1"].fields == 0
+    assert listed["security.selected@1"].pins == ("security.empty@1",)
 
 
 def test_a_nested_contract_is_pinned_to_the_accepted_version(tmp_path: Path) -> None:

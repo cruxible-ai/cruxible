@@ -57,15 +57,21 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     page = cruxible.json("orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.slug"]
     assert "(no procedures)" in cruxible.run("orient", "--section", "procedures").stdout
-    # A new instance starts with workspace.file built in.
-    assert mapped["artifacts"]["interfaces"] == 1
-    (interface,) = cruxible.json("orient", "--section", "interfaces")["interfaces"]
-    assert interface["name"] == "workspace.file"
-    assert interface["effect"] == "pure"
-    assert [item["provider"] for item in interface["providers"]] == ["cruxible-builtin"]
+    # A new instance starts with workspace.file built in: one operation of
+    # the cruxible-builtin build.
+    assert mapped["artifacts"]["operations"] == 1
+    (operation,) = cruxible.json("orient", "--section", "operations")["operations"]
+    assert operation["operation"] == "workspace.file"
+    assert operation["effect"] == "pure"
+    assert operation["build"] == "Provider:cruxible-builtin"
+    assert (operation["input"], operation["output"]) == (
+        "workspace.file.request@1",
+        "workspace.file.result@1",
+    )
     assert (
-        "workspace.file  effect=pure  providers=cruxible-builtin"
-        in cruxible.run("orient", "--section", "interfaces").stdout
+        "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
+        "workspace.file.result@1  (pure)"
+        in cruxible.run("orient", "--section", "operations").stdout
     )
     assert "floor" not in mapped
 
@@ -81,7 +87,7 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert f"Floor: .cruxible/floor at {mapped['coordinate']['git_oid'][:12]}, current" in text
 
 
-def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None:
+def test_an_operations_page_prints_each_binding_target_and_its_refusals() -> None:
     from cruxible_core.cli.commands.playbill import _render_orient
 
     text = _render_orient(
@@ -90,30 +96,27 @@ def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
             "accepted_at": "2026-09-29T00:00:00Z",
-            "section": "interfaces",
-            "interfaces": [
+            "section": "operations",
+            "operations": [
                 {
-                    "name": "workspace.file",
-                    "description": "Structure the bytes of one workspace file read.",
-                    "input": ["bytes: string", "byte_length: integer"],
-                    "output": ["content: object"],
+                    "build": "Provider:cruxible-builtin",
+                    "operation": "workspace.file",
+                    "input": "workspace.file.request@1",
+                    "output": "workspace.file.result@1",
                     "effect": "pure",
-                    "providers": [
-                        {
-                            "provider": "cruxible-builtin",
-                            "implementation_digest": "sha256:" + "6" * 64,
-                        }
-                    ],
+                    "refusals": ["invalid_parameter", "provider_declined"],
+                    "signature_digest": "sha256:" + "6" * 64,
                 }
             ],
             "next": [],
         }
     )
 
-    assert "workspace.file  effect=pure  providers=cruxible-builtin" in text
-    assert "  Structure the bytes of one workspace file read." in text
-    assert "  in:  bytes: string, byte_length: integer" in text
-    assert "  out: content: object" in text
+    assert (
+        "cruxible-builtin#workspace.file  workspace.file.request@1 -> "
+        "workspace.file.result@1  (pure)" in text
+    )
+    assert "  refuses invalid_parameter, provider_declined" in text
 
 
 def test_orient_prints_the_ledger_mirror_a_reviewer_clones() -> None:

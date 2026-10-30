@@ -636,9 +636,9 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "subject_succession",
         "query_definition",
         "procedure_mandate",
-        "acquisition_policy",
         "line",
         "trigger",
+        "contract",
         "procedure",
     ]
     assert (
@@ -657,7 +657,6 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-mandate",
         "line",
         "trigger",
-        "acquisition-policy",
         "query-claims-by-type",
         "change-set",
         "claim-type-succession",
@@ -677,10 +676,9 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
             "query_definition",
             "line",
             "trigger",
-            "acquisition_policy",
         }
         if name == "procedure-mandate":
-            assert payload["tag"] == "playbill-procedure-mandate-input-v1"
+            assert payload["tag"] == "cruxible-procedure-mandate-input-v2"
         else:
             assert "tag" not in payload
         if name == "procedure":

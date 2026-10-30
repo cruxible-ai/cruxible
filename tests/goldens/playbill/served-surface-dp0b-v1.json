@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-30:zero-field-contracts",
-    "surface_digest": "sha256:257ebb93ba64f334b340104606229cd5985cbc132ad17724b1c746ea69352466"
+    "surface_digest": "sha256:275b9aa410cb69a151799aa1e2d9603f2410065a4031c495918683f77d28af1e"
   },
   "surface": {
     "cli_leaves": [
@@ -1624,7 +1624,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.orient.OrientResult",
-        "response_schema_digest": "sha256:a007f996008bf5513dc544e60958b397de3ce5109bba7b830c60ba7e1c55ba30"
+        "response_schema_digest": "sha256:6e8eab1510872be907af9d3b8d853e5648decf99221c8a742c739bda761652eb"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.predict",
@@ -2599,7 +2599,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_orient",
         "input_schema_digest": "sha256:d6ac1cafc961087cd6031318939a8977b1fa53c23c4cf8ce36d585c4c53b9d11",
         "name": "cruxible_orient",
-        "output_schema_digest": "sha256:0d033c316de1b399db87a0a91c44410bea17cbd5ec98547c0cff45bd2a5a7764",
+        "output_schema_digest": "sha256:48a0b55848c910913551f3fb17f2af3a735056bc523e9a19c57d4a257b038572",
         "permission": "READ_ONLY"
       },
       {

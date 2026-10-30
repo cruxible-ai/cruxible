@@ -86,7 +86,6 @@
       }
     ],
     "parameter_contract": null,
-    "pin_slots": [],
     "returns": "result",
     "terminal_capability": 1
   },

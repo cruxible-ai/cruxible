@@ -227,7 +227,6 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     draft.line(
         name="consume-feed",
         procedure="consume",
-        acquisition_policy="feed-policy",
         max_authority="observe",
         trigger_input="feed",
     )
@@ -322,7 +321,7 @@ def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
 
     contract = foreign_source_capture_contract("security.advisory")
     (tmp_path / "instance").mkdir()
-    instance, _owner, line = _line_world(tmp_path / "instance")
+    instance, _owner, line, _mandate = _line_world(tmp_path / "instance")
     draft = pb.changes(rationale="Consume contract by name")
     if contract_first:
         draft.capture_contract(contract)
