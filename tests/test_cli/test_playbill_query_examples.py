@@ -7,6 +7,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_core.cli.main import cli
 
 
@@ -31,4 +32,10 @@ def test_query_coordinator_example_is_local_and_directly_creatable(
     assert definition["entry"]["subject_kinds"] == ["project.work_item"]
     assert definition["evaluation_policy"]["visible_verdicts"] == ["supported"]
     assert definition["evaluation_policy"]["visible_currency"] == ["current"]
-    assert definition["pins"] == []  # resolved by the coordinator, not a fake digest
+    # One Query format: the Query names the ClaimTypes it reads and carries no
+    # digest pins for the author to fill.
+    assert definition["artifact_format"] == "cruxible-query-definition-v3"
+    assert "pins" not in definition
+    assert QueryDefinition.model_validate(definition).identity.name == (
+        "project.work_items_by_status"
+    )

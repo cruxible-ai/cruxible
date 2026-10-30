@@ -283,10 +283,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 "rationale": f"Seed work item {payload['subject_id']}.",
             }
             if kind == "subject"
-            # Typed ClaimType authoring produces the current envelope, so the
-            # historical bundle's explicit dependency digest is no longer its
-            # accepted digest. The authoring compiler owns base resolution.
-            else {"kind": kind, "query_definition": {**payload, "pins": []}}
+            # A Query names the ClaimTypes it reads; the authoring compiler
+            # resolves them against the accepted base.
+            else {"kind": kind, "query_definition": dict(payload)}
         )
         authoring_path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
         submitted = run_cli_json("authoring", "submit", "--no-accept", str(authoring_path))
