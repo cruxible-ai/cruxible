@@ -30,6 +30,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimRetirementAttribution,
     claim_artifact_digest,
     claim_statement_digest,
     render_claim,
@@ -249,8 +250,12 @@ def test_duplicate_statement_fold_exempts_retired_predecessor_and_live_successor
     retired = predecessor.accepted.claim.model_copy(
         update={
             "lifecycle": predecessor.accepted.claim.lifecycle.model_copy(
-                update={"state": "retired"}
-            )
+                update={
+                    "state": "retired",
+                    "predecessor_digest": predecessor.accepted.artifact_digest,
+                }
+            ),
+            "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
         }
     )
     tree = {

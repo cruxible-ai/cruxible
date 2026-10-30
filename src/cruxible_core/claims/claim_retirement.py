@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimRetireDependent,
     ClaimRetirementAttribution,
     ClaimRetirementReason,
@@ -78,7 +77,7 @@ def _inventory(
 
 
 def _retired_claim(
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     reason: ClaimRetirementReason,
     effective_until: datetime | None,
@@ -188,7 +187,7 @@ def claim_retirement_inventory(
     *,
     tree: Mapping[str, bytes],
     coordinate: AcceptedCoordinate,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
 ) -> tuple[ClaimRetireInventoryItemV1, ...]:
     """Return the live Claim closure one retirement must carry, or refuse it.
 

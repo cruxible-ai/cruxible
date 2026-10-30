@@ -46,7 +46,7 @@ from cruxible_client.contracts.claim_attestation_store import (
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1, claim_verdict_v1_compat
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
@@ -663,7 +663,7 @@ def _accepted_claim_at(
     *,
     tree: Mapping[str, bytes],
     measurement: ClaimStatementProcedureMeasurement | ClaimAttestationProcedureMeasurement,
-) -> ClaimArtifactAny:
+) -> ClaimArtifact:
     path = measurement.claim_statement.artifact_path
     content = tree.get(path)
     if content is None:

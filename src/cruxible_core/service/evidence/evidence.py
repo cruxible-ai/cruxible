@@ -46,7 +46,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactAny,
+    ClaimArtifact,
     ClaimLawEvidenceAny,
     NoneClaimObject,
     SubjectClaimObject,
@@ -61,7 +61,7 @@ from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProposalIntegrityError,
 )
-from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_10
+from cruxible_client.contracts.laws import CLAIM_LAW
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -172,7 +172,7 @@ def _accepted_claim(tree: Mapping[str, bytes], identity: str) -> AcceptedClaim:
     return _accepted_claim_artifact(claim)
 
 
-def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
+def _accepted_claim_artifact(claim: ClaimArtifact) -> AcceptedClaim:
     return AcceptedClaim(
         path=claim_path(claim.identity.name),
         claim=claim,
@@ -306,7 +306,7 @@ class ClaimVerdictReadContext:
 
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
-    _claims: dict[str, ClaimArtifactAny] = dataclass_field(default_factory=dict, init=False)
+    _claims: dict[str, ClaimArtifact] = dataclass_field(default_factory=dict, init=False)
     _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
     _source_bytes: dict[str, bytes] = dataclass_field(default_factory=dict, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
@@ -345,7 +345,7 @@ class ClaimVerdictReadContext:
     def tree(self) -> Mapping[str, bytes]:
         return self._tree
 
-    def claims(self, *, subject: SemanticAddress | None = None) -> tuple[ClaimArtifactAny, ...]:
+    def claims(self, *, subject: SemanticAddress | None = None) -> tuple[ClaimArtifact, ...]:
         """Every accepted Claim, or only those about ``subject`` via the subject index."""
 
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
@@ -368,7 +368,7 @@ class ClaimVerdictReadContext:
         # The index only locates rows; the parsed statement is the authority.
         return tuple(claim for claim in selected if claim.statement.subject == subject)
 
-    def claim(self, identity: str) -> ClaimArtifactAny:
+    def claim(self, identity: str) -> ClaimArtifact:
         identity = "Claim:" + identity.removeprefix("Claim:")
         self.note_paths(claim_path(identity.removeprefix("Claim:")))
         if identity not in self._claims:
@@ -409,7 +409,7 @@ class ClaimVerdictReadContext:
         if isinstance(law_evidence, _IndexedClaimLawEvidence):
             law_evidence.prefetch(paths)
 
-    def attestation_envelopes(self, claim: ClaimArtifactAny) -> tuple[ClaimAttestation, ...]:
+    def attestation_envelopes(self, claim: ClaimArtifact) -> tuple[ClaimAttestation, ...]:
         """This exact Claim version's accepted attestations.
 
         The first request reads attestations for every Claim version this batch
@@ -634,7 +634,7 @@ def accepted_claim_attestations(
     *,
     coordinate: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     envelopes: tuple[ClaimAttestation, ...] | None = None,
 ) -> tuple[ClaimAttestationEvidence, ...]:
     """Read applicable immutable statements without inferring supersession.
@@ -680,7 +680,7 @@ def _referent_digest(tree: Mapping[str, bytes], path: str) -> str:
 
 def _referent_digests(
     tree: Mapping[str, bytes],
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
 ) -> tuple[str, str | None]:
     subject_digest_value = _referent_digest(tree, claim.statement.subject.artifact_path)
     named: object = claim.statement.object
@@ -1058,18 +1058,18 @@ def _reproduced_claim_adjudication_rule(
     with the current rule, so a verdict-semantic change cannot be hidden by a
     later revert.
 
-    Evidence recorded under Claim law v2 (``law_digest``) may carry the
+    Evidence recorded under the Claim law (``law_digest``) may carry the
     origin-supports rule of a ClaimType whose own rule does not: a key Claim
     covered by its Subject's creation. That rule reproduces from the same
     ClaimType chain; no other law's evidence can select it. It may also carry
     rule v3 (origin-only entries need no current replay) wherever v2 would be;
-    it reproduces as v3. A Claim recorded under v2 keeps v2.
+    it reproduces as v3. Each candidate is tried and the recorded digest
+    decides, so a retired Claim (whose evidence never took either) still
+    reproduces only its own rule.
     """
 
-    creation_covered = law_digest == CLAIM_LAW_V2_REVISION_10.digest
-    replay_exempt_options = (
-        (False, True) if law_digest == CLAIM_LAW_V2_REVISION_10.digest else (False,)
-    )
+    creation_covered = law_digest == CLAIM_LAW.digest
+    replay_exempt_options = (False, True) if law_digest == CLAIM_LAW.digest else (False,)
 
     # An inverse Claim (a none) is judged by the rule of its inverse's horizon;
     # the recorded digest says which one it was, so only a type with an inverse
@@ -1213,7 +1213,7 @@ def _record_verdict_time_boundaries(
     boundaries: MutableSet[datetime],
     *,
     rule: ClaimAdjudicationRuleAny,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
     reobservations: tuple[CaptureReobservationEvidence, ...] = (),

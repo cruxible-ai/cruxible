@@ -5,7 +5,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, render_claim
+from cruxible_client.contracts.claims import (
+    ClaimRetirementAttribution,
+    claim_artifact_digest,
+    claim_path,
+    render_claim,
+)
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_core.service.floor import projection_lineage as lineage
 from tests.test_claims.test_claims import _claim
@@ -142,7 +147,8 @@ def test_batch_rebuild_warm_reuse_extension_and_historical_rollback():
                     "predecessor_digest": claim_artifact_digest(claims[0]).tagged,
                     "state": "retired",
                 }
-            )
+            ),
+            "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
         }
     )
     g = SimpleNamespace(

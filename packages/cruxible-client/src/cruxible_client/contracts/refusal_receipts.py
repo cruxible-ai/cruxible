@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
-from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, claim_path
+from cruxible_client.contracts.claims import ClaimArtifact, ClaimStatement, claim_path
 
 CLAIM_REFUSAL_MATCH_KEY_DOMAIN = "cruxible-claim-refusal-match-v3"
 
@@ -53,7 +53,7 @@ def claim_refusal_match_key(statement: ClaimStatement, evidence_commitments: Ite
     ).tagged
 
 
-def claim_producer(claim: ClaimArtifactAny) -> ArtifactPin | None:
+def claim_producer(claim: ClaimArtifact) -> ArtifactPin | None:
     """The Procedure a Claim names as its producer (a derivation's reducer), if any."""
 
     return next((pin for pin in claim.pins if pin.target.kind == "Procedure"), None)

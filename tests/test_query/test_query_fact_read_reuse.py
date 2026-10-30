@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.claims import parse_claim, render_claim
+from cruxible_client.contracts.claims import (
+    ClaimRetirementAttribution,
+    claim_artifact_digest,
+    parse_claim,
+    render_claim,
+)
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.service.discovery import query as query
 from tests.core_support._knowledge_loop_support import seed_claims
@@ -24,7 +29,15 @@ def _retired_tree(instance):
     claim = parse_claim(tree[path], path=path)
     tree[path] = render_claim(
         claim.model_copy(
-            update={"lifecycle": claim.lifecycle.model_copy(update={"state": "retired"})}
+            update={
+                "lifecycle": claim.lifecycle.model_copy(
+                    update={
+                        "state": "retired",
+                        "predecessor_digest": claim_artifact_digest(claim).tagged,
+                    }
+                ),
+                "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
+            }
         )
     )
     return coordinate, tree, path

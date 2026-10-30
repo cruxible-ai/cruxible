@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_statement_digest,
 )
@@ -56,7 +56,7 @@ class ClaimVersionReference(_ContractModel):
             raise ValueError("resolution hypothesis must be a Claim")
         return self
 
-    def verify(self, claim: ClaimArtifactAny) -> None:
+    def verify(self, claim: ClaimArtifact) -> None:
         if (
             claim.identity != self.identity
             or claim_artifact_digest(claim).tagged != self.artifact_digest
@@ -111,7 +111,7 @@ class ResolutionContract(_ContractModel):
             raise ValueError("resolution outcome class must be canonical")
         return self
 
-    def verify_hypothesis(self, claim: ClaimArtifactAny) -> None:
+    def verify_hypothesis(self, claim: ClaimArtifact) -> None:
         from cruxible_client.contracts.claims import LiteralClaimObject
 
         self.hypothesis.verify(claim)

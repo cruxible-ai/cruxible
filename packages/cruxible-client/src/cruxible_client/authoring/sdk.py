@@ -177,8 +177,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimArtifactV2,
     ClaimRetireDependent,
     ClaimRetirementReason,
     ClaimUnsupportedFormatError,
@@ -295,7 +293,7 @@ _SUBJECT_REF_RE = re.compile(
 # Object kinds this client understands from an accepted ClaimType envelope.
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
-_CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
+_CLAIM_ADAPTER: TypeAdapter[ClaimArtifact] = TypeAdapter(ClaimArtifact)
 
 
 def _coordinate(value: api.AcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -517,7 +515,7 @@ def _program_stamp(operation: str, decisions: Mapping[str, object]) -> Authoring
     )
 
 
-def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
+def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifact:
     """Reconstruct the exact Claim from its pure projection envelope and facts."""
 
     statement = next(
@@ -554,16 +552,12 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
         and isinstance(artifact_format, str)
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
-    if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
-    elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifact
-    else:
+    if artifact_format != ClaimArtifact.model_fields["artifact_format"].default:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
         )
     return _CLAIM_ADAPTER.validate_python(
-        model.model_validate(
+        ClaimArtifact.model_validate(
             {
                 "artifact_format": artifact_format,
                 "identity": {
@@ -575,8 +569,8 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
                 "pins": lifecycle.get("pins"),
                 "lifecycle": lifecycle.get("lifecycle"),
                 **(
-                    {"retirement": lifecycle.get("retirement")}
-                    if artifact_format == "playbill-claim-v3"
+                    {"retirement": lifecycle["retirement"]}
+                    if lifecycle.get("retirement") is not None
                     else {}
                 ),
             }

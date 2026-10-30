@@ -39,7 +39,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     CaptureContractAny as CaptureContract,
 )
-from cruxible_client.contracts.claims import ClaimArtifactAny
+from cruxible_client.contracts.claims import ClaimArtifact
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.source_references import (
@@ -135,7 +135,7 @@ SourceContribution = tuple[str, int, tuple[tuple[str, str, str], ...]]
 
 def claim_source_pairs(
     instance: PlaybillInstance,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     contracts: Mapping[str, CaptureContract],
 ) -> tuple[tuple[str, str, str], ...]:
     """Each (source, contract label, locator) a live Claim's cited Captures give.
@@ -149,7 +149,7 @@ def claim_source_pairs(
 
 def _claim_sources(
     instance: PlaybillInstance,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     contracts: Mapping[str, CaptureContract],
 ) -> tuple[tuple[tuple[str, str, str], ...], frozenset[str]]:
     """The Claim's pairs, and the contract digests its pairs were looked up under.
@@ -258,7 +258,7 @@ EMPTY_SOURCES_LEDGER = SourcesLedgerState(PMap(), PMap(), PMap(), PMap(), ())
 
 def _contribution(
     instance: PlaybillInstance,
-    claim: ClaimArtifactAny | None,
+    claim: ClaimArtifact | None,
     latest: int,
     contracts: Mapping[str, CaptureContract],
 ) -> tuple[SourceContribution | None, frozenset[str]]:
@@ -271,7 +271,7 @@ def _contribution(
 def build_sources_ledger(
     instance: PlaybillInstance,
     *,
-    claims: Mapping[str, ClaimArtifactAny],
+    claims: Mapping[str, ClaimArtifact],
     latest: Mapping[str, int],
     contracts: Mapping[str, CaptureContract],
     documents: Collection[str],
@@ -294,7 +294,7 @@ def update_sources_ledger(
     instance: PlaybillInstance,
     state: SourcesLedgerState,
     *,
-    claims: Mapping[str, ClaimArtifactAny],
+    claims: Mapping[str, ClaimArtifact],
     latest: Mapping[str, int],
     contracts: Mapping[str, CaptureContract],
     documents: Collection[str],

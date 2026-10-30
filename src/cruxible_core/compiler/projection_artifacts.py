@@ -70,7 +70,7 @@ from cruxible_core.query.explanation import (
 from cruxible_core.storage.cas import BodyAccessContext, BodyProjectionProtocol
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts.claims import ClaimArtifactAny
+    from cruxible_client.contracts.claims import ClaimArtifact
     from cruxible_core.indexes.projection import AcceptedCoordinate
     from cruxible_core.proposals.settlement import ChangeSetRecord
 
@@ -361,7 +361,7 @@ def _procedure_node_span(
 
 
 def _claim_static_facts(
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     path: str,
     input_digest: str,
@@ -369,7 +369,7 @@ def _claim_static_facts(
     statement_digest: str,
 ) -> tuple[ProjectionFact, ...]:
     """Compile only byte-dependent Claim facts; acceptance proofs stay per-build."""
-    from cruxible_client.contracts.claims import ClaimArtifact, claim_statement_address
+    from cruxible_client.contracts.claims import claim_statement_address
 
     identity = claim.identity.qualified
     facts: list[ProjectionFact] = []
@@ -412,7 +412,7 @@ def _claim_static_facts(
                     "pins": [pin.model_dump(mode="json") for pin in claim.pins],
                     **(
                         {"retirement": claim.retirement.model_dump(mode="json")}
-                        if isinstance(claim, ClaimArtifact)
+                        if claim.retirement is not None
                         else {}
                     ),
                 },

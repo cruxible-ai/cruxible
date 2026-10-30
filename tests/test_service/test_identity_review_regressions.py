@@ -1433,14 +1433,14 @@ def _judged(
 
 
 @pytest.mark.parametrize("role", ["slug", "title"])
-def test_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
+def test_the_claim_law_admits_a_claim_retired_with_its_subject(
     instance: PlaybillInstance, role: str
 ) -> None:
     """``slug`` is the key Claim core retires with the Subject; ``title`` an ordinary
     Claim the change retires itself. Both admit under the installed revision.
     """
 
-    from cruxible_client.contracts.laws import CLAIM_LAW_V3_REVISION_11
+    from cruxible_client.contracts.laws import CLAIM_LAW
 
     trees, claims = _retirement_candidate(instance, "epsilon")
     current = _judged(instance, trees, None)
@@ -1453,12 +1453,12 @@ def test_claim_law_revision_11_admits_a_claim_retired_with_its_subject(
         )
         for member in current.candidate.members
     }
-    assert recorded[claims[role]][1] == CLAIM_LAW_V3_REVISION_11.digest
+    assert recorded[claims[role]][1] == CLAIM_LAW.digest
 
     def at(revision: Any) -> dict[str, tuple[str, str]]:
         return {**recorded, claims[role]: (revision.identifier, revision.digest)}
 
-    assert _judged(instance, trees, at(CLAIM_LAW_V3_REVISION_11)).candidate is not None
+    assert _judged(instance, trees, at(CLAIM_LAW)).candidate is not None
 
 
 # E-b delta-4 F-002: a carried key Claim composes with later lifecycle changes.

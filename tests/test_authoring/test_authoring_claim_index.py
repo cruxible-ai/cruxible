@@ -16,9 +16,10 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionMember,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimStatement,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_path,
     claim_statement_digest,
     parse_claim,
@@ -47,7 +48,7 @@ from tests.test_claims.test_claim_type_migrations_in_change_sets import (
 )
 
 
-def _changed(claim: ClaimArtifactV2, **statement_fields: object) -> ClaimArtifactV2:
+def _changed(claim: ClaimArtifact, **statement_fields: object) -> ClaimArtifact:
     if "predicate" in statement_fields:
         statement_fields["claim_type"] = ArtifactIdentity(
             kind="ClaimType", name=str(statement_fields["predicate"])
@@ -58,9 +59,16 @@ def _changed(claim: ClaimArtifactV2, **statement_fields: object) -> ClaimArtifac
     return claim.model_copy(update={"statement": statement})
 
 
-def _retired(claim: ClaimArtifactV2) -> ClaimArtifactV2:
-    return claim.model_copy(
-        update={"lifecycle": claim.lifecycle.model_copy(update={"state": "retired"})}
+def _retired(claim: ClaimArtifact) -> ClaimArtifact:
+    return ClaimArtifact.model_validate(
+        {
+            **claim.model_dump(mode="python"),
+            "lifecycle": {
+                "state": "retired",
+                "predecessor_digest": claim_artifact_digest(claim).tagged,
+            },
+            "retirement": {"reason": "was-wrong"},
+        }
     )
 
 

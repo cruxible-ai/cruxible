@@ -15,7 +15,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     LiteralClaimObject,
     claim_path,
     claim_statement_address,
@@ -155,7 +155,7 @@ def service_predict_playbill(
 
 def _observation_matches(
     declaration: ResolutionContract,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
 ) -> bool:
     statement = claim.statement
     selector = declaration.observation

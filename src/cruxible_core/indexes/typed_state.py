@@ -780,7 +780,6 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
     from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
     from cruxible_client.contracts.claims import (
         ClaimArtifact,
-        ClaimArtifactV2,
     )
     from cruxible_client.contracts.discovery import normalize_discovery_term as normal
     from cruxible_client.contracts.semantic import SemanticAddress
@@ -807,7 +806,7 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
         rows.add((identity, path, "identity", identity, identity))
         rows.add((identity, path, "structural_signature", "subject:" + signature, signature))
         rows.add((identity, path, "canonical_token", normal(source.subject_id), source.subject_id))
-    elif isinstance(source, (ClaimArtifactV2, ClaimArtifact)):
+    elif isinstance(source, ClaimArtifact):
         if source.lifecycle.state != "live":
             return ()
         rows.update(statement_vocabulary_terms(source.identity.qualified, source.statement))

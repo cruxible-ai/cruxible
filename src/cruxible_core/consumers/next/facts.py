@@ -61,7 +61,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_verdict_v1_compat,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_citation_references,
@@ -443,7 +443,7 @@ def _cursors_hold(instance: Any, cursors: _Cursors, heads: ReadHeads) -> bool:
 class _Facts:
     """One Claim's facts at one instant, and everything they read."""
 
-    claim: ClaimArtifactAny
+    claim: ClaimArtifact
     row: dict[str, Any]
     reads: frozenset[str]
     capture_bodies: dict[str, dict[str, Any] | None]
@@ -502,7 +502,7 @@ def _citation_row(claim_id: str, commitment: Any) -> tuple[Any, ...]:
 def _claim_facts(
     instance: Any,
     context: ClaimVerdictReadContext,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     at: datetime,
     stored: Mapping[str, Any] | None,
@@ -697,7 +697,7 @@ def _claim_facts(
 def _door_reads(
     instance: Any,
     context: ClaimVerdictReadContext,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     door_captures: Iterable[str],
     stored: Mapping[str, Any] | None,
@@ -771,7 +771,7 @@ class _SlotResult:
 def _resolve_slot(
     instance: Any,
     context: ClaimVerdictReadContext,
-    members: Sequence[ClaimArtifactAny],
+    members: Sequence[ClaimArtifact],
     verdicts: Mapping[str, ClaimVerdictResultAny | None],
     type_digests: Mapping[str, str | None],
     *,
@@ -806,7 +806,7 @@ def _resolve_slot(
         )
     except CruxibleError as exc:
         return _SlotResult(names, None, type_digest, None, (_error_code(exc), str(exc)))
-    by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
+    by_qualifier: dict[str | None, list[ClaimArtifact]] = defaultdict(list)
     for claim in members:
         by_qualifier[claim.statement.qualifier].append(claim)
     slots = {
@@ -826,7 +826,7 @@ def _resolve_slot(
     )
 
 
-def _prefetch(context: ClaimVerdictReadContext, claims: Iterable[ClaimArtifactAny]) -> None:
+def _prefetch(context: ClaimVerdictReadContext, claims: Iterable[ClaimArtifact]) -> None:
     from cruxible_client.contracts.claim_types import claim_type_path
 
     batch = tuple(claims)
@@ -1277,7 +1277,7 @@ def _touched(
 
 def _slot_members(
     instance: Any, context: ClaimVerdictReadContext, res_slot: str
-) -> list[ClaimArtifactAny]:
+) -> list[ClaimArtifact]:
     """The live Claims in one (predicate, Subject) slot at the coordinate: one index seek."""
 
     key = json.loads(res_slot)
@@ -1391,7 +1391,7 @@ def _derive(
 
     delta = _Delta()
     claim_types: dict[str, Any] = {}
-    present: list[ClaimArtifactAny] = []
+    present: list[ClaimArtifact] = []
     for identity in sorted(set(claim_ids)):
         try:
             present.append(context.claim(identity))

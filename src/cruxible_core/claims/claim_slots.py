@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable, Literal
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import ClaimArtifactAny
+from cruxible_client.contracts.claims import ClaimArtifact
 
 ClaimSlotResolution = Literal["empty", "single", "unresolved"]
 ClaimSlotMemberState = Literal["accepted_current", "conflicted", "absent"]
@@ -24,7 +24,7 @@ class ClaimSlotClassification:
     single_object: object | None
 
 
-def classify_claim_slot(claims: Iterable[ClaimArtifactAny]) -> ClaimSlotClassification:
+def classify_claim_slot(claims: Iterable[ClaimArtifact]) -> ClaimSlotClassification:
     """Classify one already-partitioned ``(subject,predicate,qualifier)`` slot.
 
     Multiple Claims making the same statement support one contender.  This is

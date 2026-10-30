@@ -22,8 +22,8 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
-    CLAIM_LAW_V2_REVISION_10,
-    CLAIM_LAW_V3_REVISION_11,
+    CLAIM_ACCEPTANCE_LAW,
+    CLAIM_LAW,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
     CLAIM_TYPE_V4_ACCEPTANCE_LAW,
@@ -32,8 +32,6 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_V7_ACCEPTANCE_LAW,
     CLAIM_TYPE_V8_ACCEPTANCE_LAW,
     CLAIM_TYPE_V9_ACCEPTANCE_LAW,
-    CLAIM_V2_ACCEPTANCE_LAW,
-    CLAIM_V3_ACCEPTANCE_LAW,
     CONTRACT_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -217,18 +215,11 @@ LAW_COORDINATES: tuple[
         "sha256:dafcf7d1104fec1da02c423478d801fe7e4060e78319ebe152d4789a41e2f25e",
     ),
     (
-        CLAIM_V2_ACCEPTANCE_LAW,
-        "playbill.claim.v2",
-        "playbill-claim-v2",
-        10,
-        "sha256:d2d8bde91f63883aadd803b9c2794ae5a8cb310e3319c5e5a89610d7ed7dfb31",
-    ),
-    (
-        CLAIM_V3_ACCEPTANCE_LAW,
-        "playbill.claim.v3",
-        "playbill-claim-v3",
-        11,
-        "sha256:1a75706bf54bbd681ed4da2c68f4050804904e417a2dcead8691a655e0953a00",
+        CLAIM_ACCEPTANCE_LAW,
+        "playbill.claim.v4",
+        "playbill-claim-v4",
+        1,
+        "sha256:94302db5a6cc0ce821965b5c1ba57717d494fc502f9959b11591ff95ce72eb82",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -342,8 +333,7 @@ LAW_COORDINATES += (
 def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     """One installed law per artifact tag, and nothing else in the registry."""
 
-    assert CLAIM_LAW_V3_REVISION_11 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
-    assert CLAIM_LAW_V2_REVISION_10 == CLAIM_V2_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW == CLAIM_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()
     seen_tags: set[str] = set()
     for law, identifier, artifact_tag, revision, expected_digest in LAW_COORDINATES:
@@ -369,16 +359,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f"
+    expected = "sha256:014d2d38585615a14144eda7f57ff500421d98a411b25014f10f0b64f405dd90"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 38,
+            "semantic_revision": 39,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "admitted-run-v1",
+            "revision_name": "claim-grammar-v1",
         },
     )
     assert computed == expected
@@ -423,14 +413,16 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "admitted-run-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "admitted-run-v1"
+    assert CURRENT_COMPILER_REVISION == "claim-grammar-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "claim-grammar-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
         "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924",
         # Revision 37 (merkle-genesis-v1): the versioned admitted-run carriers.
         "sha256:db1e61201a7691c12fd5a1e269040455ba4505dd4341ada115a4f2a790c8e942",
+        # Revision 38 (admitted-run-v1): the versioned Claim and authoring grammar.
+        "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f",
     ):
         earlier = CompilerCoordinate(rule_digest=earlier_digest)
         assert compiler_revision_label(earlier) is None

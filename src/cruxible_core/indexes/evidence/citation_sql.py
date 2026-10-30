@@ -309,8 +309,8 @@ def populate_citations(
                         identity,
                         reference.citation_id,
                         digest,
-                        getattr(reference, "origin", "legacy"),
-                        getattr(reference, "role", "legacy"),
+                        reference.origin,
+                        reference.role,
                     )
                 )
                 groups = groups_of.get(digest)

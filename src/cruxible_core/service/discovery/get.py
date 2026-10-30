@@ -43,8 +43,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimBacking,
     ClaimRetirementReason,
     ExactContentClaimObject,
     NoneClaimObject,
@@ -1078,7 +1076,7 @@ def _value_key(row: ClaimValueRecord) -> str:
     return repr(_claim_value(row))
 
 
-def _artifact_value(claim: ClaimArtifactAny) -> object:
+def _artifact_value(claim: ClaimArtifact) -> object:
     obj = claim.statement.object
     if isinstance(obj, SubjectClaimObject):
         return _subject_ref(obj.address.artifact_path)
@@ -1136,7 +1134,7 @@ def _claim_card(
     content: ExactContentReader,
 ) -> GetClaimCard:
     with instance.bind_accepted_projection(coordinate) as projection:
-        claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
         row = projection.typed.envelope(resolved.identity)
     statement = claim.statement
     subject_path = statement.subject.artifact_path
@@ -1158,7 +1156,7 @@ def _claim_card(
     with instance.bind_accepted_projection(coordinate) as projection:
         accepted_predicates = _live_predicates(projection)
         contenders = tuple(
-            cast(ClaimArtifactAny, projection.typed.source(f"Claim:{item.claim_id}"))
+            cast(ClaimArtifact, projection.typed.source(f"Claim:{item.claim_id}"))
             for item in slot
             if item.claim_id != claim.identity.name
         )
@@ -1240,13 +1238,13 @@ def _subject_card(
         shell = cast(SubjectShell, projection.typed.source(resolved.identity))
         accepted_predicates = _live_predicates(projection)
         claim_types: dict[str, ClaimType] = {}
-        claims: list[ClaimArtifactAny] = []
+        claims: list[ClaimArtifact] = []
         for item in rows:
             if item.predicate not in claim_types:
                 claim_types[item.predicate] = cast(
                     ClaimType, projection.typed.source(f"ClaimType:{item.predicate}")
                 )
-            claims.append(cast(ClaimArtifactAny, projection.typed.source(f"Claim:{item.claim_id}")))
+            claims.append(cast(ClaimArtifact, projection.typed.source(f"Claim:{item.claim_id}")))
         incoming = int(
             projection.typed.connection.execute(
                 "SELECT count(*) FROM claims WHERE object_kind='subject' AND object_path=? "
@@ -2015,7 +2013,7 @@ def _claim_evidence(
         for item in explanation.attestation_accounts
     )
     with instance.bind_accepted_projection(coordinate) as projection:
-        claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
+        claim = cast(ClaimArtifact, projection.typed.source(resolved.identity))
     value, content_digest = _shown(claim.statement.object, lambda: _artifact_value(claim), content)
     return GetEvidence(
         value=value,
@@ -2101,9 +2099,9 @@ class _ClaimVersions:
                 continue
             located.append(location)
         self.locations = tuple(located)
-        self._claims: dict[int, ClaimArtifactAny] = {}
+        self._claims: dict[int, ClaimArtifact] = {}
 
-    def claim(self, index: int) -> ClaimArtifactAny:
+    def claim(self, index: int) -> ClaimArtifact:
         """Revision ``index`` (oldest first), verified against its accepted record member."""
 
         if index not in self._claims:
@@ -2129,7 +2127,7 @@ class _ClaimVersions:
 
         claim = self.claim(index)
         if claim.lifecycle.state == "retired":
-            return "retired", claim.retirement.reason if isinstance(claim, ClaimArtifact) else None
+            return "retired", None if claim.retirement is None else claim.retirement.reason
         if index == 0:
             return "stated", None
         before = self.claim(index - 1)
@@ -2144,10 +2142,6 @@ class _ClaimVersions:
         if index == 0:
             return None
         claim, before = self.claim(index), self.claim(index - 1)
-        if not isinstance(claim.backing, ClaimBacking) or not isinstance(
-            before.backing, ClaimBacking
-        ):
-            return None
         current = {item.citation_id for item in claim.backing.citations}
         previous = {item.citation_id for item in before.backing.citations}
         if previous <= current:

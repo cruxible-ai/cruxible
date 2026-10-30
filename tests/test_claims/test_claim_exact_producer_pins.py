@@ -29,7 +29,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import AcceptedClaimType, ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import (
     AcceptedSubject,
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
@@ -144,7 +144,11 @@ def _claim_type(contract_digest: str) -> ClaimType:
 
 
 def _judge_claim_pinning(
-    tmp_path: Path, *, pinned_procedure_digest: str, providers: object = None
+    tmp_path: Path,
+    *,
+    pinned_procedure_digest: str,
+    providers: object = None,
+    uncited: bool = False,
 ) -> tuple[str, tuple[str, ...]]:
     """Build a Procedure-produced Capture (recorded at P1), a Claim citing it
     and pinning ``pinned_procedure_digest``, with the producer's head at P2;
@@ -182,7 +186,7 @@ def _judge_claim_pinning(
 
     claim_id = "CLM-" + "a" * 32
     path = claim_path(claim_id)
-    claim = ClaimArtifactV2(
+    claim = ClaimArtifact(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
@@ -199,7 +203,9 @@ def _judge_claim_pinning(
                 subject_content_digest=subject_digest(shell).tagged, observed_at=OBSERVED_AT
             ),
             capture_digests=(built.capture_digest,),
-            citations=(
+            citations=()
+            if uncited
+            else (
                 build_claim_citation(
                     ArtifactIdentity(kind="Claim", name=claim_id),
                     capture_digest=built.capture_digest,
@@ -293,6 +299,14 @@ def test_a_claim_pinning_the_exact_version_that_produced_its_capture_is_accepted
 ) -> None:
     verdict, codes = _judge_claim_pinning(tmp_path, pinned_procedure_digest=P1)
     assert verdict == "accepted", codes
+
+
+def test_a_backing_capture_without_an_explicit_citation_is_refused(tmp_path: Path) -> None:
+    """No legacy reference is synthesized: every backing Capture names its citation."""
+
+    verdict, codes = _judge_claim_pinning(tmp_path, pinned_procedure_digest=P1, uncited=True)
+    assert verdict == "refused"
+    assert "cruxible.claim.citation_set_incomplete" in codes
 
 
 def test_a_claim_pinning_the_producers_head_instead_of_what_ran_is_refused(

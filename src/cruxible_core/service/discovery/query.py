@@ -24,7 +24,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactAny,
+    ClaimArtifact,
     ClaimLawEvidenceAny,
     claim_artifact_digest,
     claim_statement_digest,
@@ -145,7 +145,7 @@ def _fact_row(
     readers: Mapping[str, ExternalSourceReaderProtocol],
     evidence: ClaimLawEvidenceAny,
     history: ClaimReadHistoryIndex,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestation, ...],
     store: Any = None,
@@ -326,7 +326,7 @@ class _AcceptedQueryFactsRead:
         self._subject_paths_by_kind = False
         self._history: ClaimReadHistoryIndex | None = None
         self._attestations: dict[tuple[str, str], list[ClaimAttestation]] = {}
-        self._claims: dict[str, ClaimArtifactAny] = {}
+        self._claims: dict[str, ClaimArtifact] = {}
         self._claim_types: dict[str, ClaimType] = {}
         self._rows: dict[str, ClaimFactRowV1] = {}
         self._results: dict[bool, ClaimQueryFactsV1] = {}
@@ -381,7 +381,7 @@ class _AcceptedQueryFactsRead:
         """This request's verdict read context, once ``build`` has read through one."""
         return self._context
 
-    def live_claims(self) -> tuple[ClaimArtifactAny, ...]:
+    def live_claims(self) -> tuple[ClaimArtifact, ...]:
         """Return the source Claims already read by this request's live fact fold."""
         self.build()
         return tuple(

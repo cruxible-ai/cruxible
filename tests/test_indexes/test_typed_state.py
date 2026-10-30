@@ -427,7 +427,7 @@ def _claim_row(number: int, predicate: str) -> tuple[object, ...]:
     return (
         f"Claim:CLM-{number:032d}",
         f"claims/{number:02d}/CLM-{number:032d}.json",
-        "playbill-claim-v3",
+        "playbill-claim-v4",
         f"sha256:{number:064d}",
         1,
         "live",

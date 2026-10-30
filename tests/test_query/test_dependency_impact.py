@@ -28,9 +28,10 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimReferentContext,
+    ClaimRetirementAttribution,
     ClaimStatement,
     LiteralClaimObject,
     claim_artifact_digest,
@@ -99,7 +100,7 @@ def _claim(
     digest = claim_type_digest(contract).tagged
     claim_id = f"CLM-{index:032x}"
     subject_row = subject("project.work_item", item)
-    artifact = ClaimArtifactV2(
+    artifact = ClaimArtifact(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_row.path),
@@ -119,6 +120,11 @@ def _claim(
         ),
         pins=(ArtifactPin(role="claim-type", target=contract.identity, artifact_digest=digest),),
         lifecycle=lifecycle,
+        retirement=(
+            ClaimRetirementAttribution(reason="was-rescinded")
+            if lifecycle.state == "retired"
+            else None
+        ),
     )
     return ClaimFactRowV1(
         accepted=AcceptedClaim(
@@ -372,7 +378,7 @@ def test_explicit_retired_source_scope_keeps_only_live_claim_dependents() -> Non
         UNRELATED_INDEX,
         item="wi-3",
         value="old derivative",
-        lifecycle=ArtifactLifecycle(state="retired"),
+        lifecycle=ArtifactLifecycle(state="retired", predecessor_digest="sha256:" + "ee" * 32),
         input_digests=(v1.accepted.artifact_digest,),
     )
     facts = _facts((retired, _derived(), retired_dependent), generation="55")

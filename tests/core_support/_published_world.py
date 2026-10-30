@@ -21,7 +21,7 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     build_claim_citation,
     claim_artifact_digest,
@@ -101,7 +101,7 @@ def publish_copy_claim(
     path = claim_path(intent.semantic_identity)
     tree = instance.tree_at(base.git_oid)
     claim = parse_claim(tree[path], path=path)
-    assert isinstance(claim, ClaimArtifactV2)
+    assert isinstance(claim, ClaimArtifact)
     assert isinstance(claim.backing, ClaimBacking)
     selected = b"ready"
     selected_digest = _digest(selected)
@@ -209,13 +209,15 @@ def retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-unt
     path = claim_path(claim_id)
     tree = instance.tree_at(base.git_oid)
     claim = parse_claim(tree[path], path=path)
-    assert isinstance(claim, ClaimArtifactV2)
-    retired = claim.model_copy(
-        update={
+    assert isinstance(claim, ClaimArtifact)
+    retired = ClaimArtifact.model_validate(
+        {
+            **claim.model_dump(mode="python"),
             "lifecycle": ArtifactLifecycle(
                 state="retired",
                 predecessor_digest=claim_artifact_digest(claim).tagged,
-            )
+            ),
+            "retirement": {"reason": "was-rescinded"},
         }
     )
     tree[path] = render_claim(retired)

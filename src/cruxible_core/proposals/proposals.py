@@ -87,7 +87,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimFormatError,
     ClaimLawEvidenceAny,
     ExactContentClaimObject,
@@ -130,8 +129,6 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
-    CLAIM_LAW_V2_REVISION_10,
-    CLAIM_LAW_V3_REVISION_11,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     AcceptanceLawRegistry,
@@ -1020,7 +1017,7 @@ def _effective_claim_values(
     tree: Mapping[str, bytes],
     *,
     evaluation_time: str,
-    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] | None = None,
+    parsed_claims: dict[tuple[str, bytes], ClaimArtifact] | None = None,
 ) -> dict[str, dict[str, tuple[object, ...]]]:
     """Project live Claim objects by exact Subject and predicate for policy law.
 
@@ -1265,7 +1262,7 @@ def _claim_admission_evaluations(
 ]:
     """Evaluate the authored ClaimType policy for each changed Claim member."""
 
-    changed_by_subject: dict[str, list[tuple[str, ClaimArtifactAny]]] = {}
+    changed_by_subject: dict[str, list[tuple[str, ClaimArtifact]]] = {}
     for path in scope:
         if not _CLAIM_PATH_RE.fullmatch(path) or path not in candidate_tree:
             continue
@@ -1351,7 +1348,7 @@ def _claim_admission_evaluations(
                 and candidate_claim_index is not None
             ):
                 if subject_path not in subject_policy_values:
-                    parsed_claims: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+                    parsed_claims: dict[tuple[str, bytes], ClaimArtifact] = {}
                     parent_view = _effective_claim_values(
                         {
                             path: current_tree[path]
@@ -3267,6 +3264,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
                 ),
             )
         )
+    # The one Claim law reads which behaviours apply off the Claim itself: an
+    # attributed retirement, or a live Claim.
+    retiring = claim.retirement is not None
     law = evaluate_claim_law(
         claim,
         path=context.path,
@@ -3287,16 +3287,14 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_coordinate=context.accepted_coordinate(),
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
-        allow_claim_type_retirement_shape_exemption=(
-            installed.coordinate == CLAIM_LAW_V3_REVISION_11
-        ),
+        allow_claim_type_retirement_shape_exemption=retiring,
         historical_capture_contract=historical_capture_contract_resolver(
             context.historical_artifact_provider, context.accepted_coordinate()
         ),
         claim_type_v7_semantics=True,
-        # Revision 11 alone: a Claim retired with its Subject, or after a
-        # successor carried it, names a version of that Subject's lineage.
-        subject_lifecycle_retirement=installed.coordinate == CLAIM_LAW_V3_REVISION_11,
+        # An attributed retirement alone: a Claim retired with its Subject, or
+        # after a successor carried it, names a version of that Subject's lineage.
+        subject_lifecycle_retirement=retiring,
         accepted_subject_version=(
             _subject_versions(
                 context.historical_artifact_provider,
@@ -3304,13 +3302,13 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
                 current_tree=context.current_tree,
                 candidate_tree=context.candidate_tree,
             )
-            if installed.coordinate == CLAIM_LAW_V3_REVISION_11
+            if retiring
             else None
         ),
-        # Claim law v2: a key Claim written with its Subject's creation is
+        # A live Claim: a key Claim written with its Subject's creation is
         # covered by the creation (no evidence rule must admit it).
         subject_creation_key=(
-            installed.coordinate == CLAIM_LAW_V2_REVISION_10
+            not retiring
             and is_subject_creation_key_claim(
                 context.current_tree,
                 context.candidate_tree,
@@ -3323,12 +3321,12 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # an earlier law is not an accepted citation. Only recovery of a
         # generation main already holds re-derives it without the proof.
         require_new_citation_proof=not context.replaying_accepted,
-        # Claim law v2: a same-statement revision may replace a citation with
+        # A live Claim: a same-statement revision may replace a citation with
         # one of the text it rests on now.
-        claim_rebind=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
-        # Claim law v2: a `none` type's origin-only evidence needs no current
+        claim_rebind=not retiring,
+        # A live Claim: a `none` type's origin-only evidence needs no current
         # replay (adjudication rule v3).
-        origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
+        origin_replay_exempt=not retiring,
         erasure_records=_erasure_records(context),
         erasure_contract=_erasure_authority(context),
     )
@@ -4540,7 +4538,7 @@ def _evaluate_scoped_members(
             continue
         previous_claim = parse_claim(parent_content, path=path)
         candidate_claim = parse_claim(candidate_content, path=path)
-        if not isinstance(candidate_claim, ClaimArtifact):
+        if candidate_claim.retirement is None:
             continue
         for previous_pin, candidate_pin in claim_retirement_pin_digest_updates(
             candidate_claim,

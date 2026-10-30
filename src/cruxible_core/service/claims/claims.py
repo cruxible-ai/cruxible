@@ -29,8 +29,6 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimArtifactV2,
     ClaimCitation,
     ClaimFormatError,
     ClaimLawEvidenceAny,
@@ -192,7 +190,7 @@ class PlaybillClaimGroupResolution:
     status: Literal["resolved", "unresolved", "refused"]
     selected_claim_identities: tuple[str, ...]
     contender_claim_identities: tuple[str, ...]
-    claims: tuple[ClaimArtifactAny, ...]
+    claims: tuple[ClaimArtifact, ...]
     verdicts: tuple[ClaimVerdictResultAny, ...]
 
 
@@ -297,7 +295,7 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
 
 def _claim_from_view(
     view: PlaybillClaimView | ClaimViewRecord | ClientClaimViewV2,
-) -> ClaimArtifactAny:
+) -> ClaimArtifact:
     path = view.envelope.get("path")
     if not isinstance(path, str):
         raise ProposalIntegrityError("Claim projection envelope has no path")
@@ -334,15 +332,11 @@ def _claim_from_view(
     ):
         raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
     artifact_format = view.envelope.get("format_tag")
-    if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
-    elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifact
-    else:
+    if artifact_format != ClaimArtifact.model_fields["artifact_format"].default:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
         )
-    return model.model_validate(
+    return ClaimArtifact.model_validate(
         {
             "artifact_format": artifact_format,
             "identity": {
@@ -354,8 +348,8 @@ def _claim_from_view(
             "pins": lifecycle.get("pins"),
             "lifecycle": lifecycle.get("lifecycle"),
             **(
-                {"retirement": lifecycle.get("retirement")}
-                if artifact_format == "playbill-claim-v3"
+                {"retirement": lifecycle["retirement"]}
+                if lifecycle.get("retirement") is not None
                 else {}
             ),
         }
@@ -598,7 +592,7 @@ def _accepted_generation_time(
 def _claim_admission_tree(
     instance: PlaybillInstance,
     *,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     coordinate: AcceptedProjectionCoordinate,
 ) -> dict[str, bytes]:
     """Read the ClaimType and CaptureContracts cited by this exact accepted Claim."""
@@ -638,7 +632,7 @@ def _superseded_contract(
 def _claim_admission_accounts(
     instance: PlaybillInstance,
     *,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     tree: Mapping[str, bytes],
     law: ClaimLawEvidenceAny,
     bodies: ContentAddressedBodyStore | None = None,
@@ -744,7 +738,7 @@ def resolve_playbill_claim_group(
     predicate: str,
     coordinate: AcceptedProjectionCoordinate,
     evaluated_at: datetime,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
@@ -874,7 +868,7 @@ def _attestation_count(
 def claim_attestation_accounts(
     instance: PlaybillInstance,
     *,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     claim_type: ClaimType,
     exact_attestations: tuple[ClaimAttestationEvidence, ...],
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...],

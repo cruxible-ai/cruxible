@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 class SealedClaimMember:
     path: str
     content: bytes
-    claim: ClaimArtifactAny
+    claim: ClaimArtifact
     input_digest: str
     artifact_digest: str
     statement_digest: str

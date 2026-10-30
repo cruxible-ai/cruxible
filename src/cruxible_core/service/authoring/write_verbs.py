@@ -95,8 +95,7 @@ from cruxible_client.contracts.claim_types import (
     effective_evidence_requirement,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
-    ClaimBacking,
+    ClaimArtifact,
     ClaimRetireDependent,
     ExactContentClaimObject,
     LiteralClaimObject,
@@ -2424,7 +2423,7 @@ class _Planner:
     def _revising(self) -> set[str]:
         return {item.revises for item in self.plan.changes if item.revises is not None}
 
-    def _live_claim(self, index: int, claim_id: str, *, path: str) -> ClaimArtifactAny:
+    def _live_claim(self, index: int, claim_id: str, *, path: str) -> ClaimArtifact:
         """One live Claim by ID at the head, refusing when it moved since the read."""
 
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
@@ -2613,7 +2612,7 @@ class _Planner:
                 repair="Re-bind through the CLI, the SDK or the MCP adapter, which read the file",
                 field_path=f"{prefix}.evidence",
             )
-        if statement.role == "derivation" or not isinstance(claim.backing, ClaimBacking):
+        if statement.role == "derivation":
             raise _refuse(
                 "cruxible.write.rebind_unsupported",
                 f"{claim_id} is "

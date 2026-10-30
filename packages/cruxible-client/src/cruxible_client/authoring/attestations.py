@@ -24,8 +24,6 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimArtifactV2,
     ClaimUnsupportedFormatError,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -265,7 +263,7 @@ def accepted_proof(
     return dict(result.proof)
 
 
-def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
+def _claim_from_public_view(view: Any) -> ClaimArtifact:
     facts = {item.get("schema_id"): item.get("value") for item in view.facts}
     identity = view.envelope.get("identity")
     artifact_format = view.envelope.get("format_tag")
@@ -280,15 +278,11 @@ def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
         and isinstance(lifecycle, dict)
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
-    if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
-    elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifact
-    else:
+    if artifact_format != ClaimArtifact.model_fields["artifact_format"].default:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
         )
-    return model.model_validate(
+    return ClaimArtifact.model_validate(
         {
             "artifact_format": artifact_format,
             "identity": {"kind": "Claim", "name": identity.removeprefix("Claim:")},
@@ -297,8 +291,8 @@ def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
             "pins": lifecycle.get("pins"),
             "lifecycle": lifecycle.get("lifecycle"),
             **(
-                {"retirement": lifecycle.get("retirement")}
-                if artifact_format == "playbill-claim-v3"
+                {"retirement": lifecycle["retirement"]}
+                if lifecycle.get("retirement") is not None
                 else {}
             ),
         }

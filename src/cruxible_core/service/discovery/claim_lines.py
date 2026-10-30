@@ -14,7 +14,7 @@ from collections.abc import Collection, Sequence
 from typing import Any
 
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -43,7 +43,7 @@ def live_predicates(projection: Any) -> frozenset[str]:
     )
 
 
-def claim_line(claim: ClaimArtifactAny, *, accepted_predicates: Collection[str]) -> ClaimLine:
+def claim_line(claim: ClaimArtifact, *, accepted_predicates: Collection[str]) -> ClaimLine:
     """The text line for one parsed Claim artifact."""
 
     statement = claim.statement

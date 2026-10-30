@@ -32,7 +32,7 @@ from pydantic import TypeAdapter
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -209,7 +209,7 @@ class RowContext:
             {**json.loads(fact["verdict_json"]), "evaluation_time": self.at}
         )
 
-    def claim(self, claim_id: str) -> ClaimArtifactAny | None:
+    def claim(self, claim_id: str) -> ClaimArtifact | None:
         try:
             return self.reads.claim(claim_id)
         except ClaimNotFoundError:
@@ -233,7 +233,7 @@ class RowContext:
             )
         return found
 
-    def slot_members(self, res_slot: str) -> list[ClaimArtifactAny]:
+    def slot_members(self, res_slot: str) -> list[ClaimArtifact]:
         """The live Claims of one (predicate, Subject) slot at the coordinate: one seek."""
 
         key = json.loads(res_slot)
@@ -287,7 +287,7 @@ class RowContext:
         ]
 
 
-def slot_key(claim: ClaimArtifactAny, *, qualifier: bool) -> str:
+def slot_key(claim: ClaimArtifact, *, qualifier: bool) -> str:
     key: dict[str, object] = {
         "predicate": claim.statement.predicate,
         "subject": claim.statement.subject.model_dump(mode="json"),

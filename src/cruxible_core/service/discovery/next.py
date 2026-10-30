@@ -68,7 +68,6 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimLawEvidenceAny,
     LiteralClaimObject,
     SubjectClaimObject,
@@ -1061,7 +1060,7 @@ def _cli_scalar(value: object) -> str:
 
 
 def _claim_set_arguments(
-    claim: ClaimArtifactAny, claim_type: ClaimType | None
+    claim: ClaimArtifact, claim_type: ClaimType | None
 ) -> dict[str, object] | None:
     """The `set` that restates one live Claim, or None where `set` cannot say it.
 
@@ -2169,7 +2168,7 @@ class _Holds:
         instance: PlaybillInstance,
         *,
         coordinate: AcceptedProjectionCoordinate,
-        claims: tuple[ClaimArtifactAny, ...],
+        claims: tuple[ClaimArtifact, ...],
         door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...],
         door_history: Callable[
             [], tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]
@@ -2421,7 +2420,7 @@ def _oracle_claim_rows(
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...],
-    claims: tuple[ClaimArtifactAny, ...] | None,
+    claims: tuple[ClaimArtifact, ...] | None,
     resolution_statuses: Mapping[str, str] | None,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     access_profile: CoverageAccessProfile | None = None,
@@ -2470,7 +2469,7 @@ def claim_unsure_holds(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     evaluation_time: datetime,
     resolution_statuses: Mapping[str, str] | None = None,
 ) -> frozenset[str]:
@@ -2521,7 +2520,7 @@ def _folded_holds(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    live: tuple[ClaimArtifactAny, ...],
+    live: tuple[ClaimArtifact, ...],
     identities: set[str],
     door_head: str,
     evaluation_time: datetime,
@@ -2568,12 +2567,12 @@ def _folded_holds(
 def _with_slot_contenders(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
-) -> tuple[ClaimArtifactAny, ...]:
+    claims: tuple[ClaimArtifact, ...],
+) -> tuple[ClaimArtifact, ...]:
     """These live Claims and every live Claim sharing a (predicate, Subject) slot: one seek each."""
 
     context = ClaimVerdictReadContext(instance, coordinate)
-    found: dict[str, ClaimArtifactAny] = {claim.identity.qualified: claim for claim in claims}
+    found: dict[str, ClaimArtifact] = {claim.identity.qualified: claim for claim in claims}
     with instance.bind_accepted_projection(coordinate) as projection:
         for claim in claims:
             subject = claim.statement.subject
@@ -2655,7 +2654,7 @@ def _claim_attestation_threshold_items(
     *,
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     law_evidence: Mapping[str, ClaimLawEvidenceAny],
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = (),
 ) -> tuple[PlaybillNextItemV1, ...]:
@@ -2695,7 +2694,7 @@ def _claim_threshold_rows(
     *,
     accepted: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     law_evidence: Mapping[str, ClaimLawEvidenceAny],
     claim_types: dict[str, ClaimType],
     evaluation_time: datetime,
@@ -2864,7 +2863,7 @@ def _claim_threshold_rows(
 
 
 def _contradicting_attestation_rows(
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     claim_type: ClaimType,
     *,
     latest: Mapping[str, tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]],
@@ -2946,7 +2945,7 @@ def _claim_items(
     expiring_within: CanonicalDuration,
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = (),
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
-    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    claims: tuple[ClaimArtifact, ...] | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
     access_profile: CoverageAccessProfile | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
@@ -2959,7 +2958,7 @@ def _claim_items(
         listed = service_list_playbill_claims(instance, at=coordinate)
         claims = tuple(_claim_from_view(view) for view in listed.claims)
     claims = tuple(claim for claim in claims if claim.lifecycle.state == "live")
-    groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
+    groups: dict[bytes, list[ClaimArtifact]] = defaultdict(list)
     for claim in claims:
         groups[
             canonical_bytes(
@@ -3013,7 +3012,7 @@ def _claim_slot_rows(
     *,
     coordinate: AcceptedCoordinate,
     internal: AcceptedProjectionCoordinate,
-    group: list[ClaimArtifactAny],
+    group: list[ClaimArtifact],
     resolution_statuses: Mapping[str, str] | None,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None,
     evaluation_time: datetime,
@@ -3279,7 +3278,7 @@ def _contest_repair(
     return options[0].model_copy(update={"alternatives": tuple(options[1:])})
 
 
-def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
+def _qualifier_discriminator(claims: list[ClaimArtifact]) -> str | None:
     """Name the first field whose scalar values separate all semantic contenders."""
 
     contender_values: dict[bytes, Mapping[str, object]] = {}
@@ -3374,7 +3373,7 @@ def _citation_commitments(
     *,
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
-    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    claims: tuple[ClaimArtifact, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> CitationInventory:
     population = (
@@ -3441,7 +3440,7 @@ _CITATION_READER = BodyAccessContext(principal_id="playbill-next", can_read_body
 def claim_citation_commitments(
     instance: PlaybillInstance,
     *,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     coordinate: AcceptedProjectionCoordinate,
     store: Any,
     claim_types: dict[str, ClaimType | None],
@@ -3578,7 +3577,7 @@ def _historical_claim(
     coordinate: AcceptedProjectionCoordinate,
     identity: str,
     digest: str,
-) -> tuple[ClaimArtifactAny, AcceptedProjectionCoordinate] | None:
+) -> tuple[ClaimArtifact, AcceptedProjectionCoordinate] | None:
     """Read one exact retained version, regardless of unrelated generation count."""
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
@@ -3600,7 +3599,7 @@ def _bounded_claim_lineages(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    current_claims: Mapping[str, ClaimArtifactAny],
+    current_claims: Mapping[str, ClaimArtifact],
     max_nodes: int = MAX_DEPENDENCY_LINEAGE_NODES,
 ) -> tuple[dict[str, tuple[str, ...]], frozenset[str]]:
     """Follow indexed predecessors, at most ``max_nodes`` for each lineage.
@@ -3635,7 +3634,7 @@ def _bounded_claim_lineages(
 
 @dataclass(frozen=True)
 class _AttestationLineageArtifact:
-    claim: ClaimArtifactAny
+    claim: ClaimArtifact
     artifact_digest: str
     tree: Mapping[str, bytes]
 
@@ -3962,12 +3961,7 @@ class _DoorFold:
         accounts_by_artifact, account_incomplete = cached_accounts
         lineage_digests = {item.artifact_digest for item in lineage}
         membership_proven = statement.claim_artifact_digest in lineage_digests
-        terminal = bool(
-            membership_proven
-            and lineage
-            and isinstance(lineage[-1].claim, ClaimArtifact)
-            and lineage[-1].claim.lifecycle.state == "retired"
-        )
+        terminal = bool(membership_proven and lineage and lineage[-1].claim.retirement is not None)
         for capture_digest in statement.cited_capture_digests:
             # A Claim that already admits a Capture of the same observed content
             # has this evidence: re-observing it asks nothing new.
@@ -4067,7 +4061,7 @@ def _claim_dependency_items(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfile | None = None,
-    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    claims: tuple[ClaimArtifact, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Coalesce stale recorded backing-input edges through the existing impact walker."""
@@ -4483,7 +4477,7 @@ def _workspace_items(
     evaluation_time: datetime,
     access_profile: CoverageAccessProfile,
     observation: NextWorkspaceObservation | None,
-    claims: tuple[ClaimArtifactAny, ...] | None = None,
+    claims: tuple[ClaimArtifact, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
     served: ServedRows | None = None,
 ) -> tuple[tuple[NextDomain, ...], tuple[PlaybillNextItemV1, ...]]:
@@ -6872,7 +6866,7 @@ def _queue_at(
     # These inputs belong to this evaluation only. A later request constructs a
     # fresh reader so body availability and other mutable evidence are observed.
     facts_reader = _AcceptedQueryFactsRead(instance, coordinate=coordinate)
-    parsed_claims: tuple[ClaimArtifactAny, ...] | None = None
+    parsed_claims: tuple[ClaimArtifact, ...] | None = None
     resolution_statuses: Mapping[str, str] | None = None
     if stored is None:
         try:

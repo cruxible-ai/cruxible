@@ -30,14 +30,14 @@ CURRENT_COMPILER = CompilerCoordinate(
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 38,
+            "semantic_revision": 39,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "admitted-run-v1",
+            "revision_name": "claim-grammar-v1",
         },
     )
 )
 #: Display label only; the digest is the authority.
-CURRENT_COMPILER_REVISION = "admitted-run-v1"
+CURRENT_COMPILER_REVISION = "claim-grammar-v1"
 
 #: The deterministic projection registry the current compiler runs.
 PROJECTION_REGISTRY: ProjectionExtensionRegistry = current_extension_registry()

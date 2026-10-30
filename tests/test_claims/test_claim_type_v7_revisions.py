@@ -43,7 +43,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactAny,
+    ClaimArtifact,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -150,7 +150,7 @@ class _V7World(_World):
         self.accept(tree, name=self.name("say"))
         return parse_claim(tree[path], path=path).identity.name
 
-    def claim(self, claim_id: str) -> ClaimArtifactAny:
+    def claim(self, claim_id: str) -> ClaimArtifact:
         return parse_claim(self.tree()[claim_path(claim_id)], path=claim_path(claim_id))
 
     def claim_type(self) -> ClaimType:
@@ -217,7 +217,7 @@ def world(tmp_path: Path) -> _V7World:
     return _V7World(tmp_path)
 
 
-def _backing_bytes(claim: ClaimArtifactAny) -> bytes:
+def _backing_bytes(claim: ClaimArtifact) -> bytes:
     return canonical_bytes(claim.backing.model_dump(mode="json"))
 
 

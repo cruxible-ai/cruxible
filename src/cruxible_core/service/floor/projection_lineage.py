@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from threading import RLock
 from weakref import WeakKeyDictionary
 
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_artifact_digest, parse_claim
+from cruxible_client.contracts.claims import ClaimArtifact, claim_artifact_digest, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -27,7 +27,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 
 @dataclass(frozen=True)
 class ClaimLineageNode:
-    claim: ClaimArtifactAny
+    claim: ClaimArtifact
     artifact_digest: str
     coordinate: AcceptedCoordinate
     generation: int

@@ -43,7 +43,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.floor import (
@@ -226,7 +226,7 @@ def _claim_type_cards(
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
     at: AcceptedCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
@@ -262,11 +262,11 @@ def _subject_profiles(
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
     at: AcceptedCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
     cardinalities: dict[str, str] = {}
-    grouped: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
+    grouped: dict[bytes, list[ClaimArtifact]] = defaultdict(list)
     for claim in claims:
         grouped[canonical_bytes(claim.statement.subject.model_dump(mode="json"))].append(claim)
         contract_path = claim_type_path(claim.statement.predicate)
@@ -418,7 +418,7 @@ def _discovery_layer(
     coordinate: AcceptedProjectionCoordinate,
     accepted: AcceptedCoordinate,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None,
-) -> tuple[dict[str, bytes], tuple[ClaimArtifactAny, ...]]:
+) -> tuple[dict[str, bytes], tuple[ClaimArtifact, ...]]:
     """The discovery cards: ClaimType cards, Subject profiles, Procedure cards, coverage.
 
     These carry the F5 projection shapes other tools read, digests and

@@ -21,7 +21,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     SubjectClaimObject,
     claim_path,
 )
@@ -89,7 +89,7 @@ def reset_claim_resolution_memo(*, slots: bool = True) -> None:
         memo_clear(_SLOT_MEMO)
 
 
-def _resolution_key(claim: ClaimArtifactAny) -> bytes:
+def _resolution_key(claim: ClaimArtifact) -> bytes:
     return canonical_bytes(
         {
             "predicate": claim.statement.predicate,
@@ -141,7 +141,7 @@ def remembered_resolution_statuses(
 def claim_resolution_statuses(
     instance: PlaybillInstance,
     *,
-    claims: tuple[ClaimArtifactAny, ...],
+    claims: tuple[ClaimArtifact, ...],
     at: AcceptedCoordinate,
     evaluation_time: datetime,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
@@ -201,7 +201,7 @@ def claim_resolution_statuses(
     verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
         {} if verdicts_by_identity is None else verdicts_by_identity
     )
-    live_groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
+    live_groups: dict[bytes, list[ClaimArtifact]] = defaultdict(list)
     statuses: dict[str, ClaimStatus] = {}
     for claim in claims:
         if claim.lifecycle.state == "retired":
@@ -300,7 +300,7 @@ def claim_resolution_statuses(
         finally:
             read_context.stop()
         boundaries.update(group_boundaries)
-        groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
+        groups_by_qualifier: dict[str | None, list[ClaimArtifact]] = defaultdict(list)
         for claim in group:
             groups_by_qualifier[claim.statement.qualifier].append(claim)
         slots = {
@@ -373,7 +373,7 @@ def claim_resolution_statuses(
     return statuses
 
 
-def _slot_members(group: list[ClaimArtifactAny]) -> tuple[str, ...]:
+def _slot_members(group: list[ClaimArtifact]) -> tuple[str, ...]:
     return tuple(sorted(claim.identity.qualified for claim in group))
 
 

@@ -220,12 +220,12 @@ def _judged_verdicts(
 def test_the_claim_law_covers_a_key_claim_by_its_subjects_creation(
     instance: PlaybillInstance,
 ) -> None:
-    from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_10
+    from cruxible_client.contracts.laws import CLAIM_LAW
 
     trees = _creation_candidate(instance)
 
     (current,) = _judged_verdicts(instance, trees, None).values()
-    assert current == (CLAIM_LAW_V2_REVISION_10.digest, "supported")
+    assert current == (CLAIM_LAW.digest, "supported")
 
 
 def test_a_key_claim_about_an_existing_subject_is_not_covered(

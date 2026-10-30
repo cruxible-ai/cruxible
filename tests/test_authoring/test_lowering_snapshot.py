@@ -9,7 +9,13 @@ import pytest
 
 import cruxible_core.authoring.lowering as lowering
 import cruxible_core.derived.derived_state as derived_state
-from cruxible_client.contracts.claims import claim_path, parse_claim, render_claim
+from cruxible_client.contracts.claims import (
+    ClaimRetirementAttribution,
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+    render_claim,
+)
 from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._subject_kind_support import without_keys
@@ -56,7 +62,15 @@ def test_snapshot_index_advances_candidates_without_mutating_accepted_or_sibling
     index = lowering._ClaimPredicateIndex(left)
     assert index.claims_for(original.statement) == (original,)
     retired = original.model_copy(
-        update={"lifecycle": original.lifecycle.model_copy(update={"state": "retired"})}
+        update={
+            "lifecycle": original.lifecycle.model_copy(
+                update={
+                    "state": "retired",
+                    "predecessor_digest": claim_artifact_digest(original).tagged,
+                }
+            ),
+            "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
+        }
     )
     left[path] = render_claim(retired)
     index.advance(left, (path,))

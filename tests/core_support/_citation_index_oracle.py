@@ -13,7 +13,7 @@ from cruxible_client.contracts.captures import CaptureEnvelopeAny, observed_cont
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimCitationReference,
+    ClaimCitation,
     claim_citation_references,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
@@ -105,7 +105,7 @@ def build_evidence_citation_index(
 ) -> EvidenceCitationIndexV1:
     """Turn accepted Capture and Claim facts into the reverse evidence index.
 
-    The Claim side is the reverse of `ClaimBackingV1.capture_digests`: a Claim that
+    The Claim side is the reverse of `ClaimBacking.capture_digests`: a Claim that
     pins a Capture is a citation of that Capture's commitment, and the count of
     such Claims is the bounded dependent count a drift card reports. A Capture
     nobody has pinned yet is still indexed -- it is accepted evidence with no
@@ -175,7 +175,7 @@ def build_evidence_citation_index_v2(
 
     claim_references: dict[
         str,
-        list[tuple[SemanticAddress, ClaimCitationReference]],
+        list[tuple[SemanticAddress, ClaimCitation]],
     ] = {}
     for accepted in claims:
         if accepted.claim.lifecycle.state != "live":

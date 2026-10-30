@@ -33,7 +33,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
@@ -121,7 +121,7 @@ def _addressed_claim(
     contract = claim_type(predicate, object_kind=object_kind)
     digest = claim_type_digest(contract).tagged
     claim_id = f"CLM-{index:032x}"
-    artifact = ClaimArtifactV2(
+    artifact = ClaimArtifact(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=target,

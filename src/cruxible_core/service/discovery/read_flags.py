@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path
+from cruxible_client.contracts.claims import ClaimArtifact, claim_path
 from cruxible_client.contracts.get_reads import ReadFlag
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -85,7 +85,7 @@ def answer_flags(cardinality: str, distinct_values: int) -> tuple[ReadFlag, ...]
 def unsure_holds(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-    claims: Iterable[ClaimArtifactAny],
+    claims: Iterable[ClaimArtifact],
     *,
     statuses: Mapping[str, str] | None,
     evaluation_time: datetime,

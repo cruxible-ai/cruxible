@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.claims import ClaimArtifactV2, ClaimStatement, render_claim
+from cruxible_client.contracts.claims import (
+    ClaimArtifact,
+    ClaimStatement,
+    claim_artifact_digest,
+    render_claim,
+)
 from cruxible_client.contracts.claims import claim_path as claim_artifact_path
 from cruxible_core.authoring.lowering import (
     _same_predicate_claims,
@@ -14,7 +19,7 @@ CAPTURE_DIGEST = "sha256:" + "ab" * 32
 SOURCE_DIGEST = "sha256:" + "cd" * 32
 
 
-def _claim_in_slot(*, claim_id: str, qualifier: str | None) -> ClaimArtifactV2:
+def _claim_in_slot(*, claim_id: str, qualifier: str | None) -> ClaimArtifact:
     base = _claim(
         claim_id=claim_id,
         capture_digest=CAPTURE_DIGEST,
@@ -24,10 +29,10 @@ def _claim_in_slot(*, claim_id: str, qualifier: str | None) -> ClaimArtifactV2:
     statement = ClaimStatement(
         **{**base.statement.model_dump(), "qualifier": qualifier},
     )
-    return ClaimArtifactV2(**{**base.model_dump(), "statement": statement.model_dump()})
+    return ClaimArtifact(**{**base.model_dump(), "statement": statement.model_dump()})
 
 
-def _tree(*claims: ClaimArtifactV2) -> dict[str, bytes]:
+def _tree(*claims: ClaimArtifact) -> dict[str, bytes]:
     return {claim_artifact_path(claim.identity.name): render_claim(claim) for claim in claims}
 
 
@@ -82,10 +87,14 @@ def test_every_qualifier_stays_voluntarily_dispositionable() -> None:
 def test_a_retired_claim_in_the_slot_is_neither_demanded_nor_offerable() -> None:
     live = _claim_in_slot(claim_id="CLM-" + "1" * 32, qualifier=None)
     retired_source = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier=None)
-    retired = ClaimArtifactV2(
+    retired = ClaimArtifact(
         **{
             **retired_source.model_dump(),
-            "lifecycle": {**retired_source.lifecycle.model_dump(), "state": "retired"},
+            "lifecycle": {
+                "state": "retired",
+                "predecessor_digest": claim_artifact_digest(retired_source).tagged,
+            },
+            "retirement": {"reason": "was-wrong"},
         }
     )
     tree = _tree(live, retired)

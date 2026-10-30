@@ -41,7 +41,7 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, claim_type_path
 from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
-from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject
+from cruxible_client.contracts.claims import ClaimArtifact, SubjectClaimObject
 from cruxible_client.contracts.diagnostics import GovernedOperationReference
 from cruxible_client.contracts.discovery import (
     DiscoveryMatchBasisKind,
@@ -502,7 +502,7 @@ def _match_bases(
 
 
 def descriptor_relations(
-    claims: Iterable[ClaimArtifactAny],
+    claims: Iterable[ClaimArtifact],
 ) -> Mapping[bytes, tuple[SemanticRelationV1, ...]]:
     """Index the accepted typed relation edges by the address each end sits on.
 
@@ -765,7 +765,7 @@ def _predicate_verdict(
 
 def _predicate_row(
     predicate: str,
-    rows: Sequence[ClaimArtifactAny],
+    rows: Sequence[ClaimArtifact],
     *,
     cardinalities: Mapping[str, str],
     verdict: str | None,
@@ -809,7 +809,7 @@ def build_subject_profile(
     subject_kind: str,
     subject_id: str,
     artifact_digest: str,
-    claims: Iterable[ClaimArtifactAny] = (),
+    claims: Iterable[ClaimArtifact] = (),
     cardinalities: Mapping[str, str] | None = None,
     relations: tuple[SemanticRelationV1, ...] = (),
     predicate_verdicts: Mapping[str, tuple[str, str]] | None = None,
@@ -831,7 +831,7 @@ def build_subject_profile(
     verdicts = predicate_verdicts or {}
     truncated: set[str] = set()
     reasons: set[str] = set()
-    grouped: dict[str, list[ClaimArtifactAny]] = {}
+    grouped: dict[str, list[ClaimArtifact]] = {}
     for claim in claims:
         if claim.lifecycle.state != "live":
             continue

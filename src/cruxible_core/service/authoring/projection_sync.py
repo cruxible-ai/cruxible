@@ -24,7 +24,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -72,7 +72,7 @@ _LINEAGES: ContextVar[
 ] = ContextVar("block_sync_lineages", default=None)
 # A request's lineage resolver: (path, marker Claim, its digest, its bytes) -> nodes.
 _NODES: ContextVar[
-    tuple[PlaybillInstance, Callable[[str, ClaimArtifactAny, str, bytes], dict[str, _ClaimNode]]]
+    tuple[PlaybillInstance, Callable[[str, ClaimArtifact, str, bytes], dict[str, _ClaimNode]]]
     | None
 ] = ContextVar("block_sync_nodes", default=None)
 
@@ -457,7 +457,7 @@ class ProjectionCheckContext:
         return found
 
     def _nodes(
-        self, path: str, original: ClaimArtifactAny, original_digest: str, raw: bytes
+        self, path: str, original: ClaimArtifact, original_digest: str, raw: bytes
     ) -> dict[str, _ClaimNode]:
         """The marker Claim's lineage at this request's coordinate."""
 

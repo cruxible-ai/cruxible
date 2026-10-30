@@ -25,7 +25,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactV2,
     ClaimRetirementAttribution,
     LiteralClaimObject,
     NoneClaimObject,
@@ -96,7 +95,7 @@ def claim(
     qualifier: str | None = None,
     live: bool = True,
     reason: str = "superseded",
-) -> ClaimArtifactV2 | ClaimArtifact:
+) -> ClaimArtifact:
     """A Claim of ``claim_type``; retired (``live=False``) with an attributed ``reason``."""
 
     claim_id = f"CLM-{number:032x}"
@@ -125,27 +124,25 @@ def claim(
             lifecycle=ArtifactLifecycle(state="retired", predecessor_digest="sha256:" + "0" * 64),
             retirement=ClaimRetirementAttribution.model_validate({"reason": reason}),
         )
-    return ClaimArtifactV2.model_validate(
-        {**base.model_dump(), "statement": statement.model_dump()}
-    )
+    return ClaimArtifact.model_validate({**base.model_dump(), "statement": statement.model_dump()})
 
 
-def runs(number: int, target: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
+def runs(number: int, target: str, **kwargs: Any) -> ClaimArtifact:
     obj = SubjectClaimObject(address=SemanticAddress.whole_artifact(release(target)))
     return claim(number, RUNS_TYPE, obj, **kwargs)
 
 
-def runs_none(number: int, key: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
+def runs_none(number: int, key: str, **kwargs: Any) -> ClaimArtifact:
     return claim(number, RUNS_TYPE, NoneClaimObject(of=LiteralClaimObject(value=key)), **kwargs)
 
 
-def product(number: int, target: str, name: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
+def product(number: int, target: str, name: str, **kwargs: Any) -> ClaimArtifact:
     return claim(
         number, KEY_TYPE, LiteralClaimObject(value=name), subject=release(target), **kwargs
     )
 
 
-def tree(*members: ClaimArtifactV2 | ClaimArtifact | ClaimType) -> dict[str, bytes]:
+def tree(*members: ClaimArtifact | ClaimType) -> dict[str, bytes]:
     found: dict[str, bytes] = {}
     for member in members:
         if isinstance(member, ClaimType):
@@ -157,9 +154,9 @@ def tree(*members: ClaimArtifactV2 | ClaimArtifact | ClaimType) -> dict[str, byt
 
 def judge(
     parent: dict[str, bytes],
-    *changed: ClaimArtifactV2 | ClaimArtifact | ClaimType,
+    *changed: ClaimArtifact | ClaimType,
     base: dict[str, bytes] | None = None,
-    contend: tuple[ClaimArtifactV2 | ClaimArtifact, ...] = (),
+    contend: tuple[ClaimArtifact, ...] = (),
     base_changes: frozenset[str] | None = None,
 ) -> list[str]:
     """The polarity codes of ``changed`` landing on ``parent``, made against ``base``.
@@ -220,12 +217,12 @@ def _put_type(connection: sqlite3.Connection, claim_type: ClaimType) -> None:
     )
 
 
-def _put_claim(connection: sqlite3.Connection, artifact: ClaimArtifactV2 | ClaimArtifact) -> None:
+def _put_claim(connection: sqlite3.Connection, artifact: ClaimArtifact) -> None:
     fields = _claim_fields(artifact)
     fields.update(
         identity=artifact.identity.qualified,
         path=claim_path(artifact.identity.name),
-        format_tag="playbill-claim-v2",
+        format_tag="playbill-claim-v4",
         artifact_digest="sha256:" + "00" * 32,
         revision=1,
         lifecycle=artifact.lifecycle.state,

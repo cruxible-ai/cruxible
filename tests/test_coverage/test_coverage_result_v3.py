@@ -7,8 +7,7 @@ from pydantic import ValidationError
 
 from cruxible_client.authoring.workspace import _coverage_v3_fields
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.claims import LegacyCitationReference
+from cruxible_client.contracts.claims import build_claim_citation
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
@@ -327,18 +326,11 @@ def test_ledger_reference_without_a_window_never_fabricates_one() -> None:
         ),
     )
     claim_identity = ArtifactIdentity(kind="Claim", name="CLM-00000000000000000000000000000000")
-    citation_id = typed_digest(
-        Sha256Value,
-        "playbill-legacy-claim-citation-v1",
-        {
-            "claim_identity": claim_identity.model_dump(mode="json"),
-            "capture_digest": accepted.capture_digest,
-        },
-    ).tagged
-    reference = LegacyCitationReference(
-        citation_id=citation_id,
-        claim_identity=claim_identity,
+    reference = build_claim_citation(
+        claim_identity,
         capture_digest=accepted.capture_digest,
+        role="evidence",
+        origin="independent",
     )
     address = SemanticAddress.claim_statement("claims/00/CLM-00000000000000000000000000000000.json")
     association = CoverageClaimCitationV2(

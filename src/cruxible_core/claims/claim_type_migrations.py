@@ -30,7 +30,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimRetirementAttribution,
     ClaimRetirementReason,
     ClaimStatement,
@@ -339,7 +338,7 @@ def _current_dependents(
     tree: Mapping[str, bytes],
     *,
     identity: str,
-) -> dict[str, tuple[str, ClaimArtifactAny]]:
+) -> dict[str, tuple[str, ClaimArtifact]]:
     """Return every live or retired Claim directly governed by one ClaimType."""
 
     from cruxible_core.derived.derived_state import SnapshotTree
@@ -359,7 +358,7 @@ def _current_dependents(
             )
         }
 
-    result: dict[str, tuple[str, ClaimArtifactAny]] = {}
+    result: dict[str, tuple[str, ClaimArtifact]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("claims/"):
             continue
@@ -377,11 +376,11 @@ def _current_dependents(
 
 
 def _successor_claim(
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     successor_type: ClaimType,
     disposition: MigrationResultDisposition,
-) -> ClaimArtifactAny:
+) -> ClaimArtifact:
     successor_digest = claim_type_digest(successor_type).tagged
     statement = claim.statement.model_copy(update={"claim_type_digest": successor_digest})
     found = False

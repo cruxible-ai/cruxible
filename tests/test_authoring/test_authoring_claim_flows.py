@@ -14,7 +14,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
+    ClaimArtifact,
     ExactContentClaimObject,
     parse_claim,
 )
@@ -50,7 +50,7 @@ def test_flow_b_lowers_to_retained_copy_self_source_without_writer_digests(
     )
     claim = parse_claim(lowered.proposed_tree[claim_path], path=claim_path)
 
-    assert isinstance(claim, ClaimArtifactV2)
+    assert isinstance(claim, ClaimArtifact)
     assert len(claim.backing.citations) == 1
     citation = claim.backing.citations[0]
     assert (citation.role, citation.origin) == ("copy", "self_source")
@@ -108,7 +108,7 @@ def test_flow_a_binds_only_the_selection_and_can_pass_existing_claim_laws(
         path for path, _content in lowered.changed_members if path.startswith("claims/")
     )
     claim = parse_claim(lowered.proposed_tree[claim_path], path=claim_path)
-    assert isinstance(claim, ClaimArtifactV2)
+    assert isinstance(claim, ClaimArtifact)
     assert [(item.role, item.origin) for item in claim.backing.citations] == [
         ("evidence", "independent")
     ]

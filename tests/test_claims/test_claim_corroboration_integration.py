@@ -23,7 +23,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
     render_claim_type,
 )
-from cruxible_client.contracts.claims import ClaimArtifactV2, claim_path, render_claim
+from cruxible_client.contracts.claims import ClaimArtifact, claim_path, render_claim
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
@@ -153,7 +153,7 @@ def _claim_for_type(
     *,
     claim_id: str,
     value: str = "ready",
-) -> ClaimArtifactV2:
+) -> ClaimArtifact:
     capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
         accepted_contract=SELF_SOURCE,
@@ -204,7 +204,7 @@ def _claim_for_type(
 
 def _submit_claim(
     instance: PlaybillInstance,
-    claim: ClaimArtifactV2,
+    claim: ClaimArtifact,
     *,
     proposal_name: str,
     extra_tree: dict[str, bytes] | None = None,

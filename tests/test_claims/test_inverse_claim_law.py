@@ -37,7 +37,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimLawResult,
     ClaimReferentContext,
@@ -154,7 +154,7 @@ class _World:
         value: object = "none",
         predecessor: AcceptedClaim | None = None,
         object_shell: SubjectShell | None = None,
-    ) -> ClaimArtifactV2:
+    ) -> ClaimArtifact:
         shell = _shell()
         capture, source, length = self.capture(value)
         path = claim_path(CLAIM_ID)
@@ -176,7 +176,7 @@ class _World:
                     key=lambda item: item.citation_id,
                 )
             )
-        return ClaimArtifactV2(
+        return ClaimArtifact(
             identity=identity,
             statement=ClaimStatement(
                 subject=SemanticAddress.whole_artifact(
@@ -299,7 +299,7 @@ class _World:
         )
 
 
-def _accepted(claim: ClaimArtifactV2) -> AcceptedClaim:
+def _accepted(claim: ClaimArtifact) -> AcceptedClaim:
     return AcceptedClaim(
         path=claim_path(CLAIM_ID),
         claim=claim,

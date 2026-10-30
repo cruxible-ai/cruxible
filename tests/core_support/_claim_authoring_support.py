@@ -39,7 +39,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
     ClaimStatement,
     LiteralClaimObject,
     claim_artifact_digest,
@@ -411,8 +410,8 @@ def service_propose_playbill_claim(
     identity = submitted.intent.semantic_identity
     path = claim_path(identity)
     claim = parse_claim(instance.proposal_tree(evaluated_oid)[path], path=path)
-    if not isinstance(claim, ClaimArtifactV2):
-        raise AssertionError("AuthoringIntent fixture did not lower to Claim v2")
+    if claim.retirement is not None:
+        raise AssertionError("AuthoringIntent fixture did not lower to a live Claim")
     captures = tuple(item.capture_digest for item in claim.backing.citations)
     return DirectClaimProposalV1(
         proposal=inspection,

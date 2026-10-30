@@ -23,7 +23,6 @@ from dataclasses import dataclass
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimRetirementAttribution,
     claim_artifact_digest,
     parse_claim,
@@ -88,7 +87,7 @@ def _live_claims(
             yield path, content
 
 
-def _is_key_claim(claim: ClaimArtifactAny, subject: str, keys: tuple[str, ...]) -> bool:
+def _is_key_claim(claim: ClaimArtifact, subject: str, keys: tuple[str, ...]) -> bool:
     statement = claim.statement
     return (
         claim.lifecycle.state == "live"
@@ -98,7 +97,7 @@ def _is_key_claim(claim: ClaimArtifactAny, subject: str, keys: tuple[str, ...]) 
     )
 
 
-def is_key_claim(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> bool:
+def is_key_claim(tree: Mapping[str, bytes], claim: ClaimArtifact) -> bool:
     """Whether ``claim`` is a live key Claim of its Subject's keyed kind at ``tree``."""
 
     subject = claim.statement.subject.artifact_path
@@ -112,7 +111,7 @@ def is_key_claim(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> bool:
 def is_subject_creation_key_claim(
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     *,
     new_claim: bool,
 ) -> bool:
@@ -162,7 +161,7 @@ def _changed_subjects(
     )
 
 
-def retired_key_claim(claim: ClaimArtifactAny) -> ClaimArtifact:
+def retired_key_claim(claim: ClaimArtifact) -> ClaimArtifact:
     """The attributed retirement of one live key Claim, retired with its Subject.
 
     Its statement, backing and pins stay as accepted: they name the Subject

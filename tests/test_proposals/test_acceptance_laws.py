@@ -8,8 +8,7 @@ from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
     APPROVAL_POLICY_LAW,
-    CLAIM_LAW_V2,
-    CLAIM_LAW_V3,
+    CLAIM_LAW,
     CLAIM_TYPE_LAW,
     CLAIM_TYPE_LAW_V3,
     CLAIM_TYPE_LAW_V4,
@@ -84,18 +83,15 @@ def test_p2_b1_provider_and_line_successor_laws_are_current() -> None:
     )
 
 
-def test_claim_v2_and_v3_laws_are_the_installed_revisions_only() -> None:
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v2").coordinate == CLAIM_LAW_V2
-    )
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v3").coordinate == CLAIM_LAW_V3
-    )
-    assert CLAIM_LAW_V2.identifier == "playbill.claim.v2"
-    assert CLAIM_LAW_V3.identifier == "playbill.claim.v3"
-    # A recorded earlier revision is not installed: replay refuses it.
+def test_one_claim_law_is_installed_and_removed_claim_formats_have_none() -> None:
+    assert ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v4").coordinate == CLAIM_LAW
+    assert CLAIM_LAW.identifier == "playbill.claim.v4"
+    for removed in ("playbill-claim-v2", "playbill-claim-v3"):
+        with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+            ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)
+    # Another revision is not installed: replay refuses it.
     earlier = _artifact_law_coordinate(
-        CLAIM_LAW_V3.identifier, "playbill-claim-v3", semantic_revision=7
+        CLAIM_LAW.identifier, "playbill-claim-v4", semantic_revision=2
     )
     with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
         ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)

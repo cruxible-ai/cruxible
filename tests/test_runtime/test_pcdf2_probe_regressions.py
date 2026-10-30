@@ -13,7 +13,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import claim_path, parse_claim
-from cruxible_client.contracts.laws import CLAIM_LAW_V3_IDENTIFIER, _artifact_law_coordinate
+from cruxible_client.contracts.laws import CLAIM_LAW_IDENTIFIER, _artifact_law_coordinate
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
@@ -98,10 +98,12 @@ def test_probe_reopen_after_law_bump_survives_checkpoint_and_genesis_replay(
     instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
     result = _migration(instance, claim_id)
     _accept(instance, result)
-    revision_9 = _artifact_law_coordinate(
-        CLAIM_LAW_V3_IDENTIFIER, "playbill-claim-v3", semantic_revision=9
+    # Rebinding the module name after import moves nothing: every gate bound
+    # the exact installed coordinate.
+    revision_2 = _artifact_law_coordinate(
+        CLAIM_LAW_IDENTIFIER, "playbill-claim-v4", semantic_revision=2
     )
-    monkeypatch.setattr(laws_module, "CLAIM_LAW_V3", revision_9)
+    monkeypatch.setattr(laws_module, "CLAIM_LAW", revision_2)
 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()

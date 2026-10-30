@@ -53,7 +53,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
-from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject, parse_claim
+from cruxible_client.contracts.claims import ClaimArtifact, SubjectClaimObject, parse_claim
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
     FloorManifest,
@@ -155,7 +155,7 @@ class FloorInputs:
     latest: PMap[str, int]
     subjects: PMap[str, SubjectShell]
     # Every Claim in the tree, any lifecycle, by Claim path.
-    claims: PMap[str, ClaimArtifactAny]
+    claims: PMap[str, ClaimArtifact]
     # Every ClaimType in the tree, any lifecycle, by ClaimType path.
     claim_types: PMap[str, ClaimType]
     # Subject-valued Claim path -> its revisions to this generation, as a
@@ -341,7 +341,7 @@ def _parse(path: str, content: bytes) -> tuple[str, Any]:
     return "other", None
 
 
-def _object(claim: ClaimArtifactAny | None) -> str | None:
+def _object(claim: ClaimArtifact | None) -> str | None:
     obj = None if claim is None else claim.statement.object
     return obj.address.artifact_path if isinstance(obj, SubjectClaimObject) else None
 
@@ -444,7 +444,7 @@ def _target_moves(before: _Revisions | None, after: _Revisions | None) -> tuple[
 def _object_histories(
     instance: PlaybillInstance,
     history: HistoryReader,
-    claims: Mapping[str, ClaimArtifactAny],
+    claims: Mapping[str, ClaimArtifact],
     paths: Iterable[str],
     *,
     at_most: int,
@@ -543,7 +543,7 @@ def _predicate_of_type_path(path: str) -> str:
     return f"{namespace}.{name.removesuffix('.json')}"
 
 
-def _shadow(claim: ClaimArtifactAny) -> str | None:
+def _shadow(claim: ClaimArtifact) -> str | None:
     """The short name a Claim's field shows besides its predicate, if any.
 
     A field ``<kind>.<short>`` of a Subject of ``<kind>`` (the kind is the
@@ -1054,7 +1054,7 @@ class _Stamps:
         self._names[key] = best
         return best
 
-    def incoming(self, path: str, edges: Iterable[ClaimArtifactAny]) -> int:
+    def incoming(self, path: str, edges: Iterable[ClaimArtifact]) -> int:
         """When the edges pointing at a Subject last changed.
 
         Every Claim that ever pointed at it counts, read as the maximum of
@@ -1070,7 +1070,7 @@ class _Stamps:
                 best = max(best, self.name(claim.statement.predicate, source.subject_kind))
         return best
 
-    def subject(self, path: str, live: Iterable[ClaimArtifactAny]) -> int:
+    def subject(self, path: str, live: Iterable[ClaimArtifact]) -> int:
         """Its own path, its Claims of any lifecycle (one maintained maximum), its fields' names."""
 
         shell = self._inputs.subjects[path]

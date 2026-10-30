@@ -24,7 +24,7 @@ from typing import Any, Literal, cast
 
 from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -863,7 +863,7 @@ def capture_contract_rows(
 # -- ResolutionContracts and their windows -------------------------------------------------
 
 
-def _claim_value(claim: ClaimArtifactAny) -> object:
+def _claim_value(claim: ClaimArtifact) -> object:
     obj = claim.statement.object
     if isinstance(obj, SubjectClaimObject):
         return _subject_ref(obj.address.artifact_path)
@@ -930,7 +930,7 @@ def resolution_contract_card(
             None
             if hypothesis is None
             else summary_value(
-                _claim_value(cast(ClaimArtifactAny, hypothesis)),
+                _claim_value(cast(ClaimArtifact, hypothesis)),
                 read_whole=whole_value_read(claim_id, coordinate.git_oid),
             )
         ),

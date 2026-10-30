@@ -283,7 +283,12 @@ def test_explicit_older_coordinate_does_not_read_current_head(seeded):
 
 def test_retired_claim_cannot_be_pinned_as_live_backing(seeded, monkeypatch):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.claims import parse_claim, render_claim
+    from cruxible_client.contracts.claims import (
+        ClaimRetirementAttribution,
+        claim_artifact_digest,
+        parse_claim,
+        render_claim,
+    )
 
     selected = service_read_claim_batch(
         seeded, request=request(seeded, subject_paths=PATHS, predicates=STATED)
@@ -291,7 +296,14 @@ def test_retired_claim_cannot_be_pinned_as_live_backing(seeded, monkeypatch):
     identity = selected.claims[0].envelope["identity"]
     path = selected.claims[0].envelope["path"]
     claim = parse_claim(seeded.blob_at(selected.coordinate.git_oid, path), path=path)
-    retired = claim.model_copy(update={"lifecycle": ArtifactLifecycle(state="retired")})
+    retired = claim.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=claim_artifact_digest(claim).tagged
+            ),
+            "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
+        }
+    )
     monkeypatch.setattr(seeded, "blobs_at", lambda _oid, _paths: {path: render_claim(retired)})
     with pytest.raises(FormatError, match="live Claim"):
         service_read_claim_backings(

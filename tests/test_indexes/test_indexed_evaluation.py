@@ -245,7 +245,12 @@ def test_overlay_renamed_owner_suppresses_old_and_new_source_edges(tmp_path):
 
 
 def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
-    from cruxible_client.contracts.claims import claim_path, render_claim
+    from cruxible_client.contracts.claims import (
+        ClaimRetirementAttribution,
+        claim_artifact_digest,
+        claim_path,
+        render_claim,
+    )
     from cruxible_client.contracts.semantic import SemanticAddress
     from cruxible_core.authoring.lowering import _same_predicate_claims
     from tests.test_authoring.test_authoring_disposition_slots import _claim_in_slot
@@ -271,7 +276,15 @@ def test_contenders_select_complete_address_and_changed_live_members(tmp_path):
     )
     candidate = tree.fork()
     retired = claims[0].model_copy(
-        update={"lifecycle": claims[0].lifecycle.model_copy(update={"state": "retired"})}
+        update={
+            "lifecycle": claims[0].lifecycle.model_copy(
+                update={
+                    "state": "retired",
+                    "predecessor_digest": claim_artifact_digest(claims[0]).tagged,
+                }
+            ),
+            "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
+        }
     )
     candidate[claim_path(retired.identity.name)] = render_claim(retired)
     candidate[claim_path(claims[2].identity.name)] = render_claim(

@@ -24,8 +24,7 @@ CLAIM_TYPE_LAW_V6_IDENTIFIER = "playbill.claim-type.v6"
 CLAIM_TYPE_LAW_V7_IDENTIFIER = "playbill.claim-type.v7"
 CLAIM_TYPE_LAW_V8_IDENTIFIER = "playbill.claim-type.v8"
 CLAIM_TYPE_LAW_V9_IDENTIFIER = "cruxible.claim-type.v9"
-CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
-CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
+CLAIM_LAW_IDENTIFIER = "playbill.claim.v4"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
@@ -177,24 +176,19 @@ PROCEDURE_RUNTIME_POLICY_LAW = _artifact_law_coordinate(
     "playbill-procedure-runtime-policy-v1",
     semantic_revision=1,
 )
-# Revision 10: a key Claim core writes with its Subject's creation is covered by
-# the creation, and a revision that keeps its statement may replace a citation
-# with one of the text it rests on now (same role, origin and CaptureContract).
-CLAIM_LAW_V2_REVISION_10 = _artifact_law_coordinate(
-    CLAIM_LAW_V2_IDENTIFIER,
-    "playbill-claim-v2",
-    semantic_revision=10,
+# The one Claim law, for live Claims and attributed retirements alike. A live
+# Claim: a key Claim core writes with its Subject's creation is covered by the
+# creation, a revision that keeps its statement may replace a citation with one
+# of the text it rests on now (same role, origin and CaptureContract), and a
+# ``none`` type's origin-only evidence needs no current replay. An attributed
+# retirement: it may name the Subject version it was accepted about while that
+# Subject is retired or succeeded, and keeps the retired ClaimType shape
+# exemption. Capture-contract pins are provenance throughout.
+CLAIM_LAW = _artifact_law_coordinate(
+    CLAIM_LAW_IDENTIFIER,
+    "playbill-claim-v4",
+    semantic_revision=1,
 )
-CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_10
-# Revision 11: capture-contract pins are provenance, ClaimType v7 semantics
-# apply, and an attributed retirement may name the Subject version it was
-# accepted about while that Subject is retired or succeeded.
-CLAIM_LAW_V3_REVISION_11 = _artifact_law_coordinate(
-    CLAIM_LAW_V3_IDENTIFIER,
-    "playbill-claim-v3",
-    semantic_revision=11,
-)
-CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_11
 CLAIM_TYPE_LAW_V3_REVISION_5 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
     "playbill-claim-type-v3",
@@ -398,15 +392,10 @@ LIGHT_CAPTURE_CONTRACT_LAW = InstalledAcceptanceLaw(
     artifact_kind="capture-contract",
     artifact_tag="cruxible-capture-contract-v2",
 )
-CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2_REVISION_10,
+CLAIM_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW,
     artifact_kind="claim",
-    artifact_tag="playbill-claim-v2",
-)
-CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3_REVISION_11,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v3",
+    artifact_tag="playbill-claim-v4",
 )
 PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROVIDER_LAW,
@@ -553,8 +542,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
-        CLAIM_V2_ACCEPTANCE_LAW,
-        CLAIM_V3_ACCEPTANCE_LAW,
+        CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
         CLAIM_TYPE_V3_ACCEPTANCE_LAW,
         CLAIM_TYPE_V4_ACCEPTANCE_LAW,

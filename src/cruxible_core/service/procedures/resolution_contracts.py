@@ -8,7 +8,7 @@ from typing import cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
@@ -71,7 +71,7 @@ class TriggerCaptureRefused(ExecutionError):
 
 def read_claim_reference(
     instance: PlaybillInstance, reference: ClaimVersionReference
-) -> ClaimArtifactAny:
+) -> ClaimArtifact:
     coordinate = instance.resolve_accepted_coordinate(
         **reference.coordinate.model_dump(exclude={"tag"})
     )

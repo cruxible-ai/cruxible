@@ -32,8 +32,6 @@ from cruxible_client.contracts.claim_attestations import (
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimBacking,
     ClaimLawEvidenceAny,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -106,7 +104,7 @@ class _TreeLedgerResolver:
         return content
 
 
-def _accepted_claim(tree: Mapping[str, bytes], claim_id: str) -> ClaimArtifactAny:
+def _accepted_claim(tree: Mapping[str, bytes], claim_id: str) -> ClaimArtifact:
     path = claim_path(claim_id)
     content = tree.get(path)
     if content is None:
@@ -119,7 +117,7 @@ def _accepted_claim(tree: Mapping[str, bytes], claim_id: str) -> ClaimArtifactAn
         ) from exc
 
 
-def _subject_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> str:
+def _subject_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifact) -> str:
     path = claim.statement.subject.artifact_path
     content = tree.get(path)
     if content is None:
@@ -132,7 +130,7 @@ def _subject_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) ->
         ) from exc
 
 
-def _object_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> str | None:
+def _object_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifact) -> str | None:
     if not isinstance(claim.statement.object, SubjectClaimObject):
         return None
     path = claim.statement.object.address.artifact_path
@@ -147,11 +145,9 @@ def _object_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> 
         ) from exc
 
 
-def _examined_capture_semantics(claim: ClaimArtifactAny, capture_digest: str) -> None:
+def _examined_capture_semantics(claim: ClaimArtifact, capture_digest: str) -> None:
     if capture_digest not in claim.backing.capture_digests:
         _refuse("examined_capture_not_backing", "Capture is not backing of the signed Claim")
-    if not isinstance(claim.backing, ClaimBacking):
-        return
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
     )
@@ -325,7 +321,7 @@ def _new_capture_accounts(
     law: ClaimLawEvidenceAny,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     statement: ClaimAttestationStatement,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     referent_tree: Mapping[str, bytes],
     append_tree: Mapping[str, bytes],
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
@@ -517,7 +513,7 @@ def verify_attestation_referent(
     referent_tree: Mapping[str, bytes],
     referent_principals: ActivePrincipalReader,
     at: datetime,
-) -> ClaimArtifactAny:
+) -> ClaimArtifact:
     """Verify immutable input for both pending append and governed acceptance.
 
     The caller proves that the referent coordinate is accepted and supplies its
@@ -575,7 +571,7 @@ def _verify_principal(
 def verify_attestation_admission(
     attestation: ClaimAttestation,
     *,
-    claim: ClaimArtifactAny,
+    claim: ClaimArtifact,
     referent_tree: Mapping[str, bytes],
     referent_principals: ActivePrincipalReader,
     current_tree: Mapping[str, bytes],
@@ -597,7 +593,7 @@ def verify_attestation_admission(
     s = attestation.statement
     _verify_principal(attestation, current_principals, phase="append")
     current = _accepted_claim(current_tree, s.claim_identity.name)
-    if isinstance(current, ClaimArtifact):
+    if current.retirement is not None:
         _refuse("claim_terminally_retired", "Claim lineage is terminally retired")
     if s.attestation_basis == "examined_existing":
         for digest in s.cited_capture_digests:

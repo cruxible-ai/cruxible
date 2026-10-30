@@ -3,7 +3,7 @@
 Moving aliases may choose production defaults, but equality and identity tests
 must select semantics by an exact retained coordinate/enum member or by
 membership in an explicit installed set. An example of an allowed form is
-``installed.coordinate == CLAIM_LAW_V3_REVISION_11``.
+``installed.coordinate == CLAIM_TYPE_LAW_V3_REVISION_5``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ SOURCE_ROOTS = (
 )
 MOVING_ALIAS_NAMES = frozenset(
     {
-        "CLAIM_LAW_V3",
+        "CLAIM_TYPE_LAW_V3",
         "current_compiler_coordinate",
     }
 )

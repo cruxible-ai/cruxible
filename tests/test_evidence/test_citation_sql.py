@@ -23,6 +23,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimRetirementAttribution,
     build_claim_citation,
     claim_artifact_digest,
     claim_path,
@@ -138,7 +139,7 @@ class World:
                 key=lambda item: item.citation_id,
             )
         )
-        return value.model_copy(
+        live = value.model_copy(
             update={
                 "backing": value.backing.model_copy(
                     update={
@@ -146,7 +147,16 @@ class World:
                         "citations": citations,
                     }
                 ),
-                "lifecycle": ArtifactLifecycle(state="retired" if retired else "live"),
+            }
+        )
+        if not retired:
+            return live
+        return live.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired", predecessor_digest=claim_artifact_digest(live).tagged
+                ),
+                "retirement": ClaimRetirementAttribution(reason="was-rescinded"),
             }
         )
 

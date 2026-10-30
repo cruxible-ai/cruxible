@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from typing import Annotated, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -40,7 +40,6 @@ from cruxible_client.contracts.canonical import Sha256Value, normalize_ledger_pa
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
     ClaimCitation,
-    LegacyCitationReference,
     claim_citation_id,
 )
 from cruxible_client.contracts.content_memo import ValueMemo
@@ -501,10 +500,7 @@ class CoverageCardV1(_StrictCoverageModel):
         )
 
 
-CoverageCitationReferenceV2: TypeAlias = Annotated[
-    ClaimCitation | LegacyCitationReference,
-    Field(discriminator="tag"),
-]
+CoverageCitationReferenceV2: TypeAlias = ClaimCitation
 
 
 class CoverageClaimCitationV2(_StrictCoverageModel):
@@ -531,19 +527,14 @@ class CoverageClaimCitationV2(_StrictCoverageModel):
         claim_name = self.claim_address.artifact_path.rsplit("/", 1)[-1].removesuffix(".json")
         if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_name):
             raise ValueError("coverage citation address has no Claim identity")
-        if isinstance(self.reference, LegacyCitationReference):
-            expected_path = self.claim_address.artifact_path
-            if not expected_path.endswith(f"/{self.reference.claim_identity.name}.json"):
-                raise ValueError("legacy coverage citation addresses a different Claim")
-        else:
-            expected = claim_citation_id(
-                ArtifactIdentity(kind="Claim", name=claim_name),
-                capture_digest=self.reference.capture_digest,
-                role=self.reference.role,
-                origin=self.reference.origin,
-            ).tagged
-            if self.reference.citation_id != expected:
-                raise ValueError("coverage citation ID does not match its Claim address")
+        expected = claim_citation_id(
+            ArtifactIdentity(kind="Claim", name=claim_name),
+            capture_digest=self.reference.capture_digest,
+            role=self.reference.role,
+            origin=self.reference.origin,
+        ).tagged
+        if self.reference.citation_id != expected:
+            raise ValueError("coverage citation ID does not match its Claim address")
         return self
 
     @property

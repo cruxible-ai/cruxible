@@ -51,7 +51,7 @@ import yaml
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ExactContentClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -231,15 +231,15 @@ def current_path(ref: str) -> str:
     return f"{CURRENT_PREFIX}{ref}{CURRENT_SUFFIX}"
 
 
-def claim_handle(claim: ClaimArtifactAny) -> str:
+def claim_handle(claim: ClaimArtifact) -> str:
     return claim.identity.name
 
 
-def _note(claim: ClaimArtifactAny) -> str:
+def _note(claim: ClaimArtifact) -> str:
     return claim_handle(claim)
 
 
-def _value_key(claim: ClaimArtifactAny) -> str:
+def _value_key(claim: ClaimArtifact) -> str:
     obj = claim.statement.object
     if isinstance(obj, ExactContentClaimObject):
         return repr(("exact_content", obj.content_digest, obj.span))
@@ -274,7 +274,7 @@ class ValueRenderer:
         self._instance = instance
         self._content = ExactContentReader(instance)
 
-    def shown(self, claim: ClaimArtifactAny, *, text_name: str) -> _Shown:
+    def shown(self, claim: ClaimArtifact, *, text_name: str) -> _Shown:
         obj = claim.statement.object
         note = _note(claim)
         if isinstance(obj, SubjectClaimObject):
@@ -322,7 +322,7 @@ class ValueRenderer:
         return _Shown(yaml_scalar(value), None, note, plain=value)
 
 
-def text_file_name(ref: str, key: str, claim: ClaimArtifactAny | None) -> str:
+def text_file_name(ref: str, key: str, claim: ClaimArtifact | None) -> str:
     """The sibling file a long text is written to: ``<id>.<field>[.<CLM->].txt``."""
 
     stem = ref.rsplit("/", 1)[-1]
@@ -414,7 +414,7 @@ def render_subject(
     *,
     path: str,
     shell: SubjectShell,
-    claims: Sequence[ClaimArtifactAny],
+    claims: Sequence[ClaimArtifact],
     claim_types: Mapping[str, ClaimType],
     accepted_predicates: frozenset[str],
     values: ValueRenderer,
@@ -424,7 +424,7 @@ def render_subject(
 
     ref = subject_ref(path)
     kind = shell.subject_kind
-    slots: dict[tuple[str, str | None], list[ClaimArtifactAny]] = defaultdict(list)
+    slots: dict[tuple[str, str | None], list[ClaimArtifact]] = defaultdict(list)
     for claim in claims:
         slots[(claim.statement.predicate, claim.statement.qualifier)].append(claim)
     entries: list[tuple[str, str, list[str]]] = []

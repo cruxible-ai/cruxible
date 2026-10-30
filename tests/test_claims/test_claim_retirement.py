@@ -574,29 +574,13 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
     assert "cruxible.authoring.claim_terminal" in refusal_codes(terminal)
 
 
-@pytest.mark.parametrize("leaf_retirement", ["attributed-v3", "legacy-v2"])
-def test_a_retired_dependent_leaves_the_closure(
-    tmp_path: Path,
-    leaf_retirement: str,
-) -> None:
+def test_a_retired_dependent_leaves_the_closure(tmp_path: Path) -> None:
+    # An unattributed retirement is no longer a Claim at all (one artifact,
+    # attribution exactly when retired), so the attributed leaf is the only shape.
     instance, owner, _root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
-    if leaf_retirement == "attributed-v3":
-        activate_submitted(
-            instance, owner, submit_retirement(instance, retirement_member(instance, leaf_id))
-        )
-    else:
-        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-        leaf = parse_claim(tree[claim_path(leaf_id)], path=claim_path(leaf_id))
-        legacy_leaf = leaf.model_copy(
-            update={
-                "lifecycle": ArtifactLifecycle(
-                    state="retired",
-                    predecessor_digest=claim_artifact_digest(leaf).tagged,
-                )
-            }
-        )
-        tree[claim_path(leaf_id)] = render_claim(legacy_leaf)
-        _accept_historical_derivation_tree(instance, tree)
+    activate_submitted(
+        instance, owner, submit_retirement(instance, retirement_member(instance, leaf_id))
+    )
 
     assert retirement_inventory(instance, middle_id) == ()
     accepted = dict(instance.tree_at(instance.accepted_coordinate().git_oid))

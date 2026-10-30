@@ -20,7 +20,7 @@ import pytest
 from cruxible_client.contracts.canonical import Sha256Value, canonical_digest, typed_digest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     build_claim_citation,
     claim_artifact_digest,
@@ -131,7 +131,7 @@ def test_v2_index_keeps_two_claim_roles_on_one_capture_as_distinct_associations(
             source_digest=sha256(CITED),
             source_length=len(CITED),
         )
-        artifact = ClaimArtifactV2(
+        artifact = ClaimArtifact(
             identity=legacy.identity,
             statement=legacy.statement,
             backing=ClaimBacking(

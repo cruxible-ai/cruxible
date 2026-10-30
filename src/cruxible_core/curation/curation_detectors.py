@@ -40,7 +40,7 @@ from cruxible_client.contracts.claim_verdicts import (
     evidence_control_components,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ClaimStatement,
     LiteralClaimObject,
     claim_artifact_digest,
@@ -153,14 +153,14 @@ class _Coverage:
 
 @dataclass(frozen=True)
 class _CurationHistoryIndex:
-    claims: tuple[tuple[int, str, ClaimArtifactAny], ...]
+    claims: tuple[tuple[int, str, ClaimArtifact], ...]
     capture_contract_identities: Mapping[str, str]
     first_accepted_generations: Mapping[str, int]
     last_generation: int
 
 
 def _curation_history_index(instance: PlaybillInstance) -> _CurationHistoryIndex:
-    claims: list[tuple[int, str, ClaimArtifactAny]] = []
+    claims: list[tuple[int, str, ClaimArtifact]] = []
     contracts: dict[str, str] = {}
     first: dict[str, int] = {}
     with instance.accepted_history_reader() as retained:
@@ -223,7 +223,7 @@ def _artifact_ref(
     )
 
 
-def _slot_key(claims: tuple[ClaimArtifactAny, ...]) -> str:
+def _slot_key(claims: tuple[ClaimArtifact, ...]) -> str:
     first = claims[0]
     statement = first.statement
     return typed_digest(

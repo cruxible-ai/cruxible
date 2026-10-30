@@ -56,7 +56,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
@@ -345,9 +345,9 @@ def _claim(
     capture_digest: str,
     source_digest: str,
     source_length: int,
-) -> ClaimArtifactV2:
+) -> ClaimArtifact:
     path = claim_path(claim_id)
-    return ClaimArtifactV2(
+    return ClaimArtifact(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(

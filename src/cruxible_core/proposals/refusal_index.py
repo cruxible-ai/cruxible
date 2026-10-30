@@ -61,7 +61,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactAny,
     ClaimFormatError,
     parse_claim,
 )
@@ -215,7 +214,7 @@ def _legacy_workspace_content(
     return content
 
 
-def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifactAny) -> str:
+def claim_refusal_key(instance: PlaybillInstance, claim: ClaimArtifact) -> str:
     """A Claim's match key, over the content of the Captures it cites."""
 
     bodies = instance.body_store()
@@ -235,7 +234,7 @@ def _producer(text: str | None) -> ArtifactPin | None:
 
 def _candidate_claims(
     instance: PlaybillInstance, proposal_id: str
-) -> tuple[tuple[str, ClaimArtifactAny], ...] | None:
+) -> tuple[tuple[str, ClaimArtifact], ...] | None:
     """Every live Claim a proposal's candidate authors, by path; ``None`` if unreadable.
 
     Only authored members count (a generated successor restates a Claim the
@@ -266,7 +265,7 @@ def _candidate_claims(
         )
     except Exception:  # noqa: BLE001 - a released candidate keys nothing
         return None
-    claims: list[tuple[str, ClaimArtifactAny]] = []
+    claims: list[tuple[str, ClaimArtifact]] = []
     for path in sorted(paths, key=lambda item: item.encode("utf-8")):
         content = tree.get(path)
         if content is None:
@@ -729,7 +728,7 @@ class RefusalIndex:
         instance: PlaybillInstance,
         evidence: ProposalEvidenceStore,
         facts: GenerationRecordFacts,
-        claims: tuple[ClaimArtifactAny, ...],
+        claims: tuple[ClaimArtifact, ...],
     ) -> None:
         proposal_id, rationale = _retiring_proposal(evidence, facts.candidate_digest)
         decided_at = facts.timestamp
@@ -745,7 +744,7 @@ class RefusalIndex:
                     facts.actor_id,
                     decided_at,
                     _micros(decided_at),
-                    claim.retirement.reason if isinstance(claim, ClaimArtifact) else None,
+                    None if claim.retirement is None else claim.retirement.reason,
                     rationale,
                     _producer_text(claim_producer(claim)),
                 )

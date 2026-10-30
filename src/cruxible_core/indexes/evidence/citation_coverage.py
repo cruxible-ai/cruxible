@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, overload
 
-from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
     capture_contract_digest,
@@ -21,8 +20,6 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProje
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade, observation_trust_grade
 from cruxible_client.contracts.claims import (
     ClaimCitation,
-    ClaimCitationReference,
-    LegacyCitationReference,
 )
 from cruxible_client.contracts.errors import CasError, ProjectionFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -136,22 +133,14 @@ def coverage_rows(
                 addresses.add(path)
                 if version == 1:
                     continue
-                reference: ClaimCitationReference
-                if use["origin"] == "legacy" and use["role"] == "legacy":
-                    reference = LegacyCitationReference(
-                        citation_id=str(use["use_key"]),
-                        capture_digest=digest,
-                        claim_identity=parse_artifact_identity(str(use["owner_key"])),
-                    )
-                else:
-                    reference = ClaimCitation.model_validate(
-                        {
-                            "citation_id": use["use_key"],
-                            "capture_digest": digest,
-                            "role": use["role"],
-                            "origin": use["origin"],
-                        }
-                    )
+                reference = ClaimCitation.model_validate(
+                    {
+                        "citation_id": use["use_key"],
+                        "capture_digest": digest,
+                        "role": use["role"],
+                        "origin": use["origin"],
+                    }
+                )
                 association = CoverageClaimCitationV2(
                     claim_address=SemanticAddress.claim_statement(path),
                     capture_digest=digest,

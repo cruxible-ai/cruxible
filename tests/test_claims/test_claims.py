@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureContractAny,
@@ -20,17 +23,13 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimArtifactV2,
     ClaimBacking,
-    ClaimBackingV1,
     ClaimReferentContext,
     ClaimRetirementAttribution,
     ClaimStatement,
     ClaimUnsupportedFormatError,
-    LegacyCitationReference,
     LiteralClaimObject,
     _capture_is_explicitly_eligible,
-    _citation_origin_refusal,
     build_claim_citation,
     claim_artifact_digest,
     claim_citation_references,
@@ -112,11 +111,11 @@ def _claim(
     source_digest: str,
     source_length: int,
     contract: CaptureContractAny = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-) -> ClaimArtifactV2:
+) -> ClaimArtifact:
     shell = _subject()
     claim_type = _claim_type(contract=contract)
     path = claim_path(claim_id)
-    return ClaimArtifactV2(
+    return ClaimArtifact(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
@@ -218,7 +217,7 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     assert claim_artifact_digest(stronger_backing) != claim_artifact_digest(claim)
 
 
-def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> None:
+def test_one_claim_artifact_carries_live_and_attributed_retired_claims() -> None:
     predecessor = _claim(
         claim_id="CLM-0123456789abcdef0123456789abcdef",
         capture_digest="sha256:" + "11" * 32,
@@ -226,6 +225,9 @@ def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> N
         source_length=1,
     )
     predecessor_digest = claim_artifact_digest(predecessor)
+    live_wire = json.loads(render_claim(predecessor))
+    assert live_wire["artifact_format"] == "playbill-claim-v4"
+    assert "retirement" not in live_wire
     rescinded = ClaimArtifact(
         identity=predecessor.identity,
         statement=predecessor.statement,
@@ -247,67 +249,51 @@ def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> N
     assert claim_artifact_digest(rescinded) != claim_artifact_digest(wrong)
     assert claim_artifact_digest(predecessor) == predecessor_digest
 
-
-def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
-    tmp_path: Path,
-) -> None:
-    instance, _owner = initialize_local(tmp_path)
-    claim_id = "CLM-fedcbafedcbafedcbafedcbafedcbafe"
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=claim_id,
-        value="ready",
-        rationale="Exercise the retained v1 backing laws.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-    )
-    assert capture.envelope.commitment.byte_length is not None
-    predecessor = _claim(
-        claim_id=claim_id,
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
-    legacy_backing = ClaimBackingV1(
-        referent_context=predecessor.backing.referent_context,
-        capture_digests=predecessor.backing.capture_digests,
-        attestation_digests=predecessor.backing.attestation_digests,
-        input_claim_digests=predecessor.backing.input_claim_digests,
-        reducer_digest=predecessor.backing.reducer_digest,
-        source_mappings=predecessor.backing.source_mappings,
-    )
-    retired = ClaimArtifact(
-        identity=predecessor.identity,
-        statement=predecessor.statement,
-        backing=legacy_backing,
-        pins=predecessor.pins,
-        lifecycle=ArtifactLifecycle(
-            state="retired",
-            predecessor_digest=claim_artifact_digest(predecessor).tagged,
-        ),
-        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
-    )
-
-    assert parse_claim(render_claim(retired), path=claim_path(claim_id)) == retired
-    references = claim_citation_references(retired)
-    assert len(references) == 1
-    assert isinstance(references[0], LegacyCitationReference)
-    assert references[0].capture_digest == capture.capture_digest
-    assert _capture_is_explicitly_eligible(
-        retired,
-        capture_digest=capture.capture_digest,
-    )
-    assert (
-        _citation_origin_refusal(
-            retired,
-            capture_digest=capture.capture_digest,
-            envelope=capture.envelope,
-            contract=capture.contract,
-            store=instance.body_store(),
+    live_payload = predecessor.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="exactly when retired"):
+        ClaimArtifact.model_validate({**live_payload, "retirement": {"reason": "was-wrong"}})
+    with pytest.raises(ValidationError, match="exactly when retired"):
+        ClaimArtifact.model_validate(
+            {**live_payload, "lifecycle": {"state": "retired", "predecessor_digest": None}}
         )
-        is None
+    with pytest.raises(ValidationError, match="names its exact predecessor"):
+        ClaimArtifact.model_validate(
+            {
+                **live_payload,
+                "lifecycle": {"state": "retired"},
+                "retirement": {"reason": "was-wrong"},
+            }
+        )
+
+
+@pytest.mark.parametrize("retired_format", ["playbill-claim-v2", "playbill-claim-v3"])
+def test_a_removed_claim_format_is_refused_not_reinterpreted(retired_format: str) -> None:
+    claim = _claim(
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        capture_digest="sha256:" + "11" * 32,
+        source_digest="sha256:" + "22" * 32,
+        source_length=1,
     )
+    wire = {**claim.model_dump(mode="json"), "artifact_format": retired_format}
+    with pytest.raises(ClaimUnsupportedFormatError, match="cruxible.claim.format_unsupported"):
+        parse_claim(canonical_bytes(wire) + b"\n", path=claim_path(claim.identity.name))
+
+
+def test_an_uncited_capture_is_neither_referenced_nor_eligible() -> None:
+    claim = _claim(
+        claim_id="CLM-fedcbafedcbafedcbafedcbafedcbafe",
+        capture_digest="sha256:" + "33" * 32,
+        source_digest="sha256:" + "44" * 32,
+        source_length=1,
+    )
+    uncited = claim.model_copy(
+        update={"backing": claim.backing.model_copy(update={"citations": ()})}
+    )
+    assert claim_citation_references(uncited) == ()
+    assert not _capture_is_explicitly_eligible(
+        uncited, capture_digest=claim.backing.capture_digests[0]
+    )
+    assert claim_citation_references(claim) == claim.backing.citations
 
 
 def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:

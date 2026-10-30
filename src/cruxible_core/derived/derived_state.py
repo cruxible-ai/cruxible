@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
-from cruxible_client.contracts.claims import ClaimArtifactAny, parse_claim
+from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -381,7 +381,7 @@ class SnapshotTree(Mapping[str, bytes]):
                     rows.append((path, self[path]))
         return tuple(sorted(rows))
 
-    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifactAny, ...]:
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifact, ...]:
         return tuple(
             parse_claim(content, path=path) for path, content in self.claim_items(statement)
         )
@@ -670,7 +670,7 @@ class CandidateTree(MutableMapping[str, bytes]):
     def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         return self.snapshot().claim_items(statement)
 
-    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifactAny, ...]:
+    def claims_for(self, statement: ClaimPredicateKey) -> tuple[ClaimArtifact, ...]:
         return self.snapshot().claims_for(statement)
 
 

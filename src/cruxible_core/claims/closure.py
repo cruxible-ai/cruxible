@@ -46,7 +46,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ClaimFormatError,
     claim_artifact_digest,
     parse_claim,
@@ -860,7 +860,7 @@ def reverse_pin_closure(
 
     index = build_dependency_index(tree)
     digest_identities = dict(claim_identity_by_digest or {})
-    claims_by_path: dict[str, ClaimArtifactAny] = {}
+    claims_by_path: dict[str, ClaimArtifact] = {}
     for path, state in index.states.items():
         if state.artifact_kind != "claim":
             continue

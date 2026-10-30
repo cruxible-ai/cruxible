@@ -129,8 +129,6 @@ from cruxible_client.contracts.claims import (
     CitationOrigin,
     CitationRole,
     ClaimArtifact,
-    ClaimArtifactAny,
-    ClaimArtifactV2,
     ClaimBacking,
     ClaimCitation,
     ClaimFormatError,
@@ -969,13 +967,13 @@ class AuthoringDuplicateStatement(FormatError):
 
 def _same_predicate_claims(
     tree: Mapping[str, bytes], statement: ClaimStatement
-) -> tuple[ClaimArtifactAny, ...]:
+) -> tuple[ClaimArtifact, ...]:
     """Return every live Claim on this statement's (subject, predicate).
 
     Wider than the contended slot: these are the Claims an author may
     disposition voluntarily, not the ones the law demands.
     """
-    claims: list[ClaimArtifactAny] = []
+    claims: list[ClaimArtifact] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("claims/"):
             continue
@@ -991,7 +989,7 @@ def _same_predicate_claims(
 
 def _same_slot_claims(
     tree: Mapping[str, bytes], statement: ClaimStatement
-) -> tuple[ClaimArtifactAny, ...]:
+) -> tuple[ClaimArtifact, ...]:
     """Return the live Claims contending for this statement's own slot.
 
     The slot is ``(subject, predicate, qualifier)`` — the same partition the
@@ -999,7 +997,7 @@ def _same_slot_claims(
     subject+predicate alone made every distinct qualifier and every
     cardinality=many sibling demand a disposition it does not contend with.
     """
-    claims: list[ClaimArtifactAny] = []
+    claims: list[ClaimArtifact] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("claims/"):
             continue
@@ -1025,11 +1023,11 @@ class _ClaimPredicateIndex:
 
     def __init__(self, tree: Mapping[str, bytes]) -> None:
         self._tree = tree
-        self._claims: dict[tuple[SemanticAddress, str], dict[str, ClaimArtifactAny]] | None = None
+        self._claims: dict[tuple[SemanticAddress, str], dict[str, ClaimArtifact]] | None = None
         self._keys: dict[str, tuple[SemanticAddress, str]] = {}
         # Models belong to this lowering only. Shared roots retain immutable
         # bytes; repeated siblings avoid parsing the same requested bytes again.
-        self._parsed: dict[str, tuple[bytes, ClaimArtifactAny]] = {}
+        self._parsed: dict[str, tuple[bytes, ClaimArtifact]] = {}
 
     def _replace(self, path: str) -> None:
         if not path.startswith("claims/"):
@@ -1065,9 +1063,9 @@ class _ClaimPredicateIndex:
             for path in sorted(set(changed_paths), key=lambda item: item.encode("utf-8")):
                 self._replace(path)
 
-    def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifactAny, ...]:
+    def claims_for(self, statement: ClaimStatement) -> tuple[ClaimArtifact, ...]:
         if isinstance(self._tree, SnapshotTree | CandidateTree):
-            requested: list[ClaimArtifactAny] = []
+            requested: list[ClaimArtifact] = []
             for path, content in self._tree.claim_items(statement):
                 cached = self._parsed.get(path)
                 if cached is None or cached[0] != content:
@@ -1126,7 +1124,7 @@ def _rebound_backing(
     *,
     payload: ClaimAuthoringPayloadV1,
     statement: ClaimStatement,
-    predecessor: ClaimArtifactAny | None,
+    predecessor: ClaimArtifact | None,
     citations: tuple[ClaimCitation, ...],
 ) -> _Rebound | None:
     """The backing a re-bind keeps, or None when the payload replaces nothing.
@@ -1680,10 +1678,10 @@ def _lower_claim(
         )
 
     path = claim_path(claim_id)
-    predecessor: ClaimArtifactAny | None = None
+    predecessor: ClaimArtifact | None = None
     if path in candidate_base_tree:
         predecessor = parse_claim(candidate_base_tree[path], path=path)
-        if isinstance(predecessor, ClaimArtifact):
+        if predecessor.retirement is not None:
             _refuse(
                 "cruxible.authoring.claim_terminal",
                 "revises",
@@ -1768,7 +1766,6 @@ def _lower_claim(
                 # a new way.
                 require_production_proof=not (
                     predecessor is not None
-                    and isinstance(predecessor.backing, ClaimBacking)
                     and payload.source.capture_digest in predecessor.backing.capture_digests
                 ),
             )
@@ -1913,11 +1910,7 @@ def _lower_claim(
         )
     ):
         inherited = None
-    predecessor_citations = (
-        inherited.backing.citations
-        if inherited is not None and isinstance(inherited.backing, ClaimBacking)
-        else ()
-    )
+    predecessor_citations = () if inherited is None else inherited.backing.citations
     # A re-bind (Claim law v2 revision 10): the same statement, with the named
     # citations replaced by this payload's. What only they backed -- their
     # Captures, those Captures' content mappings and contract versions -- leaves
@@ -2105,7 +2098,7 @@ def _lower_claim(
                 repair_kind="rebind_derivation",
                 repair_description="Read the basis again at the accepted base.",
             )
-    claim = ClaimArtifactV2(
+    claim = ClaimArtifact(
         identity=identity,
         statement=statement,
         backing=ClaimBacking(
@@ -2203,7 +2196,7 @@ def _lower_claim(
     # and projection share, so its statement and artifact digests are taken once
     # in this process. A Claim its own law would refuse stays as built here; the
     # law reports it.
-    final: ClaimArtifactAny = claim
+    final: ClaimArtifact = claim
     try:
         from cruxible_core.compiler.sealed_members import sealed_claim_member
 

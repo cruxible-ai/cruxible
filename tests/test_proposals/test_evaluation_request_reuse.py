@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.claims import (
-    ClaimArtifactAny,
+    ClaimArtifact,
     ClaimFormatError,
     LiteralClaimObject,
     claim_path,
@@ -72,7 +72,7 @@ def test_policy_view_reuses_only_identical_path_and_bytes_and_filters_each_time(
         return parse(content, path=path)
 
     monkeypatch.setattr(proposals, "parse_claim", counted)
-    memo: dict[tuple[str, bytes], ClaimArtifactAny] = {}
+    memo: dict[tuple[str, bytes], ClaimArtifact] = {}
     actual = [
         proposals._effective_claim_values(tree, evaluation_time=at, parsed_claims=memo)
         for tree, at in samples

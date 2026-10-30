@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
@@ -27,14 +27,12 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV2,
+    ClaimArtifact,
     ClaimBacking,
     ClaimLawEvidenceV1,
-    LegacyCitationReference,
     _capture_is_explicitly_eligible,
     _copy_capture_admitted_by_rule,
     build_claim_citation,
-    claim_artifact_digest,
     claim_citation_references,
     claim_path,
     merge_claim_citations,
@@ -64,7 +62,9 @@ CAPTURE_DIGEST = "sha256:" + "ab" * 32
 SOURCE_DIGEST = "sha256:" + "cd" * 32
 
 
-def _legacy_claim() -> ClaimArtifactV2:
+def _legacy_claim() -> ClaimArtifact:
+    """A backing whose Capture carries no citation (refused by the Claim law)."""
+
     claim = _claim(
         claim_id=CLAIM_ID,
         capture_digest=CAPTURE_DIGEST,
@@ -74,7 +74,7 @@ def _legacy_claim() -> ClaimArtifactV2:
     return claim.model_copy(update={"backing": claim.backing.model_copy(update={"citations": ()})})
 
 
-def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimArtifactV2:
+def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimArtifact:
     legacy = _legacy_claim()
     citation = build_claim_citation(
         legacy.identity,
@@ -82,7 +82,7 @@ def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimAr
         role=role,  # type: ignore[arg-type]
         origin=origin,  # type: ignore[arg-type]
     )
-    return ClaimArtifactV2(
+    return ClaimArtifact(
         identity=legacy.identity,
         statement=legacy.statement,
         backing=ClaimBacking(
@@ -118,7 +118,7 @@ def test_claim_v2_round_trips_and_rejects_a_forged_citation_id() -> None:
 
     assert parse_claim(render_claim(claim), path=claim_path(CLAIM_ID)) == claim
     with pytest.raises(ValidationError, match="citation ID does not reproduce"):
-        ClaimArtifactV2.model_validate(
+        ClaimArtifact.model_validate(
             claim.model_copy(
                 update={
                     "backing": claim.backing.model_copy(
@@ -143,51 +143,12 @@ def test_claim_v2_round_trips_and_rejects_a_forged_citation_id() -> None:
         )
 
 
-def test_legacy_reference_is_derived_without_fabricating_role_or_origin() -> None:
-    legacy = _legacy_claim()
-    references = claim_citation_references(legacy)
+def test_citation_references_are_exactly_the_explicit_associations() -> None:
+    """No reference is synthesized for a Capture: an uncited one has none at all."""
 
-    assert len(references) == 1
-    reference = references[0]
-    assert isinstance(reference, LegacyCitationReference)
-    assert reference.legacy_semantics is True
-    assert reference.model_dump(mode="json") == {
-        "tag": "playbill-legacy-claim-citation-v1",
-        "citation_id": typed_digest(
-            Sha256Value,
-            "playbill-legacy-claim-citation-v1",
-            {
-                "claim_identity": {"kind": "Claim", "name": CLAIM_ID},
-                "capture_digest": CAPTURE_DIGEST,
-            },
-        ).tagged,
-        "claim_identity": {"kind": "Claim", "name": CLAIM_ID},
-        "capture_digest": CAPTURE_DIGEST,
-        "legacy_semantics": True,
-    }
-
-
-def test_v2_backing_successor_keeps_uncited_legacy_capture_implicit() -> None:
-    legacy = _legacy_claim()
-    successor = ClaimArtifactV2(
-        identity=legacy.identity,
-        statement=legacy.statement,
-        backing=ClaimBacking(
-            referent_context=legacy.backing.referent_context.model_copy(
-                update={"observed_at": datetime(2026, 8, 20, tzinfo=timezone.utc)}
-            ),
-            capture_digests=legacy.backing.capture_digests,
-            citations=(),
-            source_mappings=legacy.backing.source_mappings,
-        ),
-        pins=legacy.pins,
-        lifecycle=ArtifactLifecycle(predecessor_digest=claim_artifact_digest(legacy).tagged),
-    )
-
-    references = claim_citation_references(successor)
-    assert len(references) == 1
-    assert isinstance(references[0], LegacyCitationReference)
-    assert parse_claim(render_claim(successor), path=claim_path(CLAIM_ID)) == successor
+    assert claim_citation_references(_legacy_claim()) == ()
+    claim = _v2_claim()
+    assert claim_citation_references(claim) == claim.backing.citations
 
 
 def test_one_capture_can_have_different_roles_on_different_claims() -> None:
