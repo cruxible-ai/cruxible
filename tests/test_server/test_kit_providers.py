@@ -162,12 +162,18 @@ def _worlds(
         from tests.support.core_provider_world import CoreProviderWorld
 
         operator = ProviderRuntimeOperator(tmp_path / "server-state")
-        yield (
+        worlds = (
             CoreProviderWorld(tmp_path / "publisher", "inst_core_publisher", operator),
             CoreProviderWorld(tmp_path / "consumer", "inst_core_consumer", operator),
         )
+        for world in worlds:
+            _accept_local_call_contract(world)
+        yield worlds
     else:
-        yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=False)
+        for worlds in _fresh_open_worlds(tmp_path, monkeypatch, independent=False):
+            for world in worlds:
+                _accept_local_call_contract(world)
+            yield worlds
 
 
 def _package(
