@@ -482,11 +482,6 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     from datetime import timedelta
     from types import SimpleNamespace
 
-    from cruxible_client.contracts.acquisition_policies import (
-        acquisition_policy_path,
-        render_acquisition_policy,
-    )
-
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
@@ -509,7 +504,6 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     from tests.support.lines import line_trigger, trigger_members
     from tests.test_procedures.test_procedure_run_surface import _actor, _slotless_procedure
     from tests.test_server.test_playbill_line_run_refusals import (
-        _acquisition_policy,
         _line_mandate,
         _served_line,
     )
@@ -517,19 +511,17 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     instance, owner, contract = contract_world(tmp_path)
     accepted = _slotless_procedure("window-method")
     procedure = accepted.procedure
-    policy = _acquisition_policy("window-policy")
-    line = _served_line("window-test", accepted=accepted, policy=policy)
+    line = _served_line("window-test", accepted=accepted)
     window_trigger = line_trigger(
         "window-test-close",
         line=line.identity.name,
         schedule=WindowCloseSchedule(window=contract.window),
     )
-    mandate = _line_mandate(accepted)
+    mandate = _line_mandate(accepted, line)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(
         {
             accepted.path: render_procedure(procedure),
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
             resolution_contract_path(contract.identity.name): render_resolution_contract(contract),
