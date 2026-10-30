@@ -1,7 +1,11 @@
 """Disabled-by-upgrade and never-enabled findings derived from accepted Line version changes.
 
 A Line whose identity is new and was never enabled owes ``line enable``: a
-setup row until its first enablement or its retirement. Each finding keeps
+setup row until its first enablement or its retirement. A Line successor that
+pins another Procedure version or binds another provider build (a Procedure
+upgrade or a build move carries it) is disabled by that upgrade: enablement is
+exact-version and never transfers, so it owes ``line enable`` until that
+version is enabled or retired. Each finding keeps
 ``since``, the acceptance instant of the generation that opened it (the new
 identity's, or the upgrade's), read once when the fold reaches it.
 
@@ -13,6 +17,7 @@ or their histories. Reads query pending rows and keyed enablement lookups only.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
@@ -30,7 +35,7 @@ _STATE = DisposableState(
 CREATE TABLE progress (singleton INTEGER PRIMARY KEY, generation INTEGER NOT NULL) STRICT;
 INSERT INTO progress VALUES(1,0);
 CREATE TABLE lines (identity TEXT PRIMARY KEY, digest TEXT NOT NULL,
- procedure TEXT NOT NULL) STRICT;
+ procedure TEXT NOT NULL, builds TEXT NOT NULL) STRICT;
 CREATE TABLE disabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL,
  digest TEXT NOT NULL, procedure TEXT NOT NULL, since TEXT NOT NULL) STRICT;
 CREATE TABLE unenabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL,
@@ -71,9 +76,16 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                 if raw is None:
                     raise ValueError(f"accepted Line bytes unavailable: {version.identity}")
                 line = parse_carry_line(raw, path=version.path)
-                procedure_reference = line.procedure.target.qualified
+                # A Line pins its Procedure's exact version and binds exact builds.
+                procedure_reference = line.procedure.artifact_digest
+                builds = json.dumps(
+                    {slot: item.build.artifact_digest for slot, item in line.bindings.items()},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
                 old = connection.execute(
-                    "SELECT digest,procedure FROM lines WHERE identity=?", (version.identity,)
+                    "SELECT digest,procedure,builds FROM lines WHERE identity=?",
+                    (version.identity,),
                 ).fetchone()
                 pending = connection.execute(
                     "SELECT line_id,digest FROM disabled WHERE identity=?", (version.identity,)
@@ -105,9 +117,28 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                     )
                 if line.lifecycle.state == "retired":
                     connection.execute("DELETE FROM disabled WHERE identity=?", (version.identity,))
+                elif (
+                    old is not None
+                    and old[0] == line.lifecycle.predecessor_digest
+                    and (old[1], old[2]) != (procedure_reference, builds)
+                ):
+                    # A further upgrade before enablement keeps the Line disabled
+                    # since the first: it moves the owed version, not ``since``.
+                    connection.execute(
+                        "INSERT INTO disabled VALUES(?,?,?,?,?) ON CONFLICT(identity) DO UPDATE "
+                        "SET line_id=excluded.line_id,digest=excluded.digest,"
+                        "procedure=excluded.procedure",
+                        (
+                            version.identity,
+                            line_id,
+                            version.artifact_digest,
+                            procedure_reference,
+                            accepted_at(generation.git_oid),
+                        ),
+                    )
                 connection.execute(
-                    "INSERT OR REPLACE INTO lines VALUES(?,?,?)",
-                    (version.identity, version.artifact_digest, procedure_reference),
+                    "INSERT OR REPLACE INTO lines VALUES(?,?,?,?)",
+                    (version.identity, version.artifact_digest, procedure_reference, builds),
                 )
         connection.execute("UPDATE progress SET generation=?", (end,))
 

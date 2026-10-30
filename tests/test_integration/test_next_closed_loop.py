@@ -1904,10 +1904,6 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from cruxible_client.contracts.procedures.artifacts import (
-        parse_procedure,
-        procedure_artifact_digest,
-    )
     from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
     from cruxible_client.contracts.provider_installation import ProviderMoveRequest
     from cruxible_client.contracts.triggers import CadenceSchedule
@@ -1921,7 +1917,7 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         _worlds,
     )
 
-    opened = _worlds(root, monkeypatch, historical=True)
+    opened = _worlds(root, monkeypatch)
     world, _consumer = next(opened)
     try:
         checkout = _PROVIDER_CHECKOUT.get()
@@ -1949,8 +1945,12 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
         client = _client(world.http)
         original = client.enable_line(world.instance_id, "user.upgrade")
         assert original.state == "enabled"
-        instance = world.instance
+        from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+        instance = get_playbill_manager().get(world.instance_id)
         _assert_gone(instance, "line_disabled_by_upgrade", _request(instance))
+        path = "lines/user.upgrade.json"
+        before = parse_line_spec(_tree(world)[path], path=path)
 
         second = _package(root / "after", checkout, name="kit-call", increment=2)
         _install(world, second)
@@ -1958,19 +1958,16 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
             world.instance_id, ProviderMoveRequest(provider="kit-call", dry_run=False)
         )
         assert moved.status == "accepted", moved
-        assert any(
-            item.identity == "Line:user.upgrade" and item.enablement == "disabled"
-            for item in moved.automation_carries
-        )
-        tree = _tree(world)
-        path = "lines/user.upgrade.json"
-        upgraded = parse_line_spec(tree[path], path=path)
-        procedure_path = f"procedures/{PROCEDURE}.json"
-        procedure = parse_procedure(tree[procedure_path], path=procedure_path)
-        assert procedure.lifecycle.predecessor_digest is not None
+        # A Procedure names no build: the move is the Line's own successor,
+        # binding the new build, and its exact-version enablement stays behind.
+        (repin,) = moved.moved
+        assert (repin.identity, repin.action) == ("Line:user.upgrade", "successor")
+        upgraded = parse_line_spec(_tree(world)[path], path=path)
         assert upgraded.lifecycle.predecessor_digest == original.line_artifact_digest
-        assert upgraded.procedure.artifact_digest == procedure_artifact_digest(procedure).tagged
-        assert upgraded.procedure.artifact_digest != procedure.lifecycle.predecessor_digest
+        assert upgraded.procedure == before.procedure
+        ((slot, binding),) = upgraded.bindings.items()
+        assert binding.build.target.name == repin.to_build
+        assert before.bindings[slot].build.target.name == repin.from_build != repin.to_build
 
         request = _request(instance)
         row = _row(instance, "line_disabled_by_upgrade", request)
