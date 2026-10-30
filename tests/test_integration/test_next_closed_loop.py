@@ -1637,12 +1637,15 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         render_procedure_mandate,
     )
     from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.test_indexes.test_resolution_contracts import _accept_tree
-    from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
+    from tests.test_procedures.test_procedure_mandates import _line, _mandate, _procedure
 
     instance, owner = initialize_local(root)
     procedure = _procedure(named=True)
-    lapsing = _mandate(procedure=procedure).model_copy(
+    # A Mandate pins the Line it grants, so the Line is accepted with it.
+    line = _line(procedure=procedure)
+    lapsing = _mandate(procedure=procedure, line=line).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=UTC)}
     )
     _accept_tree(
@@ -1651,6 +1654,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             procedure.path: render_procedure(procedure.procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },
         timestamp="2026-08-24T17:00:00.000000Z",

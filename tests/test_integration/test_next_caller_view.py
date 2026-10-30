@@ -419,7 +419,6 @@ _LINE_SUCCESSOR: dict[str, object] = {
     "kind": "line",
     "name": "hourly",
     "procedure_name": "triage",
-    "acquisition_policy_name": "files",
     "max_authority": "propose",
     "trigger_input": None,
     "parameters": {"queue": "it's due"},
@@ -496,7 +495,7 @@ def test_the_line_successor_repair_carries_its_payload_on_every_surface() -> Non
         f"cruxible_authoring_submit(payload={json.dumps(_LINE_SUCCESSOR)})"
     )
     assert _repair_command("cruxible.authoring.submit", arguments=arguments, surface="sdk") == (
-        'cx.changes().line(name="hourly", procedure="triage", acquisition_policy="files", '
+        'cx.changes().line(name="hourly", procedure="triage", '
         'max_authority="propose", parameters={"queue": "it\'s due"}, '
         'budgets={"max_items": 5}, occurrence_epoch=2).submit()'
     )
