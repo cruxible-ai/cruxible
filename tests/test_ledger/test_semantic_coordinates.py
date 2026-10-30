@@ -18,8 +18,10 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
-    manifest_root,
+    semantic_projection,
 )
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.types import GenerationDescriptor, PrincipalRecord, StorageLayout
 from cruxible_core.ledger.bootstrap import (
@@ -29,6 +31,7 @@ from cruxible_core.ledger.bootstrap import (
     genesis_semantic_root,
     genesis_tree,
 )
+from cruxible_core.ledger.semantic_root import compute_semantic_root, parent_derivation
 
 
 def test_bootstrap_root_and_change_set_have_frozen_golden_preimages() -> None:
@@ -40,9 +43,11 @@ def test_bootstrap_root_and_change_set_have_frozen_golden_preimages() -> None:
 
 
 def test_semantic_genesis_has_a_frozen_end_to_end_golden() -> None:
-    golden_path = Path(__file__).parents[1] / "goldens" / "playbill" / "semantic-genesis-v1.json"
+    """Generation zero is named by sroot-v2 over its Merkle manifest, parented by bootstrap."""
+
+    golden_path = Path(__file__).parents[1] / "goldens" / "playbill" / "semantic-genesis-v2.json"
     golden = json.loads(golden_path.read_bytes())
-    assert golden["format"] == "playbill-semantic-genesis-golden-v1"
+    assert golden["format"] == "playbill-semantic-genesis-golden-v2"
 
     principals = tuple(
         PrincipalRecord.model_validate(record) for record in golden["input"]["principals"]
@@ -69,9 +74,69 @@ def test_semantic_genesis_has_a_frozen_end_to_end_golden() -> None:
     }
     assert tree == expected_tree
     assert parent.tagged == expected["bootstrap_root"]
-    assert manifest_root(tree).tagged == expected["manifest_root"]
+    manifest = merkle_manifest_root(semantic_projection(tree))
+    assert manifest.tagged == expected["manifest_root"]
+    assert manifest.tagged.startswith("merkle-sha256:")
     assert changeset.tagged == expected["changeset_digest"]
     assert semantic.tagged == expected["semantic_root"]
+
+    # The exact preimage: the one derivation's six fields, no approvals, and the
+    # bootstrap anchor entering as a typed `bootstrap` parent.
+    preimage = expected["semantic_root_preimage"].encode("utf-8")
+    assert preimage == canonical_bytes(
+        {
+            "tag": "playbill-sroot-v2",
+            "manifest_root": manifest.tagged,
+            "changeset_digest": changeset.tagged,
+            "approval_digests": [],
+            "parent_semantic_root": parent.tagged,
+            "parent_derivation": "bootstrap",
+        }
+    )
+    assert semantic == SemanticRoot(hashlib.sha256(preimage).hexdigest())
+    assert semantic == compute_semantic_root(
+        manifest_root=manifest.tagged,
+        changeset_digest=changeset.tagged,
+        approval_digests=(),
+        parent=parent,
+    )
+
+
+def test_genesis_root_parent_kind_is_typed_and_never_a_semantic_root() -> None:
+    """The same 32 bytes as a bootstrap anchor and as a semantic root name different children."""
+
+    tree = {"principals/owner.json": b"owner\n"}
+    parent = bootstrap_root(instance_id="inst_test", daemon_public_key="00" * 32)
+    changeset, semantic = genesis_semantic_root(tree, parent=parent)
+    assert parent_derivation(parent) == "bootstrap"
+    assert parent_derivation(SemanticRoot(parent.value)) == "playbill-sroot-v2"
+    claimed_as_root = compute_semantic_root(
+        manifest_root=merkle_manifest_root(tree).tagged,
+        changeset_digest=changeset.tagged,
+        approval_digests=(),
+        parent=SemanticRoot(parent.value),
+    )
+    assert claimed_as_root != semantic
+    with pytest.raises(SettlementIntegrityError, match="bootstrap root or a semantic root"):
+        compute_semantic_root(
+            manifest_root=merkle_manifest_root(tree).tagged,
+            changeset_digest=changeset.tagged,
+            approval_digests=(),
+            parent=GenerationRoot(parent.value),  # type: ignore[arg-type]
+        )
+
+
+def test_genesis_semantic_root_is_member_sensitive_and_ignores_derivative_namespaces() -> None:
+    tree = {"principals/owner.json": b"owner\n", "governance/approval-policy.json": b"{}\n"}
+    parent = bootstrap_root(instance_id="inst_test", daemon_public_key="00" * 32)
+    _changeset, semantic = genesis_semantic_root(tree, parent=parent)
+    altered = {**tree, "principals/owner.json": b"owner altered\n"}
+    assert genesis_semantic_root(altered, parent=parent)[1] != semantic
+    other_parent = bootstrap_root(instance_id="inst_other", daemon_public_key="00" * 32)
+    assert genesis_semantic_root(tree, parent=other_parent)[1] != semantic
+    # The root covers the semantic projection, as every later generation's does.
+    with_card = {**tree, "cards/owner.txt": b"card\n"}
+    assert genesis_semantic_root(with_card, parent=parent)[1] == semantic
 
 
 def test_generation_root_uses_exact_three_field_preimage() -> None:
@@ -130,11 +195,11 @@ def test_manifest_root_is_order_independent_and_content_sensitive() -> None:
         "principals/owner.json": b"owner\n",
     }
     right = dict(reversed(tuple(left.items())))
-    assert manifest_root(left) == manifest_root(right)
+    assert merkle_manifest_root(left) == merkle_manifest_root(right)
 
     changed = dict(left)
     changed["principals/owner.json"] = b"owner changed\n"
-    assert manifest_root(left) != manifest_root(changed)
+    assert merkle_manifest_root(left) != merkle_manifest_root(changed)
 
 
 @pytest.mark.parametrize(

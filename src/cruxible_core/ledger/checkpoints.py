@@ -35,7 +35,7 @@ accepted answer that a genesis-rooted replay would not have produced.
    append-only and replay refuses any generation that modifies a predecessor's
    record -- so each generation's committed manifest root, change-set digest and
    recorded approvals are read out of one signed tree. That is enough to
-   recompute the entire `playbill-sroot-v1` chain from the genesis semantic root
+   recompute the entire `playbill-sroot-v2` chain from the genesis semantic root
    forward, and the `playbill-gen-v1` chain with it. The checkpoint's claimed
    semantic and generation roots are then required to equal the recomputed head
    roots. A forged root does not survive the recomputation.
@@ -713,7 +713,6 @@ def _rederive_prefix(
             record,
             approval_digests=approvals,
             parent_semantic_root=parent.semantic_root.tagged,
-            parent_record=records[index - 2] if index >= 2 else None,
         )
         descriptor = GenerationDescriptor(
             semantic_root=semantic_root.value,

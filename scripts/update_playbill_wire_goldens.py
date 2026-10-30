@@ -19,7 +19,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.canonical import (
     ChangeSetDigest,
     canonical_bytes,
-    manifest_root,
+    semantic_projection,
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
@@ -41,6 +41,7 @@ from cruxible_client.contracts.merkle import (
     MERKLE_ROOT_DOMAIN,
     ROOT_PREFIX,
     build_merkle_manifest,
+    merkle_manifest_root,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -55,6 +56,7 @@ from cruxible_core.claims.closure import (
     dependency_edge_members,
 )
 from cruxible_core.ledger.bootstrap import (
+    bootstrap_changeset_digest,
     bootstrap_root,
     genesis_semantic_root,
     genesis_tree,
@@ -139,7 +141,7 @@ def _update_subject_golden() -> None:
 
 
 def _update_semantic_genesis_golden() -> None:
-    path = GOLDENS / "semantic-genesis-v1.json"
+    path = GOLDENS / "semantic-genesis-v2.json"
     fixture = _read(path)
     input_payload = fixture.get("input")
     if not isinstance(input_payload, dict):
@@ -164,6 +166,9 @@ def _update_semantic_genesis_golden() -> None:
         daemon_public_key=str(input_payload["daemon_public_key"]),
     )
     changeset, semantic = genesis_semantic_root(tree, parent=parent)
+    manifest = merkle_manifest_root(semantic_projection(tree))
+    if changeset != bootstrap_changeset_digest(parent):
+        raise AssertionError("genesis change set is not the bootstrap change set")
     input_payload["principals"] = [item.model_dump(mode="json") for item in principals]
     input_payload["approval_policy"] = approval_policy.model_dump(mode="json")
     input_payload["procedure_runtime_policy"] = runtime_policy.model_dump(mode="json")
@@ -172,8 +177,20 @@ def _update_semantic_genesis_golden() -> None:
             member_path: content.decode("utf-8") for member_path, content in tree.items()
         },
         "bootstrap_root": parent.tagged,
-        "manifest_root": manifest_root(tree).tagged,
+        "manifest_root": manifest.tagged,
         "changeset_digest": changeset.tagged,
+        # The exact generation-zero preimage: the one semantic-root derivation
+        # with no approvals and the bootstrap anchor as a typed parent.
+        "semantic_root_preimage": canonical_bytes(
+            {
+                "tag": "playbill-sroot-v2",
+                "manifest_root": manifest.tagged,
+                "changeset_digest": changeset.tagged,
+                "approval_digests": [],
+                "parent_semantic_root": parent.tagged,
+                "parent_derivation": "bootstrap",
+            }
+        ).decode(),
         "semantic_root": semantic.tagged,
     }
     _write(path, fixture)

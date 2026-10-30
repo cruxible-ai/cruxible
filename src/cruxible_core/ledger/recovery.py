@@ -671,7 +671,6 @@ def _verify_successor(
         record,
         approval_digests=approval_digests,
         parent_semantic_root=parent.semantic_root.tagged,
-        parent_record=parent.record,
     )
     descriptor = GenerationDescriptor(
         semantic_root=semantic_root.value,

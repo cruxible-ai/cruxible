@@ -30,14 +30,14 @@ CURRENT_COMPILER = CompilerCoordinate(
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 36,
+            "semantic_revision": 37,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "light-artifacts-v1",
+            "revision_name": "merkle-genesis-v1",
         },
     )
 )
 #: Display label only; the digest is the authority.
-CURRENT_COMPILER_REVISION = "light-artifacts-v1"
+CURRENT_COMPILER_REVISION = "merkle-genesis-v1"
 
 #: The deterministic projection registry the current compiler runs.
 PROJECTION_REGISTRY: ProjectionExtensionRegistry = current_extension_registry()

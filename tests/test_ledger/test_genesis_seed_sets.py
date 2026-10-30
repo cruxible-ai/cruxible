@@ -45,6 +45,13 @@ def test_a_new_instance_starts_with_the_genesis_seeds_and_reopens(tmp_path: Path
 
     genesis = reopened._verified_genesis.tree
     assert {path: content for path, content in genesis.items() if path in seeds} == seeds
+    # A fresh reopen, before any proposal, reproduces every recorded coordinate.
+    verified = reopened._verified_genesis
+    assert reopened.descriptor.genesis == instance.descriptor.genesis
+    assert reopened.descriptor.genesis.semantic_root == verified.semantic_root.tagged
+    assert reopened.descriptor.genesis.generation_root == verified.generation_root.tagged
+    assert reopened.descriptor.genesis.bootstrap_root == verified.bootstrap_root.tagged
+    assert reopened.accepted_coordinate() == instance.accepted_coordinate()
 
 
 def _trust(tmp_path: Path) -> tuple[TrustRoot, GeneratedKeyMaterial]:
