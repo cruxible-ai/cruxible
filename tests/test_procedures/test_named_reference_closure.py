@@ -6,7 +6,6 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claim_types import render_claim_type
-from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
@@ -35,9 +34,9 @@ PPATH = "procedures/triage.json"
 
 def authored_query(name="definitions"):
     """Hand-written native input, without a legacy conversion round trip."""
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+    from cruxible_client.contracts.query.definitions import QueryDefinition
 
-    return NamedQueryDefinition.model_validate(
+    return QueryDefinition.model_validate(
         {
             "identity": {"kind": "QueryDefinition", "name": name},
             "entry": {
@@ -374,10 +373,8 @@ def test_proposal_recheck_reads_one_bucket_per_changed_member(tmp_path, unrelate
 
 
 def world():
-    query = name_query(
-        active_work_query(
-            identity=ArtifactIdentity(kind="QueryDefinition", name="claims-by-status")
-        )
+    query = active_work_query(
+        identity=ArtifactIdentity(kind="QueryDefinition", name="claims-by-status")
     )
     procedure = _artifact(_definition())
     return (
@@ -509,7 +506,7 @@ def test_proposal_lists_compatible_referrers_and_names_broken_ones(tmp_path):
     assert any("Broken referrer Procedure:triage" in d.message for d in broken.diagnostics)
 
 
-def test_legacy_dependency_edges_keep_exact_versions_before_compiler_36():
+def test_current_trigger_dependencies_always_include_the_named_line():
     from cruxible_client.contracts.dependencies import dependency_pins
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from cruxible_client.contracts.triggers import CadenceSchedule, render_trigger, trigger_path
@@ -521,20 +518,16 @@ def test_legacy_dependency_edges_keep_exact_versions_before_compiler_36():
         "triage-clock",
         line=line.identity.name,
         schedule=CadenceSchedule(interval_seconds=60),
-        named=False,
     )
-    # Frozen Trigger v1 omits the target Line from its pins. Its old semantic
-    # root must keep that omission; compiler 36 indexes the explicit name.
-    assert dependency_pins(trigger, by_name=False) == trigger.pins
-    assert not any(p.target == line.identity for p in trigger.pins)
-    assert any(p.target == line.identity for p in dependency_pins(trigger, by_name=True))
+    assert dependency_pins(trigger, by_name=False) == dependency_pins(trigger, by_name=True)
+    assert any(p.target == line.identity for p in dependency_pins(trigger))
     tree = {
         line_spec_path(line.identity.name): render_line_spec(line),
         trigger_path(trigger.identity.name): render_trigger(trigger),
     }
     frozen = build_dependency_index(tree, by_name=False)
     current = build_dependency_index(tree, by_name=True)
-    assert not frozen.edges_by_target.get(line_spec_path(line.identity.name))
+    assert frozen.edges_by_target == current.edges_by_target
     assert [e.source_path for e in current.edges_by_target[line_spec_path(line.identity.name)]] == [
         trigger_path(trigger.identity.name)
     ]

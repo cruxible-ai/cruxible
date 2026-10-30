@@ -50,8 +50,7 @@ from cruxible_client.contracts.procedures.trigger_rules import (
     validate_trigger_input,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
-    NamedCaptureEventSelector,
+    CaptureEventNameSelector,
 )
 from cruxible_client.contracts.provider_operations import (
     LineBinding,
@@ -169,7 +168,7 @@ class LineSpec(_StrictLineModel):
     )
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    trigger_event: NamedCaptureEventSelector | None = None
+    trigger_event: CaptureEventNameSelector | None = None
     budgets: object
     epsilon: object
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
@@ -477,7 +476,7 @@ def evaluate_line_spec_law(
                 path=path,
             )
 
-        def event_key(value: CaptureEventSelector | None) -> object:
+        def event_key(value: CaptureEventNameSelector | None) -> object:
             return (
                 None if value is None else (value.capture_contract_identity, value.logical_sources)
             )

@@ -20,7 +20,7 @@ from cruxible_client import Cruxible, CruxibleClient
 from cruxible_client.authoring.blocks import _query_backing
 from cruxible_client.contracts.compact_query import QueryRequest, QueryResultRecord
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec, QueryDefinition
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import (
     QueryClaimValueRef,
     QueryComparisonFilter,
@@ -306,7 +306,7 @@ def test_a_query_without_a_projection_records_the_claims_its_cells_served(
     if mode == "named":
         body["name"] = BARE
     else:
-        body["spec"] = NamedQueryDefinitionSpec.model_validate(
+        body["spec"] = QueryDefinitionSpec.model_validate(
             _bare_query().model_dump(mode="json")
         ).model_dump(mode="json")
     response = client._client.post(f"/api/v1/{instance_id}/query", json=body)

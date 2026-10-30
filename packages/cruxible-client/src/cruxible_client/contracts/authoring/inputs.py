@@ -83,8 +83,6 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
-    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
 )
@@ -332,13 +330,7 @@ class SubjectSuccessionInput(_StrictInputModel):
 
 class QueryDefinitionInput(_StrictInputModel):
     kind: Literal["query_definition"]
-    query_definition: (
-        QuerySpecInput
-        | QueryDefinitionSpec
-        | QueryDefinition
-        | NamedQueryDefinitionSpec
-        | NamedQueryDefinition
-    )
+    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
 
 
 class ApprovalPolicyInput(_StrictInputModel):

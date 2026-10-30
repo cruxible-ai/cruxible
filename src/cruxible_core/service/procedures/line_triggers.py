@@ -25,7 +25,7 @@ from cruxible_client.contracts.line_dispatch import (
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.windows import (
     TIMED_BINDING_KINDS,
-    CaptureEventWindow,
+    CaptureEventNameWindow,
     LineTriggerBinding,
     TriggerEventReference,
 )
@@ -359,7 +359,7 @@ def service_check_line_trigger(
             selector = (
                 schedule.event
                 if isinstance(schedule, CaptureLandingSchedule)
-                else (window.event if isinstance(window, CaptureEventWindow) else None)
+                else (window.event if isinstance(window, CaptureEventNameWindow) else None)
             )
             if selector is not None:
                 remaining = request.limit - len(bindings)

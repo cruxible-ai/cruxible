@@ -113,6 +113,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("FixedWindow", "starts_at"): "VALIDITY WINDOW",
     ("FixedWindow", "duration_seconds"): "VALIDITY WINDOW",
     ("CaptureEventWindow", "duration_seconds"): "VALIDITY WINDOW",
+    ("CaptureEventNameWindow", "duration_seconds"): "VALIDITY WINDOW",
     ("CaptureEventByNameWindow", "duration_seconds"): "VALIDITY WINDOW",
     ("BoundObservationWindow", "starts_at"): "VALIDITY WINDOW",
     ("BoundObservationWindow", "ends_at"): "VALIDITY WINDOW",

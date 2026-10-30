@@ -32,7 +32,6 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -68,7 +67,7 @@ def _query(*, missing_parameter: bool = False) -> QueryDefinition:
     ]
     if missing_parameter:
         parameters.append(QueryParameterDeclaration(name="required_extra", value_type="string"))
-    return NamedQueryDefinition(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.subject_exists"),
         entry=QueryEntry(
             binding="item",

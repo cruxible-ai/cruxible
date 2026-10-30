@@ -143,8 +143,8 @@ def test_model_is_closed():
         simple(hops=[{"a": "incident.name", "b": "incident.name"}])
 
 
-def test_lowering_writes_the_named_format_from_a_pinned_spec(tree, resolver):
-    query = lower_query_spec(simple(), resolver, named=False)
+def test_lowering_preserves_the_current_query_spec_digest(tree, resolver):
+    query = lower_query_spec(simple(), resolver)
     payload = lower_authoring_input(
         QueryDefinitionInput(kind="query_definition", query_definition=query)
     )
@@ -153,7 +153,7 @@ def test_lowering_writes_the_named_format_from_a_pinned_spec(tree, resolver):
     assert new.artifact_format == "cruxible-query-definition-v3"
     assert render_query_definition(new) == wire
     assert query_definition_digest(new).tagged == digest
-    assert query_definition_digest(query).tagged != digest
+    assert query_definition_digest(query).tagged == digest
 
 
 def test_reverse_shorthand_and_multiple_target_kinds(resolver):
@@ -688,17 +688,17 @@ def test_hop_filter_refusals_count_columns_in_the_entire_hop(separator, resolver
 
 
 def test_authored_query_lowers_directly_to_a_pinless_v3_definition(resolver):
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+    from cruxible_client.contracts.query.definitions import QueryDefinition
 
     query = lower_query_spec(simple(), resolver)
-    assert isinstance(query, NamedQueryDefinition)
+    assert isinstance(query, QueryDefinition)
     assert query.artifact_format == "cruxible-query-definition-v3"
     assert "pins" not in query.model_dump(mode="json")
     assert query.referenced_predicates == ("security.incident.name",)
 
 
 def test_pinless_query_wire_restores_only_declared_defaults(resolver):
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+    from cruxible_client.contracts.query.definitions import QueryDefinition
 
     query = lower_query_spec(simple(), resolver)
     wire = render_query_definition(query)
@@ -707,22 +707,22 @@ def test_pinless_query_wire_restores_only_declared_defaults(resolver):
     assert "result_binding" not in body and "result_cardinality" not in body
     assert b'"tag"' not in wire
     restored = parse_query_definition(wire, path="query-definitions/test.authored.json")
-    assert isinstance(restored, NamedQueryDefinition)
+    assert isinstance(restored, QueryDefinition)
     assert restored == query
     assert render_query_definition(restored) == wire
     assert query_definition_digest(restored) == query_definition_digest(query)
 
 
 def test_typed_named_query_specs_fill_defaults_without_reintroducing_pins(resolver):
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 
     full = lower_query_spec(simple(), resolver)
     body = full.model_dump(mode="json")
     body.pop("result_shape")
     body.pop("dedupe")
-    partial = NamedQueryDefinitionSpec.model_validate(body)
+    partial = QueryDefinitionSpec.model_validate(body)
     assert partial.model_dump(mode="json") == full.model_dump(mode="json")
     assert "pins" not in type(partial).model_fields
     accepted = QueryDefinitionInput(kind="query_definition", query_definition=body)
-    assert isinstance(accepted.query_definition, NamedQueryDefinitionSpec)
+    assert isinstance(accepted.query_definition, QueryDefinitionSpec)
     assert query_definition_digest(accepted.query_definition) == query_definition_digest(full)

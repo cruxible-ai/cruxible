@@ -2,7 +2,7 @@
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
+    QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_path,
     render_query_definition,
@@ -23,7 +23,7 @@ def subject_query_members(name, *other_names):
             for item in (name, *other_names)
             for path, value in subject_query_members(item).items()
         }
-    query = NamedQueryDefinition(
+    query = QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         result_binding="item",

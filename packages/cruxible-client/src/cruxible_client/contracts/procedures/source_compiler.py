@@ -885,7 +885,7 @@ class _Compiler:
     ) -> Value:
         shape = selected.type.structure
         # One Claim view schema for authored and AST reads; reference() retains
-        # the selected syntax's named or historical exact binding grammar.
+        # the ClaimType name resolved at admission.
         schema = claim_view_schema(shape)
         pin = self.reference(ArtifactIdentity(kind="ClaimType", name=shape.predicate))
         emitted = self.append(

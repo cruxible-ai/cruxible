@@ -44,7 +44,7 @@ from cruxible_client.contracts.procedures.source_requests import (
     SourceQuerySelection,
     SourceSlotSelection,
 )
-from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+from cruxible_client.contracts.query.definitions import QueryDefinition
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -206,7 +206,7 @@ def resolve_source(
                 }
             )
         elif isinstance(selected, SourceQuerySelection):
-            query = require("QueryDefinition", selected.name, NamedQueryDefinition)
+            query = require("QueryDefinition", selected.name, QueryDefinition)
             bindings[name] = SourceQueryBinding(name=query.identity.name, definition=query)
         else:
             child = require("Procedure", selected.name, ProcedureArtifact)

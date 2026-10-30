@@ -27,7 +27,6 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -74,7 +73,7 @@ def _condition_query(*, only_subject: str | None = None) -> QueryDefinition:
             value_type="string",
         )
     )
-    return NamedQueryDefinition(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
         entry=QueryEntry(
             binding="item",

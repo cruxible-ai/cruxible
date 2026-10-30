@@ -68,10 +68,9 @@ from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContrac
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
+    CaptureEventNameSelector,
     FixedWindow,
     LogicalSources,
-    NamedCaptureEventSelector,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -82,8 +81,6 @@ from cruxible_client.contracts.proposal_models import (
 )
 from cruxible_client.contracts.query.authored import QuerySpecInput
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
-    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
 )
@@ -133,7 +130,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:73f93114466905c4c051230aa90f6901a1589bc091d60b4b283ed2f556a0f472"
+    "sha256:785932b547b90a2ad275673370740dc1818a4fafd48bb1ca58198b57bb8a5458"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -937,13 +934,7 @@ class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
         "playbill-query-definition-authoring-payload-v1"
     )
-    query_definition: (
-        QuerySpecInput
-        | QueryDefinitionSpec
-        | QueryDefinition
-        | NamedQueryDefinitionSpec
-        | NamedQueryDefinition
-    )
+    query_definition: QuerySpecInput | QueryDefinitionSpec | QueryDefinition
 
 
 class ApprovalPolicyAuthoringPayload(_StrictAuthoringModel):
@@ -1058,7 +1049,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
 
 
 class CaptureLandingByNameSchedule(_StrictAuthoringModel):
-    """Resolve a live CaptureContract at prepare; accepted Triggers retain its digest."""
+    """Resolve a live CaptureContract at prepare; accepted Triggers retain its name."""
 
     kind: Literal["capture_landing"] = "capture_landing"
     capture_contract: str
@@ -1918,10 +1909,10 @@ def build_preflight_certificate(**values: object) -> PreflightCertificate:
 
 
 class ResolvedTriggerCaptureContract(_StrictAuthoringModel):
-    """The exact contract a Trigger resolved during this prepare or preview."""
+    """The contract identity a Trigger resolved during this prepare or preview."""
 
     trigger_name: str
-    event: CaptureEventSelector | NamedCaptureEventSelector
+    event: CaptureEventNameSelector
 
 
 class PreflightResult(_StrictAuthoringModel):

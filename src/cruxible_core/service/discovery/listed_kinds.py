@@ -50,7 +50,7 @@ from cruxible_client.contracts.procedure_mandates import (
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
-from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
 from cruxible_client.contracts.triggers import (
@@ -565,7 +565,7 @@ def _trigger_detail(trigger: Trigger) -> dict[str, Any]:
         contract = schedule.event.capture_contract_identity.qualified
         sources = schedule.event.logical_sources
     elif isinstance(schedule, WindowCloseSchedule) and isinstance(
-        schedule.window, CaptureEventWindow
+        schedule.window, CaptureEventNameWindow
     ):
         contract = schedule.window.event.capture_contract_identity.qualified
         sources = schedule.window.event.logical_sources

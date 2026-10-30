@@ -3,8 +3,9 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
     CaptureContract,
@@ -104,17 +105,16 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
 def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path):
     from datetime import UTC, datetime, timedelta
 
-    from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.captures import foreign_source_capture_contract
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
-    from cruxible_client.contracts.named_references import name_trigger
     from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_path,
         parse_line_spec,
         render_line_spec,
     )
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
     from cruxible_client.contracts.triggers import (
         CaptureLandingSchedule,
         LineTarget,
@@ -122,7 +122,6 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
         parse_trigger,
         render_trigger,
         trigger_path,
-        trigger_schedule_pins,
     )
 
     # A Line pins an exact accepted Procedure version (C2): use the same
@@ -146,19 +145,15 @@ def test_named_line_and_trigger_keep_their_bytes_when_contract_advances(tmp_path
     line = line_spec
     contract = foreign_source_capture_contract("named.feed")
     schedule = CaptureLandingSchedule(
-        event=CaptureEventSelector(
+        event=CaptureEventNameSelector(
             capture_contract_identity=contract.identity,
-            capture_contract_digest=capture_contract_digest(contract).tagged,
         )
     )
-    trigger = name_trigger(
-        Trigger(
-            identity=ArtifactIdentity(kind="Trigger", name="on-feed"),
-            target=LineTarget(line=ArtifactRef(role="line", target=line.identity)),
-            schedule=schedule,
-            pins=trigger_schedule_pins(schedule),
-        ).model_copy()
-    )
+    trigger = Trigger(
+        identity=ArtifactIdentity(kind="Trigger", name="on-feed"),
+        target=LineTarget(line=ArtifactNameRef(target=line.identity)),
+        schedule=schedule,
+    ).model_copy()
     instance, _ = initialize_local(tmp_path)
     lpath, tpath, cpath = (
         line_spec_path(line.identity.name),
@@ -238,13 +233,7 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
 @pytest.mark.parametrize(
     "path,old,new",
     [
-        (
-            "query-definitions/check.json",
-            "playbill-query-definition-v2",
-            "cruxible-query-definition-v3",
-        ),
         ("lines/check.json", "playbill-line-v6", "cruxible-line-v8"),
-        ("triggers/check.json", "playbill-trigger-v1", "cruxible-trigger-v2"),
         (
             "capture-contracts/check.json",
             "cruxible-capture-contract-v2",
@@ -328,7 +317,6 @@ def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface()
         QueryDefinitionInput,
         lower_authoring_input,
     )
-    from cruxible_client.contracts.named_references import name_query
     from cruxible_client.contracts.query.definitions import render_query_definition
     from cruxible_core.authoring.lowering import _render_non_procedure_member
     from tests.test_procedures.test_named_reference_closure import world
@@ -338,38 +326,37 @@ def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface()
         {"kind": "query_definition", "query_definition": named.model_dump(mode="json")}
     )
     payload = lower_authoring_input(input_)
-    assert name_query(payload.query_definition) == named
+    assert payload.query_definition.model_dump(mode="json") == named.model_dump(mode="json")
     path, content, _ = _render_non_procedure_member(payload, tree=tree)
     assert path == "query-definitions/claims-by-status.json"
     assert content == render_query_definition(named)
 
 
-def test_trigger_event_checks_stay_exact():
-    # The former provider half of this test (comparing _build_runtime() with a
-    # tweaked `pins` tuple, with/without by_name) tested a removed-noun-era
-    # mechanism: a provider's pins no longer carry a separate
-    # provider-interface reference to churn, _build_runtime() has never
-    # included `pins` (only control_domain/runtime_artifact/implementations/
-    # operations -- "what a build runs"), and its `by_name` parameter is now
-    # unused (`del by_name`). There is nothing left to differentiate.
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+def test_trigger_events_match_names_and_refuse_authored_digests():
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
     from cruxible_client.contracts.triggers import (
         CaptureEventInput,
         CaptureLandingSchedule,
         schedule_satisfies_input,
     )
 
-    selector = CaptureEventSelector(
-        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="test.events"),
-        capture_contract_digest="sha256:" + "b" * 64,
+    selector = CaptureEventNameSelector(
+        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="test.events")
     )
     schedule = CaptureLandingSchedule(event=selector)
-    required = CaptureEventInput(
-        event=selector.model_copy(update={"capture_contract_digest": "sha256:" + "c" * 64})
+    assert schedule_satisfies_input(schedule, CaptureEventInput(event=selector))
+    other = selector.model_copy(
+        update={
+            "capture_contract_identity": ArtifactIdentity(
+                kind="CaptureContract", name="other.events"
+            )
+        }
     )
-    assert not schedule_satisfies_input(schedule, required, by_name=False)
-    assert schedule_satisfies_input(schedule, required, by_name=True)
+    assert not schedule_satisfies_input(schedule, CaptureEventInput(event=other))
+    with pytest.raises(ValidationError, match="capture_contract_digest"):
+        CaptureEventNameSelector.model_validate(
+            {**selector.model_dump(), "capture_contract_digest": "sha256:" + "c" * 64}
+        )
 
 
 def test_each_v3_tag_has_one_named_law_object():
@@ -490,13 +477,13 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
 
 
 def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
-    from cruxible_client.contracts.named_references import name_query
+
     from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
     from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
     from cruxible_client.contracts.query.definitions import render_query_definition
     from tests.test_query.test_query_definitions import active_work_query
 
-    query = name_query(active_work_query())
+    query = active_work_query()
     binding = SourceQueryBinding(name=query.identity.name, definition=query)
     wire = compact_procedure(binding)
     assert wire["definition"] == json.loads(render_query_definition(query))
@@ -532,7 +519,7 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
 
     from cruxible_client.contracts.query.definitions import (
         AcceptedQueryDefinition,
-        NamedQueryDefinitionSpec,
+        QueryDefinitionSpec,
         query_definition_digest,
         validate_query_definition,
     )
@@ -545,18 +532,14 @@ def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins
     assert accepted.query == query
     assert accepted.artifact_digest == query_definition_digest(query).tagged
     assert AcceptedQueryDefinition.model_validate(accepted.model_dump(mode="json")) == accepted
-    assert set(
-        AcceptedQueryDefinition.model_json_schema()["properties"]["query"]["discriminator"][
-            "mapping"
-        ]
-    ) == {
-        "playbill-query-definition-v1",
-        "playbill-query-definition-v2",
-        "cruxible-query-definition-v3",
-    }
+    schema = AcceptedQueryDefinition.model_json_schema()
+    assert schema["properties"]["query"] == {"$ref": "#/$defs/QueryDefinition"}
     assert (
-        validate_query_definition(NamedQueryDefinitionSpec.model_validate(query.model_dump()))
-        == query
+        schema["$defs"]["QueryDefinition"]["properties"]["artifact_format"]["const"]
+        == "cruxible-query-definition-v3"
+    )
+    assert (
+        validate_query_definition(QueryDefinitionSpec.model_validate(query.model_dump())) == query
     )
     with pytest.raises(ValidationError, match="pins"):
         validate_query_definition({**query.model_dump(mode="json"), "pins": []})
@@ -694,13 +677,13 @@ def test_noop_reference_move_keeps_the_owner_wire_form():
 
 
 def test_native_trigger_missing_line_keeps_the_target_law_refusal(tmp_path):
-    from cruxible_client.contracts.triggers import NamedTrigger, render_trigger
+    from cruxible_client.contracts.triggers import Trigger, render_trigger
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
     from tests.core_support._support import initialize_local
 
     instance, _ = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
-    trigger = NamedTrigger.model_validate(
+    trigger = Trigger.model_validate(
         {
             "identity": {"kind": "Trigger", "name": "test.missing-line"},
             "target": {"kind": "line", "line": {"target": {"kind": "Line", "name": "absent"}}},

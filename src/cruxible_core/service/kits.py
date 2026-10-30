@@ -229,11 +229,11 @@ def _render(path: str, payload: dict[str, Any]) -> tuple[bytes, str]:
         and payload.get("artifact_format") == "cruxible-query-definition-v3"
     ):
         from cruxible_client.contracts.query.definitions import (
-            NamedQueryDefinition,
+            QueryDefinition,
             render_query_definition,
         )
 
-        content = render_query_definition(NamedQueryDefinition.model_validate(payload))
+        content = render_query_definition(QueryDefinition.model_validate(payload))
     else:
         content = pretty_canonical_bytes(payload)
     return content, _artifact_state(path, content).artifact_digest
@@ -831,19 +831,17 @@ def _retirement(path: str, current: bytes, *, by_name: bool = False) -> bytes:
     )
     if not by_name:
         return content
-    from cruxible_client.contracts.named_references import name_query, name_trigger
-
     if path.startswith("query-definitions/"):
         from cruxible_client.contracts.query.definitions import (
             parse_query_definition,
             render_query_definition,
         )
 
-        return render_query_definition(name_query(parse_query_definition(content, path=path)))
+        return render_query_definition(parse_query_definition(content, path=path))
     if path.startswith("triggers/"):
         from cruxible_client.contracts.triggers import parse_trigger, render_trigger
 
-        return render_trigger(name_trigger(parse_trigger(content, path=path)))
+        return render_trigger(parse_trigger(content, path=path))
     if path.startswith("capture-contracts/"):
         from cruxible_client.contracts.capture_contract_inputs import (
             CaptureContractInputRecord,

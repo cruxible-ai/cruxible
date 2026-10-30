@@ -139,7 +139,7 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.procedures.windows import (
     BoundObservationWindow,
-    CaptureEventWindow,
+    CaptureEventNameWindow,
     LineTriggerBinding,
     TriggerEventReference,
 )
@@ -3902,7 +3902,7 @@ def _run_playbill_line(
             anchor = capture_event_time(instance, schedule.event, event, now=evaluation_time)
             trigger_binding = trigger_binding_for(trigger, event=event)
         elif trigger is not None and isinstance(schedule, WindowCloseSchedule):
-            if isinstance(schedule.window, CaptureEventWindow) and event is None:
+            if isinstance(schedule.window, CaptureEventNameWindow) and event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -3915,7 +3915,7 @@ def _run_playbill_line(
                 )
             line_event = event
             if (
-                not isinstance(schedule.window, CaptureEventWindow)
+                not isinstance(schedule.window, CaptureEventNameWindow)
                 and request.resolution_contract is not None
             ):
                 line_event = None
@@ -3923,7 +3923,7 @@ def _run_playbill_line(
             trigger_binding = trigger_binding_for(trigger, window=window)
             anchor = (
                 window.starts_at
-                if isinstance(schedule.window, CaptureEventWindow)
+                if isinstance(schedule.window, CaptureEventNameWindow)
                 else window.ends_at
             )
         elif (

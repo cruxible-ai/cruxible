@@ -38,7 +38,7 @@ def test_governed_query_example_has_mcp_client_factory_parity() -> None:
 
     assert result.payload == authoring_example("query-claims-by-type")
     assert result.payload.kind == "query_definition"
-    assert result.payload.query_definition.artifact_format == "playbill-query-definition-v1"
+    assert result.payload.query_definition.artifact_format == "cruxible-query-definition-v3"
     assert result.name == "query-claims-by-type"
 
 

@@ -234,10 +234,10 @@ def _retired_trigger(path: str, content: bytes, *, by_name: bool = False) -> byt
     retired = pretty_canonical_bytes(payload)
     if not by_name:
         return retired
-    from cruxible_client.contracts.named_references import name_trigger
+
     from cruxible_client.contracts.triggers import parse_trigger, render_trigger
 
-    return render_trigger(name_trigger(parse_trigger(retired, path=path)))
+    return render_trigger(parse_trigger(retired, path=path))
 
 
 def live_triggers_of(connection: sqlite3.Connection, line: str) -> tuple[tuple[str, str], ...]:

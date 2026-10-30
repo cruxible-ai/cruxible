@@ -40,7 +40,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.query.definitions import NamedQueryDefinitionSpec
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.cli.commands.playbill import _local_git_workspace_root
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
@@ -620,7 +620,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             # The fixture ClaimType was lowered to the current format. Resolve
             # its dependency at the accepted base, rather than pinning the old
             # fixture envelope's digest.
-            query_definition=NamedQueryDefinitionSpec.model_validate(
+            query_definition=QueryDefinitionSpec.model_validate(
                 work_item_query(claim_type=claim_type).model_dump(mode="json", exclude={"pins"})
             ),
         ).model_dump(mode="json"),

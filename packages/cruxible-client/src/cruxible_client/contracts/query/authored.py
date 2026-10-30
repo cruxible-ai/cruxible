@@ -18,9 +18,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
-    QueryDefinitionSpec,
     QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
@@ -472,7 +470,7 @@ class _LowerQuery:
 
         return lower(parse_filter(text, path=path, column_offset=column_offset))
 
-    def lower(self, *, named: bool = True) -> QueryDefinition:
+    def lower(self) -> QueryDefinition:
         binding, entry_text = next(iter(self.spec.from_.items()))
         self.require_binding(binding, "$.from")
         matched_entry = re.fullmatch(
@@ -623,8 +621,7 @@ class _LowerQuery:
                 )
             )
         path_shape = bool(traversal)
-        model = NamedQueryDefinition if named else QueryDefinitionSpec
-        return model(
+        return QueryDefinition(
             identity=self.spec.identity,
             description=self.spec.description,
             entry=entry,
@@ -674,11 +671,9 @@ class _LowerQuery:
         )
 
 
-def lower_query_spec(
-    spec: QuerySpecInput, resolver: QuerySpecResolver, *, named: bool = True
-) -> QueryDefinition:
+def lower_query_spec(spec: QuerySpecInput, resolver: QuerySpecResolver) -> QueryDefinition:
     """Resolve directly into the pin-less current tree, or a frozen pre-36 spec."""
-    return _LowerQuery(spec, resolver).lower(named=named)
+    return _LowerQuery(spec, resolver).lower()
 
 
 def query_spec_from_definition(query: QueryDefinition) -> QuerySpecInput:

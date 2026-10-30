@@ -24,11 +24,11 @@ _NODE_MODELS = (*get_args(get_args(ProcedureNode)[0]), RepeatBodyNode)
 
 def compact_procedure(value: Any) -> Any:
     from cruxible_client.contracts.query.definitions import (
-        NamedQueryDefinition,
+        QueryDefinition,
         query_definition_wire,
     )
 
-    if isinstance(value, NamedQueryDefinition):
+    if isinstance(value, QueryDefinition):
         return query_definition_wire(value)
     if isinstance(value, PredicateOperand) and value.kind == "literal":
         return value.value

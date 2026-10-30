@@ -47,7 +47,6 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.named_references import name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
@@ -82,7 +81,6 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -421,7 +419,7 @@ def _claim_type_pin(field_name: str) -> ArtifactPin:
 def _condition() -> QueryDefinition:
     """The settle condition: the target work item exists; its status rides along."""
 
-    return NamedQueryDefinition(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=CONDITION_NAME),
         entry=QueryEntry(
             binding="item",
@@ -541,9 +539,7 @@ def definitions(world: World) -> dict[str, bytes]:
             )
         ),
         "triggers/curation-detect.json": render_trigger(
-            name_trigger(
-                parse_trigger(_CURATION_DETECT.read_bytes(), path="triggers/curation-detect.json")
-            )
+            parse_trigger(_CURATION_DETECT.read_bytes(), path="triggers/curation-detect.json")
         ),
     }
     return members

@@ -233,9 +233,8 @@ def _carried_definition() -> dict[str, object]:
 def _change_set_query(*, named: bool = True) -> QueryDefinition:
     example = query_claims_by_type_example().query_definition
     assert example.projection is not None
-    from cruxible_client.contracts.named_references import name_query
 
-    return (name_query(example) if named else example).model_copy(
+    return example.model_copy(
         update={
             "projection": QueryProjection(fields=(example.projection.fields[0],)),
         }
@@ -1162,15 +1161,10 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     assert result.receipt.terminal == result.terminal
 
 
-def _accepted_authoring_trio(tmp_path, *, historical=False):
-    from cruxible_client.contracts.acquisition_policies import (
-        SourceAcquisitionPolicy,
-    )
-
+def _accepted_authoring_trio(tmp_path):
     from cruxible_client.contracts.authoring.models import (
         LineAuthoringPayload,
         ProcedureMandateAuthoringPayload,
-        SourceAcquisitionPolicyAuthoringPayload,
         authoring_member_identity,
     )
 
@@ -1179,20 +1173,14 @@ def _accepted_authoring_trio(tmp_path, *, historical=False):
     actor = AuthenticatedActor(actor_id="owner")
     procedure = _list_contract_payload()
     name = procedure.definition["name"]
-    policy = SourceAcquisitionPolicyAuthoringPayload(
-        acquisition_policy=SourceAcquisitionPolicy(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="demo")
-        )
-    )
     line = LineAuthoringPayload(
         name=name,
         procedure_name=name,
-        acquisition_policy_name=None if historical else "demo",
         max_authority="observe",
     )
     mandate = ProcedureMandateAuthoringPayload(
         name=name,
-        procedure_name=name,
+        line_name=name,
         grants="propose",
         resource_ceiling=ProcedureHardCaps.model_validate(procedure.definition["hard_caps"]),
         namespace=("captures",),
@@ -1202,7 +1190,7 @@ def _accepted_authoring_trio(tmp_path, *, historical=False):
     payload = ChangeSetAuthoringPayload(
         members=tuple(
             sorted(
-                (procedure, line, mandate) if historical else (policy, procedure, line, mandate),
+                (procedure, line, mandate),
                 key=authoring_member_identity,
             )
         )
@@ -1268,15 +1256,12 @@ def test_unchanged_procedure_line_mandate_submit_reuses_accepted_state(tmp_path)
             assert instance.accepted_coordinate() == coordinate
 
 
-@pytest.mark.parametrize("historical", [True, False])
-def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path, historical):
+def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path):
     from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 
-    coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(
-        tmp_path, historical=historical
-    )
+    coordinator, actor, owner, payload, procedure, _, _ = _accepted_authoring_trio(tmp_path)
     instance = coordinator.instance
     before = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = procedure_path(procedure.definition["name"])
@@ -1293,12 +1278,7 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
     computed = compute_preflight(instance, intent=intent, actor=actor)
     assert computed.result.verdict == "passed", computed.result.frontier
     lowered = computed.lowered
-    if historical:
-        assert not lowered.idempotent and len(lowered.changed_members) == 3
-    else:
-        assert not lowered.idempotent and len(lowered.changed_members) == 2
-        line_path = f"lines/{procedure.definition['name']}.json"
-        assert lowered.proposed_tree[line_path] == before[line_path]
+    assert not lowered.idempotent and len(lowered.changed_members) == 3
     new = parse_procedure(lowered.proposed_tree[path], path=path)
     assert new.lifecycle.predecessor_digest == old_digest
     new_digest = procedure_artifact_digest(new).tagged
@@ -1306,7 +1286,14 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
         if p.startswith("lines/"):
             assert parse_line_spec(b, path=p).procedure.artifact_digest == new_digest
         if p.startswith("procedure-mandates/"):
-            assert parse_procedure_mandate_any(b, path=p).procedure.artifact_digest == new_digest
+            line_path = f"lines/{procedure.definition['name']}.json"
+            revised_line = parse_line_spec(lowered.proposed_tree[line_path], path=line_path)
+            from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+
+            assert (
+                parse_procedure_mandate_any(b, path=p).line.artifact_digest
+                == line_spec_digest(revised_line).tagged
+            )
     _accept_tree(
         instance,
         owner,
@@ -1335,6 +1322,8 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
 
 
 def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_path):
+    from cruxible_client.contracts.authoring.models import LineAuthoringPayload
+
     coordinator, actor, _, _, procedure, line, mandate = _accepted_authoring_trio(tmp_path)
     instance = coordinator.instance
     # These are material changes even with unchanged Procedure graph content.
@@ -1351,7 +1340,10 @@ def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_p
             actor=actor, payload=member, canonical_timestamp="2026-08-21T12:02:00.000000Z"
         ).intent
         changed = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-        assert not changed.idempotent and len(changed.changed_members) == 1
+        assert not changed.idempotent
+        # Any Line change renews its exact Mandate in the same change set.
+        expected = 2 if isinstance(member, LineAuthoringPayload) else 1
+        assert len(changed.changed_members) == expected
 
 
 @pytest.mark.parametrize("in_change_set", [False, True])

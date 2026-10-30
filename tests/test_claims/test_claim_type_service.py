@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.claim_types import claim_type_path
+from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
 from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claim_types import (
@@ -38,13 +38,8 @@ def test_accepted_claim_type_reads_back_at_its_accepted_coordinate(tmp_path: Pat
 
     path = claim_type_path(PREDICATE)
     source_type = parse_claim_type(instance.blob_at(accepted.git_oid, path), path=path)
-    claim_type_pin = next(
-        pin
-        for pin in work_item_query(claim_type=source_type, named=False).pins
-        if pin.role == "claim-type"
-    )
     assert work_item_query(claim_type=source_type).referenced_predicates == (PREDICATE,)
-    assert view.artifact_digest == claim_type_pin.artifact_digest
+    assert view.artifact_digest == claim_type_digest(source_type).tagged
     assert view.envelope["artifact_format"] == "playbill-claim-type-v1"
 
 

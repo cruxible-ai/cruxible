@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     DirectForeignSourceSelection,
     capture_contract_digest,
@@ -23,7 +23,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
 )
@@ -257,7 +256,7 @@ def work_item_query(
                 )
             }
         )
-    query = NamedQueryDefinition(
+    query = QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntry(binding="item", subject_kinds=(SUBJECT_KIND,)),
         result_binding="item",
@@ -284,21 +283,7 @@ def work_item_query(
         default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
     )
-    if named:
-        return query
-    return QueryDefinition.model_validate(
-        {
-            **query.model_dump(mode="json"),
-            "artifact_format": "playbill-query-definition-v1",
-            "pins": [
-                ArtifactPin(
-                    role="claim-type",
-                    target=claim_type.identity,
-                    artifact_digest=claim_type_digest(claim_type).tagged,
-                ).model_dump(mode="json")
-            ],
-        }
-    )
+    return query
 
 
 def accept_proposal(

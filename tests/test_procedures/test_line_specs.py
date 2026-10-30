@@ -178,7 +178,7 @@ def test_a_served_line_interprets_its_result_budget() -> None:
 
 
 def test_a_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> None:
-    from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
 
     first, accepted, _interfaces = _line()
     prior = AcceptedLineSpec(
@@ -206,7 +206,7 @@ def test_a_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> 
         verdict(rebound.model_copy(update={"occurrence_epoch": 2})).diagnostics[0].code
         == "cruxible.line.occurrence_epoch_mismatch"
     )
-    selector = NamedCaptureEventSelector.model_validate(
+    selector = CaptureEventNameSelector.model_validate(
         {"capture_contract_identity": ArtifactIdentity(kind="CaptureContract", name="anchor")}
     )
     with pytest.raises(ValidationError, match="come together"):

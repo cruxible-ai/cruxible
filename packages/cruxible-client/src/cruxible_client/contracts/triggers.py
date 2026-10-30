@@ -28,7 +28,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -39,7 +38,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactNameRef,
     ArtifactPin,
-    ArtifactRef,
 )
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
@@ -51,12 +49,9 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
-    CaptureEventWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
     FixedWindow,
-    NamedCaptureEventSelector,
-    NamedCaptureEventWindow,
-    ObservationWindow,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -121,14 +116,14 @@ class CaptureLandingSchedule(_StrictTriggerModel):
     """Fire once for each retained Capture landing under one exact CaptureContract."""
 
     kind: Literal["capture_landing"] = "capture_landing"
-    event: CaptureEventSelector
+    event: CaptureEventNameSelector
 
 
 class WindowCloseSchedule(_StrictTriggerModel):
     """Fire when a fixed window, or a window anchored on a Capture landing, closes."""
 
     kind: Literal["window_close"] = "window_close"
-    window: ObservationWindow
+    window: Annotated[FixedWindow | CaptureEventNameWindow, Field(discriminator="kind")]
 
 
 class GenerationAcceptedSchedule(_StrictTriggerModel):
@@ -177,7 +172,7 @@ class CaptureEventInput(_StrictTriggerModel):
     """
 
     kind: Literal["capture_event"] = "capture_event"
-    event: CaptureEventSelector | None = None
+    event: CaptureEventNameSelector | None = None
 
 
 TriggerInputRecord: TypeAlias = Annotated[
@@ -263,12 +258,12 @@ class LineTarget(_StrictTriggerModel):
     """Run one Line, whatever version of it is accepted when the Trigger fires."""
 
     kind: Literal["line"] = "line"
-    line: ArtifactRef
+    line: ArtifactNameRef
 
     @model_validator(mode="after")
     def _line(self) -> LineTarget:
-        if self.line.role != TRIGGER_LINE_REF_ROLE or self.line.target.kind != "Line":
-            raise ValueError("a Line target is a role=line reference to a Line identity")
+        if self.line.target.kind != "Line":
+            raise ValueError("a Trigger names a Line")
         return self
 
 
@@ -285,37 +280,21 @@ TriggerTarget: TypeAlias = Annotated[
 ]
 
 
-def schedule_capture_selector(schedule: TriggerSchedule) -> CaptureEventSelector | None:
+def schedule_capture_selector(schedule: TriggerSchedule) -> CaptureEventNameSelector | None:
     """The exact Capture event a schedule fires on, if it fires on one."""
 
     if isinstance(schedule, CaptureLandingSchedule):
         return schedule.event
     if isinstance(schedule, WindowCloseSchedule):
         window = schedule.window
-        return window.event if isinstance(window, CaptureEventWindow) else None
+        return window.event if isinstance(window, CaptureEventNameWindow) else None
     if schedule_is_timed(schedule) or isinstance(schedule, GenerationAcceptedSchedule):
         return None
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
-def schedule_satisfies_input(
-    schedule: TriggerSchedule, required: TriggerInputRecord, *, by_name: bool = True
-) -> bool:
-    """Whether every fire of ``schedule`` carries the event ``required`` names.
-
-    The one rule for every target: a Line's accepted event and an internal
-    action's declared input are both judged here.
-
-    ``by_name=False`` asks for an exact-digest match, but a
-    ``NamedCaptureEventSelector`` (a Line's own ``trigger_event`` is always
-    one) carries no digest at all -- it overrides ``capture_contract_digest``
-    to a ``ClassVar`` ``None``, so comparing it by digest is comparing
-    ``None`` to whatever the other side has, never a real match. Neither side
-    of this pure function can resolve a name to today's live digest (that
-    needs an instance read), so a Named side -- having nothing to compare --
-    falls back to the identity match already required above, the same as
-    ``by_name=True``.
-    """
+def schedule_satisfies_input(schedule: TriggerSchedule, required: TriggerInputRecord) -> bool:
+    """Whether every fire supplies the target's named event and allowed sources."""
 
     if isinstance(required, NoTriggerInput):
         return True
@@ -323,63 +302,27 @@ def schedule_satisfies_input(
     if selector is None or required.event is None:
         return selector is not None
     event = required.event
-    return (
-        selector.capture_contract_identity == event.capture_contract_identity
-        and (
-            by_name
-            or isinstance(selector, NamedCaptureEventSelector)
-            or isinstance(event, NamedCaptureEventSelector)
-            or selector.capture_contract_digest == event.capture_contract_digest
-        )
-        and (
-            not event.logical_sources
-            or bool(selector.logical_sources)
-            and set(selector.logical_sources) <= set(event.logical_sources)
-        )
-    )
-
-
-def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
-    return (
-        pin.role.encode("utf-8"),
-        pin.target.qualified.encode("utf-8"),
-        pin.artifact_digest.encode("ascii"),
-    )
-
-
-def trigger_schedule_pins(schedule: TriggerSchedule) -> tuple[ArtifactPin, ...]:
-    """The exact pins a schedule requires: the CaptureContract an event names."""
-
-    selector = schedule_capture_selector(schedule)
-    if selector is None:
-        return ()
-    return (
-        ArtifactPin(
-            role=TRIGGER_CAPTURE_CONTRACT_PIN_ROLE,
-            target=selector.capture_contract_identity,
-            artifact_digest=selector.capture_contract_digest,
-        ),
+    return selector.capture_contract_identity == event.capture_contract_identity and (
+        not event.logical_sources
+        or bool(selector.logical_sources)
+        and set(selector.logical_sources) <= set(event.logical_sources)
     )
 
 
 class Trigger(_StrictTriggerModel):
     """One schedule and the one Line or internal action it sets off."""
 
-    artifact_format: Literal["playbill-trigger-v1"] = "playbill-trigger-v1"
+    artifact_format: Literal["cruxible-trigger-v2"] = "cruxible-trigger-v2"
     identity: ArtifactIdentity
     schedule: TriggerSchedule
     target: TriggerTarget
-    pins: tuple[ArtifactPin, ...] = ()
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
     def _shape(self) -> Trigger:
         if self.identity.kind != "Trigger" or not _TRIGGER_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Trigger identity must be path-addressable and kind Trigger")
-        # The pins are exactly what the schedule names, so closure moves a
-        # Trigger with the CaptureContract version its event matches.
-        if self.pins != tuple(sorted(trigger_schedule_pins(self.schedule), key=_pin_key)):
-            raise ValueError("Trigger pins must be exactly the CaptureContract its schedule names")
         return self
 
     @property
@@ -389,44 +332,6 @@ class Trigger(_StrictTriggerModel):
     @property
     def action(self) -> str | None:
         return self.target.action if isinstance(self.target, ActionTarget) else None
-
-
-class NamedLineTarget(LineTarget):
-    line: ArtifactNameRef  # type: ignore[assignment]
-
-    @model_validator(mode="after")
-    def _line(self) -> NamedLineTarget:
-        if self.line.target.kind != "Line":
-            raise ValueError("a Trigger names a Line")
-        return self
-
-
-class NamedCaptureLandingSchedule(CaptureLandingSchedule):
-    event: NamedCaptureEventSelector
-
-
-class NamedWindowCloseSchedule(WindowCloseSchedule):
-    window: Annotated[FixedWindow | NamedCaptureEventWindow, Field(discriminator="kind")]
-
-
-class NamedTrigger(Trigger):
-    artifact_format: Literal["cruxible-trigger-v2"] = "cruxible-trigger-v2"  # type: ignore[assignment]
-    schedule: Annotated[
-        CadenceSchedule
-        | CronSchedule
-        | NamedCaptureLandingSchedule
-        | NamedWindowCloseSchedule
-        | GenerationAcceptedSchedule,
-        Field(discriminator="kind"),
-    ]
-    target: Annotated[NamedLineTarget | ActionTarget, Field(discriminator="kind")]
-    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
-
-    @model_validator(mode="after")
-    def _shape(self) -> NamedTrigger:
-        if self.identity.kind != "Trigger" or not _TRIGGER_NAME_RE.fullmatch(self.identity.name):
-            raise ValueError("Trigger identity must be path-addressable and kind Trigger")
-        return self
 
 
 def trigger_path(name: str) -> str:
@@ -447,9 +352,7 @@ def trigger_digest(trigger: Trigger) -> ArtifactDigest:
 
 def parse_trigger(content: bytes, *, path: str) -> Trigger:
     try:
-        trigger: Trigger = TypeAdapter[Trigger | NamedTrigger](
-            Trigger | NamedTrigger
-        ).validate_python(json.loads(content))
+        trigger = Trigger.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise TriggerFormatError("Trigger failed strict validation") from exc
     if trigger_path(trigger.identity.name) != path:
@@ -461,7 +364,7 @@ def parse_trigger(content: bytes, *, path: str) -> Trigger:
 
 class AcceptedTrigger(_StrictTriggerModel):
     path: str
-    trigger: Annotated[Trigger | NamedTrigger, Field(discriminator="artifact_format")]
+    trigger: Trigger
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -508,7 +411,6 @@ def evaluate_trigger_law(
     predecessor: AcceptedTrigger | None,
     target_line_live: bool | None = None,
     target_line_input: TriggerInputRecord | None = None,
-    by_name: bool = False,
     actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
 ) -> TriggerLawResult:
     """Judge one Trigger against its predecessor and what it aims at.
@@ -597,9 +499,7 @@ def evaluate_trigger_law(
                 )
             target = f"Line {trigger.target.line.target.qualified!r}"
             required = target_line_input or NoTriggerInput()
-        if not schedule_satisfies_input(
-            trigger.schedule, required, by_name=by_name or isinstance(trigger, NamedTrigger)
-        ):
+        if not schedule_satisfies_input(trigger.schedule, required):
             assert isinstance(required, CaptureEventInput)
             needed = (
                 "its declared trigger_event contract and source restriction"
@@ -649,5 +549,4 @@ __all__ = [
     "schedule_satisfies_input",
     "trigger_digest",
     "trigger_path",
-    "trigger_schedule_pins",
 ]

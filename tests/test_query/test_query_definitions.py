@@ -16,7 +16,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
-from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_V3_ACCEPTANCE_LAW
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -24,7 +24,6 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
-    NamedQueryDefinition,
     QueryDefinition,
     QueryDefinitionFormatError,
     QueryEvaluationPolicy,
@@ -33,6 +32,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_address,
     query_definition_digest,
     query_definition_path,
+    query_definition_wire,
     render_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
@@ -188,10 +188,8 @@ def active_work_query(**overrides: object) -> QueryDefinition:
         ),
     }
     fields.update(overrides)
-    if fields.get("artifact_format") == "cruxible-query-definition-v3":
-        fields.pop("pins", None)
-        return NamedQueryDefinition.model_validate(fields)
-    return QueryDefinition(**fields)  # type: ignore[arg-type]
+    fields.pop("pins", None)
+    return QueryDefinition.model_validate(fields)
 
 
 def single_status_query(**overrides: object) -> QueryDefinition:
@@ -227,10 +225,8 @@ def single_status_query(**overrides: object) -> QueryDefinition:
         "pins": (claim_type_pin(STATUS_PREDICATE),),
     }
     fields.update(overrides)
-    if fields.get("artifact_format") == "cruxible-query-definition-v3":
-        fields.pop("pins", None)
-        return NamedQueryDefinition.model_validate(fields)
-    return QueryDefinition(**fields)  # type: ignore[arg-type]
+    fields.pop("pins", None)
+    return QueryDefinition.model_validate(fields)
 
 
 def accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
@@ -245,27 +241,25 @@ def accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
 
 
 def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> None:
-    fixture = json.loads(GOLDEN.read_bytes())["historical_v1"]
+    fixture = json.loads(GOLDEN.read_bytes())
     query = QueryDefinition.model_validate(fixture["query_definition"])
-
     assert query == active_work_query()
     assert query_definition_path(query.identity.name) == QUERY_PATH
     rendered = render_query_definition(query)
     assert rendered.decode() == fixture["canonical_wire"]
     assert query_definition_digest(query).tagged == fixture["artifact_digest"]
     assert parse_query_definition(rendered, path=QUERY_PATH) == query
+    assert b'"tag"' not in rendered
 
 
-def test_query_definition_v3_is_compact_without_moving_frozen_v1() -> None:
-    fixture = json.loads(GOLDEN.read_bytes())
-    v1 = QueryDefinition.model_validate(fixture["historical_v1"]["query_definition"])
-    v3 = NamedQueryDefinition.model_validate(fixture["query_definition"])
-    wire = render_query_definition(v3)
-    assert wire.decode() == fixture["canonical_v3_wire"]
-    assert query_definition_digest(v3).tagged == fixture["v3_artifact_digest"]
-    assert parse_query_definition(wire, path=QUERY_PATH) == v3
-    assert len(wire) < len(render_query_definition(v1))
-    assert b'"tag"' not in wire
+@pytest.mark.parametrize(
+    "artifact_format", ["playbill-query-definition-v1", "playbill-query-definition-v2"]
+)
+def test_query_definition_refuses_removed_formats(artifact_format) -> None:
+    payload = active_work_query().model_dump(mode="json")
+    payload["artifact_format"] = artifact_format
+    with pytest.raises(QueryDefinitionFormatError, match="unsupported"):
+        parse_query_definition(json.dumps(payload).encode(), path=QUERY_PATH)
 
 
 def test_query_definition_digest_uses_the_shared_envelope_domain() -> None:
@@ -275,7 +269,7 @@ def test_query_definition_digest_uses_the_shared_envelope_domain() -> None:
     assert query_definition_digest(query) == typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
-        query.model_dump(mode="json"),
+        query_definition_wire(query),
     )
 
 
@@ -315,8 +309,8 @@ def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewher
     with pytest.raises(ProjectionFormatError, match="no registered format"):
         registered_path_kind("queries/project.active_work.yaml")
     assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-query-definition-v1")
-        == QUERY_DEFINITION_ACCEPTANCE_LAW
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-query-definition-v3")
+        == QUERY_DEFINITION_V3_ACCEPTANCE_LAW
     )
 
 
@@ -363,13 +357,6 @@ def test_query_grammar_refuses_unknown_filter_ref_and_policy_kinds() -> None:
 
 
 def test_query_grammar_requires_canonical_ordering_and_unique_declarations() -> None:
-    with pytest.raises(ValidationError, match="sorted"):
-        active_work_query(
-            pins=(
-                claim_type_pin(STATUS_PREDICATE),
-                claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
-            )
-        )
     with pytest.raises(ValidationError, match="at least two operands"):
         QueryConjunctionFilter(
             filters=(QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),)
@@ -425,46 +412,15 @@ def test_query_grammar_closes_binding_parameter_and_predicate_references() -> No
         )
 
 
-def test_query_definition_pins_exactly_the_claim_types_it_references() -> None:
-    with pytest.raises(ValidationError, match="pin exactly the ClaimTypes"):
-        active_work_query(pins=(claim_type_pin(STATUS_PREDICATE),))
-    with pytest.raises(ValidationError, match="pin exactly the ClaimTypes"):
-        active_work_query(
-            pins=(
-                claim_type_pin("project.work_item.owner"),
-                claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
-                claim_type_pin(STATUS_PREDICATE),
-            )
-        )
-    with pytest.raises(ValidationError, match="target ClaimType identities"):
-        active_work_query(
-            pins=(
-                claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
-                ArtifactPin(
-                    role="claim-type",
-                    target=ArtifactIdentity(kind="Subject", name=STATUS_PREDICATE),
-                    artifact_digest=claim_type_pin(STATUS_PREDICATE).artifact_digest,
-                ),
-            )
-        )
+def test_query_definition_uses_named_dependencies_and_refuses_authored_pins() -> None:
     query = active_work_query()
     assert query.referenced_predicates == (REVIEWER_PREDICATE, STATUS_PREDICATE)
     assert query.subject_kinds == ("project.person", "project.work_item")
-
-
-def test_query_definition_refuses_contract_pins_that_do_not_target_contracts() -> None:
-    with pytest.raises(ValidationError, match="target Contract identities"):
-        active_work_query(
-            pins=(
-                claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
-                claim_type_pin(STATUS_PREDICATE),
-                ArtifactPin(
-                    role="result-contract",
-                    target=ArtifactIdentity(kind="ClaimType", name=STATUS_PREDICATE),
-                    artifact_digest=claim_type_pin(STATUS_PREDICATE).artifact_digest,
-                ),
-            )
-        )
+    payload = query.model_dump(mode="json")
+    assert "pins" not in payload
+    payload["pins"] = []
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        QueryDefinition.model_validate(payload)
 
 
 # -- shape, cardinality, conflict, and budget law -------------------------
@@ -634,7 +590,11 @@ def test_query_budgets_are_explicit_bounded_and_ceilinged() -> None:
 def test_query_definition_law_accepts_a_genesis_declaration_with_resolved_pins() -> None:
     query = active_work_query()
     accepted_artifacts = {
-        pin.target.qualified: (pin.target, pin.artifact_digest) for pin in query.pins
+        pin.target.qualified: (pin.target, pin.artifact_digest)
+        for pin in (
+            claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
+            claim_type_pin(STATUS_PREDICATE),
+        )
     }
 
     result = evaluate_query_definition_law(
@@ -811,7 +771,7 @@ def test_query_definition_participates_in_dependency_closure_with_its_claim_type
     state = parse_dependency_artifact(QUERY_PATH, tree[QUERY_PATH])
     assert state is not None
     assert state.artifact_kind == "query-definition"
-    assert state.artifact_tag == "playbill-query-definition-v1"
+    assert state.artifact_tag == "cruxible-query-definition-v3"
     assert state.identity == query.identity
     assert state.address == SemanticAddress.whole_artifact(QUERY_PATH)
 
@@ -918,7 +878,7 @@ def test_query_definition_projects_its_declaration_policy_and_references() -> No
 def test_query_definition_projection_refuses_a_malformed_registered_artifact() -> None:
     with pytest.raises(QueryDefinitionFormatError):
         parse_projection_tree(
-            {QUERY_PATH: b'{"artifact_format":"playbill-query-definition-v1"}\n'},
+            {QUERY_PATH: b'{"artifact_format":"cruxible-query-definition-v3"}\n'},
         )
 
 
@@ -955,7 +915,10 @@ def test_a_query_definition_change_set_is_authorable_and_law_evaluated(tmp_path:
     member = members[query_path]
     assert member.artifact_kind == "query-definition"
     assert member.law_identifier == "cruxible.query-definition.named.v1"
-    assert QUERY_DEFINITION_ACCEPTANCE_LAW.coordinate.identifier == "playbill.query-definition.v1"
+    assert (
+        QUERY_DEFINITION_V3_ACCEPTANCE_LAW.coordinate.identifier
+        == "cruxible.query-definition.named.v1"
+    )
     assert member.candidate_artifact_digest == query_definition_digest(query).tagged
     law_result = next(
         item.result for item in evaluation.candidate.law_evidence if item.path == query_path
@@ -1131,18 +1094,21 @@ def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> N
         "result_binding",
     ]
     # An accepted definition stays strict: every field is stated.
-    assert set(SPEC_DEFAULTED_FIELDS) <= set(QueryDefinition.model_json_schema()["required"])
+    assert {
+        "result_shape",
+        "dedupe",
+        "evaluation_policy",
+        "default_budgets",
+        "maximum_budgets",
+    } <= set(QueryDefinition.model_json_schema()["required"])
 
 
-@pytest.mark.parametrize("format", ["playbill-query-definition-v1", "cruxible-query-definition-v3"])
-def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
+def test_typed_specs_with_traversals_keep_subject_defaults_and_digests():
     from cruxible_client.contracts.query.definitions import (
-        NamedQueryDefinitionSpec,
         QueryDefinitionSpec,
     )
 
     explicit = active_work_query(
-        artifact_format=format,
         result_shape="subject",
         dedupe="subject",
         default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
@@ -1151,12 +1117,7 @@ def test_typed_specs_with_traversals_keep_subject_defaults_and_digests(format):
     stated = explicit.model_dump(mode="json")
     stated.pop("result_shape")
     stated.pop("dedupe")
-    model = (
-        NamedQueryDefinitionSpec
-        if format == "cruxible-query-definition-v3"
-        else QueryDefinitionSpec
-    )
-    defaulted = model.model_validate(stated)
+    defaulted = QueryDefinitionSpec.model_validate(stated)
     assert defaulted.result_shape == "subject"
     assert defaulted.dedupe == "subject"
     assert defaulted.model_dump(mode="json") == explicit.model_dump(mode="json")

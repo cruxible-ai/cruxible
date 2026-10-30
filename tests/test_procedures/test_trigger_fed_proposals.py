@@ -28,7 +28,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, evidence_by_item
@@ -73,7 +73,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     )
     monkeypatch.undo()
     contract = capture_contract()
-    selector = NamedCaptureEventSelector(
+    selector = CaptureEventNameSelector(
         capture_contract_identity=contract.identity,
     )
     served = fixtures._served_line(instance, proposer, policy)

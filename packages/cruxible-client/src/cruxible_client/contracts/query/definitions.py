@@ -1,4 +1,4 @@
-"""Governed QueryDefinition v1 artifact, identity/path law, and acceptance law.
+"""Governed QueryDefinition artifact, identity/path law, and acceptance law.
 
 A QueryDefinition is the only governed way to name a canonical read of accepted
 Claim state. Every accepted definition declares which verdicts and currencies it
@@ -13,9 +13,9 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -115,21 +115,10 @@ class QueryEvaluationPolicy(_StrictQueryDefinitionModel):
         return sorted_unique(value, label="query visible currency")
 
 
-def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
-    return (
-        pin.role.encode("utf-8"),
-        pin.target.qualified.encode("utf-8"),
-        pin.artifact_digest.encode("ascii"),
-    )
-
-
 class QueryDefinition(_StrictQueryDefinitionModel):
-    """One governed, digest-pinned, Claim-native canonical query declaration."""
+    """One governed, named, Claim-native canonical query declaration."""
 
-    artifact_format: Literal[
-        "playbill-query-definition-v1",
-        "playbill-query-definition-v2",
-    ] = "playbill-query-definition-v1"
+    artifact_format: Literal["cruxible-query-definition-v3"] = "cruxible-query-definition-v3"
     identity: ArtifactIdentity
     description: str | None = None
     entry: QueryEntry | QueryArtifactsEntry
@@ -155,7 +144,7 @@ class QueryDefinition(_StrictQueryDefinitionModel):
     evaluation_policy: QueryEvaluationPolicy
     default_budgets: QueryBudgets
     maximum_budgets: QueryBudgets
-    pins: tuple[ArtifactPin, ...] = ()
+    pins: ClassVar[tuple[ArtifactPin, ...]] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @field_validator("description")
@@ -190,15 +179,10 @@ class QueryDefinition(_StrictQueryDefinitionModel):
         sorted_unique(tuple(item.name for item in value), label="QueryDefinition includes")
         return value
 
-    @field_validator("pins", check_fields=False)
+    @model_validator(mode="before")
     @classmethod
-    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        if value != tuple(sorted(value, key=_pin_key)):
-            raise ValueError("QueryDefinition pins must be canonically sorted")
-        keys = tuple((pin.role, pin.target.qualified) for pin in value)
-        if len(set(keys)) != len(keys):
-            raise ValueError("QueryDefinition pins must be unique by role and target")
-        return value
+    def _wire_defaults(cls, data: Any) -> Any:
+        return _query_wire_defaults(data)
 
     @model_validator(mode="after")
     def _shape(self) -> "QueryDefinition":
@@ -209,11 +193,6 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
             )
         if isinstance(self.entry, QueryArtifactsEntry):
-            if self.artifact_format not in {
-                "playbill-query-definition-v2",
-                "cruxible-query-definition-v3",
-            }:
-                raise ValueError("Artifact selection requires query definition v2")
             if (self.result_shape, self.result_cardinality, self.dedupe) != (
                 "artifact_definition",
                 "many",
@@ -242,11 +221,8 @@ class QueryDefinition(_StrictQueryDefinitionModel):
             if not self.default_budgets.within(self.maximum_budgets):
                 raise ValueError("default budgets exceed maximum budgets")
             return self
-        if self.artifact_format not in {
-            "playbill-query-definition-v1",
-            "cruxible-query-definition-v3",
-        } or (self.result_shape == "artifact_definition" or self.dedupe == "artifact"):
-            raise ValueError("Claim traversal requires the frozen v1 query grammar")
+        if self.result_shape == "artifact_definition" or self.dedupe == "artifact":
+            raise ValueError("Claim traversal cannot return artifact definitions")
         if self.row_contract is not None and self.projection is None:
             raise ValueError("a row Contract requires a declared projection to produce it")
         if self.parameter_contract is not None and not self.parameters:
@@ -255,7 +231,6 @@ class QueryDefinition(_StrictQueryDefinitionModel):
         self._validate_reference_scopes()
         self._validate_shape_rules()
         self._validate_budgets()
-        self._validate_pins()
         return self
 
     # -- structural laws -------------------------------------------------
@@ -390,32 +365,6 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 "and prohibited for Subject shapes"
             )
 
-    def _validate_pins(self) -> None:
-        pinned = tuple(pin for pin in self.pins if pin.role == CLAIM_TYPE_PIN_ROLE)
-        if any(pin.target.kind != "ClaimType" for pin in pinned):
-            raise ValueError("QueryDefinition claim-type pins must target ClaimType identities")
-        pinned_predicates = tuple(sorted(pin.target.name for pin in pinned))
-        if pinned_predicates != tuple(sorted(self.referenced_predicates)):
-            raise ValueError(
-                "QueryDefinition must pin exactly the ClaimTypes whose predicates it references"
-            )
-        for pin in self.pins:
-            if pin.role in _CONTRACT_PIN_ROLES and pin.target.kind != "Contract":
-                raise ValueError("QueryDefinition contract pins must target Contract identities")
-
-
-class NamedQueryDefinition(QueryDefinition):
-    artifact_format: Literal["cruxible-query-definition-v3"] = "cruxible-query-definition-v3"  # type: ignore[assignment]
-    pins: ClassVar[tuple[ArtifactPin, ...]] = ()  # type: ignore[misc]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _v3_defaults(cls, data: Any) -> Any:
-        return _query_v3_defaults(data)
-
-    def _validate_pins(self) -> None:
-        pass
-
 
 #: Spec fields an author may leave out; the defaults are stated in the stored definition.
 SPEC_DEFAULTED_FIELDS = (
@@ -436,7 +385,7 @@ def _spec_schema(schema: dict[str, Any]) -> None:
         schema["required"] = [name for name in required if name not in SPEC_DEFAULTED_FIELDS]
 
 
-def _query_v3_defaults(data: Any) -> Any:
+def _query_wire_defaults(data: Any) -> Any:
     if (
         not isinstance(data, Mapping)
         or data.get("artifact_format") != "cruxible-query-definition-v3"
@@ -459,7 +408,7 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     """The spec with each omitted defaulted field stated.
 
     - ``result_shape``: ``subject`` for a Subject entry;
-      ``artifact_definition`` for an artifacts entry (v2).
+      ``artifact_definition`` for an artifacts entry.
     - ``result_cardinality``: ``many``.
     - ``dedupe``: ``subject`` or ``artifact`` for those shapes; other shapes state it.
     - ``evaluation_policy``: supported, current Claims; conflicts surfaced.
@@ -473,8 +422,6 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
     artifacts = isinstance(entry, QueryArtifactsEntry) or (
         isinstance(entry, Mapping) and entry.get("tag") == _ARTIFACTS_ENTRY_TAG
     )
-    if artifacts:
-        stated.setdefault("artifact_format", "playbill-query-definition-v2")
     shape = stated.setdefault("result_shape", "artifact_definition" if artifacts else "subject")
     stated.setdefault("result_cardinality", "many")
     if shape in ("subject", "artifact_definition"):
@@ -504,12 +451,10 @@ def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class QueryDefinitionSpec(QueryDefinition):
-    """Authoring grammar: omitted ClaimType pins resolve at the intent base.
+    """Authoring grammar with stated defaults and named dependencies.
 
-    Explicit pins remain assertions, never silently rebound. Accepted artifacts
-    always pass the stricter QueryDefinition validation after lowering. The
-    shape, cardinality, dedupe, evaluation policy and budgets may be left out
-    (``query_spec_defaults``); the stored definition states them.
+    The shape, cardinality, dedupe, evaluation policy and budgets may be left
+    out (``query_spec_defaults``); the stored definition states them.
     """
 
     model_config = ConfigDict(
@@ -523,31 +468,8 @@ class QueryDefinitionSpec(QueryDefinition):
     @classmethod
     def _defaults(cls, data: Any) -> Any:
         if isinstance(data, Mapping):
-            data = _query_v3_defaults(data)
+            data = _query_wire_defaults(data)
             return query_spec_defaults(data)
-        return data
-
-    def _validate_pins(self) -> None:
-        referenced = set(self.referenced_predicates)
-        for pin in self.pins:
-            if pin.role == CLAIM_TYPE_PIN_ROLE and (
-                pin.target.kind != "ClaimType" or pin.target.name not in referenced
-            ):
-                raise ValueError("query ClaimType pins must reference a used predicate")
-            if pin.role in _CONTRACT_PIN_ROLES and pin.target.kind != "Contract":
-                raise ValueError("QueryDefinition contract pins must target Contract identities")
-
-
-class NamedQueryDefinitionSpec(NamedQueryDefinition):
-    """The pin-less typed authoring form with the same stated defaults."""
-
-    model_config = QueryDefinitionSpec.model_config
-
-    @model_validator(mode="before")
-    @classmethod
-    def _defaults(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            return query_spec_defaults(_query_v3_defaults(data))
         return data
 
 
@@ -579,9 +501,6 @@ def validate_query_definition_path(
 
 
 def query_definition_wire(query: QueryDefinition) -> dict[str, Any]:
-    if getattr(query, "artifact_format") != "cruxible-query-definition-v3":
-        return query.model_dump(mode="json")
-
     def compact(model: BaseModel, output: dict[str, Any]) -> None:
         # Tags belong to declared model positions, never to opaque JSON data.
         output.pop("tag", None)
@@ -617,25 +536,13 @@ def render_query_definition(query: QueryDefinition) -> bytes:
 def validate_query_definition(payload: Any) -> QueryDefinition:
     """Strictly select the stored owner model without changing the payload."""
     if (
-        type(payload) is NamedQueryDefinition
-        and payload.artifact_format == "cruxible-query-definition-v3"
-    ) or (
         type(payload) is QueryDefinition
-        and payload.artifact_format
-        in {"playbill-query-definition-v1", "playbill-query-definition-v2"}
+        and payload.artifact_format == "cruxible-query-definition-v3"
     ):
-        # Owner parsers already validated immutable objects; readers must not
-        # parse the same accepted artifact again just to put it in a carrier.
         return payload
     if isinstance(payload, QueryDefinition):
         payload = payload.model_dump(mode="json")
-    model = (
-        NamedQueryDefinition
-        if isinstance(payload, Mapping)
-        and payload.get("artifact_format") == "cruxible-query-definition-v3"
-        else QueryDefinition
-    )
-    return model.model_validate(payload)
+    return QueryDefinition.model_validate(payload)
 
 
 def parse_query_definition(
@@ -647,11 +554,10 @@ def parse_query_definition(
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise QueryDefinitionFormatError("QueryDefinition is not strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("artifact_format") not in {
-        "playbill-query-definition-v1",
-        "playbill-query-definition-v2",
-        "cruxible-query-definition-v3",
-    }:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("artifact_format") != "cruxible-query-definition-v3"
+    ):
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise QueryDefinitionFormatError(
             f"unsupported QueryDefinition artifact format: {declared!r}"
@@ -660,7 +566,7 @@ def parse_query_definition(
         query = validate_query_definition(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
-            "QueryDefinition failed strict playbill-query-definition-v1 validation"
+            "QueryDefinition failed strict cruxible-query-definition-v3 validation"
         ) from exc
     validate_query_definition_path(query, path)
     if render_query_definition(query) != content:
@@ -678,10 +584,7 @@ def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
 
 class AcceptedQueryDefinition(_StrictQueryDefinitionModel):
     path: str
-    query: Annotated[
-        SerializeAsAny[QueryDefinition | NamedQueryDefinition],
-        Field(discriminator="artifact_format"),
-    ]
+    query: QueryDefinition
     artifact_digest: str
 
     @field_validator("query", mode="before")
@@ -767,15 +670,6 @@ def evaluate_query_definition_law(
             path=path,
         )
     if accepted_artifacts is not None:
-        for pin in query.pins:
-            accepted = accepted_artifacts.get(pin.target.qualified)
-            if accepted is None or (not by_name and accepted[1] != pin.artifact_digest):
-                return _refusal(
-                    "cruxible.query_definition.pin_unresolved",
-                    "A QueryDefinition pin does not resolve at the accepted parent coordinate.",
-                    path=path,
-                )
-    if accepted_artifacts is not None and isinstance(query, NamedQueryDefinition):
         for predicate in query.referenced_predicates:
             if accepted_artifacts.get(f"ClaimType:{predicate}") is None:
                 return _refusal(

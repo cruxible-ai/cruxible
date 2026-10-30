@@ -35,7 +35,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -69,9 +69,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
-    CLAIM_TYPE_PIN_ROLE,
     AcceptedQueryDefinition,
-    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
     QueryEvaluationPolicy,
@@ -834,27 +832,6 @@ def _member_key(value: object) -> tuple[str, object]:
     return ("scalar", value)
 
 
-def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[ArtifactPin, ...]:
-    pins = [
-        ArtifactPin(
-            role=CLAIM_TYPE_PIN_ROLE,
-            target=ArtifactIdentity(kind="ClaimType", name=predicate),
-            artifact_digest=vocabulary.predicates[predicate].claim_type_digest,
-        )
-        for predicate in predicates
-    ]
-    return tuple(
-        sorted(
-            pins,
-            key=lambda pin: (
-                pin.role.encode("utf-8"),
-                pin.target.qualified.encode("utf-8"),
-                pin.artifact_digest.encode("ascii"),
-            ),
-        )
-    )
-
-
 def _accepted(query: QueryDefinition) -> AcceptedQueryDefinition:
     strict = validate_query_definition(query)
     return AcceptedQueryDefinition(
@@ -1303,7 +1280,7 @@ def _compact_subject_query(
             field_path="order_by",
         )
     draft: dict[str, Any] = {
-        "artifact_format": "playbill-query-definition-v1",
+        "artifact_format": "cruxible-query-definition-v3",
         "identity": ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
         "entry": QueryEntry(binding=ROOT, subject_kinds=(plan.kind,)),
         "traversal": tuple(
@@ -1331,10 +1308,7 @@ def _compact_subject_query(
         "default_budgets": budgets,
         "maximum_budgets": budgets,
     }
-    unpinned = QueryDefinitionSpec(**draft)
-    spec = QueryDefinitionSpec(
-        **{**draft, "pins": _pins(vocabulary, unpinned.referenced_predicates)}
-    )
+    spec = QueryDefinitionSpec(**draft)
     definition = _accepted(spec)
     with_retired = "retired" in request.status
     result = evaluate_accepted_query(
@@ -1973,7 +1947,7 @@ def _artifact_definition(
         break
     budgets = QueryBudgets(max_results=ARTIFACT_QUERY_MAX_RESULTS, max_traversal_depth=0)
     query = QueryDefinitionSpec(
-        artifact_format="playbill-query-definition-v2",
+        artifact_format="cruxible-query-definition-v3",
         identity=ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
         entry=QueryArtifactsEntry(
             artifact_kind=kind,
@@ -1999,9 +1973,7 @@ def _artifact_definition(
 # -- spec and named queries -------------------------------------------------------
 
 
-def _pinned_spec(
-    vocabulary: QueryVocabulary, spec: QueryDefinitionSpec | NamedQueryDefinitionSpec
-) -> QueryDefinition:
+def _resolved_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> QueryDefinition:
     if isinstance(spec.entry, QueryEntry):
         for index, kind in enumerate(spec.entry.subject_kinds):
             vocabulary.require_kind(kind, field_path=f"spec.entry.subject_kinds[{index}]")
@@ -2015,42 +1987,7 @@ def _pinned_spec(
                 repair="use accepted predicates (query kind=ClaimType lists them)",
                 field_path="spec",
             )
-    if isinstance(spec, NamedQueryDefinitionSpec):
-        return validate_query_definition(spec)
-    explicit = {pin.target.name: pin for pin in spec.pins if pin.role == CLAIM_TYPE_PIN_ROLE}
-    for predicate, pin in explicit.items():
-        if pin.artifact_digest != vocabulary.predicates[predicate].claim_type_digest:
-            raise query_refusal(
-                "cruxible.query.pin_stale",
-                f"the spec pins ClaimType {predicate} at a version that is not accepted here",
-                repair="omit ClaimType pins to resolve them at this coordinate",
-                field_path="spec.pins",
-            )
-    others = tuple(pin for pin in spec.pins if pin.role != CLAIM_TYPE_PIN_ROLE)
-    pins = tuple(
-        sorted(
-            (*others, *_pins(vocabulary, referenced)),
-            key=lambda pin: (
-                pin.role.encode("utf-8"),
-                pin.target.qualified.encode("utf-8"),
-                pin.artifact_digest.encode("ascii"),
-            ),
-        )
-    )
-    try:
-        return validate_query_definition(
-            {
-                **spec.model_dump(mode="json"),
-                "pins": [pin.model_dump(mode="json") for pin in pins],
-            }
-        )
-    except ValueError as exc:
-        raise query_refusal(
-            "cruxible.query.spec_invalid",
-            f"the spec does not validate once pinned: {str(exc).splitlines()[0]}",
-            repair="check the spec against QueryDefinitionSpec",
-            field_path="spec",
-        ) from exc
+    return validate_query_definition(spec)
 
 
 def _field_column(vocabulary: QueryVocabulary, name: str, ref: QueryValueRef) -> QueryColumn:
@@ -2422,7 +2359,7 @@ def _spec_answer(
     content: ExactContentReader,
 ) -> _Answer:
     assert request.spec is not None
-    definition = _accepted(_pinned_spec(vocabulary, request.spec))
+    definition = _accepted(_resolved_spec(vocabulary, request.spec))
     # The server ceiling is an execution input, never part of the spec, so the
     # submitted spec keeps its digest while every budget is clipped.
     artifacts = isinstance(definition.query.entry, QueryArtifactsEntry)

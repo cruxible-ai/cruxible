@@ -2230,7 +2230,7 @@ placeholder digests. `authoring example query-ontology` and `authoring example q
 provide artifact queries; MCP's authoring-example and authoring-compile tools use
 these same typed inputs. Both are `query_definition` inputs.
 
-Artifact queries use `playbill-query-definition-v2` and
+All Query definitions use `cruxible-query-definition-v3`; artifact queries use
 `playbill-query-artifacts-entry-v2`. Select `ClaimType` or `Procedure`:
 
 - `selection: all` selects all live definitions of that kind.

@@ -285,7 +285,7 @@ def test_a_raw_candidate_declaring_a_row_contract_is_refused() -> None:
     """The law refuses row_contract outright, before resolving or judging it."""
 
     from cruxible_client.contracts.query.definitions import (
-        NamedQueryDefinition,
+        QueryDefinition,
         evaluate_query_definition_law,
         query_definition_path,
     )
@@ -297,7 +297,7 @@ def test_a_raw_candidate_declaring_a_row_contract_is_refused() -> None:
     # An unresolvable Contract name: the refusal must fire before any
     # resolution is even attempted.
     data["row_contract"] = "project.unresolvable-row@1"
-    query = NamedQueryDefinition.model_validate(data)
+    query = QueryDefinition.model_validate(data)
     result = evaluate_query_definition_law(
         query, path=query_definition_path(query.identity.name), predecessor=None
     )
@@ -310,7 +310,7 @@ def test_a_raw_candidate_declaring_a_row_contract_is_refused() -> None:
 
 def test_a_raw_candidate_declaring_a_parameter_contract_is_refused() -> None:
     from cruxible_client.contracts.query.definitions import (
-        NamedQueryDefinition,
+        QueryDefinition,
         evaluate_query_definition_law,
         query_definition_path,
     )
@@ -321,7 +321,7 @@ def test_a_raw_candidate_declaring_a_parameter_contract_is_refused() -> None:
     data["artifact_format"] = "cruxible-query-definition-v3"
     data["parameters"] = [{"name": "status", "value_type": "string"}]
     data["parameter_contract"] = "project.unresolvable-params@1"
-    query = NamedQueryDefinition.model_validate(data)
+    query = QueryDefinition.model_validate(data)
     result = evaluate_query_definition_law(
         query, path=query_definition_path(query.identity.name), predecessor=None
     )

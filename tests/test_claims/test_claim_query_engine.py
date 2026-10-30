@@ -321,7 +321,6 @@ def typed_item_query(
         ),
         default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
-        pins=(claim_type_pin_for(predicate, object_kind=object_kind),),
     )
 
 
@@ -369,6 +368,7 @@ def all_items_query(**overrides: object) -> QueryDefinition:
         ),
     }
     fields.update(overrides)
+    fields.pop("pins", None)
     return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 

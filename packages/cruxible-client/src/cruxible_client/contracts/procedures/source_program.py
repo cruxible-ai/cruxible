@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.provider_operations import OperationEffect, ProcedureSlot
-from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.shapes import ContractRef
 
 
@@ -67,7 +67,7 @@ class SourceQueryBinding(_Closed):
 
     kind: Literal["query"] = "query"
     name: str
-    definition: NamedQueryDefinition
+    definition: QueryDefinition
 
 
 class SourceProcedureBinding(_Closed):

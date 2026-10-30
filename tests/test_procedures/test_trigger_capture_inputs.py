@@ -15,7 +15,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
 from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload
@@ -59,27 +59,25 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         contract = kwargs.get("contract", frozen_contract())
     else:
         contract = kwargs.get("contract", capture_contract())
-    selector = CaptureEventSelector(
+    selector = CaptureEventNameSelector(
         capture_contract_identity=contract.identity,
-        capture_contract_digest=capture_contract_digest(contract).tagged,
         logical_sources=sources,
     )
     original = _served_line(instance, procedure, policy)
     schedule = CaptureLandingSchedule(event=selector)
     if window:
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+        from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
 
         schedule = WindowCloseSchedule(
-            window=CaptureEventWindow(event=selector, duration_seconds=60)
+            window=CaptureEventNameWindow(event=selector, duration_seconds=60)
         )
     values = {
         **original.model_dump(mode="python"),
         "trigger_input": SOURCE_ALIAS,
         "trigger_event": selector,
     }
-    from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
 
-    values["trigger_event"] = NamedCaptureEventSelector(
+    values["trigger_event"] = CaptureEventNameSelector(
         capture_contract_identity=contract.identity, logical_sources=sources
     )
     line = LineSpec.model_validate(values)
@@ -105,7 +103,6 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
                     TRIGGER,
                     line=line.identity.name,
                     schedule=schedule,
-                    named=not kwargs.get("historical", False),
                 )
             ),
         },

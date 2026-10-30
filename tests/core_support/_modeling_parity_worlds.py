@@ -260,7 +260,6 @@ def work_queue_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
-        pins=_work_item_pins(WI_PRIORITY, WI_STATUS, WI_SUMMARY, WI_TITLE, WI_TYPE),
     )
 
 
@@ -315,15 +314,6 @@ def _note_query(
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
-        pins=(
-            claim_type_pin(
-                SN_ABOUT_WORK_ITEM,
-                subject_kinds=(STATE_NOTE,),
-                object_subject_kinds=(WORK_ITEM,),
-            ),
-            claim_type_pin(SN_CREATED_AT, subject_kinds=(STATE_NOTE,)),
-            claim_type_pin(SN_KIND, subject_kinds=(STATE_NOTE,)),
-        ),
     )
 
 
@@ -388,7 +378,6 @@ def work_item_status_query() -> QueryDefinition:
         evaluation_policy=_ONE_POLICY,
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=_work_item_pins(WI_STATUS),
     )
 
 
@@ -489,18 +478,6 @@ def notes_without_review_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
-        pins=(
-            claim_type_pin(
-                SN_ABOUT_REVIEW_REQUEST,
-                subject_kinds=(STATE_NOTE,),
-                object_subject_kinds=(REVIEW_REQUEST,),
-            ),
-            claim_type_pin(
-                SN_ABOUT_WORK_ITEM,
-                subject_kinds=(STATE_NOTE,),
-                object_subject_kinds=(WORK_ITEM,),
-            ),
-        ),
     )
 
 
@@ -564,19 +541,6 @@ def notes_on_open_review_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=2),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=2),
-        pins=(
-            claim_type_pin(RR_STATUS, subject_kinds=(REVIEW_REQUEST,)),
-            claim_type_pin(
-                SN_ABOUT_REVIEW_REQUEST,
-                subject_kinds=(STATE_NOTE,),
-                object_subject_kinds=(REVIEW_REQUEST,),
-            ),
-            claim_type_pin(
-                SN_ABOUT_WORK_ITEM,
-                subject_kinds=(STATE_NOTE,),
-                object_subject_kinds=(WORK_ITEM,),
-            ),
-        ),
     )
 
 
@@ -659,13 +623,6 @@ def work_items_for_area_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
-        pins=(
-            claim_type_pin(
-                WI_TARGETS_AREA,
-                subject_kinds=(WORK_ITEM,),
-                object_subject_kinds=(PRODUCT_AREA,),
-            ),
-        ),
     )
 
 
@@ -782,17 +739,6 @@ def incident_work_items_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
-        pins=(
-            claim_type_pin(
-                SWI_ADDRESSES_INCIDENT,
-                subject_kinds=(SUPPLY_WORK_ITEM,),
-                object_subject_kinds=(INCIDENT,),
-            ),
-            claim_type_pin(SWI_PRIORITY, subject_kinds=(SUPPLY_WORK_ITEM,)),
-            claim_type_pin(SWI_STATUS, subject_kinds=(SUPPLY_WORK_ITEM,)),
-            claim_type_pin(SWI_TITLE, subject_kinds=(SUPPLY_WORK_ITEM,)),
-            claim_type_pin(SWI_TYPE, subject_kinds=(SUPPLY_WORK_ITEM,)),
-        ),
     )
 
 
@@ -847,9 +793,4 @@ def open_incidents_by_severity_query() -> QueryDefinition:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgets(max_results=200, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=0),
-        pins=(
-            claim_type_pin(INC_SEVERITY, subject_kinds=(INCIDENT,)),
-            claim_type_pin(INC_STATUS, subject_kinds=(INCIDENT,)),
-            claim_type_pin(INC_TITLE, subject_kinds=(INCIDENT,)),
-        ),
     )

@@ -80,7 +80,6 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_path,
@@ -284,7 +283,7 @@ def _claim_type_path(claim_type: ClaimType) -> str:
 
 
 def _query_definition(index: int, claim_type: ClaimType, *, named: bool = True) -> QueryDefinition:
-    query = NamedQueryDefinition(
+    query = QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=f"project.reading_{index:04d}"),
         entry=QueryEntry(
             binding="item",

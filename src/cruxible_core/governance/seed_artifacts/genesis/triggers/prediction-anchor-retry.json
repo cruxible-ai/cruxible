@@ -1,5 +1,5 @@
 {
-  "artifact_format": "playbill-trigger-v1",
+  "artifact_format": "cruxible-trigger-v2",
   "identity": {
     "kind": "Trigger",
     "name": "prediction-anchor-retry"
@@ -8,7 +8,6 @@
     "predecessor_digest": null,
     "state": "live"
   },
-  "pins": [],
   "schedule": {
     "interval_seconds": 3600,
     "kind": "cadence"

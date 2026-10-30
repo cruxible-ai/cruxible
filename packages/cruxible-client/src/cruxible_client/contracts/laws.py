@@ -30,7 +30,6 @@ CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
 PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
-QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
@@ -256,13 +255,6 @@ PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-procedure-mandate-v1",
     semantic_revision=1,
 )
-# Revision 5 refuses moving a query that live ClaimTypes corroborate
-# through by exact digest unless those ClaimTypes move with it.
-QUERY_DEFINITION_LAW = _artifact_law_coordinate(
-    QUERY_DEFINITION_LAW_IDENTIFIER,
-    "playbill-query-definition-v1",
-    semantic_revision=5,
-)
 EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
     EXHAUST_PROMOTION_LAW_IDENTIFIER,
     "playbill-exhaust-promotion-v1",
@@ -446,18 +438,6 @@ PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure-mandate",
     artifact_tag="playbill-procedure-mandate-v1",
 )
-QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=QUERY_DEFINITION_LAW,
-    artifact_kind="query-definition",
-    artifact_tag="playbill-query-definition-v1",
-)
-QUERY_DEFINITION_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.query-definition.v2", "playbill-query-definition-v2", semantic_revision=1
-    ),
-    artifact_kind="query-definition",
-    artifact_tag="playbill-query-definition-v2",
-)
 EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=EXHAUST_PROMOTION_LAW,
     artifact_kind="exhaust-promotion",
@@ -502,16 +482,6 @@ CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="contract",
     artifact_tag="cruxible-contract-v1",
 )
-# A Trigger aims at a live Line that accepts its event, or at an internal
-# action on a cadence; a retired Trigger is never revived.
-TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.trigger.v1", "playbill-trigger-v1", semantic_revision=1
-    ),
-    artifact_kind="trigger",
-    artifact_tag="playbill-trigger-v1",
-)
-
 RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "cruxible.resolution-contract.v1", "playbill-resolution-contract-v1", semantic_revision=1
@@ -597,13 +567,10 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         LINE_V6_ACCEPTANCE_LAW,
-        TRIGGER_ACCEPTANCE_LAW,
         SUBJECT_KIND_ACCEPTANCE_LAW,
         CONTRACT_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
-        QUERY_DEFINITION_ACCEPTANCE_LAW,
-        QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_V3_ACCEPTANCE_LAW,

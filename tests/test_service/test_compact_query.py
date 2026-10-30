@@ -14,7 +14,7 @@ import pytest
 
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinitionSpec,
+    QueryDefinitionSpec,
 )
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
@@ -249,7 +249,7 @@ def test_named_query_runs_its_accepted_definition(instance: Any) -> None:
 
 def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
     declared = work_item_query("project.adhoc")
-    spec = NamedQueryDefinitionSpec.model_validate(declared.model_dump(mode="json"))
+    spec = QueryDefinitionSpec.model_validate(declared.model_dump(mode="json"))
     result = _query(instance, spec=spec)
 
     assert result.receipt.mode == "spec"
@@ -598,7 +598,7 @@ def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> Non
     fields = declared["projection"]["fields"]
     fields[0]["name"], fields[1]["name"] = "subject", "flags"
     declared["projection"]["fields"] = sorted(fields, key=lambda item: item["name"])
-    spec = NamedQueryDefinitionSpec.model_validate(declared)
+    spec = QueryDefinitionSpec.model_validate(declared)
 
     result = _query(instance, spec=spec)
 
@@ -832,7 +832,7 @@ def test_spec_mode_clips_path_budgets_at_execution_not_in_the_spec(
             "max_paths_per_result": 50,
         },
     )
-    spec = NamedQueryDefinitionSpec.model_validate(declared)
+    spec = QueryDefinitionSpec.model_validate(declared)
     seen: list[tuple[str, Any]] = []
 
     class Evaluated(Exception):

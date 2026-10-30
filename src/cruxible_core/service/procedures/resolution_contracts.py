@@ -23,6 +23,8 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCode
 from cruxible_client.contracts.procedures.windows import (
     BoundObservationWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
     CaptureEventSelector,
     CaptureEventWindow,
     FixedWindow,
@@ -164,7 +166,7 @@ def capture_contract_name(instance: PlaybillInstance, digest: str) -> str | None
 
 def read_capture_event(
     instance: PlaybillInstance,
-    selector: CaptureEventSelector,
+    selector: CaptureEventSelector | CaptureEventNameSelector,
     reference: TriggerEventReference,
     *,
     now: datetime,
@@ -239,7 +241,7 @@ def read_capture_event(
 
 def capture_event_time(
     instance: PlaybillInstance,
-    selector: CaptureEventSelector,
+    selector: CaptureEventSelector | CaptureEventNameSelector,
     reference: TriggerEventReference,
     *,
     now: datetime,
@@ -250,12 +252,12 @@ def capture_event_time(
 
 def bind_window(
     instance: PlaybillInstance,
-    policy: ObservationWindow,
+    policy: ObservationWindow | CaptureEventNameWindow,
     event: TriggerEventReference | None,
     *,
     now: datetime,
 ) -> BoundObservationWindow:
-    if isinstance(policy, CaptureEventWindow):
+    if isinstance(policy, CaptureEventWindow | CaptureEventNameWindow):
         if event is None:
             raise ExecutionError("window is waiting for its retained capture event")
         instant = capture_event_time(instance, policy.event, event, now=now)

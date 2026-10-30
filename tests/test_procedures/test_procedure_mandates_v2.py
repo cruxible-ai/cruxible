@@ -96,14 +96,6 @@ def _query(*, where=None, entry_parameter: str = "asset_id") -> QueryDefinition:
         ),
         default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
-        pins=tuple(
-            ArtifactPin(
-                role="claim-type",
-                target=ArtifactIdentity(kind="ClaimType", name=predicate),
-                artifact_digest="sha256:" + digit * 64,
-            )
-            for predicate, digit in (("sec.asset.criticality", "3"), ("sec.asset.environment", "4"))
-        ),
     )
 
 
@@ -489,10 +481,10 @@ def _world(tmp_path):
         if path == claim_type_path(_claim_type().predicate)
     )
     status = claim_type.predicate
-    from cruxible_client.contracts.named_references import name_query
+
     from tests.support.procedures import revalidated
 
-    query = name_query(_query()).model_copy(
+    query = _query().model_copy(
         update={
             "artifact_format": "cruxible-query-definition-v3",
             "identity": ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),

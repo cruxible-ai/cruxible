@@ -99,10 +99,10 @@ def test_query_definition_reads_only_selected_accepted_sources(
 
 
 def test_current_population_query_helpers_use_pinless_owner_models():
-    from cruxible_client.contracts.query.definitions import NamedQueryDefinition
+    from cruxible_client.contracts.query.definitions import QueryDefinition
     from tests.core_support._adoption_fixture import _claim_type, _query_definition
     from tests.test_scale._worlds import _condition
 
     for query in (work_item_query(), _query_definition(0, _claim_type(0)), _condition()):
-        assert isinstance(query, NamedQueryDefinition)
+        assert isinstance(query, QueryDefinition)
         assert "pins" not in query.model_dump(mode="json")

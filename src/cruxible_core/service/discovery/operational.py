@@ -68,7 +68,11 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_requested_rung,
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
-from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventNameWindow,
+    CaptureEventWindow,
+    FixedWindow,
+)
 from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
@@ -322,7 +326,7 @@ def window_summary(window: object) -> str:
             f"the fixed window from {format_datetime(window.starts_at)} "
             f"({window.duration_seconds}s)"
         )
-    if isinstance(window, CaptureEventWindow):
+    if isinstance(window, CaptureEventWindow | CaptureEventNameWindow):
         sources = (
             " from " + ", ".join(window.event.logical_sources)
             if window.event.logical_sources

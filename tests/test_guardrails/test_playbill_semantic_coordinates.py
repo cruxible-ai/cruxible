@@ -47,12 +47,9 @@ from cruxible_client.contracts.laws import (
     PROVIDER_BUILD_ACCEPTANCE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
     PROVIDER_V3_ACCEPTANCE_LAW,
-    QUERY_DEFINITION_ACCEPTANCE_LAW,
-    QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     SUBJECT_KIND_ACCEPTANCE_LAW,
-    TRIGGER_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
@@ -81,13 +78,6 @@ LAW_COORDINATES: tuple[
         "playbill-line-v6",
         1,
         "sha256:4e145cfe2c8250d7851d9383137686cc6591d2b5219cd12b18e271db555b3b97",
-    ),
-    (
-        TRIGGER_ACCEPTANCE_LAW,
-        "playbill.trigger.v1",
-        "playbill-trigger-v1",
-        1,
-        "sha256:7fc3d357dbd23307f849c5750181a21035d7d9866e07db022fb3722e59fe2bce",
     ),
     (
         SUBJECT_KIND_ACCEPTANCE_LAW,
@@ -263,20 +253,6 @@ LAW_COORDINATES: tuple[
         "playbill-procedure-mandate-v1",
         1,
         "sha256:dc874c06567d0405554a80cbc12f2f586765b9c6fcbe03a60634b72a06312ae9",
-    ),
-    (
-        QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
-        "playbill.query-definition.v2",
-        "playbill-query-definition-v2",
-        1,
-        "sha256:45b2e729a3ac7168623dc799affcad2d97633c5e944ac56551d2d0d5b43eb5fc",
-    ),
-    (
-        QUERY_DEFINITION_ACCEPTANCE_LAW,
-        "playbill.query-definition.v1",
-        "playbill-query-definition-v1",
-        5,
-        "sha256:9bd27f8ffacfae8f9c593f74bdb548526f27040a0dc37d41289dfd86f6365c7d",
     ),
     (
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,

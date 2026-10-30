@@ -6,7 +6,6 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.named_references import name_query
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -289,7 +288,7 @@ def test_query_binds_request_parameters_and_types_the_result():
         bindings={
             "work": SourceQueryBinding(
                 name=definition.identity.name,
-                definition=name_query(definition),
+                definition=definition,
             )
         },
     )
@@ -511,7 +510,7 @@ def test_query_defaults_and_explicit_budget_use_existing_contracts():
     definition = active_work_query()
     binding = SourceQueryBinding(
         name=definition.identity.name,
-        definition=name_query(definition),
+        definition=definition,
     )
     program = """
         def example(request, bindings):

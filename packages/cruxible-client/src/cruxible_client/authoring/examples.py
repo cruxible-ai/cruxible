@@ -689,7 +689,7 @@ def query_ontology_example() -> QueryDefinitionInput:
     return QueryDefinitionInput(
         kind="query_definition",
         query_definition=QueryDefinitionSpec(
-            artifact_format="playbill-query-definition-v2",
+            artifact_format="cruxible-query-definition-v3",
             identity=ArtifactIdentity(kind="QueryDefinition", name="security.ontology"),
             entry=QueryArtifactsEntry(
                 artifact_kind="ClaimType",

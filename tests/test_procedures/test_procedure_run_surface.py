@@ -417,14 +417,13 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     assert next_due is None
 
     from cruxible_client.contracts.procedures.windows import (
-        CaptureEventSelector,
+        CaptureEventNameSelector,
         LineTriggerBinding,
         TriggerEventReference,
     )
 
-    selector = CaptureEventSelector(
+    selector = CaptureEventNameSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
-        capture_contract_digest=_line_digest("anchor"),
     )
     trigger = _accepted_trigger(
         line_trigger(

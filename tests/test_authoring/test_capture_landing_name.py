@@ -26,14 +26,13 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
-    CaptureEventWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
 )
 from cruxible_client.contracts.triggers import (
     CaptureLandingSchedule,
     WindowCloseSchedule,
     parse_trigger,
-    trigger_schedule_pins,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
@@ -44,9 +43,8 @@ from tests.test_server.test_playbill_line_run_refusals import _served_line
 
 NAME = CONTRACT.identity.name
 PATH = capture_contract_path(NAME)
-SELECTOR = CaptureEventSelector(
+SELECTOR = CaptureEventNameSelector(
     capture_contract_identity=CONTRACT.identity,
-    capture_contract_digest=capture_contract_digest(CONTRACT).tagged,
 )
 
 
@@ -104,7 +102,10 @@ def test_unavailable_named_contract_is_a_typed_authoring_refusal(failure, window
 
 @pytest.mark.parametrize(
     "extra",
-    [{"event": SELECTOR.model_dump()}, {"expected_digest": SELECTOR.capture_contract_digest}],
+    [
+        {"event": SELECTOR.model_dump()},
+        {"expected_digest": capture_contract_digest(CONTRACT).tagged},
+    ],
 )
 def test_name_schedule_refuses_exact_selector_or_expected_digest(extra):
     with pytest.raises(ValidationError):
@@ -187,7 +188,7 @@ def test_exact_event_authoring_form_is_refused(window_close):
     from cruxible_client.contracts.authoring.inputs import TriggerInput
 
     schedule = (
-        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        WindowCloseSchedule(window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=60))
         if window_close
         else CaptureLandingSchedule(event=SELECTOR)
     )
@@ -280,7 +281,7 @@ def test_retiring_an_absent_trigger_refuses_without_resolving_its_schedule():
 )
 def test_selector_and_authored_sources_must_be_sorted_unique_logical_names(sources):
     for model, fields in (
-        (CaptureEventSelector, SELECTOR.model_dump()),
+        (CaptureEventNameSelector, SELECTOR.model_dump()),
         (CaptureLandingByNameSchedule, {"capture_contract": NAME}),
         (CaptureEventByNameWindow, {"capture_contract": NAME, "duration_seconds": 60}),
     ):
@@ -288,13 +289,12 @@ def test_selector_and_authored_sources_must_be_sorted_unique_logical_names(sourc
             model.model_validate({**fields, "logical_sources": sources})
 
 
-def test_unrestricted_selector_keeps_its_historical_serialization():
+def test_unrestricted_selector_has_one_name_only_serialization():
     assert SELECTOR.model_dump(mode="json") == {
         "capture_contract_identity": CONTRACT.identity.model_dump(mode="json"),
-        "capture_contract_digest": capture_contract_digest(CONTRACT).tagged,
     }
     assert (
-        CaptureEventSelector.model_validate({**SELECTOR.model_dump(), "logical_sources": []})
+        CaptureEventNameSelector.model_validate({**SELECTOR.model_dump(), "logical_sources": []})
         == SELECTOR
     )
 
@@ -318,7 +318,7 @@ def test_trigger_input_accepts_only_sources_covered_by_its_line(required, offere
     assert schedule_satisfies_input(CaptureLandingSchedule(event=selector), need) is allowed
     assert (
         schedule_satisfies_input(
-            WindowCloseSchedule(window=CaptureEventWindow(event=selector, duration_seconds=60)),
+            WindowCloseSchedule(window=CaptureEventNameWindow(event=selector, duration_seconds=60)),
             need,
         )
         is allowed
@@ -336,15 +336,6 @@ def test_named_sourced_trigger_can_target_an_unrestricted_source_input():
             update={
                 "trigger_input": "feed",
                 "trigger_event": SELECTOR,
-                "pins": tuple(
-                    sorted(
-                        (
-                            *line.pins,
-                            *trigger_schedule_pins(CaptureLandingSchedule(event=SELECTOR)),
-                        ),
-                        key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-                    )
-                ),
             }
         )
     )

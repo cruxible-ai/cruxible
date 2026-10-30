@@ -33,7 +33,6 @@ from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
-    ArtifactPin,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResult
@@ -43,7 +42,6 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.get_reads import GetProcedureCard, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
@@ -1041,13 +1039,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ),
         default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
-        pins=(
-            ArtifactPin(
-                role="claim-type",
-                target=triage_type.definition.identity,
-                artifact_digest=claim_type_digest(triage_type.definition).tagged,
-            ),
-        ),
     )
     query_preflight = transport.compile_authoring_input(
         instance_id,

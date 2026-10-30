@@ -4,20 +4,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactRef
-from cruxible_client.contracts.named_references import name_trigger
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactNameRef
 from cruxible_client.contracts.triggers import (
-    TRIGGER_LINE_REF_ROLE,
     ActionTarget,
     CadenceSchedule,
     LineTarget,
-    NamedTrigger,
     Trigger,
     TriggerSchedule,
     render_trigger,
     trigger_digest,
     trigger_path,
-    trigger_schedule_pins,
 )
 
 
@@ -27,40 +23,18 @@ def line_trigger(
     line: str,
     schedule: TriggerSchedule,
     lifecycle: ArtifactLifecycle | None = None,
-    named: bool = True,
 ) -> Trigger:
-    """A Trigger that runs the named Line on `schedule`."""
-
-    if named:
-        data = schedule.model_dump(mode="json")
-        if data["kind"] == "capture_landing":
-            data["event"].pop("capture_contract_digest", None)
-        if data["kind"] == "window_close" and data["window"]["kind"] == "capture_event":
-            data["window"]["event"].pop("capture_contract_digest", None)
-        return NamedTrigger(
-            identity=ArtifactIdentity(kind="Trigger", name=name),
-            schedule=data,
-            target={
-                "kind": "line",
-                "line": {"target": {"kind": "Line", "name": line.removeprefix("Line:")}},
-            },
-            lifecycle=lifecycle or ArtifactLifecycle(),
-        )
-
-    trigger = Trigger(
+    """A Trigger that runs the named Line on its authored schedule."""
+    return Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
         target=LineTarget(
-            line=ArtifactRef(
-                role=TRIGGER_LINE_REF_ROLE,
-                target=ArtifactIdentity(kind="Line", name=line.removeprefix("Line:")),
+            line=ArtifactNameRef(
+                target=ArtifactIdentity(kind="Line", name=line.removeprefix("Line:"))
             )
         ),
-        pins=trigger_schedule_pins(schedule),
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
-
-    return name_trigger(trigger) if named else trigger
 
 
 def action_trigger(
@@ -70,22 +44,17 @@ def action_trigger(
     interval_seconds: int | None = None,
     schedule: TriggerSchedule | None = None,
     lifecycle: ArtifactLifecycle | None = None,
-    named: bool = True,
 ) -> Trigger:
-    """A Trigger that fires one internal action, on a cadence unless given a schedule."""
-
+    """A Trigger that fires one internal action."""
     if schedule is None:
         assert interval_seconds is not None
         schedule = CadenceSchedule(interval_seconds=interval_seconds)
-    trigger = Trigger(
+    return Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
         target=ActionTarget(action=action),
-        pins=trigger_schedule_pins(schedule),
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
-
-    return name_trigger(trigger) if named else trigger
 
 
 def successor(
@@ -94,32 +63,14 @@ def successor(
     schedule: TriggerSchedule | None = None,
     target: LineTarget | ActionTarget | None = None,
     state: Literal["live", "retired"] = "live",
-    named: bool = True,
 ) -> Trigger:
-    """The next version of a Trigger, pinning its exact predecessor."""
-
-    if named:
-        result = name_trigger(trigger).model_copy(
-            update={
-                "schedule": schedule or trigger.schedule,
-                "target": target or trigger.target,
-                "lifecycle": ArtifactLifecycle(
-                    state=state,
-                    predecessor_digest=trigger_digest(trigger).tagged,
-                ),
-            }
-        )
-        return name_trigger(result)
-    schedule = schedule or trigger.schedule
-    result = Trigger(
+    """The next Trigger version, naming its exact predecessor."""
+    return Trigger(
         identity=trigger.identity,
-        schedule=schedule,
+        schedule=schedule or trigger.schedule,
         target=target or trigger.target,
-        pins=trigger_schedule_pins(schedule),
         lifecycle=ArtifactLifecycle(state=state, predecessor_digest=trigger_digest(trigger).tagged),
     )
-
-    return name_trigger(result) if named else result
 
 
 def trigger_members(*triggers: Trigger) -> dict[str, bytes]:

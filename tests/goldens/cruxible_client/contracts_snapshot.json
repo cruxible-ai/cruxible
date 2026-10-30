@@ -5255,7 +5255,7 @@
           },
           "CaptureLandingByNameSchedule": {
             "additionalProperties": false,
-            "description": "Resolve a live CaptureContract at prepare; accepted Triggers retain its digest.",
+            "description": "Resolve a live CaptureContract at prepare; accepted Triggers retain its name.",
             "properties": {
               "capture_contract": {
                 "title": "Capture Contract",
@@ -8606,411 +8606,6 @@
             "title": "MandateScopeAuthoring",
             "type": "object"
           },
-          "NamedQueryDefinition": {
-            "additionalProperties": false,
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
-            ],
-            "title": "NamedQueryDefinition",
-            "type": "object"
-          },
-          "NamedQueryDefinitionSpec": {
-            "additionalProperties": false,
-            "description": "The pin-less typed authoring form with the same stated defaults.",
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding"
-            ],
-            "title": "NamedQueryDefinitionSpec",
-            "type": "object"
-          },
           "PredicateOperand": {
             "additionalProperties": false,
             "description": "One operand in the closed predicate grammar.",
@@ -11109,14 +10704,11 @@
           },
           "QueryDefinition": {
             "additionalProperties": false,
-            "description": "One governed, digest-pinned, Claim-native canonical query declaration.",
+            "description": "One governed, named, Claim-native canonical query declaration.",
             "properties": {
               "artifact_format": {
-                "default": "playbill-query-definition-v1",
-                "enum": [
-                  "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
-                ],
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -11205,14 +10797,6 @@
                   "$ref": "#/$defs/QueryParameterDeclaration"
                 },
                 "title": "Parameters",
-                "type": "array"
-              },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
-                },
-                "title": "Pins",
                 "type": "array"
               },
               "projection": {
@@ -11342,12 +10926,6 @@
                   },
                   {
                     "$ref": "#/$defs/QueryDefinition"
-                  },
-                  {
-                    "$ref": "#/$defs/NamedQueryDefinitionSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/NamedQueryDefinition"
                   }
                 ],
                 "title": "Query Definition"
@@ -11362,14 +10940,11 @@
           },
           "QueryDefinitionSpec": {
             "additionalProperties": false,
-            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering. The\nshape, cardinality, dedupe, evaluation policy and budgets may be left out\n(``query_spec_defaults``); the stored definition states them.",
+            "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "default": "playbill-query-definition-v1",
-                "enum": [
-                  "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
-                ],
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -11458,14 +11033,6 @@
                   "$ref": "#/$defs/QueryParameterDeclaration"
                 },
                 "title": "Parameters",
-                "type": "array"
-              },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
-                },
-                "title": "Pins",
                 "type": "array"
               },
               "projection": {
@@ -13423,7 +12990,7 @@
             "description": "A Query the source reads, named; it resolves at the accepted coordinate.",
             "properties": {
               "definition": {
-                "$ref": "#/$defs/NamedQueryDefinition"
+                "$ref": "#/$defs/QueryDefinition"
               },
               "kind": {
                 "const": "query",
@@ -15164,14 +14731,10 @@
             "title": "BlockedCheck",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -15185,10 +14748,9 @@
               }
             },
             "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
+              "capture_contract_identity"
             ],
-            "title": "CaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -15391,27 +14953,6 @@
             "title": "DiagnosticFrontierLimits",
             "type": "object"
           },
-          "NamedCaptureEventSelector": {
-            "additionalProperties": false,
-            "properties": {
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "logical_sources": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Logical Sources",
-                "type": "array"
-              }
-            },
-            "required": [
-              "capture_contract_identity"
-            ],
-            "title": "NamedCaptureEventSelector",
-            "type": "object"
-          },
           "PreflightCertificate": {
             "additionalProperties": false,
             "properties": {
@@ -15609,18 +15150,10 @@
           },
           "ResolvedTriggerCaptureContract": {
             "additionalProperties": false,
-            "description": "The exact contract a Trigger resolved during this prepare or preview.",
+            "description": "The contract identity a Trigger resolved during this prepare or preview.",
             "properties": {
               "event": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CaptureEventSelector"
-                  },
-                  {
-                    "$ref": "#/$defs/NamedCaptureEventSelector"
-                  }
-                ],
-                "title": "Event"
+                "$ref": "#/$defs/CaptureEventNameSelector"
               },
               "trigger_name": {
                 "title": "Trigger Name",
@@ -16539,14 +16072,10 @@
             "title": "CandidateStatusRecord",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -16560,10 +16089,9 @@
               }
             },
             "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
+              "capture_contract_identity"
             ],
-            "title": "CaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -16766,27 +16294,6 @@
             "title": "DiagnosticFrontierLimits",
             "type": "object"
           },
-          "NamedCaptureEventSelector": {
-            "additionalProperties": false,
-            "properties": {
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "logical_sources": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Logical Sources",
-                "type": "array"
-              }
-            },
-            "required": [
-              "capture_contract_identity"
-            ],
-            "title": "NamedCaptureEventSelector",
-            "type": "object"
-          },
           "PreflightCertificate": {
             "additionalProperties": false,
             "properties": {
@@ -16984,18 +16491,10 @@
           },
           "ResolvedTriggerCaptureContract": {
             "additionalProperties": false,
-            "description": "The exact contract a Trigger resolved during this prepare or preview.",
+            "description": "The contract identity a Trigger resolved during this prepare or preview.",
             "properties": {
               "event": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CaptureEventSelector"
-                  },
-                  {
-                    "$ref": "#/$defs/NamedCaptureEventSelector"
-                  }
-                ],
-                "title": "Event"
+                "$ref": "#/$defs/CaptureEventNameSelector"
               },
               "trigger_name": {
                 "title": "Trigger Name",
@@ -20908,7 +20407,7 @@
           "json_name": "event",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/CaptureEventSelector"
+            "$ref": "#/$defs/CaptureEventNameSelector"
           }
         },
         "kind": {
@@ -20948,14 +20447,10 @@
             "title": "ArtifactIdentity",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -20969,10 +20464,9 @@
               }
             },
             "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
+              "capture_contract_identity"
             ],
-            "title": "CaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           }
         },
@@ -20980,7 +20474,7 @@
         "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
         "properties": {
           "event": {
-            "$ref": "#/$defs/CaptureEventSelector"
+            "$ref": "#/$defs/CaptureEventNameSelector"
           },
           "kind": {
             "const": "capture_landing",
@@ -54349,211 +53843,6 @@
             "title": "InvokeNode",
             "type": "object"
           },
-          "NamedQueryDefinition": {
-            "additionalProperties": false,
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
-            ],
-            "title": "NamedQueryDefinition",
-            "type": "object"
-          },
           "PredicateOperand": {
             "additionalProperties": false,
             "description": "One operand in the closed predicate grammar.",
@@ -56123,6 +55412,212 @@
             "title": "QueryConjunctionFilter",
             "type": "object"
           },
+          "QueryDefinition": {
+            "additionalProperties": false,
+            "description": "One governed, named, Claim-native canonical query declaration.",
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntry"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicy"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryInclude"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrdering"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclaration"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStep"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "QueryDefinition",
+            "type": "object"
+          },
           "QueryDisjunctionFilter": {
             "additionalProperties": false,
             "description": "Deterministic any-of composition over canonically ordered operands.",
@@ -57478,7 +56973,7 @@
             "description": "A Query the source reads, named; it resolves at the accepted coordinate.",
             "properties": {
               "definition": {
-                "$ref": "#/$defs/NamedQueryDefinition"
+                "$ref": "#/$defs/QueryDefinition"
               },
               "kind": {
                 "const": "query",
@@ -92185,211 +91680,6 @@
             "title": "InvokeNode",
             "type": "object"
           },
-          "NamedQueryDefinition": {
-            "additionalProperties": false,
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
-            ],
-            "title": "NamedQueryDefinition",
-            "type": "object"
-          },
           "PredicateOperand": {
             "additionalProperties": false,
             "description": "One operand in the closed predicate grammar.",
@@ -94105,6 +93395,212 @@
               "filters"
             ],
             "title": "QueryConjunctionFilter",
+            "type": "object"
+          },
+          "QueryDefinition": {
+            "additionalProperties": false,
+            "description": "One governed, named, Claim-native canonical query declaration.",
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntry"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicy"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryInclude"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrdering"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclaration"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStep"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "QueryDefinition",
             "type": "object"
           },
           "QueryDisjunctionFilter": {
@@ -96073,7 +95569,7 @@
             "description": "A Query the source reads, named; it resolves at the accepted coordinate.",
             "properties": {
               "definition": {
-                "$ref": "#/$defs/NamedQueryDefinition"
+                "$ref": "#/$defs/QueryDefinition"
               },
               "kind": {
                 "const": "query",
@@ -96805,14 +96301,10 @@
                 "$ref": "#/$defs/QueryDefinitionSpec"
               },
               {
-                "$ref": "#/$defs/NamedQueryDefinitionSpec"
-              },
-              {
                 "type": "null"
               }
             ],
-            "default": null,
-            "title": "Spec"
+            "default": null
           }
         },
         "status": {
@@ -96976,29 +96468,6 @@
             "title": "ArtifactLifecycle",
             "type": "object"
           },
-          "ArtifactPin": {
-            "additionalProperties": false,
-            "properties": {
-              "artifact_digest": {
-                "title": "Artifact Digest",
-                "type": "string"
-              },
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
-              "target",
-              "artifact_digest"
-            ],
-            "title": "ArtifactPin",
-            "type": "object"
-          },
           "CanonicalDuration": {
             "additionalProperties": false,
             "properties": {
@@ -97052,206 +96521,6 @@
               "version"
             ],
             "title": "ContractRef",
-            "type": "object"
-          },
-          "NamedQueryDefinitionSpec": {
-            "additionalProperties": false,
-            "description": "The pin-less typed authoring form with the same stated defaults.",
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding"
-            ],
-            "title": "NamedQueryDefinitionSpec",
             "type": "object"
           },
           "QueryArtifactsEntry": {
@@ -97654,14 +96923,11 @@
           },
           "QueryDefinitionSpec": {
             "additionalProperties": false,
-            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering. The\nshape, cardinality, dedupe, evaluation policy and budgets may be left out\n(``query_spec_defaults``); the stored definition states them.",
+            "description": "Authoring grammar with stated defaults and named dependencies.\n\nThe shape, cardinality, dedupe, evaluation policy and budgets may be left\nout (``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
-                "default": "playbill-query-definition-v1",
-                "enum": [
-                  "playbill-query-definition-v1",
-                  "playbill-query-definition-v2"
-                ],
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -97750,14 +97016,6 @@
                   "$ref": "#/$defs/QueryParameterDeclaration"
                 },
                 "title": "Parameters",
-                "type": "array"
-              },
-              "pins": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ArtifactPin"
-                },
-                "title": "Pins",
                 "type": "array"
               },
               "projection": {
@@ -99215,14 +98473,10 @@
                 "$ref": "#/$defs/QueryDefinitionSpec"
               },
               {
-                "$ref": "#/$defs/NamedQueryDefinitionSpec"
-              },
-              {
                 "type": "null"
               }
             ],
-            "default": null,
-            "title": "Spec"
+            "default": null
           },
           "status": {
             "default": [
@@ -101969,211 +101223,6 @@
             "title": "InvokeNode",
             "type": "object"
           },
-          "NamedQueryDefinition": {
-            "additionalProperties": false,
-            "properties": {
-              "artifact_format": {
-                "const": "cruxible-query-definition-v3",
-                "default": "cruxible-query-definition-v3",
-                "title": "Artifact Format",
-                "type": "string"
-              },
-              "dedupe": {
-                "enum": [
-                  "subject",
-                  "path",
-                  "none",
-                  "artifact"
-                ],
-                "title": "Dedupe",
-                "type": "string"
-              },
-              "default_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "description": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Description"
-              },
-              "entry": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryEntry"
-                  },
-                  {
-                    "$ref": "#/$defs/QueryArtifactsEntry"
-                  }
-                ],
-                "title": "Entry"
-              },
-              "evaluation_policy": {
-                "$ref": "#/$defs/QueryEvaluationPolicy"
-              },
-              "identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "includes": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryInclude"
-                },
-                "title": "Includes",
-                "type": "array"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/ArtifactLifecycle",
-                "default": {
-                  "predecessor_digest": null,
-                  "state": "live"
-                }
-              },
-              "maximum_budgets": {
-                "$ref": "#/$defs/QueryBudgets"
-              },
-              "orderings": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryOrdering"
-                },
-                "title": "Orderings",
-                "type": "array"
-              },
-              "parameter_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "parameters": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryParameterDeclaration"
-                },
-                "title": "Parameters",
-                "type": "array"
-              },
-              "projection": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/QueryProjection"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "result_binding": {
-                "title": "Result Binding",
-                "type": "string"
-              },
-              "result_cardinality": {
-                "enum": [
-                  "one",
-                  "many"
-                ],
-                "title": "Result Cardinality",
-                "type": "string"
-              },
-              "result_shape": {
-                "enum": [
-                  "subject",
-                  "relation_claim",
-                  "path",
-                  "artifact_definition"
-                ],
-                "title": "Result Shape",
-                "type": "string"
-              },
-              "row_contract": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ContractRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "traversal": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/QueryTraversalStep"
-                },
-                "title": "Traversal",
-                "type": "array"
-              },
-              "where": {
-                "anyOf": [
-                  {
-                    "discriminator": {
-                      "mapping": {
-                        "all_of": "#/$defs/QueryConjunctionFilter",
-                        "any_of": "#/$defs/QueryDisjunctionFilter",
-                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
-                        "comparison": "#/$defs/QueryComparisonFilter",
-                        "membership": "#/$defs/QueryMembershipFilter",
-                        "not": "#/$defs/QueryNegationFilter"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/QueryComparisonFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryMembershipFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryClaimPresenceFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryConjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryDisjunctionFilter"
-                      },
-                      {
-                        "$ref": "#/$defs/QueryNegationFilter"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Where"
-              }
-            },
-            "required": [
-              "identity",
-              "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
-            ],
-            "title": "NamedQueryDefinition",
-            "type": "object"
-          },
           "PredicateOperand": {
             "additionalProperties": false,
             "description": "One operand in the closed predicate grammar.",
@@ -104056,6 +103105,212 @@
               "filters"
             ],
             "title": "QueryConjunctionFilter",
+            "type": "object"
+          },
+          "QueryDefinition": {
+            "additionalProperties": false,
+            "description": "One governed, named, Claim-native canonical query declaration.",
+            "properties": {
+              "artifact_format": {
+                "const": "cruxible-query-definition-v3",
+                "default": "cruxible-query-definition-v3",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none",
+                  "artifact"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryArtifactsEntry"
+                  }
+                ],
+                "title": "Entry"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicy"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryInclude"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgets"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrdering"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameter_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclaration"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path",
+                  "artifact_definition"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "row_contract": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContractRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStep"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilter",
+                        "any_of": "#/$defs/QueryDisjunctionFilter",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilter",
+                        "comparison": "#/$defs/QueryComparisonFilter",
+                        "membership": "#/$defs/QueryMembershipFilter",
+                        "not": "#/$defs/QueryNegationFilter"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilter"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilter"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "QueryDefinition",
             "type": "object"
           },
           "QueryDisjunctionFilter": {
@@ -106183,7 +105438,7 @@
             "description": "A Query the source reads, named; it resolves at the accepted coordinate.",
             "properties": {
               "definition": {
-                "$ref": "#/$defs/NamedQueryDefinition"
+                "$ref": "#/$defs/QueryDefinition"
               },
               "kind": {
                 "const": "query",
@@ -108840,15 +108095,7 @@
           "json_name": "event",
           "required": true,
           "schema": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/CaptureEventSelector"
-              },
-              {
-                "$ref": "#/$defs/NamedCaptureEventSelector"
-              }
-            ],
-            "title": "Event"
+            "$ref": "#/$defs/CaptureEventNameSelector"
           }
         },
         "trigger_name": {
@@ -108884,35 +108131,9 @@
             "title": "ArtifactIdentity",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
-            "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              },
-              "logical_sources": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Logical Sources",
-                "type": "array"
-              }
-            },
-            "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
-            ],
-            "title": "CaptureEventSelector",
-            "type": "object"
-          },
-          "NamedCaptureEventSelector": {
-            "additionalProperties": false,
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
@@ -108929,23 +108150,15 @@
             "required": [
               "capture_contract_identity"
             ],
-            "title": "NamedCaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "The exact contract a Trigger resolved during this prepare or preview.",
+        "description": "The contract identity a Trigger resolved during this prepare or preview.",
         "properties": {
           "event": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/CaptureEventSelector"
-              },
-              {
-                "$ref": "#/$defs/NamedCaptureEventSelector"
-              }
-            ],
-            "title": "Event"
+            "$ref": "#/$defs/CaptureEventNameSelector"
           },
           "trigger_name": {
             "title": "Trigger Name",
@@ -113795,15 +113008,15 @@
     "Trigger": {
       "fields": {
         "artifact_format": {
-          "default": "playbill-trigger-v1",
+          "default": "cruxible-trigger-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "artifact_format",
           "required": false,
           "schema": {
-            "const": "playbill-trigger-v1",
-            "default": "playbill-trigger-v1",
+            "const": "cruxible-trigger-v2",
+            "default": "cruxible-trigger-v2",
             "title": "Artifact Format",
             "type": "string"
           }
@@ -113829,22 +113042,6 @@
               "predecessor_digest": null,
               "state": "live"
             }
-          }
-        },
-        "pins": {
-          "default": [],
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "pins",
-          "required": false,
-          "schema": {
-            "default": [],
-            "items": {
-              "$ref": "#/$defs/ArtifactPin"
-            },
-            "title": "Pins",
-            "type": "array"
           }
         },
         "schedule": {
@@ -113988,46 +113185,18 @@
             "title": "ArtifactLifecycle",
             "type": "object"
           },
-          "ArtifactPin": {
+          "ArtifactNameRef": {
             "additionalProperties": false,
+            "description": "A field-typed reference resolved at the selected accepted coordinate.\n\nThe containing field supplies the role. Only historical pins and evidence\ncarry a digest; an authored dependency names the governed identity.",
             "properties": {
-              "artifact_digest": {
-                "title": "Artifact Digest",
-                "type": "string"
-              },
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
               "target": {
                 "$ref": "#/$defs/ArtifactIdentity"
               }
             },
             "required": [
-              "role",
-              "target",
-              "artifact_digest"
-            ],
-            "title": "ArtifactPin",
-            "type": "object"
-          },
-          "ArtifactRef": {
-            "additionalProperties": false,
-            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
-            "properties": {
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
               "target"
             ],
-            "title": "ArtifactRef",
+            "title": "ArtifactNameRef",
             "type": "object"
           },
           "CadenceSchedule": {
@@ -114053,14 +113222,10 @@
             "title": "CadenceSchedule",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -114074,14 +113239,14 @@
               }
             },
             "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
+              "capture_contract_identity"
             ],
-            "title": "CaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           },
-          "CaptureEventWindow": {
+          "CaptureEventNameWindow": {
             "additionalProperties": false,
+            "description": "An authored window anchored on the named Capture event.",
             "properties": {
               "duration_seconds": {
                 "description": "Reads VALIDITY WINDOW.",
@@ -114090,7 +113255,7 @@
                 "type": "integer"
               },
               "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+                "$ref": "#/$defs/CaptureEventNameSelector"
               },
               "kind": {
                 "const": "capture_event",
@@ -114103,7 +113268,7 @@
               "event",
               "duration_seconds"
             ],
-            "title": "CaptureEventWindow",
+            "title": "CaptureEventNameWindow",
             "type": "object"
           },
           "CaptureLandingSchedule": {
@@ -114111,7 +113276,7 @@
             "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
             "properties": {
               "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+                "$ref": "#/$defs/CaptureEventNameSelector"
               },
               "kind": {
                 "const": "capture_landing",
@@ -114207,7 +113372,7 @@
                 "type": "string"
               },
               "line": {
-                "$ref": "#/$defs/ArtifactRef"
+                "$ref": "#/$defs/ArtifactNameRef"
               }
             },
             "required": [
@@ -114229,7 +113394,7 @@
               "window": {
                 "discriminator": {
                   "mapping": {
-                    "capture_event": "#/$defs/CaptureEventWindow",
+                    "capture_event": "#/$defs/CaptureEventNameWindow",
                     "fixed": "#/$defs/FixedWindow"
                   },
                   "propertyName": "kind"
@@ -114239,7 +113404,7 @@
                     "$ref": "#/$defs/FixedWindow"
                   },
                   {
-                    "$ref": "#/$defs/CaptureEventWindow"
+                    "$ref": "#/$defs/CaptureEventNameWindow"
                   }
                 ],
                 "title": "Window"
@@ -114256,8 +113421,8 @@
         "description": "One schedule and the one Line or internal action it sets off.",
         "properties": {
           "artifact_format": {
-            "const": "playbill-trigger-v1",
-            "default": "playbill-trigger-v1",
+            "const": "cruxible-trigger-v2",
+            "default": "cruxible-trigger-v2",
             "title": "Artifact Format",
             "type": "string"
           },
@@ -114270,14 +113435,6 @@
               "predecessor_digest": null,
               "state": "live"
             }
-          },
-          "pins": {
-            "default": [],
-            "items": {
-              "$ref": "#/$defs/ArtifactPin"
-            },
-            "title": "Pins",
-            "type": "array"
           },
           "schedule": {
             "discriminator": {
@@ -115069,7 +114226,7 @@
           "schema": {
             "discriminator": {
               "mapping": {
-                "capture_event": "#/$defs/CaptureEventWindow",
+                "capture_event": "#/$defs/CaptureEventNameWindow",
                 "fixed": "#/$defs/FixedWindow"
               },
               "propertyName": "kind"
@@ -115079,7 +114236,7 @@
                 "$ref": "#/$defs/FixedWindow"
               },
               {
-                "$ref": "#/$defs/CaptureEventWindow"
+                "$ref": "#/$defs/CaptureEventNameWindow"
               }
             ],
             "title": "Window"
@@ -115108,14 +114265,10 @@
             "title": "ArtifactIdentity",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventNameSelector": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An authored CaptureContract name and optional logical-source restriction.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
               "capture_contract_identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -115129,14 +114282,14 @@
               }
             },
             "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
+              "capture_contract_identity"
             ],
-            "title": "CaptureEventSelector",
+            "title": "CaptureEventNameSelector",
             "type": "object"
           },
-          "CaptureEventWindow": {
+          "CaptureEventNameWindow": {
             "additionalProperties": false,
+            "description": "An authored window anchored on the named Capture event.",
             "properties": {
               "duration_seconds": {
                 "description": "Reads VALIDITY WINDOW.",
@@ -115145,7 +114298,7 @@
                 "type": "integer"
               },
               "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+                "$ref": "#/$defs/CaptureEventNameSelector"
               },
               "kind": {
                 "const": "capture_event",
@@ -115158,7 +114311,7 @@
               "event",
               "duration_seconds"
             ],
-            "title": "CaptureEventWindow",
+            "title": "CaptureEventNameWindow",
             "type": "object"
           },
           "FixedWindow": {
@@ -115203,7 +114356,7 @@
           "window": {
             "discriminator": {
               "mapping": {
-                "capture_event": "#/$defs/CaptureEventWindow",
+                "capture_event": "#/$defs/CaptureEventNameWindow",
                 "fixed": "#/$defs/FixedWindow"
               },
               "propertyName": "kind"
@@ -115213,7 +114366,7 @@
                 "$ref": "#/$defs/FixedWindow"
               },
               {
-                "$ref": "#/$defs/CaptureEventWindow"
+                "$ref": "#/$defs/CaptureEventNameWindow"
               }
             ],
             "title": "Window"

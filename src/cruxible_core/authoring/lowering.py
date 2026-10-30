@@ -24,7 +24,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactNameRef,
     ArtifactPin,
-    ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
     AuthoringInputError,
@@ -162,7 +161,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
-from cruxible_client.contracts.named_references import name_trigger
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -211,8 +209,8 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
-    CaptureEventWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
     FixedWindow,
 )
 from cruxible_client.contracts.providers import (
@@ -266,7 +264,6 @@ from cruxible_client.contracts.subjects import (
     subject_path,
 )
 from cruxible_client.contracts.triggers import (
-    TRIGGER_LINE_REF_ROLE,
     ActionTarget,
     CaptureEventInput,
     CaptureLandingSchedule,
@@ -281,7 +278,6 @@ from cruxible_client.contracts.triggers import (
     schedule_satisfies_input,
     trigger_digest,
     trigger_path,
-    trigger_schedule_pins,
 )
 from cruxible_core.authoring.registrations import source_projection_blocks
 from cruxible_core.claims.claim_retirement import (
@@ -3142,15 +3138,6 @@ def _render_non_procedure_member(
                 )
         else:
             query = source
-        from cruxible_client.contracts.query.definitions import NamedQueryDefinition
-
-        if not isinstance(query, NamedQueryDefinition):
-            query = NamedQueryDefinition.model_validate(
-                {
-                    **query.model_dump(mode="python", exclude={"pins", "artifact_format"}),
-                    "artifact_format": "cruxible-query-definition-v3",
-                }
-            )
         previous_query: QueryDefinition | None = None
         previous_content = None
         if isinstance(source, QuerySpecInput) and tree is not None:
@@ -3304,7 +3291,7 @@ def _render_line_member(
     accepts, read from that Source's CaptureContract.
     """
 
-    from cruxible_client.contracts.procedures.windows import NamedCaptureEventSelector
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameSelector
     from cruxible_core.providers.operation_index import line_slot_map
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -3389,7 +3376,7 @@ def _render_line_member(
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    trigger_event: NamedCaptureEventSelector | None = None
+    trigger_event: CaptureEventNameSelector | None = None
     if payload.trigger_input is not None:
         sources = [
             node
@@ -3411,7 +3398,7 @@ def _render_line_member(
                 repair_description="Name the `as` alias of one Source node, or omit it.",
             )
         assert isinstance(contract, ArtifactPin | ArtifactNameRef)
-        trigger_event = NamedCaptureEventSelector.model_validate(
+        trigger_event = CaptureEventNameSelector.model_validate(
             {"capture_contract_identity": contract.target}
         )
     line = LineSpec.model_validate(
@@ -3452,7 +3439,8 @@ def _resolve_trigger_authoring_schedule(
     """Read one canonical contract artifact; never consult Captures or journals.
 
     All authoring adapters preserve the typed schedule until this shared
-    candidate-overlay boundary. Stored schedules and runtime matching stay exact.
+    candidate-overlay boundary. Stored schedules name the contract; runtime
+    verifies each exact retained event.
     """
 
     if isinstance(schedule, CaptureLandingByNameSchedule):
@@ -3482,20 +3470,21 @@ def _resolve_trigger_authoring_schedule(
                 "or name an existing live CaptureContract."
             ),
         )
-    event = CaptureEventSelector(
+    event = CaptureEventNameSelector(
         capture_contract_identity=contract.identity,
-        capture_contract_digest=capture_contract_digest(contract).tagged,
         logical_sources=logical_sources,
     )
     if isinstance(schedule, CaptureLandingByNameSchedule):
         return CaptureLandingSchedule(event=event)
     return WindowCloseSchedule(
-        window=CaptureEventWindow(event=event, duration_seconds=schedule.window.duration_seconds)
+        window=CaptureEventNameWindow(
+            event=event, duration_seconds=schedule.window.duration_seconds
+        )
     )
 
 
 def _resolved_trigger_schedule(content: bytes, *, path: str) -> dict[str, object]:
-    """Expose the exact event identity and digest in prepare/preview output."""
+    """Expose the resolved event identity in prepare/preview output."""
 
     schedule = parse_trigger(content, path=path).schedule
     selector = schedule_capture_selector(schedule)
@@ -3510,7 +3499,7 @@ def _render_trigger_member(
     """Lower one Trigger decision; a Line target is named by identity, never pinned.
 
     A live Trigger's Line must be present in the staged tree -- accepted at the
-    base or authored earlier in the same set -- and an event schedule's exact
+    base or authored earlier in the same set -- and an event schedule's named
     CaptureContract must be too. Whether the Line is live and accepts the event
     is the Trigger law's to judge at acceptance.
     """
@@ -3538,7 +3527,6 @@ def _render_trigger_member(
                 ),
             }
         )
-        retired = name_trigger(retired)
         return path, render_trigger(retired), trigger_digest(retired).tagged
     if payload.line_name is not None:
         if line_spec_path(payload.line_name) not in tree:
@@ -3550,8 +3538,7 @@ def _render_trigger_member(
                 repair_description="Use a Line name present at the authoring coordinate.",
             )
         target: TriggerTarget = LineTarget(
-            line=ArtifactRef(
-                role=TRIGGER_LINE_REF_ROLE,
+            line=ArtifactNameRef(
                 target=ArtifactIdentity(kind="Line", name=payload.line_name),
             )
         )
@@ -3564,15 +3551,14 @@ def _render_trigger_member(
         line_path = line_spec_path(payload.line_name)
         line = parse_line_spec(tree[line_path], path=line_path)
         if line.trigger_event is not None and not schedule_satisfies_input(
-            schedule, CaptureEventInput(event=line.trigger_event), by_name=True
+            schedule, CaptureEventInput(event=line.trigger_event)
         ):
             _refuse(
                 "cruxible.trigger.event_not_accepted",
                 "schedule",
-                f"Resolved contract {selector.capture_contract_identity.qualified} digest "
-                f"{selector.capture_contract_digest} differs from Line Source contract "
-                f"{line.trigger_event.capture_contract_identity.qualified} digest "
-                f"{line.trigger_event.capture_contract_digest}, or sources "
+                f"Resolved contract {selector.capture_contract_identity.qualified} "
+                f"differs from Line Source contract "
+                f"{line.trigger_event.capture_contract_identity.qualified}, or sources "
                 f"{selector.logical_sources!r} exceed the Line's accepted sources "
                 f"{line.trigger_event.logical_sources!r}.",
                 repair_kind="replace_schedule",
@@ -3585,13 +3571,11 @@ def _render_trigger_member(
         identity=ArtifactIdentity(kind="Trigger", name=payload.name),
         schedule=schedule,
         target=target,
-        pins=trigger_schedule_pins(schedule),
         lifecycle=ArtifactLifecycle(
             state="live",
             predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
         ),
     )
-    trigger = name_trigger(trigger)
     if previous_content is not None and previous is not None:
         if _same_revision_content(trigger, previous):
             return path, previous_content, trigger_digest(previous).tagged

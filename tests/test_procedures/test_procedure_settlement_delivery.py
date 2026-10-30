@@ -39,7 +39,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import SettleChangeSetNode
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     QueryEvaluationPolicy,
     query_definition_digest,
@@ -80,7 +79,7 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 def _condition(*, only_subject: str | None, require_claim: bool = False) -> QueryDefinition:
     """The settle condition; `require_claim` also projects the not-yet-accepted Claim."""
 
-    return NamedQueryDefinition(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="security.settle-condition"),
         entry=QueryEntry(
             binding="advisory",

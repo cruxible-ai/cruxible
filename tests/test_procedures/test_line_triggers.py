@@ -20,8 +20,8 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelector,
-    CaptureEventWindow,
+    CaptureEventNameSelector,
+    CaptureEventNameWindow,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
@@ -44,9 +44,8 @@ from tests.test_server.test_playbill_line_run_refusals import (
 
 TRIGGER_CONTRACT = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
 
-SELECTOR = CaptureEventSelector(
+SELECTOR = CaptureEventNameSelector(
     capture_contract_identity=TRIGGER_CONTRACT.identity,
-    capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
 )
 
 
@@ -174,7 +173,7 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
 
 
 def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_incomplete(tmp_path):
-    policy = WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+    policy = WindowCloseSchedule(window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=60))
     instance, line, procedure = line_world(tmp_path, policy)
     stored = capture(instance, procedure)
     before = _dry_run(

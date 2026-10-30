@@ -2220,7 +2220,6 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[s
         if line.lifecycle.state == "retired" or not schedule_satisfies_input(
             trigger.schedule,
             _line_trigger_input(line),
-            by_name=True,
         ):
             stranded.add(trigger.identity.qualified)
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
@@ -2346,7 +2345,6 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         trigger,
         path=context.path,
         predecessor=predecessor,
-        by_name=True,
         target_line_live=line_live,
         target_line_input=line_input,
     )
@@ -4753,11 +4751,11 @@ def _evaluate_scoped_members(
             content = render_procedure(ProcedureArtifact.model_validate(payload))
         elif state.artifact_tag == "cruxible-query-definition-v3":
             from cruxible_client.contracts.query.definitions import (
-                NamedQueryDefinition,
+                QueryDefinition,
                 render_query_definition,
             )
 
-            content = render_query_definition(NamedQueryDefinition.model_validate(payload))
+            content = render_query_definition(QueryDefinition.model_validate(payload))
         try:
             recheck = referrer_kind.evaluate(
                 dataclasses.replace(

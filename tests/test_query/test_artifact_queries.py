@@ -19,11 +19,8 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.declared_blocks import projection_query_semantic_result_digest
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
-    NamedQueryDefinitionSpec,
     QueryDefinition,
     QueryDefinitionSpec,
-    parse_query_definition,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
@@ -50,12 +47,7 @@ def definition(
     max_results=100,
     artifact_format="cruxible-query-definition-v3",
 ):
-    model = (
-        NamedQueryDefinition
-        if artifact_format == "cruxible-query-definition-v3"
-        else QueryDefinition
-    )
-    return model(
+    return QueryDefinition(
         artifact_format=artifact_format,
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryArtifactsEntry(
@@ -116,20 +108,15 @@ def test_invalid_scope_is_not_a_broad_read(entry):
         QueryArtifactsEntry(**entry)
 
 
-def test_v1_definition_and_result_encoding_stay_frozen():
-    old = work_item_query(named=False).model_copy(
-        update={"artifact_format": "playbill-query-definition-v1"}
-    )
-    assert (
-        parse_query_definition(
-            render_query_definition(old), path=query_definition_path(old.identity.name)
-        )
-        == old
-    )
-    bad = definition().model_dump(mode="json")
-    bad["artifact_format"] = "playbill-query-definition-v1"
-    with pytest.raises(ValidationError):
-        QueryDefinition.model_validate(bad)
+@pytest.mark.parametrize(
+    "artifact_format", ["playbill-query-definition-v1", "playbill-query-definition-v2"]
+)
+def test_removed_formats_refuse_for_both_query_shapes(artifact_format):
+    for query in (work_item_query(), definition()):
+        bad = query.model_dump(mode="json")
+        bad["artifact_format"] = artifact_format
+        with pytest.raises(ValidationError):
+            QueryDefinition.model_validate(bad)
 
 
 def test_scope_membership_versions_history_and_empty_result(tmp_path, monkeypatch):
@@ -231,7 +218,7 @@ def test_changeset_resolves_query_vocabulary_without_manual_pins(tmp_path):
     instance, _ = initialize_local(tmp_path)
     payload = work_item_query().model_dump(mode="json")
     draft = QueryDefinitionInput(
-        kind="query_definition", query_definition=NamedQueryDefinitionSpec.model_validate(payload)
+        kind="query_definition", query_definition=QueryDefinitionSpec.model_validate(payload)
     )
     members = (
         ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.status")),
@@ -432,7 +419,6 @@ def test_query_lowering_refuses_a_missing_or_retired_predicate(tmp_path, failure
             ),
         )
     body = work_item_query(named=False).model_dump(mode="json")
-    body["pins"] = []
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create_input(

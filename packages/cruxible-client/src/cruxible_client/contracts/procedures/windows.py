@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     AfterValidator,
@@ -57,8 +57,17 @@ class CaptureEventSelector(_WindowModel):
         return value
 
 
-class NamedCaptureEventSelector(CaptureEventSelector):
-    capture_contract_digest: ClassVar[None] = None  # type: ignore[misc, assignment]
+class CaptureEventNameSelector(_WindowModel):
+    """An authored CaptureContract name and optional logical-source restriction."""
+
+    capture_contract_identity: ArtifactIdentity
+    logical_sources: LogicalSources = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _kind(self) -> CaptureEventNameSelector:
+        if self.capture_contract_identity.kind != "CaptureContract":
+            raise ValueError("capture event selector must name a CaptureContract")
+        return self
 
 
 class TriggerEventReference(_WindowModel):
@@ -97,8 +106,12 @@ class CaptureEventWindow(_WindowModel):
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
 
-class NamedCaptureEventWindow(CaptureEventWindow):
-    event: NamedCaptureEventSelector
+class CaptureEventNameWindow(_WindowModel):
+    """An authored window anchored on the named Capture event."""
+
+    kind: Literal["capture_event"] = "capture_event"
+    event: CaptureEventNameSelector
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
 
 ObservationWindow = Annotated[FixedWindow | CaptureEventWindow, Field(discriminator="kind")]
@@ -130,7 +143,7 @@ class BoundObservationWindow(_WindowModel):
 
 
 def bind_observation_window(
-    policy: ObservationWindow,
+    policy: ObservationWindow | CaptureEventNameWindow,
     *,
     event: TriggerEventReference | None = None,
     event_time: datetime | None = None,

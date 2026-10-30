@@ -260,7 +260,6 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
 
 def _retire_seeded_triggers(instance, owner):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.named_references import name_trigger
     from cruxible_client.contracts.triggers import parse_trigger, render_trigger, trigger_digest
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
@@ -270,14 +269,12 @@ def _retire_seeded_triggers(instance, owner):
             trigger = parse_trigger(tree[path], path=path)
             # A seeded Trigger is retired in the named format new artifacts take.
             tree[path] = render_trigger(
-                name_trigger(
-                    trigger.model_copy(
-                        update={
-                            "lifecycle": ArtifactLifecycle(
-                                state="retired", predecessor_digest=trigger_digest(trigger).tagged
-                            )
-                        }
-                    )
+                trigger.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            state="retired", predecessor_digest=trigger_digest(trigger).tagged
+                        )
+                    }
                 )
             )
     _accept_tree(
@@ -405,6 +402,27 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate,
+        procedure_mandate_digest,
+        render_procedure_mandate,
+    )
+
+    mandate_path = "procedure-mandates/served-line-mandate.json"
+    mandate = parse_procedure_mandate(tree[mandate_path], path=mandate_path)
+    tree[mandate_path] = render_procedure_mandate(
+        mandate.model_copy(
+            update={
+                "line": mandate.line.model_copy(
+                    update={"artifact_digest": line_spec_digest(retired).tagged}
+                ),
+                "lifecycle": ArtifactLifecycle(
+                    state="retired", predecessor_digest=procedure_mandate_digest(mandate).tagged
+                ),
+            }
+        )
+    )
+
     # A Line retires with the Triggers aimed at it.
     tree.update(
         trigger_members(
