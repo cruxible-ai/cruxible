@@ -718,13 +718,17 @@ def _contains_key_type(field_type: FieldType) -> bool:
 
 
 class Contract(_Shape):
-    """One immutable data shape. A successor version names its predecessor's digest."""
+    """One immutable data shape. A successor version names its predecessor's digest.
+
+    ``fields`` may be empty: the closed empty record, which accepts only ``{}``
+    (an empty selector, a refusal without detail, a parameterless operation).
+    """
 
     artifact_format: Literal["cruxible-contract-v1"] = "cruxible-contract-v1"
     name: str
     version: int = Field(ge=1, le=999_999_999)
     description: str | None = Field(default=None, exclude_if=_not_none)
-    fields: dict[str, ContractField] = Field(min_length=1, max_length=MAX_CONTRACT_FIELDS)
+    fields: dict[str, ContractField] = Field(max_length=MAX_CONTRACT_FIELDS)
     predecessor_digest: str | None = Field(default=None, exclude_if=_not_none)
 
     _name = field_validator("name")(

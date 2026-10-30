@@ -7130,8 +7130,7 @@
                     }
                   ]
                 },
-                "description": "Field name to its type spelling, or to {type, description}.",
-                "minProperties": 1,
+                "description": "Field name to its type spelling, or to {type, description}. Empty ({}) declares the closed empty record, which accepts only {}.",
                 "title": "Fields",
                 "type": "object"
               },

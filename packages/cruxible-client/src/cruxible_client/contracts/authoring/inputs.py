@@ -541,8 +541,10 @@ class ContractInput(_StrictInputModel):
     version: int = Field(ge=1, description="The version this declares, starting at 1.")
     description: str | None = None
     fields: dict[str, str | ContractFieldInput] = Field(
-        min_length=1,
-        description="Field name to its type spelling, or to {type, description}.",
+        description=(
+            "Field name to its type spelling, or to {type, description}. Empty ({}) "
+            "declares the closed empty record, which accepts only {}."
+        ),
     )
 
 
