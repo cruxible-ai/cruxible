@@ -4,7 +4,7 @@ When a later backing successor supports or contradicts a statement, the
 question an agent has to answer is not "what did we believe" but "what is
 standing on the thing that moved". This module walks the accepted dependency
 edges outward from one Claim -- downstream Claims through their backing inputs,
-and QueryDefinitions through their pins -- and renders each dependent twice
+and Claims through exact pins -- and renders each dependent twice
 over:
 
 * the **exact artifact it used**, taken from that dependent's own recorded
@@ -40,7 +40,6 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.providers import ProviderV1
-from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import CoverageDescriptor
@@ -49,7 +48,7 @@ from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 
 DEPENDENCY_IMPACT_RECEIPT_DIGEST_DOMAIN = "playbill-dependency-impact-v1"
 
-DEPENDENT_KINDS: tuple[str, ...] = ("Claim", "QueryDefinition")
+DEPENDENT_KINDS: tuple[str, ...] = ("Claim",)
 
 SOURCE_SUPERSEDED = "cruxible.impact.source_superseded"
 SOURCE_CONTRADICTED = "cruxible.impact.source_contradicted"
@@ -152,7 +151,7 @@ class DependentImpactV1(_StrictImpactModel):
     tag: Literal["playbill-dependency-impact-dependent-v1"] = (
         "playbill-dependency-impact-dependent-v1"
     )
-    kind: Literal["Claim", "QueryDefinition"]
+    kind: Literal["Claim"]
     address: SemanticAddress
     identity: str
     artifact_digest: str
@@ -424,43 +423,6 @@ def _claim_dependents(
     return dependents
 
 
-def _pinned_dependents(
-    source: DependencyImpactSourceV1,
-    *,
-    definitions: Iterable[AcceptedQueryDefinition],
-) -> list[DependentImpactV1]:
-    identity = _claim_identity(source)
-    dependents: list[DependentImpactV1] = []
-    holders: tuple[tuple[str, str, SemanticAddress, Iterable[ArtifactPin], str], ...] = (
-        *(
-            (
-                "QueryDefinition",
-                item.query.identity.qualified,
-                SemanticAddress.whole_artifact(item.path),
-                item.query.pins,
-                item.artifact_digest,
-            )
-            for item in definitions
-            if item.query.lifecycle.state == "live"
-        ),
-    )
-    for kind, qualified, address, pins, artifact_digest in holders:
-        for pin in _matching_pins(pins, identity):
-            dependents.append(
-                _dependent(
-                    kind=kind,
-                    address=address,
-                    identity=qualified,
-                    artifact_digest=artifact_digest,
-                    dependency_kind="pin",
-                    used_pin_role=pin.role,
-                    source=source,
-                    used_artifact_digest=pin.artifact_digest,
-                )
-            )
-    return dependents
-
-
 def _dependent_order(item: DependentImpactV1) -> tuple[bytes, bytes, bytes, bytes, bytes]:
     return (
         item.kind.encode("utf-8"),
@@ -498,7 +460,6 @@ def build_dependency_impact(
     request: DependencyImpactRequestV1,
     *,
     facts: ClaimQueryFactsV1,
-    definitions: Iterable[AcceptedQueryDefinition] = (),
     source_lineages: Mapping[str, Sequence[str]] | None = None,
     include_retired_sources: bool = False,
 ) -> DependencyImpactV1:
@@ -519,7 +480,6 @@ def build_dependency_impact(
         providers=providers,
         source_lineages=source_lineages or {},
     )
-    definitions = tuple(definitions)
 
     found: list[DependentImpactV1] = []
     for source in sources:
@@ -529,12 +489,6 @@ def build_dependency_impact(
                 source,
                 evaluation_time=request.evaluation_time,
                 providers=providers,
-            )
-        )
-        found.extend(
-            _pinned_dependents(
-                source,
-                definitions=definitions,
             )
         )
     ordered = tuple(sorted(found, key=_dependent_order))

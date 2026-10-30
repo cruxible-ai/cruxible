@@ -38,11 +38,6 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     render_claim,
 )
-from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinition,
-    QueryDefinition,
-    query_definition_digest,
-)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_core.coverage.contracts import CoverageAccessProfile
@@ -69,8 +64,6 @@ from tests.test_claims.test_claim_query_engine import (
 )
 from tests.test_query.test_query_definitions import (
     STATUS_PREDICATE,
-    accepted_query,
-    active_work_query,
     claim_type,
 )
 
@@ -172,24 +165,6 @@ def _claim_pin(row: ClaimFactRowV1) -> ArtifactPin:
     )
 
 
-def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinition:
-    base = active_work_query()
-    pins = tuple(
-        sorted(
-            (*base.pins, _claim_pin(row)),
-            key=lambda item: (item.role.encode("utf-8"), item.target.qualified.encode("utf-8")),
-        )
-    )
-    payload = base.model_dump(mode="json")
-    payload["pins"] = [item.model_dump(mode="json") for item in pins]
-    query = QueryDefinition.model_validate(payload)
-    return AcceptedQueryDefinition(
-        path=accepted_query(base).path,
-        query=query,
-        artifact_digest=query_definition_digest(query).tagged,
-    )
-
-
 def _facts(claims: tuple[ClaimFactRowV1, ...], *, generation: str = "22") -> ClaimQueryFactsV1:
     subjects = tuple(
         sorted(
@@ -215,11 +190,13 @@ def _request(facts: ClaimQueryFactsV1, **overrides: object) -> DependencyImpactR
 
 
 def _impact(facts: ClaimQueryFactsV1, source: ClaimFactRowV1, **overrides: object):
-    return build_dependency_impact(
-        _request(facts, **overrides),
-        facts=facts,
-        definitions=(_pinning_query(source),),
+    # Queries name predicates, and cannot carry Claim pins. Preserve two real
+    # dependencies for ordering/budget guards with another derived Claim.
+    second = _claim(
+        4, item="wi-3", value="also-derived", input_digests=(source.accepted.artifact_digest,)
     )
+    facts = facts.model_copy(update={"claims": (*facts.claims, second)})
+    return build_dependency_impact(_request(facts, **overrides), facts=facts)
 
 
 def _historical(result: DependencyImpactV1) -> list[tuple[str, str, str, str | None, str]]:
@@ -240,19 +217,19 @@ def _historical(result: DependencyImpactV1) -> list[tuple[str, str, str, str | N
 # -- the walk --------------------------------------------------------------
 
 
-def test_the_walk_reaches_every_dependent_family_through_its_own_edge_kind() -> None:
+def test_the_walk_reaches_each_backing_claim_and_excludes_unrelated_claims() -> None:
     v1 = _source_v1()
     facts = _facts((v1, _derived(), _claim(UNRELATED_INDEX, item="wi-3", value="unrelated")))
     result = _impact(facts, v1)
 
-    # A Procedure or Line names its dependencies and pins no Claim.
-    assert [item.kind for item in result.dependents] == ["Claim", "QueryDefinition"]
+    # Procedures, Lines and Queries cannot pin individual Claims.
+    assert [item.kind for item in result.dependents] == ["Claim", "Claim"]
     claim_dependent = result.dependents[0]
     assert claim_dependent.address.artifact_path == DERIVED_PATH
     assert claim_dependent.dependency_kind == "backing_input"
     assert claim_dependent.used_pin_role is None
-    assert all(item.dependency_kind == "pin" for item in result.dependents[1:])
-    assert {item.used_pin_role for item in result.dependents[1:]} == {PIN_ROLE}
+    assert all(item.dependency_kind == "backing_input" for item in result.dependents)
+    assert all(item.used_pin_role is None for item in result.dependents)
     # A Claim that neither derives from the source nor pins it is not a
     # dependent; an impact surface that returned it would be noise.
     assert all(
@@ -676,7 +653,7 @@ def test_a_clipped_impact_states_what_it_dropped() -> None:
 
     assert len(result.dependents) == 1
     assert result.candidate_dependent_count == 2
-    assert result.coverage.truncated_facets == ("QueryDefinition",)
+    assert result.coverage.truncated_facets == ("Claim",)
     assert result.coverage.reason_codes == ("dependent_budget_exceeded",)
     assert result.coverage.available_facets == ("Claim",)
 
