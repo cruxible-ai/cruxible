@@ -54,7 +54,6 @@ def _web_fetch_fixture(tmp_path: Path, *, body: bytes, stated: str | None = None
     fixture = provider_capture_fixture(tmp_path)
     material = canonical_bytes(
         {
-            "input_bucket": fixture.receipt.input_bucket,
             "retrieved": {
                 "body_base64": base64.b64encode(body).decode("ascii"),
                 "body_sha256": stated or "sha256:" + hashlib.sha256(body).hexdigest(),
@@ -86,7 +85,9 @@ def _web_fetch_fixture(tmp_path: Path, *, body: bytes, stated: str | None = None
         update={
             "operation": WEB_FETCH_OPERATION,
             "output": ProviderInvocationOutputDigest(
-                output_digest=provider_invocation_output_digest(result.model_dump(mode="json"))
+                output_digest=provider_invocation_output_digest(
+                    result.model_dump(mode="json", exclude_none=True)
+                )
             ).model_dump(mode="json"),
         }
     )

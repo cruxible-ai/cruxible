@@ -182,7 +182,9 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
             attribution="none",
         ),
         output=ProviderInvocationOutputDigest(
-            output_digest=provider_invocation_output_digest(result.model_dump(mode="json"))
+            output_digest=provider_invocation_output_digest(
+                result.model_dump(mode="json", exclude_none=True)
+            )
         ).model_dump(mode="json"),
         egress=egress,
         fence_scope="process_group+descendant_sweep",
