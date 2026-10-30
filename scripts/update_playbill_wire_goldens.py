@@ -7,7 +7,6 @@ from pathlib import Path
 
 from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
     DependencyProofReference,
@@ -43,14 +42,7 @@ from cruxible_client.contracts.merkle import (
     ROOT_PREFIX,
     build_merkle_manifest,
 )
-from cruxible_client.contracts.named_references import name_query
-from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicy,
-)
 from cruxible_client.contracts.query.definitions import (
-    NamedQueryDefinition,
     QueryDefinition,
     query_definition_digest,
     render_query_definition,
@@ -104,27 +96,6 @@ def _remove_retired_claim_type_fields(payload: dict[str, object]) -> dict[str, o
     return payload
 
 
-def _query_claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
-    return ClaimType(
-        artifact_format="playbill-claim-type-v1",
-        identity=ArtifactIdentity(kind="ClaimType", name=predicate),
-        predicate=predicate,
-        allowed_subject_kinds=("project.work_item",),
-        object_kind=object_kind,  # type: ignore[arg-type]
-        literal_schema={"type": "string"} if object_kind == "literal" else None,
-        allowed_object_subject_kinds=() if object_kind == "literal" else ("project.person",),
-        cardinality="one" if object_kind == "literal" else "many",
-        permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicy(),
-        resolution_policy=ClaimResolutionPolicy(
-            cardinality="one" if object_kind == "literal" else "many",
-            eligible_verdicts=("supported",),
-            selector="only_contender" if object_kind == "literal" else "all",
-        ),
-    )
-
-
 def _update_claim_type_golden() -> None:
     path = GOLDENS / "claim-type-v1.json"
     fixture = _read(path)
@@ -144,31 +115,12 @@ def _update_query_golden() -> None:
     raw = fixture.get("query_definition")
     if not isinstance(raw, dict):
         raise TypeError("QueryDefinition golden has no query_definition object")
-    raw.pop("authority", None)
-    digests = {
-        "project.work_item.reviewed_by": claim_type_digest(
-            _query_claim_type("project.work_item.reviewed_by", object_kind="subject")
-        ).tagged,
-        "project.work_item.status": claim_type_digest(
-            _query_claim_type("project.work_item.status")
-        ).tagged,
-    }
-    for pin in raw.get("pins", []):
-        pin["artifact_digest"] = digests[pin["target"]["name"]]
     # The fixture stores the expanded typed declaration; its wire is rendered
     # by the current owner codec below, not parsed as already-canonical bytes.
-    definition = (
-        NamedQueryDefinition.model_validate(raw)
-        if raw.get("artifact_format") == "cruxible-query-definition-v3"
-        else name_query(QueryDefinition.model_validate(raw))
-    )
-    fixture["historical_v1"] = _read(ROOT / "tests/fixtures/query-definition-v1.json")
+    definition = QueryDefinition.model_validate(raw)
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged
-    v3 = definition.model_copy(update={"artifact_format": "cruxible-query-definition-v3"})
-    fixture["canonical_v3_wire"] = render_query_definition(v3).decode("utf-8")
-    fixture["v3_artifact_digest"] = query_definition_digest(v3).tagged
     _write(path, fixture)
 
 
@@ -374,7 +326,6 @@ def _update_seed_bundle() -> None:
                 for source_id in source_ids
             )
     claim_type = ClaimType.model_validate(type_payload)
-    type_digest = claim_type_digest(claim_type).tagged
     _write(type_path, claim_type.model_dump(mode="json"))
 
     for name in ("wi-101-status.json", "wi-102-status.json", "wi-103-status.json"):
@@ -387,15 +338,10 @@ def _update_seed_bundle() -> None:
 
     query_path = SEED / "query-definitions/project.work_items.json"
     query_payload = _read(query_path)
-    query_payload.pop("authority", None)
-    pins = query_payload.get("pins")
-    if not isinstance(pins, list):
-        raise TypeError("seed QueryDefinition has no pins")
-    for pin in pins:
-        if pin["target"]["name"] == claim_type.identity.name:
-            pin["artifact_digest"] = type_digest
-    QueryDefinition.model_validate(query_payload)
-    _write(query_path, query_payload)
+    # A Query names the ClaimTypes it reads; it carries no digest pins to refresh.
+    query = QueryDefinition.model_validate(query_payload)
+    if query_payload != json.loads(render_query_definition(query)):
+        raise AssertionError("seed QueryDefinition is not its canonical wire")
 
     for name in ("wi-101.json", "wi-102.json", "wi-103.json"):
         path = SEED / "subjects" / name

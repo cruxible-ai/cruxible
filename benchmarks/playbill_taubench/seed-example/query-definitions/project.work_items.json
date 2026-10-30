@@ -1,28 +1,18 @@
 {
-  "artifact_format": "playbill-query-definition-v1",
+  "artifact_format": "cruxible-query-definition-v3",
   "dedupe": "subject",
   "default_budgets": {
-    "max_paths": null,
-    "max_paths_per_result": null,
     "max_results": 10,
-    "max_traversal_depth": 0,
-    "tag": "playbill-query-budgets-v1"
+    "max_traversal_depth": 0
   },
-  "description": null,
   "entry": {
     "binding": "item",
-    "subject_id": null,
     "subject_kinds": [
       "project.work_item"
-    ],
-    "tag": "playbill-query-entry-v1"
+    ]
   },
   "evaluation_policy": {
     "conflict_behavior": "surface_conflicts",
-    "requires_accepted_coordinate": true,
-    "requires_explicit_evaluation_time": true,
-    "result_expiry": null,
-    "tag": "playbill-query-evaluation-policy-v1",
     "visible_currency": [
       "current"
     ],
@@ -34,58 +24,29 @@
     "kind": "QueryDefinition",
     "name": "project.work_items"
   },
-  "includes": [],
-  "lifecycle": {
-    "predecessor_digest": null,
-    "state": "live"
-  },
   "maximum_budgets": {
-    "max_paths": null,
-    "max_paths_per_result": null,
     "max_results": 50,
-    "max_traversal_depth": 0,
-    "tag": "playbill-query-budgets-v1"
+    "max_traversal_depth": 0
   },
-  "orderings": [],
-  "parameters": [],
-  "pins": [
-    {
-      "artifact_digest": "sha256:92e40239c480988e42799489a6644c42d4013b38ed4e50322801a9ada86853be",
-      "role": "claim-type",
-      "target": {
-        "kind": "ClaimType",
-        "name": "project.work_item.status"
-      }
-    }
-  ],
   "projection": {
     "fields": [
       {
         "name": "item_id",
-        "tag": "playbill-query-projection-field-v1",
         "value": {
           "binding": "item",
           "field": "subject_id",
-          "kind": "subject_field",
-          "tag": "playbill-query-subject-field-ref-v1"
+          "kind": "subject_field"
         }
       },
       {
         "name": "status",
-        "tag": "playbill-query-projection-field-v1",
         "value": {
           "binding": "item",
           "kind": "claim_value",
-          "predicate": "project.work_item.status",
-          "tag": "playbill-query-claim-value-ref-v1"
+          "predicate": "project.work_item.status"
         }
       }
-    ],
-    "tag": "playbill-query-projection-v1"
+    ]
   },
-  "result_binding": "item",
-  "result_cardinality": "many",
-  "result_shape": "subject",
-  "traversal": [],
-  "where": null
+  "result_shape": "subject"
 }
