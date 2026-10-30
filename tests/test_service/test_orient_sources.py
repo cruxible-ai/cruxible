@@ -48,6 +48,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 KEV, PYPI = "cisa.kev.catalog", "pypi.release"
 SECOND_CONTRACT = foreign_source_capture_contract(PYPI)
 SECOND = capture_contract_digest(SECOND_CONTRACT).tagged
+TRIGGER_DIGEST = capture_contract_digest(TRIGGER_CONTRACT).tagged
 
 
 class SourcesWorld:
@@ -78,10 +79,10 @@ class SourcesWorld:
         )
         self.landed: dict[str, list[tuple[str, str]]] = {KEV: [], PYPI: []}
         for minute in range(3):
-            self.land(KEV, SELECTOR.capture_contract_digest, minute)
-        self.land(PYPI, SELECTOR.capture_contract_digest, 3)
-        self.land(None, SELECTOR.capture_contract_digest, 4)  # emitted output
-        stored = self.land(PYPI, SELECTOR.capture_contract_digest, 5)
+            self.land(KEV, TRIGGER_DIGEST, minute)
+        self.land(PYPI, TRIGGER_DIGEST, 3)
+        self.land(None, TRIGGER_DIGEST, 4)  # emitted output
+        stored = self.land(PYPI, TRIGGER_DIGEST, 5)
         self.instance.body_store().erase(stored.record.payload_digest)  # lost record payload
         self.land(PYPI, SECOND, 6)
 
@@ -252,7 +253,7 @@ def test_the_landings_are_the_ones_the_activity_feed_lists(world: SourcesWorld) 
 
 def test_a_lost_latest_payload_lists_the_landing_by_its_run(tmp_path: Path) -> None:
     lost = SourcesWorld(tmp_path)
-    stored = lost.land(KEV, SELECTOR.capture_contract_digest, 9)
+    stored = lost.land(KEV, TRIGGER_DIGEST, 9)
     assert _rows(lost.instance)[KEV].latest.capture is not None  # projected while readable
     lost.instance.body_store().erase(stored.record.payload_digest)
 
@@ -304,7 +305,7 @@ def test_a_landing_newer_than_the_reads_position_keeps_its_source(tmp_path: Path
     raced = SourcesWorld(tmp_path)
     assert _rows(raced.instance)  # everything so far is projected
     positions = read_positions(raced.instance)
-    raced.land("new.source", SELECTOR.capture_contract_digest, 20)
+    raced.land("new.source", TRIGGER_DIGEST, 20)
 
     with reading_at(positions):
         answer = service_playbill_orient(raced.instance, section="sources")

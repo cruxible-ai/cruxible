@@ -145,14 +145,14 @@ def _served_world(root: Path, extra: int) -> object:
     """The sources world with ``extra`` more landings and ``10 * extra`` unrelated findings."""
 
     from cruxible_core.consumers.next.evidence import _STATE
-    from tests.test_service.test_orient_sources import KEV, SELECTOR, SourcesWorld
+    from tests.test_service.test_orient_sources import KEV, TRIGGER_DIGEST, SourcesWorld
 
     root.mkdir()
     world = SourcesWorld(root)
     for index in range(extra):
         source = KEV if index % 2 else f"zz.other-{index:04d}"
-        world.land(source, SELECTOR.capture_contract_digest, 10 + index)
-    latest = world.land(KEV, SELECTOR.capture_contract_digest, 10 + extra)
+        world.land(source, TRIGGER_DIGEST, 10 + index)
+    latest = world.land(KEV, TRIGGER_DIGEST, 10 + extra)
     from cruxible_core.exhaust.payloads import read_payload
     from cruxible_core.storage.capture_metadata import capture_envelope
     from cruxible_core.storage.cas import BodyAccessContext

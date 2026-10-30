@@ -380,9 +380,13 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     instance, owner, contract = contract_world(tmp_path)
     accept_contract(instance, owner, contract)
     procedure = _slotless_procedure("capture-anchor").procedure
-    from tests.test_procedures.test_line_triggers import SELECTOR
+    from cruxible_client.contracts.captures import capture_contract_digest
+    from tests.test_procedures.test_line_triggers import TRIGGER_CONTRACT
 
-    selector = SELECTOR
+    selector = CaptureEventSelector(
+        capture_contract_identity=TRIGGER_CONTRACT.identity,
+        capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
+    )
     journal, _ = _journal_for_write(instance)
     stream = _stream(instance)
     _activate_writer(journal, stream, "run:anchor")

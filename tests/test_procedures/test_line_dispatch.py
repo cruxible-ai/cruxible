@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchRequest,
     LineEnablementPrincipal,
@@ -39,6 +40,7 @@ from tests.support.lines import line_trigger, successor, trigger_members
 from tests.test_procedures.test_line_triggers import (
     SELECTOR,
     TRIGGER,
+    TRIGGER_CONTRACT,
     _dry_run,
     capture,
     line_world,
@@ -253,10 +255,10 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
 def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     tmp_path, event_relative
 ):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow, FixedWindow
 
     window = (
-        CaptureEventWindow(event=SELECTOR, duration_seconds=60)
+        CaptureEventNameWindow(event=SELECTOR, duration_seconds=60)
         if event_relative
         else FixedWindow(starts_at=READ_TIME, duration_seconds=60)
     )
@@ -448,7 +450,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
         daemon_id="daemon",
     )
     segment = _active_segment(instance)
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     if new_trigger:
@@ -461,7 +463,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
                         schedule=CaptureLandingSchedule(event=SELECTOR),
                     ),
                     schedule=WindowCloseSchedule(
-                        window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)
+                        window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=1)
                     ),
                 )
             )
@@ -649,7 +651,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     if new_trigger:
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+        from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
 
         # A changed schedule is new trigger semantics: what the old one matched
         # is superseded, never adopted.
@@ -663,7 +665,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
                         schedule=CaptureLandingSchedule(event=SELECTOR),
                     ),
                     schedule=WindowCloseSchedule(
-                        window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)
+                        window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=1)
                     ),
                 )
             )
@@ -752,7 +754,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
 
 
 def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_path):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
@@ -792,7 +794,9 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
     )
     windowed = successor(
         landing,
-        schedule=WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)),
+        schedule=WindowCloseSchedule(
+            window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=1)
+        ),
     )
     accept(windowed, "to-window", "2026-08-24T15:30:00.000000Z")
     superseded = dispatch(now)
@@ -848,7 +852,9 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
         instance,
         procedure,
         at=READ_TIME + timedelta(seconds=10) if failure == "future" else READ_TIME,
-        digest="sha256:" + "b" * 64 if failure == "selector" else SELECTOR.capture_contract_digest,
+        digest="sha256:" + "b" * 64
+        if failure == "selector"
+        else capture_contract_digest(TRIGGER_CONTRACT).tagged,
     )
     second = capture(
         instance,
@@ -1040,10 +1046,10 @@ def _event(stored):  # type: ignore[no-untyped-def]
 
 @pytest.mark.parametrize("windowed", [False, True])
 def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path, windowed):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
 
     schedule = (
-        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        WindowCloseSchedule(window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=60))
         if windowed
         else CaptureLandingSchedule(event=SELECTOR)
     )

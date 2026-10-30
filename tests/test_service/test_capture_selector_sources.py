@@ -8,12 +8,18 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     CaptureRunCoordinateV1,
+    capture_contract_digest,
     render_capture_envelope,
 )
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-from cruxible_client.contracts.procedures.windows import CaptureEventWindow, TriggerEventReference
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventNameWindow,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    TriggerEventReference,
+)
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     EvidenceCommitment,
@@ -25,7 +31,7 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from cruxible_core.service.procedures.resolution_contracts import bind_window, read_capture_event
 from tests.support.lines import line_trigger, trigger_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER_CONTRACT, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME
 
 
@@ -35,7 +41,7 @@ def _landing(instance, procedure, source, *, partition, at=READ_TIME):
     body = store.store(b"{}")
     digest = "sha256:" + "a" * 64
     envelope = CaptureEnvelopeV1(
-        capture_contract_digest=SELECTOR.capture_contract_digest,
+        capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
         source=(
             ExternalSourceReference(
                 source_identity=source,
@@ -81,7 +87,7 @@ def _reference(stored):
 def test_two_lines_route_one_contract_by_source_and_unrestricted_gets_both(tmp_path, window):
     def schedule(selector):
         return (
-            WindowCloseSchedule(window=CaptureEventWindow(event=selector, duration_seconds=60))
+            WindowCloseSchedule(window=CaptureEventNameWindow(event=selector, duration_seconds=60))
             if window
             else CaptureLandingSchedule(event=selector)
         )
@@ -166,7 +172,11 @@ def test_exact_event_and_window_refuse_a_different_source(tmp_path):
     instance, _line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     repo = _landing(instance, procedure, "github.repo.snapshot", partition="run:repo")
     cas = _landing(instance, procedure, None, partition="run:cas")
-    selector = SELECTOR.model_copy(update={"logical_sources": ("github.repo.snapshot",)})
+    selector = CaptureEventSelector(
+        capture_contract_identity=TRIGGER_CONTRACT.identity,
+        capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
+        logical_sources=("github.repo.snapshot",),
+    )
     assert read_capture_event(instance, selector, _reference(repo), now=READ_TIME)[0] == repo.record
     policy = CaptureEventWindow(event=selector, duration_seconds=60)
     assert bind_window(
@@ -195,7 +205,7 @@ def test_v6_index_migration_preserves_rows_and_progress_without_backfill(tmp_pat
     index = journal.index
     args = dict(
         bodies=instance.body_store(),
-        contract_digest=SELECTOR.capture_contract_digest,
+        contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
         since=None,
         until=READ_TIME + timedelta(seconds=2),
         limit=10,
@@ -251,7 +261,7 @@ def test_landing_projection_handles_only_the_new_envelope_at_two_sizes(tmp_path,
     journal, _ = _journal(instance)
     args = dict(
         bodies=instance.body_store(),
-        contract_digest=SELECTOR.capture_contract_digest,
+        contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
         since=None,
         until=READ_TIME + timedelta(seconds=2),
         limit=2,
@@ -277,7 +287,7 @@ def test_landing_projection_handles_only_the_new_envelope_at_two_sizes(tmp_path,
         plan = conn.execute(
             "EXPLAIN QUERY PLAN SELECT record_id FROM capture_selectors "
             "WHERE contract_digest=? AND logical_source IN (?)",
-            (SELECTOR.capture_contract_digest, "sarif.log"),
+            (capture_contract_digest(TRIGGER_CONTRACT).tagged, "sarif.log"),
         ).fetchall()
     assert any("capture_contract_source" in row[3] for row in plan)
 
@@ -298,7 +308,7 @@ def test_unavailable_envelope_preserves_unrestricted_event_discovery(tmp_path):
     bodies.erase(payload["capture_digest"])
     args = dict(
         bodies=bodies,
-        contract_digest=SELECTOR.capture_contract_digest,
+        contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
         since=None,
         until=READ_TIME + timedelta(seconds=1),
         limit=10,

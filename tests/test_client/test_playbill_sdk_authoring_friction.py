@@ -364,12 +364,12 @@ def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
 def test_sdk_trigger_refuses_exact_event_authoring(pb, window_close):
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.procedures.windows import CaptureEventNameWindow
     from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
     from tests.test_authoring.test_capture_landing_name import SELECTOR
 
     schedule = (
-        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        WindowCloseSchedule(window=CaptureEventNameWindow(event=SELECTOR, duration_seconds=60))
         if window_close
         else CaptureLandingSchedule(event=SELECTOR)
     )
