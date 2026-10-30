@@ -1,6 +1,8 @@
 """Real built wheels cross the SDK/HTTP boundary; no substituted provider invoker."""
 
+import base64
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -10,25 +12,6 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
-
-
-def interface_entry(client: CruxibleClient, instance_id: str, name: str) -> dict[str, Any]:
-    """The accepted inventory entry of one live provider interface, as ``get`` proves it."""
-
-    from cruxible_client.contracts.get_reads import GetRequest
-
-    proof = client.get(
-        instance_id,
-        request=GetRequest(ref=f"ProviderInterface:{name}", detail="proof"),
-    ).proof
-    assert proof is not None
-    return dict(proof["entry"])
-
-
-# A real child's spawn and import time under a loaded parallel run; the
-# example Procedure's 2 s run budget is sized for an in-process call.
-_RUN_WALL_CLOCK = {"microseconds": 30_000_000}
-_MAX_WALL_CLOCK = {"microseconds": 60_000_000}
 
 
 @pytest.fixture
@@ -120,12 +103,10 @@ def test_transfer_install_and_restart_reuse(
     assert again.registered and again.status == "ready"
 
 
-def _run_call(http, instance_id, reviewer, *, build, value, name="installed-package-call"):
-    """Run ``local.increment`` of the installed ``build`` through a Line bound to it.
+def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameters, name):
+    """Author ``spec`` and a Line binding its slots, each accepted by the reviewer.
 
-    The Procedure declares one slot of the operation's exact signature; the Line
-    binds it to the installed build's operation at acceptance, and the run goes
-    through the daemon's real provider operator to the installed runtime child.
+    The Line binds every slot to one exact ``{build, operation}`` at acceptance.
     """
 
     from cruxible_client.contracts.authoring.inputs import (
@@ -137,46 +118,19 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.lowering import lower_authoring
     from cruxible_core.proposals.proposals import AuthenticatedActor
-    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
     instance = get_playbill_manager().get(instance_id)
-    procedure = f"test.{name}"
-    line = f"test.{name}-line"
     for kind, payload in (
-        (
-            "procedure",
-            ProcedureInput(
-                kind="procedure",
-                spec=ProcedureSpec.model_validate(
-                    {
-                        "procedure": procedure,
-                        "input": {"n": "integer"},
-                        "output": {"n": "integer"},
-                        "slots": {
-                            "increment": {
-                                "in": LOCAL_CALL_IN,
-                                "out": LOCAL_CALL_OUT,
-                                "effect": "pure",
-                            }
-                        },
-                        "steps": [
-                            {"call": "result", "slot": "increment", "input": {"n": "$input.n"}}
-                        ],
-                        "returns": "result",
-                        "budget": {"provider_calls": 1},
-                    }
-                ),
-            ),
-        ),
+        ("procedure", ProcedureInput(kind="procedure", spec=ProcedureSpec.model_validate(spec))),
         (
             "line",
             LineInput.model_validate(
                 {
                     "kind": "line",
                     "name": line,
-                    "procedure_name": procedure,
-                    "bindings": {"increment": build},
-                    "parameters": value,
+                    "procedure_name": spec["procedure"],
+                    "bindings": bindings,
+                    "parameters": parameters,
                     "occurrence_epoch": 1,
                 }
             ),
@@ -193,11 +147,50 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
         )
         lowered = lower_authoring(instance, intent=intent, actor_id="operator")
         _accept(http, instance_id, reviewer, dict(lowered.changed_members), name=f"{name}-{kind}")
+
+
+def _run_call(http, instance_id, reviewer, *, build, value, name="installed-package-call"):
+    """Run ``local.increment`` of the installed ``build`` through a Line bound to it.
+
+    The Procedure declares one slot of the operation's exact signature; the Line
+    binds it to the installed build's operation at acceptance, and the run goes
+    through the daemon's real provider operator to the installed runtime child.
+    """
+
+    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
+
+    line = f"test.{name}-line"
+    _author_line(
+        http,
+        instance_id,
+        reviewer,
+        spec={
+            "procedure": f"test.{name}",
+            "input": {"n": "integer"},
+            "output": {"n": "integer"},
+            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "returns": "result",
+            "budget": {"provider_calls": 1},
+        },
+        line=line,
+        bindings={"increment": build},
+        parameters=value,
+        name=name,
+    )
     return _run_line(instance_id, line)
 
 
 def _run_line(instance_id, line):
     """One manual run of an accepted Line through the daemon's real provider operator."""
+
+    state = _line_state(instance_id, line)
+    assert state.status == "succeeded", state.terminal
+    return state.result
+
+
+def _line_state(instance_id, line, **arguments):
+    """The run state of one manual run of an accepted Line, whatever its outcome."""
 
     from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequest,
@@ -206,16 +199,15 @@ def _run_line(instance_id, line):
     from tests.support.operation_world import actor
 
     manager = get_playbill_manager()
-    state = service_run_playbill_line(
+    return service_run_playbill_line(
         manager.get(instance_id),
         path_identity_digest=line,
         request=LineRunRequest(line=line),
         actor_context=actor(),
         caller_rung=2,
         provider_runtime_operator=manager.provider_runtime_operator(),
+        **arguments,
     )
-    assert state.status == "succeeded", state.terminal
-    return state.result
 
 
 @pytest.mark.parametrize("legacy_proof", [False, True])
@@ -404,137 +396,297 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert all(item.environment_path.exists() for item in old.values())
 
 
-def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
-    installer_http, tmp_path, provider_checkout
-):
-    from cruxible_client import Cruxible
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from tests.core_support._light_capture_support import http_contract
-    from tests.test_procedures.test_procedure_source_runs import _policy
-    from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+def _web_contract_members(wheel: Path) -> dict[str, bytes]:
+    """The Contract members the web wheel ships, read from the wheel itself.
+
+    ``cruxible_provider_web/contracts/<name>/v<N>.json`` is the exact accepted-tree
+    member at ``contracts/<name>/v<N>.json``; nothing is rendered here.
+    """
+
+    prefix = "cruxible_provider_web/contracts/"
+    with zipfile.ZipFile(wheel) as archive:
+        return {
+            "contracts/" + name.removeprefix(prefix): archive.read(name)
+            for name in sorted(archive.namelist())
+            if name.startswith(prefix) and name.endswith(".json")
+        }
+
+
+@pytest.fixture
+def installed_web(installer_http, provider_checkout):
+    """The real web wheel installed after its fifteen Contracts (and their closure)."""
+
+    from cruxible_client.contracts.shapes import contract_digest, parse_contract
 
     http, instance_id, reviewer = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
-    repository = provider_checkout.repository
     wheels = provider_checkout.wheels
+    wheel = next(wheels.glob("cruxible_provider_web-*.whl"))
+    members = _web_contract_members(wheel)
+    # 2 operations x (in, out) + 6 + 5 refusals, and the three nested Contracts
+    # the results pin: the coordinate, the zero-field selector, the window.
+    assert len(members) == 18
+    _accept(http, instance_id, reviewer, members, name="web-contracts")
     installed = install_provider_wheel(
         client,
         instance_id,
-        wheel=next(wheels.glob("cruxible_provider_web-*.whl")),
-        lock=repository / "packages/cruxible-provider-web/uv.lock",
+        wheel=wheel,
+        lock=provider_checkout.repository / "packages/cruxible-provider-web/uv.lock",
         dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
+        # web.fetch's implementation declares the browser extra; without it the
+        # implementation is not installed at all, rendered or not.
+        extras=("browser",),
     )
-    assert installed.registered
-    assert all(row.installed for row in installed.operations)
-    assert all(
-        "python extra" not in item
-        for row in installed.operations
-        for item in row.missing_requirements
-    )
-    # Core owns web.fetch: the package installs onto core's registration of the
-    # definition it ships.
-    from cruxible_client.contracts.provider_interfaces import (
-        provider_interface_path,
-        render_provider_interface,
-    )
-    from cruxible_core.providers.web_fetch import web_fetch_interface_registration
-
-    instance = get_playbill_manager().get(instance_id)
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    assert tree[
-        provider_interface_path(web_fetch_interface_registration().identity.name)
-    ] == render_provider_interface(web_fetch_interface_registration())
-    assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
-    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
-    contract = http_contract()
-    policy = _policy(name="installed-web-policy")
-    draft = (
-        pb.changes(rationale="Retain a fetched observation.")
-        .capture_contract(contract)
-        .acquisition_policy(policy)
-    )
-    prepared = draft.prepare()
-    assert not prepared.refused, prepared.diagnostics
-    prepared.submit(accept="never")
-    _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
-    interface = interface_entry(client, instance_id, "web.fetch")
-    provider = interface["providers"][0]
-
-    # web.fetch refuses private and loopback origins, so the run reads the recording the web
-    # package ships for the reserved fixture.invalid host; it opens no socket.
-    example = procedure_example()
-
-    def accepted(role, target):
-        return {"kind": "accepted", "role": role, "target": target}
-
-    carried = {"kind": "carried_contract", "role": "contract-out", "name": "fetch-result"}
-    raw = {
-        **example.definition,
-        "name": "installed-web-fetch",
-        "graph_format": 6,
-        "returns": "result",
-        "contract_out": carried,
-        "nodes": [
-            {
-                "kind": "source",
-                "node_id": "fetch",
-                "as": "observation",
-                "next": "shape",
-                "capture_contract": accepted("capture-contract", contract.identity.qualified),
-                "provider": accepted("provider", provider["provider_identity"]),
-                "interface": accepted("provider-interface", interface["identity"]),
-                "request": {
-                    "url": "https://fixture.invalid/api/v1/measurements.json",
-                    "expected_format": "json",
-                },
-            },
-            {
-                "kind": "project",
-                "node_id": "shape",
-                "as": "result",
-                "fields": {"text": "$steps.observation.derived.text"},
-                "contract_out": carried,
-            },
-        ],
-        "budget": {
-            **example.definition["budget"],
-            "wall_clock": _RUN_WALL_CLOCK,
-            "max_items": None,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 1048576,
-        },
-        "hard_caps": {
-            **example.definition["hard_caps"],
-            "max_wall_clock": _MAX_WALL_CLOCK,
-            "max_provider_calls": 2,
-            "max_capture_bytes": 2097152,
-        },
+    assert installed.installed and installed.registered, installed
+    digests = {
+        path: contract_digest(parse_contract(content, path=path)).tagged
+        for path, content in members.items()
     }
-    authored = example.model_copy(
-        update={
-            "definition": raw,
-            "acquisition_policy": policy.identity.name,
-            "contracts": (
-                next(row for row in example.contracts if row.name == "empty-input"),
-                CarriedContractInput(
-                    name="fetch-result", fields={"text": PropertySchema(type="string")}
-                ),
-            ),
-        }
+    return client, installed, digests
+
+
+def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
+    installer_http, installed_web
+):
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        parse_capture_envelope,
+        render_capture_contract,
     )
-    prepared = pb.procedure(definition=authored).prepare()
-    assert not prepared.refused, prepared.diagnostics
-    prepared.submit(accept="never")
-    _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
-    run = pb.accepted_procedure("installed-web-fetch").run()
-    state = client.get_procedure_run(instance_id, run.run_id)
-    assert run.status == "succeeded", state.model_dump_json(indent=2)
-    assert '"station": "newlyn"' in run.result.text
-    assert state.source_observations[0].capture_digest
-    assert state.receipt_digest
+    from cruxible_client.contracts.provider_operations import operation_signature_digest
+    from cruxible_client.contracts.providers import parse_provider, provider_path
+    from cruxible_client.contracts.shapes import contract_path
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._light_capture_support import http_contract
+    from tests.test_procedures.test_procedure_source_runs import _policy
+
+    http, instance_id, reviewer = installer_http
+    client, installed, digests = installed_web
+    # Readiness is per operation and truthful. search.web needs nothing beyond
+    # the base install. web.fetch's implementation needs the browser extra (this
+    # install asked for it) and a Chromium matching the installed Playwright,
+    # which the install probes for rather than assumes: where none is present,
+    # the operation is installed but not ready, and the install says so.
+    readiness = {row.operation: row for row in installed.operations}
+    assert set(readiness) == {"web.fetch", "search.web"}
+    assert all(row.installed for row in readiness.values()), installed.operations
+    assert readiness["search.web"].missing_requirements == ()
+    assert set(readiness["web.fetch"].missing_requirements) <= {
+        "runtime resource: playwright.chromium"
+    }
+    assert installed.status == (
+        "blocked" if readiness["web.fetch"].missing_requirements else "ready"
+    )
+    # The registration pinned both operations and every declared refusal to
+    # the accepted Contracts.
+    instance = get_playbill_manager().get(instance_id)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    build_path = provider_path(installed.build)
+    build = parse_provider(tree[build_path], path=build_path)
+    served = {operation.name: operation for operation in build.operations}
+    assert set(served) == {"web.fetch", "search.web"}
+    for operation in served.values():
+        refs = (
+            operation.in_,
+            operation.out,
+            *(item.contract for item in operation.refusals.values()),
+        )
+        for ref in refs:
+            assert ref.digest == digests[contract_path(ref.name, ref.version)], ref
+    assert set(served["web.fetch"].refusals) == {
+        "credential_unavailable",
+        "cross_origin_credentialed_redirect",
+        "engine_unavailable",
+        "provider_declined",
+        "redirect_limit",
+        "unsupported_redirect_scheme",
+    }
+    assert set(served["search.web"].refusals) == {
+        "cross_origin_credentialed_redirect",
+        "provider_declined",
+        "redirect_limit",
+        "undeclared_instance",
+        "unsupported_redirect_scheme",
+    }
+    assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
+
+    contract = http_contract()
+    _accept(
+        http,
+        instance_id,
+        reviewer,
+        {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
+        name="web-capture-contract",
+    )
+    # web.fetch refuses private and loopback origins, so the run reads the
+    # recording the web package ships for the reserved fixture.invalid host; it
+    # opens no socket, and needs no browser: the request does not render.
+    url = "https://fixture.invalid/api/v1/measurements.json"
+    line = "test.installed-web-fetch-line"
+    _author_line(
+        http,
+        instance_id,
+        reviewer,
+        spec={
+            "procedure": "test.installed-web-fetch",
+            "input": {},
+            "output": {"text": "string"},
+            "slots": {
+                "fetch": {
+                    "in": "web.fetch.request@1",
+                    "out": "web.fetch.result@1",
+                    "effect": "external_read",
+                }
+            },
+            "acquisition_defaults": {"observation": _policy().model_dump(mode="json")},
+            "steps": [
+                {
+                    "source": "observation",
+                    "contract": contract.identity.name,
+                    "slot": "fetch",
+                    "request": {"url": url, "expected_format": "json"},
+                },
+                {"project": "result", "fields": {"text": "$observation.derived.text"}},
+            ],
+            "returns": "result",
+            "budget": {"provider_calls": 1, "capture_bytes": 1048576},
+        },
+        line=line,
+        bindings={"fetch": f"{installed.build}#web.fetch"},
+        parameters={},
+        name="installed-web-fetch",
+    )
+    state = _line_state(instance_id, line)
+    assert state.status == "succeeded", state.terminal
+    assert '"station": "newlyn"' in state.result["text"]
+    run = client.get_procedure_run(instance_id, state.run_id)
+    assert run.receipt_digest
+    (observation,) = run.source_observations
+    assert observation.capture_digest
+    # The run executed the exact operation of the exact build the Line bound.
+    (receipt,) = _invocation_receipts(instance, state.run_id)
+    assert receipt.operation == "web.fetch"
+    assert receipt.provider_artifact_digest == _build_digest(build)
+    assert receipt.operation_signature_digest == operation_signature_digest(
+        served["web.fetch"].signature()
+    )
+    # The retained Capture: the exact observation bundle, its digest and length,
+    # under the request's source identity, recorded as served from a recording.
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(observation.capture_digest, access=access)
+    )
+    material = instance.body_store().read(envelope.commitment.digest, access=access)
+    assert envelope.commitment.byte_length == len(material)
+    assert envelope.source.source_identity == "web.response"
+    assert envelope.source.coordinate_type == "http-response-v1"
+    assert envelope.source.selector == {}
+    assert envelope.source.replayability == "attested_only"
+    assert envelope.source_effective_time is None
+    bundle = json.loads(material)
+    retrieved = bundle["retrieved"]
+    assert retrieved["source"] == "packaged-recording"
+    assert retrieved["url"] == url
+    assert envelope.source.coordinate["source"] == "packaged-recording"
+    assert envelope.source.coordinate["body_sha256"] == retrieved["body_sha256"]
+    assert b"newlyn" in base64.b64decode(retrieved["body_base64"])
+    assert bundle["derived"]["text"] == state.result["text"]
+
+
+_SEARCH_IN_ITS_ENVIRONMENT = """
+import json
+from cruxible_provider_runtime.egress import EgressRecorder
+from cruxible_provider_runtime.protocol import Budgets
+from cruxible_provider_runtime.provider_api import ProviderRunContext
+from cruxible_provider_web.search import SearxngSearch
+
+result = SearxngSearch()(
+    ProviderRunContext(
+        run_id="installed-search",
+        operation="search.web",
+        operation_signature_digest="sha256:" + "a" * 64,
+        build_digest="sha256:" + "b" * 64,
+        implementation_digest="sha256:" + "c" * 64,
+        input={"query": "tide gauge recalibration", "limit": 2},
+        coordinates={"instance_url": "https://fixture.invalid", "as_of": "2026-06-01T00:00:00Z"},
+        budgets=Budgets(wall_clock_seconds=30.0, output_bytes=4_000_000),
+        declared_endpoints=("dynamic:target-from-configuration",),
+        capture_contract=None,
+        secrets={},
+        egress=EgressRecorder(),
+    )
+)
+print(json.dumps({"status": result.status, "output": result.output}))
+"""
+
+
+def test_installed_web_search_returns_its_result_contract(installer_http, installed_web):
+    """search.web's output, from the installed build's code, is exactly its Contract.
+
+    No Line runs it here: a run names search.web's instance through run
+    configuration (the ``instance_url`` coordinate), which a Procedure Source does
+    not supply. The adapter runs in the installed deployment's own interpreter,
+    over the packaged recording, and Core's operation checker reads its output
+    against the accepted result Contract.
+    """
+
+    import subprocess
+
+    from cruxible_client.contracts.captures import ProviderResultToExternalCapture
+    from cruxible_client.contracts.provider_operations import validate_operation_value
+    from cruxible_client.contracts.shapes import contract_path, parse_contract
+
+    _http, instance_id, _reviewer = installer_http
+    _client, installed, _digests = installed_web
+    instance = get_playbill_manager().get(instance_id)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    def resolve(ref):
+        path = contract_path(ref.name, ref.version)
+        return None if path not in tree else parse_contract(tree[path], path=path)
+
+    (deployment,) = get_playbill_manager().provider_runtime_operator().deployments.values()
+    ran = subprocess.run(
+        [str(deployment.interpreter_path), "-c", _SEARCH_IN_ITS_ENVIRONMENT],
+        capture_output=True,
+        check=True,
+    )
+    returned = json.loads(ran.stdout)
+    assert returned["status"] == "ok", returned
+    output = returned["output"]
+    result = resolve(_served_operation(instance, installed.build, "search.web").out)
+    assert result is not None
+    assert "source_effective_time" not in output
+    assert validate_operation_value(output, result, resolve=resolve) == output
+    decoded = ProviderResultToExternalCapture.model_validate(output)
+    assert decoded.source_identity == "search.response"
+    assert decoded.source_effective_time is None
+    bundle = json.loads(base64.b64decode(decoded.content_base64))
+    assert bundle["retrieved"]["source"] == "packaged-recording"
+    assert bundle["retrieved"]["result_count"] == 3
+    assert len(bundle["derived"]["results"]) == 2
+
+
+def _served_operation(instance, build_name, operation):
+    from cruxible_client.contracts.providers import parse_provider, provider_path
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = provider_path(build_name)
+    build = parse_provider(tree[path], path=path)
+    return next(item for item in build.operations if item.name == operation)
+
+
+def _build_digest(build):
+    from cruxible_client.contracts.providers import provider_digest
+
+    return provider_digest(build).tagged
+
+
+def _invocation_receipts(instance, run_id):
+    from tests.test_procedures.test_b2_operations import invocation_receipts
+
+    return invocation_receipts(instance, run_id)
 
 
 @pytest.mark.parametrize("installer_http", [True], indirect=True)
@@ -665,30 +817,163 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
         client.install_provider(instance_id, request.model_copy(update={"version": "99.0"}))
 
 
-def test_installing_a_package_for_a_built_in_interface_refuses_by_name(
+#: One workspace.file request: the bytes the daemon read, as the operation takes them.
+_WORKSPACE_BYTES = b"high\nlow\n"
+
+
+def _workspace_request() -> dict[str, object]:
+    import hashlib
+
+    return {
+        "logical_source": "docs.readme",
+        "commitment_digest": "sha256:" + "c0" * 32,
+        "content_encoding": "base64",
+        "bytes": base64.b64encode(_WORKSPACE_BYTES).decode("ascii"),
+        "byte_length": len(_WORKSPACE_BYTES),
+        "bytes_digest": "sha256:" + hashlib.sha256(_WORKSPACE_BYTES).hexdigest(),
+    }
+
+
+def _author_workspace_line(http, instance_id, reviewer, *, build, name):
+    """A Procedure calling one workspace.file slot, and a Line binding it to ``build``."""
+
+    line = f"test.{name}-line"
+    _author_line(
+        http,
+        instance_id,
+        reviewer,
+        spec={
+            "procedure": f"test.{name}",
+            "input": {},
+            "output": {"lines": "integer"},
+            "slots": {
+                "read": {
+                    "in": "workspace.file.request@1",
+                    "out": "workspace.file.result@1",
+                    "effect": "pure",
+                }
+            },
+            "steps": [
+                {"call": "structured", "slot": "read", "input": _workspace_request()},
+                {"project": "out", "fields": {"lines": "$structured.content.line_count"}},
+            ],
+            "returns": "out",
+            "budget": {"provider_calls": 1},
+        },
+        line=line,
+        bindings={"read": f"{build}#workspace.file"},
+        parameters={},
+        name=name,
+    )
+    return line
+
+
+def test_a_package_serving_a_built_in_operation_installs_beside_the_built_in(
     installer_http, provider_checkout
 ):
-    from cruxible_client.errors import ConfigError
+    """The workspace package and the seeded built-in serve one signature side by side.
 
-    http, instance_id, _ = installer_http
+    Installing ``cruxible-provider-workspace`` (``workspace.file``, pure) registers a
+    build of its own beside the genesis-seeded ``Provider:cruxible-builtin``. Nothing
+    seeded moves: the built-in's bytes, the Contracts both pin, and a Line already
+    bound to the built-in, which runs the built-in in process before and after. A
+    Line bound to the package build runs that exact build in its own child.
+    """
+
+    from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
+    from cruxible_client.contracts.shapes import (
+        contract_digest,
+        contract_path_parts,
+        parse_contract,
+    )
+    from cruxible_core.governance.seed_artifacts.workspace_file import (
+        WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
+        WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
+    )
+    from cruxible_core.ledger.bootstrap import GENESIS_SEEDS
+
+    http, instance_id, reviewer = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
-    repository = provider_checkout.repository
+    instance = get_playbill_manager().get(instance_id)
+
+    def accepted_tree():
+        return instance.tree_at(instance.accepted_coordinate().git_oid)
+
+    def seeded(tree):
+        return {path: tree[path] for path, _digest in GENESIS_SEEDS}
+
+    def contract_digests(tree):
+        return {
+            path: contract_digest(parse_contract(content, path=path)).tagged
+            for path, content in seeded(tree).items()
+            if contract_path_parts(path) is not None
+        }
+
+    builtin_path = provider_path(WORKSPACE_FILE_BUILTIN_PROVIDER_ID)
+    before = accepted_tree()
+    assert builtin_path in seeded(before)
+    builtin = parse_provider(before[builtin_path], path=builtin_path)
+    builtin_line = _author_workspace_line(
+        http, instance_id, reviewer, build=WORKSPACE_FILE_BUILTIN_PROVIDER_ID, name="builtin-read"
+    )
+    line_path = f"lines/{builtin_line}.json"
+    line_bytes = accepted_tree()[line_path]
+
+    def run(line, *, build):
+        state = _line_state(instance_id, line)
+        assert state.status == "succeeded", state.terminal
+        assert state.result == {"lines": 2}
+        (receipt,) = _invocation_receipts(instance, state.run_id)
+        assert receipt.operation == "workspace.file"
+        assert receipt.provider_artifact_digest == provider_digest(build).tagged
+        return receipt
+
+    first = run(builtin_line, build=builtin)
+    assert first.implementation_digest == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    assert first.fence_scope == "in_process"
+
     wheels = provider_checkout.wheels
-    with pytest.raises(ConfigError, match="workspace.file is built in on this instance"):
-        install_provider_wheel(
-            client,
-            instance_id,
-            wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
-            lock=repository / "packages/cruxible-provider-workspace/uv.lock",
-            dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-        )
-    # Nothing was registered: no deployment, and the built-in is untouched.
-    assert not get_playbill_manager().provider_runtime_operator().config.deployments
-    entry = interface_entry(client, instance_id, "workspace.file")
-    assert [item["provider_identity"] for item in entry["providers"]] == [
-        "Provider:cruxible-builtin"
-    ]
+    installed = install_provider_wheel(
+        client,
+        instance_id,
+        wheel=next(wheels.glob("cruxible_provider_workspace-*.whl")),
+        lock=provider_checkout.repository / "packages/cruxible-provider-workspace/uv.lock",
+        dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
+    )
+    assert installed.status == "ready" and installed.registered, installed
+    assert installed.provider_id == "cruxible-provider-workspace"
+    assert [
+        (row.operation, row.installed, row.missing_requirements) for row in installed.operations
+    ] == [("workspace.file", True, ())]
+    after = accepted_tree()
+    package_path = provider_path(installed.build)
+    assert package_path != builtin_path
+    package = parse_provider(after[package_path], path=package_path)
+    (served,) = package.operations
+    (builtin_served,) = builtin.operations
+    # The same signature, pinned to the same seeded Contracts.
+    assert served.signature() == builtin_served.signature()
+    assert served.refusals == builtin_served.refusals
+    # Nothing seeded moved, and neither did the Line bound to the built-in.
+    assert seeded(after) == seeded(before)
+    assert contract_digests(after) == contract_digests(before)
+    assert after[line_path] == line_bytes
+    assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
+
+    again = run(builtin_line, build=builtin)
+    assert again.implementation_digest == first.implementation_digest
+    assert again.provider_artifact_digest == first.provider_artifact_digest
+    assert again.fence_scope == "in_process"
+
+    package_line = _author_workspace_line(
+        http, instance_id, reviewer, build=installed.build, name="package-read"
+    )
+    own = run(package_line, build=package)
+    assert own.implementation_digest != WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    assert own.implementation_digest == package.implementations[0].implementation_digest
+    assert own.fence_scope != "in_process"
+    assert own.operation_signature_digest == first.operation_signature_digest
 
 
 def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_index(

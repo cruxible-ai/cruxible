@@ -141,6 +141,24 @@ def test_a_provider_row_that_borrows_the_built_in_digest_refuses() -> None:
     assert builtin_provider_binding(provider, interface, "sha256:" + "0" * 64) is None
 
 
+def test_a_package_operation_of_the_built_in_signature_never_runs_as_the_built_in() -> None:
+    """A package may serve workspace.file's exact signature beside the built-in.
+
+    Its operation is its own (its entrypoint), so naming the built-in's
+    implementation digest for it refuses: a signature is never a licence to run
+    the in-process adapter.
+    """
+
+    provider, operation = _accepted()
+    package = operation.model_copy(
+        update={"entrypoint": "cruxible_provider_workspace.file:WorkspaceFile"}
+    )
+    assert package.signature() == operation.signature()
+    with pytest.raises(ProviderLocalRuntimeRefused) as refused:
+        builtin_provider_binding(provider, package, WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST)
+    assert refused.value.code == "acceptance_divergence"
+
+
 def test_the_built_in_honours_its_output_budget() -> None:
     provider, interface = _accepted()
     binding = builtin_provider_binding(

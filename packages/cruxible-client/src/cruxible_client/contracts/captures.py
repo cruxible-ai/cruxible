@@ -2821,10 +2821,14 @@ def build_provider_external_capture_v2(
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
     try:
+        # An external result is the provider's output, checked against its
+        # operation Contract, in which optional means an absent key and no
+        # value is null: the decoder's defaults (an unstated validity window)
+        # are absent from what the receipt digested, so they are here too.
         provider_output = (
             normalize_canonical(json.loads(content))
             if workspace_source
-            else result.model_dump(mode="json")
+            else result.model_dump(mode="json", exclude_none=True)
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise CaptureFormatError("workspace.file result is not canonical JSON") from exc

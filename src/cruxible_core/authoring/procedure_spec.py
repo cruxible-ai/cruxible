@@ -153,9 +153,18 @@ def resolve_procedure_spec(
             input_view = contract_schema_view(contract(slot.in_, authored_path), resolve_ref)
             output_view = contract_schema_view(contract(slot.out, authored_path), resolve_ref)
             request_defaults: dict[str, Any] = {}
-            if isinstance(step, SourceStep) and is_workspace_file_signature(
+            output_fields: Any = output_view.fields
+            workspace_source = isinstance(step, SourceStep) and is_workspace_file_signature(
                 operation_signature_digest(slot)
-            ):
+            )
+            if isinstance(step, SourceStep) and not workspace_source:
+                # An external Source's alias binds its Capture's material: the
+                # canonical JSON its result carries as content_base64. The slot's
+                # out Contract types that Capture wire, not the material inside
+                # it, so references into the material are not checked against it.
+                # (A workspace read's material is its structured result itself.)
+                output_fields = None
+            if workspace_source:
                 assert capture is not None
                 components = capture_components(capture)
                 coordinates = components.coordinate_schema_pins
@@ -183,7 +192,7 @@ def resolve_procedure_spec(
                 "request_defaults": request_defaults,
                 "input": None if input_view is None else input_view.fields,
                 "input_allow_extra": False,
-                "output": output_view.fields,
+                "output": output_fields,
             }
 
         return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve))

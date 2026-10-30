@@ -134,12 +134,9 @@ _FETCH_COORDINATE = Contract.model_validate(
         },
     }
 )
+# The whole response: the closed empty record, which accepts only ``{}``.
 _FETCH_SELECTOR = Contract.model_validate(
-    {
-        "name": "test.sdk-fetch-selector",
-        "version": 1,
-        "fields": {"whole": {"type": "bool", "optional": True}},
-    }
+    {"name": "test.sdk-fetch-selector", "version": 1, "fields": {}}
 )
 _FETCH_EFFECTIVE = Contract.model_validate(
     {
