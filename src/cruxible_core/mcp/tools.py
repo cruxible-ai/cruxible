@@ -311,7 +311,7 @@ def register_tools(
         *,
         request: ProviderMoveRequest,
     ) -> ProviderMoveResult:
-        """Move Procedures to a provider build; preview every re-pin and automation it stops."""
+        """Move Lines to a provider build; preview every re-pin and automation it stops."""
         return handlers.handle_playbill_provider_move(require_instance_id(instance_id), request)
 
     @_tool

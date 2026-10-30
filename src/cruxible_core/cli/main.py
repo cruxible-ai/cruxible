@@ -547,7 +547,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "install": _command(
                 "playbill", "install_provider", "Install and register a provider package."
             ),
-            "move": _command("playbill", "move_provider", "Move Procedures to a provider build."),
+            "move": _command("playbill", "move_provider", "Move Lines to a provider build."),
             "retire": _command("playbill", "retire_provider", "Retire an unpinned provider build."),
         },
         module="playbill",

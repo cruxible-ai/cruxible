@@ -22,9 +22,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "retain its environment and deployments. Requires admin permission."
     ),
     "cruxible_provider_move": (
-        "Move live Procedures to a provider build (newest means most recently registered). "
-        "Preview each re-pin, carried disabled Line and propose-only Mandate; commit the governed "
-        "change with dry_run false and at set to the preview coordinate."
+        "Move live Lines to a provider build (newest means most recently registered). "
+        "Preview each re-pin, carried disabled Line and Mandate carried propose-only; commit the "
+        "governed change with dry_run false and at set to the preview coordinate."
     ),
     "cruxible_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "
