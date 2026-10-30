@@ -22,7 +22,6 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
-from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.procedures.line_dispatch import (
     service_dispatch_line,
     service_enable_line,
@@ -56,6 +55,32 @@ def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
     with LineDispatchStore(instance).locked() as conn:
         (row,) = conn.execute("SELECT session_id FROM sessions WHERE active=1").fetchall()
     return row[0]
+
+
+def _carry_line_mandate(tree, line):
+    """Pair a fixture Line successor with its exact accepted Mandate successor."""
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
+    from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate,
+        procedure_mandate_digest,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+
+    path = procedure_mandate_path("served-line-mandate")
+    previous = parse_procedure_mandate(tree[path], path=path)
+    carried = previous.model_copy(
+        update={
+            "line": ArtifactPin(
+                role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(previous).tagged
+            ),
+        }
+    )
+    tree[path] = render_procedure_mandate(carried)
 
 
 def queued_world(tmp_path):
@@ -476,6 +501,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
             }
         )
         tree[line_spec_path(line.identity.name)] = render_line_spec(revised)
+        _carry_line_mandate(tree, revised)
 
     def accept_successor():
         _accept_tree(
@@ -516,8 +542,13 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
 
 def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
     from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_server.test_playbill_line_run_refusals import _line_mandate
 
     instance, first, procedure, owner = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
@@ -525,6 +556,10 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     second = first.model_copy(update={"identity": ArtifactIdentity(kind="Line", name="other-line")})
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(second.identity.name)] = render_line_spec(second)
+    mandate = _line_mandate(procedure, second).model_copy(
+        update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="other-line-mandate")}
+    )
+    tree[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
     tree.update(
         trigger_members(
             line_trigger(
@@ -672,6 +707,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         )
     else:
         tree[line_spec_path(line.identity.name)] = render_line_spec(revised)
+        _carry_line_mandate(tree, revised)
 
     def accept_successor():
         _accept_tree(
@@ -1139,57 +1175,91 @@ def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp
     assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
 
 
-@pytest.mark.parametrize("provider_count", [0, 2])
-def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path, provider_count):
-    from datetime import UTC, datetime
-
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
-
-    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
-    from cruxible_client.contracts.cas_contracts import BodyAccessContext
-    from cruxible_client.contracts.procedures.artifacts import render_procedure
-    from cruxible_client.contracts.procedures.line_specs import LineSpec, render_line_spec
-    from cruxible_client.contracts.providers import provider_path, render_provider
-    from cruxible_core.exhaust.payloads import read_payload
+def _slot_fit_refusal_world(tmp_path, provider_count):
+    """Run real Line fitting against zero/two accepted operation candidates."""
+    from cruxible_core.errors import RequestRefusedError
     from tests.core_support._identity_support import accept_tree
     from tests.core_support._support import initialize_local
-    from tests.test_procedures.test_slotted_procedures import slotted
-    from tests.test_providers.test_slotted_build_moves import _other
-
-    _, procedure, provider, interface = slotted()
-    instance, _ = initialize_local(tmp_path)
-    line = LineSpec(
-        identity=ArtifactIdentity(kind="Line", name="test.slotted"),
-        occurrence_epoch=1,
-        procedure=ArtifactNameRef(target=procedure.procedure.identity),
-        parameters={"value": 1},
-        max_authority="observe",
-        budgets={
-            "max_wall_clock_microseconds": 1000000,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 0,
-            "max_items": 0,
-        },
-        epsilon={"$decimal": "0.1"},
+    from tests.support.operation_world import (
+        LINE,
+        author_line,
+        author_procedure,
+        build_files,
+        contract_files,
+        operation_build,
+        slotted_spec,
     )
-    members = {
-        procedure.path: render_procedure(authored_procedure(procedure)),
-        interface.path: render_provider_interface(interface.registration),
-        "lines/test.slotted.json": render_line_spec(line),
-        **trigger_members(
+
+    instance, _ = initialize_local(tmp_path)
+    builds = tuple(operation_build(build=value) for value in ("a", "d")[:provider_count])
+    members = contract_files()
+    for build in builds:
+        members.update(build_files(build))
+    accept_tree(instance, members, name="fit-candidates")
+    author_procedure(instance, slotted_spec())
+    before = instance.accepted_coordinate()
+    with pytest.raises(RequestRefusedError) as refused:
+        author_line(instance)
+    assert instance.accepted_coordinate() == before
+    assert f"lines/{LINE}.json" not in instance.tree_at(before.git_oid)
+    return instance, refused.value, builds
+
+
+@pytest.mark.parametrize("provider_count", [0, 2])
+def test_line_authoring_refuses_zero_or_multiple_fitting_operations(tmp_path, provider_count):
+    _instance, refusal, builds = _slot_fit_refusal_world(tmp_path, provider_count)
+    code = "cruxible.line.slot_" + ("unfilled" if not provider_count else "ambiguous")
+    assert refusal.error_code == code
+    assert refusal.repair.hand_edit.target == "bindings"
+    assert "compute" in str(refusal) and "test.value@1" in str(refusal)
+    for build in builds:
+        assert f"{build.identity.name}#compute" in str(refusal)
+
+
+@pytest.mark.parametrize("provider_count", [0, 2])
+def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(
+    tmp_path, provider_count, monkeypatch
+):
+    from cruxible_client.contracts.cas_contracts import BodyAccessContext
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        parse_line_spec,
+    )
+    from cruxible_client.contracts.providers import provider_digest
+    from cruxible_core.exhaust.payloads import read_payload
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.operation_world import (
+        LINE,
+        NOW,
+        author_line,
+        build_files,
+        operation_build,
+    )
+
+    instance, refusal, builds = _slot_fit_refusal_world(tmp_path, provider_count)
+    # Repair authoring first: install a fitting build or disambiguate explicitly.
+    selected = builds[0] if builds else operation_build()
+    if not builds:
+        accept_tree(instance, build_files(selected), name="install-fit")
+    author_line(instance, bindings={"compute": f"{selected.identity.name}#compute"})
+    path = f"lines/{LINE}.json"
+    line = parse_line_spec(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    assert line.bindings["compute"].build.artifact_digest == provider_digest(selected).tagged
+    assert line.bindings["compute"].operation == "compute"
+    accept_tree(
+        instance,
+        trigger_members(
             line_trigger(
                 "test.slotted-tick",
                 line=line.identity.name,
                 schedule=CadenceSchedule(interval_seconds=60),
             )
         ),
-    }
-    if provider_count:
-        other = _other(interface.registration)
-        members[provider.path] = render_provider(provider.provider)
-        members[provider_path(other.identity.name)] = render_provider(other)
-    accept_tree(instance, members, name="dispatch-slot-world")
-    now = datetime(2026, 10, 25, tzinfo=UTC)
+        name="dispatch-slot-trigger",
+    )
+    now = NOW
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
@@ -1198,6 +1268,18 @@ def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path,
         now=now + timedelta(minutes=2),
     )
     assert evaluated.occurrences and evaluated.occurrences[0].pending
+    # The accepted Line is fully bound. This injected current typed refusal
+    # exercises dispatch plumbing; actual Lines never refit slots at admission.
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+
+    calls = []
+
+    def refuse_admission(*args, **kwargs):
+        assert kwargs["expected_line_artifact_digest"] == line_spec_digest(line).tagged
+        calls.append(kwargs["request"].occurrence_id)
+        raise refusal
+
+    monkeypatch.setattr(dispatch_service, "service_run_playbill_line", refuse_admission)
     result = service_dispatch_line(
         instance,
         line.identity.name,
@@ -1206,9 +1288,11 @@ def test_slot_fit_refusal_is_durable_and_leaves_the_occurrence_pending(tmp_path,
         now=now + timedelta(minutes=2),
         caller_rung=3,
     )
-    code = "cruxible.procedure.slot_binding_" + ("missing" if not provider_count else "ambiguous")
+    code = "cruxible.line.slot_" + ("unfilled" if not provider_count else "ambiguous")
+    assert calls == [result.items[0].occurrence_id]
     assert len(result.items) == 1 and result.items[0].status == "blocked"
     assert result.items[0].refusal.code == code
+    assert result.items[0].refusal.repair == refusal.repair
     store = LineDispatchStore(instance)
     records = store.journal.select_records(store.stream, partition_id="dispatch")
     event = read_payload(
