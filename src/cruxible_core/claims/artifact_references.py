@@ -31,6 +31,25 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceQueryBinding,
     SourceSlotBinding,
 )
+from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+from cruxible_client.contracts.shapes import Contract, all_field_refs
+from cruxible_core.errors import RequestRefusedError
+
+
+def immutable_contract_error(path: str) -> RequestRefusedError:
+    """A Contract version cannot acquire new bytes, pins or lifecycle."""
+
+    return RequestRefusedError(
+        "cruxible.contract.immutable",
+        f"{path} is immutable; author the next Contract version instead.",
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target=path,
+                required_change="Preserve this version and author the next Contract version.",
+            )
+        ),
+    )
+
 
 _PIN = ("*", "artifact_digest")
 # A Claim's capture-contract pins are provenance -- the exact contract versions its
@@ -314,13 +333,24 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
 
 
 def movable_references(path: str) -> bool:
-    """Whether ``move_references`` can re-pin an artifact at ``path``: a family with a
-    reference table, or a Procedure (through its typed graph)."""
+    """Whether the typed visitor or reference table can process this family.
 
-    return path.startswith(_GRAPH_FAMILIES) or reference_fields(path) is not None
+    Contracts support validation only: a remap changing a commitment refuses.
+    """
+
+    return path.startswith((*_GRAPH_FAMILIES, "contracts/")) or reference_fields(path) is not None
 
 
 def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
+    if path.startswith("contracts/"):
+        contract = Contract.model_validate(payload)
+        for ref in all_field_refs(contract):
+            if ref.digest is not None:
+                yield ref.digest
+        # Historical commitment, needed for closure but never freely re-pinned.
+        if contract.predecessor_digest is not None:
+            yield contract.predecessor_digest
+        return
     if path.startswith(_GRAPH_FAMILIES):
         yield from _graph_digests(path, payload)
         return
@@ -335,6 +365,10 @@ def move_references(
 ) -> dict[str, Any]:
     """A copy of ``payload`` with its reference fields moved through ``remap``."""
 
+    if path.startswith("contracts/"):
+        if any(remap.get(digest, digest) != digest for digest in referenced_digests(path, payload)):
+            raise immutable_contract_error(path)
+        return Contract.model_validate(payload).model_dump(mode="json")
     if path.startswith(_GRAPH_FAMILIES):
         return _move_graph(path, payload, remap)
     fields = reference_fields(path)
