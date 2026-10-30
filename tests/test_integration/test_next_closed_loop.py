@@ -1638,12 +1638,14 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         render_procedure_mandate,
     )
     from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.procedures.line_specs import render_line_spec
     from tests.test_indexes.test_resolution_contracts import _accept_tree
-    from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
+    from tests.test_procedures.test_procedure_mandates import _line, _mandate, _procedure
 
     instance, owner = initialize_local(root)
     procedure = _procedure()
-    lapsing = _mandate(procedure=procedure).model_copy(
+    line = _line(procedure=procedure)
+    lapsing = _mandate(line=line).model_copy(
         update={"expires_at": datetime(2026, 8, 27, tzinfo=UTC)}
     )
     _accept_tree(
@@ -1652,6 +1654,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             procedure.path: render_procedure(authored_procedure(procedure)),
+            f"lines/{line.identity.name}.json": render_line_spec(line),
             procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
         },
         timestamp="2026-08-24T17:00:00.000000Z",
@@ -2175,16 +2178,74 @@ def _line_manual_failure_is_no_row(instance, line, monkeypatch, request) -> None
 
 
 def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    # This case exercises inbox queue repairs, independent of source decoding.
+    # Keep it on the current authored graph and exact Line fixture.
+    from cruxible_client.contracts.procedures.artifacts import (
+        AcceptedProcedure,
+        procedure_artifact_digest,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
     from cruxible_core.service.procedures.line_inbox import (
         service_acknowledge_inbox_item,
         service_dismiss_inbox_item,
         service_list_inbox,
     )
-    from tests.test_procedures.test_line_inbox_delivery import inbox_world
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
     from tests.test_procedures.test_manual_line_runs import manual_run
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
     from tests.test_procedures.test_procedure_source_runs import NOW, _actor
+    from tests.test_server.test_playbill_line_run_refusals import _served_line
 
-    instance, workspace, line = inbox_world(root)
+    instance, owner = initialize_local(root)
+    template = _slotless_procedure("next-inbox").procedure
+    (shape,) = template.definition.nodes
+    definition = template.definition.model_copy(
+        update={
+            "nodes": (
+                shape.model_copy(update={"next": "inbox"}),
+                InboxEgressNode(
+                    node_id="inbox",
+                    input={
+                        "items": [
+                            {"cve": "CVE-2026-0001"},
+                            {"cve": "CVE-2026-0002"},
+                            {"cve": "CVE-2026-0003"},
+                        ]
+                    },
+                ),
+            )
+        }
+    )
+    procedure = template.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    accepted = AcceptedProcedure(
+        path="procedures/next-inbox.json",
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    line = _served_line("next-inbox", accepted=accepted).model_copy(
+        update={"max_authority": "observe"}
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            accepted.path: render_procedure(procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
+        },
+        timestamp="2026-08-21T12:00:00.000000Z",
+        proposal_name="next-inbox",
+    )
+    workspace = root / "workspace"
+    workspace.mkdir(exist_ok=True)
     assert manual_run(instance, line, at=NOW, root=workspace).status == "succeeded"
     request = _request(instance)
 

@@ -259,7 +259,7 @@ def test_the_pins_section_pages_every_live_definition_pin_once(tmp_path: Path) -
     mandate = {(row.role, row.target) for row in rows if row.source == "ProcedureMandate:triage"}
     assert ("claim-type", f"ClaimType:{STATUS}") in mandate
     assert ("condition-query", "QueryDefinition:project.settle-condition") in mandate
-    assert any(role == "procedure" and target.startswith("Procedure:") for role, target in mandate)
+    assert any(role == "line" and target.startswith("Line:") for role, target in mandate)
     assert all(row.current for row in rows if row.source == "ProcedureMandate:triage")
     whole = service_playbill_orient(instance, section="pins", limit=500)
     assert whole.pins == tuple(rows) and not whole.truncated

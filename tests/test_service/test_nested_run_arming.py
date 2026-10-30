@@ -41,11 +41,6 @@ def _resolver(credential_id: str) -> str | None:
 def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-def]
     """A Line run whose Procedure invokes a child twice, admitted by a credential arm."""
 
-    from cruxible_client.contracts.acquisition_policies import (
-        acquisition_policy_path,
-        render_acquisition_policy,
-    )
-
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
@@ -61,10 +56,7 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
     )
     from tests.test_procedures.test_procedure_source_runs import (
         _accept_more,
-        _line_mandate,
-        _policy,
         _run_line,
-        _served_line,
     )
 
     tmp_path = tmp_path_factory.mktemp("nested-arming")
@@ -75,21 +67,22 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
     accepted = _accepted_procedure(
         instance, name="parent", coordinate=instance.accepted_coordinate()
     )
-    policy = _policy()
-    line = _served_line(accepted.procedure, policy).model_copy(
-        update={"parameters": {"positive": True}}
+    from tests.test_server.test_playbill_line_run_refusals import _line_mandate, _served_line
+
+    line = _served_line("nested-line", accepted=accepted).model_copy(
+        update={"parameters": {"positive": True}, "max_authority": "observe"}
     )
-    mandate = _line_mandate(accepted.procedure)
+    mandate = _line_mandate(accepted, line)
     _accept_more(
         instance,
         owner,
         {
-            acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
         },
         name="nested-line",
     )
+    (tmp_path / "workspace").mkdir(exist_ok=True)
     result, _ = _run_line(instance, tmp_path / "workspace", line)
     assert result.status == "succeeded", result.model_dump_json()
     children = [

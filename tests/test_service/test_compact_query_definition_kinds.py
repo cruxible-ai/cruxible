@@ -225,7 +225,7 @@ def test_mandates_list_their_grant_scope_condition_and_expiry(settling: Any) -> 
 
     assert [column.name for column in result.columns] == [
         "name",
-        "procedure",
+        "line",
         "grant",
         "state",
         "scope",
@@ -236,7 +236,7 @@ def test_mandates_list_their_grant_scope_condition_and_expiry(settling: Any) -> 
         "expires_at",
     ]
     (row,) = (item for item in result.rows if item["name"] == "triage")
-    assert row["procedure"].startswith("Procedure:")
+    assert row["line"].startswith("Line:")
     assert (row["grant"], row["state"]) == ("settle", "active")
     assert row["scope"] == [f"ClaimType:{STATUS}"]
     assert row["change_kinds"] == ["create", "revise"]

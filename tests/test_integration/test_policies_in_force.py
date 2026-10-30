@@ -39,6 +39,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
+from cruxible_core.procedures.reference_binding import authored_procedure
 from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from tests.core_support._adoption_fixture import _claim_type as _legacy_claim_type
 from tests.core_support._adoption_fixture import _claim_type_path, _query_definition
@@ -280,7 +281,7 @@ def complete_policy_inventory(
     )
     tree[document_path(document.document_id)] = render_document(document)
 
-    live_procedure = _accepted_procedure().procedure
+    live_procedure = authored_procedure(_accepted_procedure())
     retired_procedure = procedure_artifact(
         live_procedure.definition.model_copy(update={"name": "retired-policy-procedure"}),
         activation_policy=live_procedure.activation_policy,

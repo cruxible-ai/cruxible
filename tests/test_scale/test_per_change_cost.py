@@ -62,7 +62,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -70,7 +70,11 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
-from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+from cruxible_client.contracts.procedures.line_specs import (
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
 from cruxible_client.contracts.procedures.models import ProposeChangeSetNode
 from cruxible_core.compiler import assembler
 from cruxible_core.governance.keys import generate_client_principal_key
@@ -158,7 +162,9 @@ def _propose_line(
     line = _worlds._line(f"{name}-line", procedure, authority="propose")  # noqa: SLF001
     mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=f"{name}-mandate"),
-        procedure=_worlds._pin(procedure),  # noqa: SLF001
+        line=ArtifactPin(
+            role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged
+        ),
         grants="propose",
         resource_ceiling=procedure.procedure.definition.hard_caps,
         namespace=namespace,

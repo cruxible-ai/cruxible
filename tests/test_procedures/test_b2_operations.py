@@ -1516,6 +1516,47 @@ def test_a_scheme_relative_url_under_restricted_origins_refuses_before_any_call(
 # --- 8. exact producer versions -----------------------------------------------
 
 
+def _line_input(instance, name, **updates):  # type: ignore[no-untyped-def]
+    """Reauthor an exact Line with its existing parameters and provider builds."""
+    from cruxible_client.contracts.authoring.inputs import LineInput
+
+    line = accepted_line(instance, name)
+    return LineInput.model_validate(
+        {
+            "kind": "line",
+            "name": name,
+            "procedure_name": line.procedure.target.name,
+            "bindings": {
+                slot: f"{binding.build.target.name}#{binding.operation}"
+                for slot, binding in line.bindings.items()
+            },
+            "parameters": line.parameters,
+            "max_authority": line.max_authority,
+            "acquisition": line.acquisition,
+            "budgets": line.budgets,
+            "occurrence_epoch": line.occurrence_epoch,
+            "trigger_input": line.trigger_input,
+            **updates,
+        }
+    )
+
+
+def _succeed_procedure_and_line(instance, spec, line):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.authoring.inputs import ChangeSetInput, ProcedureInput
+
+    author(
+        instance,
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ProcedureInput(kind="procedure", spec=spec),
+                _line_input(instance, line),
+            ),
+        ),
+        name="producer-v2",
+    )
+
+
 def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path):
     from cruxible_client.contracts.cas_contracts import BodyAccessContext
     from cruxible_core.service.evidence.capture_reads import verify_accepted_capture
@@ -1538,16 +1579,23 @@ def test_a_capture_keeps_verifying_across_procedure_and_line_succession(tmp_path
     verified()
     # A Procedure successor (a new digest) at the head: the Capture still names
     # the exact version that produced it, which history retains.
-    author_procedure(instance, sourced_spec(description="A changed description."), name="v2")
+    _succeed_procedure_and_line(
+        instance, sourced_spec(description="A changed description."), SOURCE_LINE
+    )
     verified()
-    # A Line successor over the new Procedure (re-authored, so a new intent).
-    author_line(
+    # A separate Line budget change also leaves the old producer verifiable.
+    line = accepted_line(instance, SOURCE_LINE)
+    author(
         instance,
-        name=SOURCE_LINE,
-        procedure="test.sourced",
-        parameters={},
-        max_authority="observe",
-        label="line-v2",
+        _line_input(
+            instance,
+            SOURCE_LINE,
+            budgets={
+                **line.budgets,
+                "max_capture_bytes": line.budgets["max_capture_bytes"] - 1,
+            },
+        ),
+        name="line-v2",
     )
     line = accepted_line(instance, SOURCE_LINE)
     assert line.lifecycle.predecessor_digest is not None
@@ -1690,10 +1738,10 @@ def test_a_procedure_produced_capture_verifies_at_its_exact_producer_version(tmp
 
     verifies()
     # A Procedure successor: the head digest is no longer the producer's.
-    author_procedure(instance, emitting_spec(description="A new description."), name="v2")
+    _succeed_procedure_and_line(instance, emitting_spec(description="A new description."), LINE)
     verifies()
     # A Line successor over it, then a provider move of that Line.
-    author_line(instance, max_authority="observe", label="line-v2")
+    author(instance, _line_input(instance, LINE, parameters={"value": 2}), name="line-v2")
     verifies()
     from cruxible_client.contracts.provider_installation import ProviderMoveRequest
     from cruxible_core.service.procedures.provider_builds import service_move_provider
