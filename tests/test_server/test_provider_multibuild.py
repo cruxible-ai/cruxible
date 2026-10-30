@@ -1,24 +1,25 @@
-"""One kit add upgrades both its own and operator Procedures without losing old builds."""
+"""One kit add moves the kit's and the operator's Lines to a new build, per Line.
+
+A Procedure names no provider build: each Line binds its slots to one exact
+build. A kit release shipping a new build of a provider moves every live Line
+bound to another build of it, in the same change set, unless ``keep_build``
+names that Line; old builds stay installed and runnable.
+"""
 
 from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.procedure_mandates import (
-    procedure_mandate_path,
-    render_procedure_mandate,
-)
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
+from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedure,
     parse_procedure,
     procedure_artifact_digest,
     render_procedure,
 )
-from cruxible_client.contracts.provider_installation import (
-    ProviderMoveRequest,
-    ProviderRetireRequest,
-)
+from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
+from cruxible_client.contracts.provider_installation import ProviderRetireRequest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.support.provider_checkout import ProviderCheckout
@@ -30,93 +31,75 @@ from tests.test_server.test_kit_providers import (
     _client,
     _install,
     _package,
-    _run,
     _tree,
     _worlds,
 )
-from tests.test_server.test_playbill_line_run_refusals import (
-    _accept_members as _served_accept_members,
-)
-from tests.test_server.test_playbill_line_run_refusals import _line_mandate
+from tests.test_server.test_playbill_line_run_refusals import _accept_members
+
+USER_PROCEDURE = "user.increment"
+USER_LINE = "user.tick"
+KIT_LINE = "user.kit-tick"
+USER_MANDATE = "user-mandate"
+KIT_MANDATE = "kit-mandate"
 
 
-def _accept_members(world, members, *, timestamp):
-    if hasattr(world, "instance"):
-        world.accept_members(members, timestamp=timestamp)
-    else:
-        _served_accept_members(
-            get_playbill_manager().get(world.instance_id),
-            world.reviewer_key,
-            members,
-            timestamp=timestamp,
-        )
+def _author_user_procedure(world) -> None:
+    """The operator's own open-slot Procedure, the same shape the kit ships."""
 
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-def _instantiate(world, name):
-    # This file exercises frozen, exact build succession at revision 35.
-    from cruxible_client.contracts.procedures.blueprints import (
-        blueprint_digest,
-        blueprint_interfaces,
-        instantiate_blueprint,
-        parse_blueprint,
+    spec = ProcedureSpec.model_validate(
+        {
+            "procedure": USER_PROCEDURE,
+            "input": {"n": "integer"},
+            "output": {"n": "integer"},
+            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "returns": "result",
+            "budget": {"wall_clock": "PT30S", "provider_calls": 1},
+        }
     )
-    from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
-        parse_provider_interface,
-        provider_interface_digest,
-        provider_interface_path,
+    intent = (
+        world.pb.changes(rationale="The operator's own increment.")
+        .procedure(definition=ProcedureInput(kind="procedure", spec=spec))
+        .prepare()
     )
-
-    from cruxible_client.contracts.providers import (
-        AcceptedProvider,
-        parse_provider,
-        provider_digest,
-        provider_path,
-    )
-    from cruxible_core.providers.builds import resolve_in_tree
-    from tests.support.core_provider_world import AT
-    from tests.test_server.test_kit_providers import BLUEPRINT
-
-    tree = _tree(world)
-    path = "blueprints/" + BLUEPRINT + ".json"
-    blueprint = parse_blueprint(tree[path], path=path)
-    selected = resolve_in_tree(
-        world.instance, world.instance.accepted_coordinate(), tree, "kit-call"
-    ).resolved
-    ppath = provider_path(selected)
-    provider = parse_provider(tree[ppath], path=ppath)
-
-    def interface_lookup(identity):
-        ipath = provider_interface_path(identity.name)
-        interface = parse_provider_interface(tree[ipath], path=ipath)
-        return AcceptedProviderInterfaceRegistration(
-            path=ipath,
-            registration=interface,
-            artifact_digest=provider_interface_digest(interface).tagged,
-        )
-
-    instance = instantiate_blueprint(
-        blueprint,
-        blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
-        name=name,
-        providers={
-            "increment": AcceptedProvider(
-                path=ppath, provider=provider, artifact_digest=provider_digest(provider).tagged
-            )
-        },
-        interface_registrations=blueprint_interfaces(blueprint, interface_lookup),
-    )
-    world.accept_members({"procedures/" + name + ".json": render_procedure(instance)}, timestamp=AT)
+    assert not intent.refused, intent.diagnostics
+    world.approve(intent.submit(accept="never")._candidate_status.proposal_id)
     world.pb.refresh()
 
 
-def _pins(world, name):
-    path = f"procedures/{name}.json"
-    return tuple(
-        pin.target.name
-        for pin in parse_procedure(_tree(world)[path], path=path).pins
-        if pin.role == "provider"
+def _mandate(name: str, line: str, caps) -> ProcedureMandateInput:
+    from datetime import UTC, datetime
+
+    return ProcedureMandateInput(
+        kind="procedure_mandate",
+        name=name,
+        line_name=line,
+        grants="propose",
+        resource_ceiling=caps,
+        namespace=("claims",),
+        valid_from=datetime(2026, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
+
+
+def _line(world, name: str):
+    path = f"lines/{name}.json"
+    return parse_line_spec(_tree(world)[path], path=path)
+
+
+def _bound_build(world, name: str) -> str:
+    (binding,) = _line(world, name).bindings.values()
+    return binding.build.target.name
+
+
+def _run(world, line: str):
+    from tests.test_server.test_provider_installation import _run_line
+
+    return _run_line(world.instance_id, line)
 
 
 @pytest.mark.parametrize(
@@ -124,12 +107,12 @@ def _pins(world, name):
     [
         ((), False, False),
         ((), True, False),
-        (("Procedure:user.increment",), False, False),
-        ((f"Procedure:{PROCEDURE}",), False, False),
-        ((f"Procedure:{PROCEDURE}",), False, True),
+        ((f"Line:{USER_LINE}",), False, False),
+        ((f"Line:{KIT_LINE}",), False, False),
+        ((f"Line:{KIT_LINE}",), False, True),
     ],
 )
-def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
+def test_kit_101_to_102_is_one_add_and_keep_build_is_per_line(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_checkout: ProviderCheckout,
@@ -137,107 +120,93 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
     concurrent: bool,
     definition_change: bool,
 ) -> None:
-    opened = _worlds(tmp_path, monkeypatch, historical=True)
+    opened = _worlds(tmp_path, monkeypatch)
     publisher, consumer = next(opened)
     try:
         first = _package(tmp_path / "v101", provider_checkout, name="kit-call", increment=1)
         _install(publisher, first)
         _author(publisher)
         v101 = _build(publisher, first, version="1.0.1")
+        old = v101.manifest.providers[0].build
         assert _add(consumer, v101, dry_run=False).status == "accepted"
         consumer.pb.refresh()
-        _instantiate(consumer, "user.increment")
+        _author_user_procedure(consumer)
+        kit_path = f"procedures/{PROCEDURE}.json"
+        caps = parse_procedure(_tree(consumer)[kit_path], path=kit_path).definition.hard_caps
         intent = (
-            consumer.pb.changes(rationale="Schedule the operator's Procedure.")
-            .line(name="user.tick", procedure="user.increment", parameters={"n": 2})
-            .line(name="user.kit-tick", procedure=PROCEDURE, parameters={"n": 2})
-            .trigger(
-                name="user.clock", line="user.tick", schedule=CadenceSchedule(interval_seconds=3600)
+            consumer.pb.changes(rationale="Schedule the operator's and the kit's Procedures.")
+            .line(
+                name=USER_LINE,
+                procedure=USER_PROCEDURE,
+                bindings={"increment": old},
+                parameters={"n": 2},
             )
+            .line(
+                name=KIT_LINE,
+                procedure=PROCEDURE,
+                bindings={"increment": old},
+                parameters={"n": 2},
+            )
+            .trigger(
+                name="user.clock", line=USER_LINE, schedule=CadenceSchedule(interval_seconds=3600)
+            )
+            .procedure_mandate(_mandate(USER_MANDATE, USER_LINE, caps))
+            .procedure_mandate(_mandate(KIT_MANDATE, KIT_LINE, caps))
             .prepare()
         )
         assert not intent.refused, intent.diagnostics
-        submitted = intent.submit(accept="never")
-        consumer.approve(submitted._candidate_status.proposal_id)
-        procedure_path = "procedures/user.increment.json"
-        procedure = parse_procedure(_tree(consumer)[procedure_path], path=procedure_path)
-        mandate = _line_mandate(
-            AcceptedProcedure(
-                path=procedure_path,
-                procedure=procedure,
-                artifact_digest=procedure_artifact_digest(procedure).tagged,
-            )
-        )
-        kit_path = f"procedures/{PROCEDURE}.json"
-        kit_procedure = parse_procedure(_tree(consumer)[kit_path], path=kit_path)
-        kit_mandate = _line_mandate(
-            AcceptedProcedure(
-                path=kit_path,
-                procedure=kit_procedure,
-                artifact_digest=procedure_artifact_digest(kit_procedure).tagged,
-            )
-        ).model_copy(
-            update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="kit-mandate")}
-        )
-        _accept_members(
-            consumer,
-            {
-                procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
-                procedure_mandate_path(kit_mandate.identity.name): render_procedure_mandate(
-                    kit_mandate
-                ),
-            },
-            timestamp="2026-10-15T09:00:00.000000Z",
-        )
-        old = _pins(consumer, "user.increment")
-        old_provider = _tree(consumer)[f"providers/{old[0]}.json"]
-        assert _run(consumer, "user.increment", 2) == {"n": 3}
+        consumer.approve(intent.submit(accept="never")._candidate_status.proposal_id)
+        consumer.pb.refresh()
+        assert _bound_build(consumer, USER_LINE) == _bound_build(consumer, KIT_LINE) == old
+        old_provider = _tree(consumer)[f"providers/{old}.json"]
+        assert _run(consumer, USER_LINE) == {"n": 3}
 
         second = _package(tmp_path / "v102", provider_checkout, name="kit-call", increment=2)
         _install(publisher, second)
-        moved = _client(publisher.http).move_provider(
-            publisher.instance_id, ProviderMoveRequest(provider="kit-call", dry_run=False)
-        )
-        assert moved.status == "accepted", moved
-        publisher.pb.refresh()
         if definition_change:
             current = parse_procedure(_tree(publisher)[kit_path], path=kit_path)
             changed = current.model_copy(
                 update={
-                    "activation_policy": "snapshot",
+                    "activation_policy": "abort",
                     "lifecycle": ArtifactLifecycle(
                         predecessor_digest=procedure_artifact_digest(current).tagged
                     ),
                 }
             )
             _accept_members(
-                publisher,
+                get_playbill_manager().get(publisher.instance_id),
+                publisher.reviewer_key,
                 {kit_path: render_procedure(changed)},
                 timestamp="2026-10-15T10:00:00.000000Z",
             )
             publisher.pb.refresh()
         v102 = _build(publisher, second, version="1.0.2")
-        assert v101.manifest.providers[0].build != v102.manifest.providers[0].build
-        assert [p for p in v101.contents() if p.startswith("provider-interfaces/")] == [
-            p for p in v102.contents() if p.startswith("provider-interfaces/")
-        ]
+        new = v102.manifest.providers[0].build
+        assert old != new
         if concurrent:
             _install(consumer, second)
         before = _tree(consumer)
         preview = _add(consumer, v102, keep_build=keep)
         assert preview.status == "would_propose", preview
         assert _tree(consumer) == before
-        assert {item.identity for item in preview.repins} == {
-            f"Procedure:{PROCEDURE}",
-            "Procedure:user.increment",
+        # Both Lines bind the old build, so both are re-pin candidates; a kept
+        # Line says why it stays.
+        assert {
+            (item.identity, item.from_build, item.to_build, item.action) for item in preview.repins
+        } == {
+            (line, old, new, "kept" if line in keep else "successor")
+            for line in (f"Line:{USER_LINE}", f"Line:{KIT_LINE}")
         }
-        expected_carries = (
-            set()
-            if "Procedure:user.increment" in keep
-            else {"Line:user.tick", "ProcedureMandate:served-line-mandate"}
-        )
-        if f"Procedure:{PROCEDURE}" not in keep or definition_change:
-            expected_carries.update({"Line:user.kit-tick", "ProcedureMandate:kit-mandate"})
+        # A moved Line is its own re-pin; a Line over the kit's Procedure successor
+        # is carried (disabled) even when its build is kept. Either way each
+        # Mandate pinning a changed Line is carried propose-only.
+        carried_lines = {f"Line:{KIT_LINE}"} if definition_change else set()
+        moved_lines = ({f"Line:{USER_LINE}", f"Line:{KIT_LINE}"} - set(keep)) | carried_lines
+        mandates = {f"Line:{USER_LINE}": USER_MANDATE, f"Line:{KIT_LINE}": KIT_MANDATE}
+        expected_carries = {
+            *carried_lines,
+            *(f"ProcedureMandate:{mandates[line]}" for line in moved_lines),
+        }
         assert not preview.stops
         assert {item.identity for item in preview.automation_carries} == expected_carries
         assert all(
@@ -276,54 +245,48 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
         else:
             added = _add(consumer, v102, dry_run=False, keep_build=keep)
         assert added.status == "accepted", added
-        assert {item.identity for item in added.repins} == {
-            f"Procedure:{PROCEDURE}",
-            "Procedure:user.increment",
+        assert {(item.identity, item.action) for item in added.repins} == {
+            (item.identity, item.action) for item in preview.repins
         }
         assert not added.stops
         assert {item.identity for item in added.automation_carries} == expected_carries
         assert all(item.phase == "validated" for item in added.automation_carries)
+        assert all(
+            item.enablement == "disabled"
+            for item in added.automation_carries
+            if item.kind == "line"
+        )
         after = _tree(consumer)
+        # Triggers stay byte-identical; a kept Line and its Mandate stay put.
         assert after["triggers/user.clock.json"] == before["triggers/user.clock.json"]
-        if "Procedure:user.increment" in keep:
-            for path in ("lines/user.tick.json", "procedure-mandates/served-line-mandate.json"):
-                assert after[path] == before[path]
-        else:
-            from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
-            from cruxible_client.contracts.procedures.line_specs import parse_line_spec
-
-            line = parse_line_spec(after["lines/user.tick.json"], path="lines/user.tick.json")
-            carried_mandate = parse_procedure_mandate_any(
-                after["procedure-mandates/served-line-mandate.json"],
-                path="procedure-mandates/served-line-mandate.json",
-            )
-            new_procedure = parse_procedure(after[procedure_path], path=procedure_path)
-            assert line.procedure.artifact_digest == procedure_artifact_digest(new_procedure).tagged
-            assert carried_mandate.procedure == line.procedure
-            assert carried_mandate.grants == "propose"
-            assert line.occurrence_epoch == 1
-            assert any(
-                item.kind == "line" and item.enablement == "disabled"
-                for item in added.automation_carries
-            )
-        for path in ("lines/user.kit-tick.json", "procedure-mandates/kit-mandate.json"):
-            if f"Procedure:{PROCEDURE}" in keep and not definition_change:
-                assert after[path] == before[path]
-            else:
-                assert after[path] != before[path]
-        assert {item.identity for item in preview.automation_carries} == {
-            item.identity for item in added.automation_carries
-        }
+        for line in (USER_LINE, KIT_LINE):
+            paths = (f"lines/{line}.json", f"procedure-mandates/{mandates[f'Line:{line}']}.json")
+            if f"Line:{line}" not in moved_lines:
+                for path in paths:
+                    assert after[path] == before[path]
+                continue
+            line_path, mandate_path = paths
+            moved = parse_line_spec(after[line_path], path=line_path)
+            previous = parse_line_spec(before[line_path], path=line_path)
+            assert moved.lifecycle.predecessor_digest == line_spec_digest(previous).tagged
+            assert moved.occurrence_epoch == previous.occurrence_epoch
+            procedure_path = f"procedures/{moved.procedure.target.name}.json"
+            procedure = parse_procedure(after[procedure_path], path=procedure_path)
+            assert moved.procedure.artifact_digest == procedure_artifact_digest(procedure).tagged
+            # The Mandate is a same-name propose-only successor pinning the new Line.
+            carried = parse_procedure_mandate(after[mandate_path], path=mandate_path)
+            assert carried.line.artifact_digest == line_spec_digest(moved).tagged
+            assert carried.grants == "propose"
         consumer.pb.refresh()
-        for name in (PROCEDURE, "user.increment"):
-            kept = f"Procedure:{name}" in keep
-            assert _pins(consumer, name) == (old if kept else (v102.manifest.providers[0].build,))
-            assert _run(consumer, name, 2) == {"n": 3 if kept else 4}
-        assert _tree(consumer)[f"providers/{old[0]}.json"] == old_provider
+        for line in (USER_LINE, KIT_LINE):
+            kept = f"Line:{line}" in keep
+            assert _bound_build(consumer, line) == (old if kept else new)
+            assert _run(consumer, line) == {"n": 3 if kept else 4}
+        assert _tree(consumer)[f"providers/{old}.json"] == old_provider
         catalog = _client(consumer.http).list_provider_packages(consumer.instance_id)
         assert len([row for row in catalog.installed if row.provider == "kit-call"]) == 2
         retired = _client(consumer.http).retire_provider(
-            consumer.instance_id, ProviderRetireRequest(build=old[0], dry_run=False)
+            consumer.instance_id, ProviderRetireRequest(build=old, dry_run=False)
         )
         assert retired.status == ("blocked" if keep else "retired"), retired
         if keep:

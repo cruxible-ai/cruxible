@@ -1190,8 +1190,12 @@ def _planned_automation(
             and item.artifact_kind == "line"
             and item.triggering_identity.qualified not in retiring_procedures
         ):
-            continue
-        if by_name and item.artifact_kind == "line":
+            # A Line pins its Procedure's exact version, so a live Procedure
+            # successor carries it disabled, as settlement does. Any other root
+            # reaching a Line needs its own authoring and is not planned here.
+            if item.triggering_identity.kind != "Procedure":
+                continue
+        elif by_name and item.artifact_kind == "line":
             line = parse_carry_line(tree[item.path], path=item.path)
             stops[line.identity.qualified] = StoppedAutomationV1(
                 identity=line.identity.qualified,

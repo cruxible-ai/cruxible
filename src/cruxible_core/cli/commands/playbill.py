@@ -1785,7 +1785,7 @@ def retire_provider(build: str, dry_run: bool | None, at: str | None, output_jso
 @click.option(
     "--to", required=True, help="newest (most recently registered) or an exact build key."
 )
-@click.option("--only", multiple=True, help="Move only this Procedure or Line (repeatable).")
+@click.option("--only", multiple=True, help="Move only this Line (Line:NAME, repeatable).")
 @change_control_options
 @json_option
 @handle_errors
@@ -1797,7 +1797,7 @@ def move_provider(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Move definitions to NAME's build; carry Lines disabled and Mandates propose-only."""
+    """Move Lines to NAME's build; carry Lines disabled and Mandates propose-only."""
     request = ProviderMoveRequest(
         provider=provider, to=to, only=tuple(sorted(set(only))), dry_run=dry_run, at=at
     )
@@ -2064,8 +2064,8 @@ def build_kit(
 @click.option(
     "--keep-build",
     multiple=True,
-    metavar="Procedure:NAME",
-    help="Keep this Procedure on its current provider build (repeatable).",
+    metavar="Line:NAME",
+    help="Keep this Line on its current provider builds (repeatable).",
 )
 @click.option(
     "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
@@ -2092,8 +2092,8 @@ def add_kit(
     this instance holds differently takes the release's version (the preview
     says what that does: overwrites your edit, re-adds a retired definition,
     takes over one defined outside the kit) unless --keep or --keep-local-edits
-    keeps yours. Every Procedure on a shipped provider moves to its exact build;
-    --keep-build Procedure:NAME keeps its current build. The preview names each
+    keeps yours. Every Line bound to a shipped provider moves to its exact build;
+    --keep-build Line:NAME keeps its current builds. The preview names each
     re-pin, each carried disabled Line, and every Mandate downgraded to propose.
     Triggers stay unchanged; use line enable to resume and re-grant settle explicitly.
     Replaced definitions' other dependents are carried along. The change

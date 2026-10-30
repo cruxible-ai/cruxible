@@ -314,8 +314,8 @@ class ProviderMoveRequest(_Strict):
     #: ``newest`` (the most recently registered live build) or one exact build,
     #: by its build key or ``name/<build key>``.
     to: str = "newest"
-    #: Only these definitions (``Procedure:<name>``); empty moves every live
-    #: definition pinning another build of the provider.
+    #: Only these Lines (``Line:<name>``); empty moves every live Line binding
+    #: another build of the provider. A Procedure names no build.
     only: tuple[str, ...] = ()
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -344,8 +344,8 @@ class ProviderMoveRequest(_Strict):
             raise ValueError("only must be sorted and unique")
         for identity in value:
             kind, separator, name = identity.partition(":")
-            if not separator or kind not in {"Procedure", "Line"} or not name:
-                raise ValueError("only names definitions as Procedure:NAME or Line:NAME")
+            if not separator or kind != "Line" or not name:
+                raise ValueError("only names Lines as Line:NAME")
         return value
 
 

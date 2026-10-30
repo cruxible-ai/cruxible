@@ -367,7 +367,7 @@ def register_tools(
         keep_build: Annotated[
             list[str] | None,
             Field(
-                description="Procedures (Procedure:NAME) to keep on their current provider build."
+                description="Lines (Line:NAME) to keep on their current provider builds."
             ),
         ] = None,
         allow_downgrade: bool = False,

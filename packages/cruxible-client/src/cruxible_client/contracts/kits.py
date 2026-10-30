@@ -812,9 +812,10 @@ class KitAddRequest(_Strict):
     retire_dependents: tuple[str, ...] = ()
     #: Install a release older than the installed one.
     allow_downgrade: bool = False
-    #: Procedures (``Procedure:acme.triage``) to keep on the provider build they
-    #: pin. Every other live Procedure bound to a provider the kit ships moves to
-    #: the build the kit ships, in the same change set.
+    #: Lines (``Line:acme.triage-daily``) to keep on the provider builds they
+    #: bind. A Procedure names no build; every other live Line binding another
+    #: build of a provider the kit ships moves to the build the kit ships, in
+    #: the same change set.
     keep_build: tuple[str, ...] = ()
     #: A kit install is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
@@ -846,8 +847,8 @@ class KitAddRequest(_Strict):
     def _keep_build(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         for identity in value:
             kind, separator, name = identity.partition(":")
-            if not separator or kind != "Procedure" or not name:
-                raise ValueError("keep_build names a Procedure as Procedure:NAME")
+            if not separator or kind != "Line" or not name:
+                raise ValueError("keep_build names a Line as Line:NAME")
         return _sorted_unique(value, label="keep_build")
 
 

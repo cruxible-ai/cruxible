@@ -46,9 +46,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "bundling provider packages installs them first (admin; a commit stages their files), "
         "and a default provider by name unless something here implements it (satisfied), "
         "then proposes the definitions; an install awaiting approval stops at "
-        "awaiting_providers, and its activation proposes them on their own. Every Procedure "
-        "on a shipped provider moves to that exact build (kit and user definitions); "
-        "keep_build opts out by Procedure identity. The preview lists re-pins, disabled "
+        "awaiting_providers, and its activation proposes them on their own. Every Line "
+        "bound to another build of a shipped provider moves to that exact build; "
+        "keep_build opts out by Line identity. The preview lists re-pins, disabled "
         "Line successors and propose-only Mandates; Triggers stay unchanged. "
         "Old builds stay installed."
     ),

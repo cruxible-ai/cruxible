@@ -176,6 +176,24 @@ def test_kit_add_never_sends_the_files() -> None:
     assert "files" not in request.model_dump(mode="json")["bundle"]
 
 
+def test_build_keeps_and_moves_name_lines_because_a_procedure_names_no_build() -> None:
+    from cruxible_client.contracts.provider_installation import ProviderMoveRequest
+
+    bundle = _bundle()
+    assert KitAddRequest(bundle=bundle, keep_build=("Line:acme.tick",)).keep_build == (
+        "Line:acme.tick",
+    )
+    assert ProviderMoveRequest(provider="kit-call", only=("Line:acme.tick",)).only == (
+        "Line:acme.tick",
+    )
+    # A Procedure identity would never match a Line binding the build, so it is
+    # refused rather than silently keeping or moving nothing.
+    with pytest.raises(ValidationError, match="keep_build names a Line as Line:NAME"):
+        KitAddRequest(bundle=bundle, keep_build=("Procedure:acme.increment",))
+    with pytest.raises(ValidationError, match="only names Lines as Line:NAME"):
+        ProviderMoveRequest(provider="kit-call", only=("Procedure:acme.increment",))
+
+
 def test_docs_write_at_their_paths_with_or_without_skills(tmp_path: Path) -> None:
     bundle = _bundle()
     written = write_kit_docs(bundle, tmp_path / "docs", skills=False)

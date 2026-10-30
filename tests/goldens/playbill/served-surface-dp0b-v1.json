@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-30:collapse-c2-graph.zero-field-contracts",
-    "surface_digest": "sha256:42f64ac089f17f41741c01e9239573f373486c9f6cbc4aec9f649c7a7e43b770"
+    "register_entry": "2026-10-30:kit-keep-build-lines",
+    "surface_digest": "sha256:8ff324b0d21b79baf7c00330f81bb7541e5084b9f808e7fe3f9d2aa575ea6ab7"
   },
   "surface": {
     "cli_leaves": [
@@ -2494,7 +2494,7 @@
           "store_body"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",
-        "input_schema_digest": "sha256:964ea2dd99717463265dba65682515faabd0ef483434ac397348ea8cc5d0a906",
+        "input_schema_digest": "sha256:4996d5348d77b265ee9ba40a8618c5a817c9d2d02f52143f674ee1e0e2a5a9cc",
         "name": "cruxible_kit_add",
         "output_schema_digest": "sha256:16b2149bc477f300aa80e9a2dede08cd3fafbad0193e40d8694e8269939e0eb5",
         "permission": "GOVERNED_WRITE"

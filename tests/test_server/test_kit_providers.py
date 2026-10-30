@@ -142,9 +142,7 @@ _RUN_WALL_CLOCK = {"microseconds": 30_000_000}
 _MAX_WALL_CLOCK = {"microseconds": 60_000_000}
 
 
-def _worlds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, historical=False
-) -> Iterator[tuple[Any, Any]]:
+def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, Any]]:
     """A publisher and a fresh consumer on one daemon whose operator resolves registry
     wheels from PyPI (a plain transferred wheel needs it; a kit's bundled one does not)."""
 
@@ -157,23 +155,10 @@ def _worlds(
             {"provider_index_urls": ["https://pypi.org/simple", "https://files.pythonhosted.org/"]}
         )
     )
-    if historical:
-        from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
-        from tests.support.core_provider_world import CoreProviderWorld
-
-        operator = ProviderRuntimeOperator(tmp_path / "server-state")
-        worlds = (
-            CoreProviderWorld(tmp_path / "publisher", "inst_core_publisher", operator),
-            CoreProviderWorld(tmp_path / "consumer", "inst_core_consumer", operator),
-        )
+    for worlds in _fresh_open_worlds(tmp_path, monkeypatch, independent=False):
         for world in worlds:
             _accept_local_call_contract(world)
         yield worlds
-    else:
-        for worlds in _fresh_open_worlds(tmp_path, monkeypatch, independent=False):
-            for world in worlds:
-                _accept_local_call_contract(world)
-            yield worlds
 
 
 def _package(
@@ -198,17 +183,9 @@ def _package(
 def _accept_local_call_contract(world: Any) -> None:
     """Accept the Contract a ``build_local_call`` package pins, as this world accepts."""
 
-    from tests.support.provider_installation import (
-        accept_local_call_contract,
-        local_call_contract_files,
-    )
+    from tests.support.provider_installation import accept_local_call_contract
 
-    members = local_call_contract_files()
-    if hasattr(world, "accept_members"):
-        if not set(members) <= set(world.tree()):
-            world.accept_members(members, timestamp="2026-10-24T11:00:00.000000Z")
-    else:
-        accept_local_call_contract(world.instance_id, world.approve)
+    accept_local_call_contract(world.instance_id, world.approve)
 
 
 def _install(world: Any, project: Path, *, control_domain: str = "operator") -> None:
@@ -265,20 +242,17 @@ def _author(world: Any, *, procedure: bool = True) -> None:
     # removed acquisition-policy artifact. Keep a real typed shape in that role.
     shape = Contract.model_validate({"name": POLICY, "version": 1, "fields": {"n": "int"}})
     members = {contract_path(shape.name, 1): render_contract(shape)}
-    if hasattr(world, "accept_members"):
-        world.accept_members(members, timestamp="2026-10-24T11:00:00.000000Z")
-    else:
-        instance = get_playbill_manager().get(world.instance_id)
-        proposed = submit_member_candidate(
-            instance,
-            members=members,
-            actor_id="operator",
-            proposal_name="kit-owned-shape",
-            proposal_family="procedure",
-            timestamp="2026-10-24T11:00:00.000000Z",
-        ).proposal
-        assert proposed.candidate is not None, proposed.evaluation.diagnostics
-        world.approve(proposed.admission.proposal_id)
+    instance = get_playbill_manager().get(world.instance_id)
+    proposed = submit_member_candidate(
+        instance,
+        members=members,
+        actor_id="operator",
+        proposal_name="kit-owned-shape",
+        proposal_family="procedure",
+        timestamp="2026-10-24T11:00:00.000000Z",
+    ).proposal
+    assert proposed.candidate is not None, proposed.evaluation.diagnostics
+    world.approve(proposed.admission.proposal_id)
     draft = world.pb.changes(rationale="Ship open increment Procedures.")
     for selected in ("kit-call", None) if procedure else (None,):
         definition, contracts = _graph(world, provider=selected)
@@ -317,40 +291,16 @@ def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
             stage_kit_provider_directory(client, world.instance_id, project) for project in projects
         ),
     )
-    if hasattr(world, "instance"):
-        from cruxible_core.service.kits import service_build_kit
-
-        return service_build_kit(world.instance, request).bundle
     return playbill_api.playbill_kit_build(world.instance_id, request).bundle
 
 
 def _add(world: Any, bundle: KitBundle, **options: Any) -> KitChangeResult:
     staged = stage_kit_providers(_client(world.http), world.instance_id, bundle)
     request = KitAddRequest(bundle=staged, source="test", **options)
-    if hasattr(world, "instance"):
-        from cruxible_core.service.kits import service_add_kit
-        from cruxible_core.service.procedures.provider_installation import service_install_provider
-
-        return service_add_kit(
-            world.instance,
-            request,
-            actor_id="owner",
-            timestamp="2026-10-24T12:00:00.000000Z",
-            install_provider=lambda request, **kwargs: service_install_provider(
-                world.instance,
-                operator=world.operator,
-                request=request,
-                actor_id="owner",
-                timestamp="2026-10-24T12:00:00.000000Z",
-                **kwargs,
-            ),
-        )
     return playbill_api.playbill_kit_add(world.instance_id, request)
 
 
 def _tree(world: Any) -> dict[str, bytes]:
-    if hasattr(world, "instance"):
-        return world.tree()
     instance = get_playbill_manager().get(world.instance_id)
     return dict(instance.immutable_tree_at(instance.accepted_coordinate().git_oid))
 
