@@ -53,6 +53,31 @@ def accept_local_call_contract(instance_id: str, approve: Any) -> None:
     approve(proposal.admission.proposal_id)
 
 
+def noop_contract_files() -> dict[str, bytes]:
+    """The reference noop operation's actual typed input, output and refusals."""
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+    definitions = {
+        "noop.echo.request": {"mode": "string?", "text": "string?", "seconds": "int?"},
+        "noop.echo.result": {
+            "echo": "string",
+            "credential_length": "int?",
+            "credential_fingerprint": "string?",
+        },
+        "noop.echo.refusal.credential_missing": {"ref": "string"},
+        "noop.echo.refusal.provider_declined": {
+            "mode": "string?",
+            "known": "list<string>{max_items: 32}?",
+            "run_id": "string?",
+        },
+    }
+    members = {}
+    for name, fields in definitions.items():
+        contract = Contract.model_validate({"name": name, "version": 1, "fields": fields})
+        members[contract_path(name, 1)] = render_contract(contract)
+    return members
+
+
 def build_local_call(
     directory: Path,
     repository: Path,

@@ -578,7 +578,10 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
     from cruxible_client.contracts.provider_installation import ProviderInstallRequest
     from cruxible_core.service.procedures import provider_installation as service
 
-    http, instance_id, _ = installer_http
+    http, instance_id, reviewer = installer_http
+    from tests.support.provider_installation import noop_contract_files
+
+    _accept(http, instance_id, reviewer, noop_contract_files(), name="noop-contracts")
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     catalog = client.list_provider_packages(instance_id)
@@ -641,7 +644,10 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(
     from cruxible_client.errors import ConfigError
     from cruxible_core.service.procedures import provider_installation as service
 
-    http, instance_id, _ = index_installer_http
+    http, instance_id, reviewer = index_installer_http
+    from tests.support.provider_installation import noop_contract_files
+
+    _accept(http, instance_id, reviewer, noop_contract_files(), name="indexed-noop-contracts")
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     assert "install by name" in (client.list_provider_packages(instance_id).detail or "")
