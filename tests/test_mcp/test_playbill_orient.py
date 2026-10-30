@@ -85,7 +85,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "claim_types",
         "subject_kinds",
         "queries",
-        "interfaces",
+        "operations",
         "runs",
         "running",
         "lines",
@@ -100,7 +100,14 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "pins",
         "activity",
         "sources",
+        "contracts",
     ]
+    from pydantic import TypeAdapter, ValidationError
+
+    from cruxible_client.contracts.orient import OrientSection
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(OrientSection).validate_python("interfaces")
     # `at` is a git OID (or unique prefix) or a generation number, never a free-form dict.
     assert {member.get("type") for member in schema["properties"]["at"]["anyOf"]} == {
         "string",

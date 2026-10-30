@@ -26,7 +26,7 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "procedures",
         "documents",
         "queries",
-        "interfaces",
+        "operations",
         # Operational families: counted in the map, paged by their own section.
         "lines",
         "captures",
@@ -73,6 +73,7 @@ def test_http_orient_refusals_are_coded(
     assert stale.json()["error_code"] == "cruxible.list.cursor_mismatch"
 
     assert client.get(url, params={"section": "nothing"}).status_code == 422
+    assert client.get(url, params={"section": "interfaces"}).status_code == 422
 
 
 @pytest.mark.parametrize("surface", ["cli", "sdk", "mcp"])

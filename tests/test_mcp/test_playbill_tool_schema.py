@@ -147,7 +147,6 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "procedure-mandate",
         "line",
         "trigger",
-        "acquisition-policy",
         "change-set",
         "claim-type-succession",
     ]
@@ -233,13 +232,22 @@ def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values()
     assert binding_schema["additionalProperties"] == {
         "type": "string",
         "minLength": 1,
-        "maxLength": 393,
+        "maxLength": 650,
     }
-    assert binding_schema["propertyNames"] == {"minLength": 1, "maxLength": 256}
+    assert binding_schema["propertyNames"] == {"minLength": 1, "maxLength": 512}
     assert binding_schema["maxProperties"] == 256
     assert McpProcedureBindings.model_validate({"fetch": "web/build"}).root == {
         "fetch": "web/build"
     }
+    assert McpProcedureBindings.model_validate({"fetch": "web/build#fetch"}).root == {
+        "fetch": "web/build#fetch"
+    }
+    longest = "Provider:" + "p" * 384 + "#" + "o" * 256
+    assert len(longest) == 650
+    assert McpProcedureBindings.model_validate({"a" * 512: longest}).root == {"a" * 512: longest}
+    for invalid in ({"a" * 513: longest}, {"fetch": longest + "x"}):
+        with pytest.raises(ValidationError):
+            McpProcedureBindings.model_validate(invalid)
     with pytest.raises(ValidationError):
         McpProcedureBindings.model_validate({"fetch": {"provider": "web/build"}})
 

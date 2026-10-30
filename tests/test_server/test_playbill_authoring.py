@@ -391,7 +391,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
             "subject_succession",
             "line",
             "trigger",
-            "acquisition_policy",
+            "contract",
         }
     assert "BriefInput" not in schemas
     assert "ClaimSlotPolicyV1" not in schemas
@@ -415,6 +415,16 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
     )
 
     assert response.status_code == 422
+    for retired in ("acquisition_policy", "provider_interface", "blueprint"):
+        refused = client.post(
+            f"/api/v1/{instance_id}/authoring/compile",
+            json={"tag": "playbill-authoring-input-compile-request-v1", "input": {"kind": retired}},
+        )
+        assert refused.status_code == 422
+        error = refused.json()
+        assert error["error_code"] == "request.invalid"
+        assert error["error_type"] == "RequestValidationError"
+        assert any("input" in item and retired in item for item in error["errors"])
 
 
 def test_http_migration_route_delegates_the_typed_request(
