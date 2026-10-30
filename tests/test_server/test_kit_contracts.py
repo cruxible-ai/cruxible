@@ -25,7 +25,6 @@ from cruxible_core.claims.artifact_references import move_references, referenced
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.kits import build_kit, service_add_kit, service_remove_kit
-from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._identity_support import accept_tree
 from tests.core_support._support import initialize_local
 
@@ -82,8 +81,6 @@ def test_scalar_export_add_readd_remove_preserves_exact_bytes(tmp_path: Path) ->
     payload = json.loads(content)
     assert list(referenced_digests(path, payload)) == []
     assert move_references(path, payload, {literal: "sha256:" + "b" * 64}) == payload
-    # Ordinary inventory read initializes the fresh local proposal index before preview.
-    service_list_playbill_proposals(consumer)
     before = _tree(consumer)
     preview = service_add_kit(
         consumer, KitAddRequest(bundle=bundle), actor_id="owner", timestamp=STAMP
