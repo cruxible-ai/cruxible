@@ -1,37 +1,23 @@
-"""A retained projection of an earlier physical schema never binds as the current one.
+"""Obsolete derived schemas refuse; missing current caches rebuild from authority.
 
-The fixture is an instance an earlier build (``history.json``: ``built_by``)
-wrote under typed projection storage schema 14: two accepted generations, each
-with its retained projection. Schema 15 added the whole-key Subject index and a
-predicate index, so this build names its projections differently, and binding
-either coordinate -- the head on reopen, the retained genesis on a historical
-read -- rebuilds it under schema 15 instead of reading the old physical schema
-(review F-004).
+Both coordinates belong to the current compiler. Earlier accepted compiler
+formats require reseeding, so an old signed instance is not a cache fixture.
 """
 
 from __future__ import annotations
 
 import json
-import tarfile
 from pathlib import Path
 
-from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
-from cruxible_client.contracts.types import TrustRoot
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION
+from cruxible_core.indexes.sqlite import ProjectionIntegrityError, bind_projection
 from cruxible_core.runtime.instance import PlaybillInstance
-
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "storage_schema_14_history"
-
-
-def _historical_instance(tmp_path: Path) -> tuple[Path, dict[str, object]]:
-    history = json.loads((FIXTURE / "history.json").read_text())
-    assert history["storage_schema_version"] == 14
-    with tarfile.open(FIXTURE / "instance.tar.gz") as archive:
-        archive.extractall(tmp_path, filter="data")
-    root = tmp_path / str(history["instance_root"])
-    config = root / "ledger.git" / "config"
-    config.write_text(config.read_text().replace("@INSTANCE_ROOT@", str(root)))
-    return root, history
+from tests.core_support._support import initialize_local
+from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 
 def _manifests(root: Path) -> dict[str, int]:
@@ -41,33 +27,53 @@ def _manifests(root: Path) -> dict[str, int]:
     }
 
 
-def test_a_retained_schema_14_projection_is_rebuilt_not_bound(tmp_path: Path) -> None:
+def test_an_obsolete_derived_schema_refuses_and_current_coordinates_rebuild(tmp_path: Path) -> None:
     current = PROJECTION_STORAGE_SCHEMA_VERSION
-    assert current > 14
-    root, history = _historical_instance(tmp_path)
-    retained = _manifests(root)
-    assert set(retained.values()) == {14} and len(retained) == 2
-
-    instance = PlaybillInstance.open(
-        root, trust_root=TrustRoot.model_validate(history["trust_root"])
+    instance, owner = initialize_local(tmp_path)
+    genesis = instance.accepted_coordinate()
+    tree = instance.tree_at(genesis.git_oid)
+    subject = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="cache.test/one"),
+        subject_kind="cache.test",
+        subject_id="one",
     )
-
-    def at(recorded: object) -> AcceptedProjectionCoordinate:
-        coordinate = AcceptedProjectionCoordinate.model_validate(recorded)
-        return instance.resolve_accepted_coordinate(
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler_digest=coordinate.compiler.rule_digest,
+    tree[subject_path("cache.test", "one")] = render_subject(subject)
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:01:00.000000Z", proposal_name="cache-head"
+    )
+    head = instance.accepted_coordinate()
+    assert head != genesis and head.compiler == genesis.compiler
+    root = instance.root
+    directory = root / "projections"
+    stale = {}
+    retained = _manifests(root)
+    assert len(retained) == 2 and set(retained.values()) == {current}
+    for label, coordinate in (("genesis", genesis), ("head", head)):
+        manifest = next(
+            path
+            for path in directory.glob("projection-*.json")
+            if json.loads(path.read_bytes())["git_oid"] == coordinate.git_oid
         )
+        data = json.loads(manifest.read_bytes())
+        # Damage only disposable cache metadata. No ledger/compiler/receipt bytes
+        # are changed or reinterpreted under a historical schema.
+        data["storage_schema_version"] = current - 1
+        obsolete = directory / f"projection-obsolete-{label}.json"
+        obsolete.write_text(json.dumps(data))
+        stale[obsolete] = obsolete.read_bytes()
+        with pytest.raises(ProjectionIntegrityError, match="malformed"):
+            bind_projection(obsolete, expected=coordinate)
+        manifest.unlink()  # Explicit cache repair: remove the missing-current pointer target.
 
-    head, genesis = at(history["head"]), at(history["genesis"])
-    assert instance.accepted_coordinate() == head
-    with instance.bind_accepted_projection(head) as projection:
+    reopened = PlaybillInstance.open(root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == head
+    with reopened.bind_accepted_projection(head) as projection:
         assert projection.typed.connection.execute("SELECT count(*) FROM subject_keys").fetchone()
-    # The retained genesis projection was written under schema 14; a historical
-    # read rebuilds it under schema 15 rather than binding the old schema.
-    with instance.bind_accepted_projection(genesis) as projection:
+        assert (
+            projection.typed.envelope(subject.identity.qualified).identity
+            == subject.identity.qualified
+        )
+    with reopened.bind_accepted_projection(genesis) as projection:
         tables = {
             str(row[0])
             for row in projection.typed.connection.execute(
@@ -75,12 +81,14 @@ def test_a_retained_schema_14_projection_is_rebuilt_not_bound(tmp_path: Path) ->
             )
         }
         assert {"subject_keys", "subject_keys_by_key", "claims_by_predicate"} <= tables
-
-    # Head and genesis each hold a current-schema projection now; the schema-14
-    # ones are never bound (reopen may sweep them).
+        assert projection.typed.envelope(subject.identity.qualified) is None
     rebuilt = _manifests(root)
     assert sorted(version for version in rebuilt.values() if version == current) == [
         current,
         current,
     ]
-    assert len(set(rebuilt) - set(retained)) == 2
+    assert set(retained) <= set(rebuilt)
+    for path, original in stale.items():
+        if path.exists():
+            assert path.read_bytes() == original
+    assert reopened.accepted_coordinate() == head

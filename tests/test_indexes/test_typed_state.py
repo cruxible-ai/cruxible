@@ -84,7 +84,28 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 19
+    # Every surviving owner family must use its identity seek; removed
+    # Blueprint/interface/policy tables contribute no branch.
+    expected_tables = {
+        "resolution_contracts",
+        "attestations",
+        "claims",
+        "procedures",
+        "lines",
+        "triggers",
+        "subjects",
+        "subject_kinds",
+        "documents",
+        "claim_types",
+        "providers",
+        "procedure_mandates",
+        "query_definitions",
+        "contracts",
+        "capture_contracts",
+        "exhaust_promotions",
+    }
+    assert {detail.split()[1] for detail in searches} == expected_tables
+    assert len(searches) == len(expected_tables)
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 
@@ -290,31 +311,10 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
             projection.close()
 
 
-#: Each physical projection schema, pinned to the storage schema version it
-#: shipped under. A reopened instance rebuilds only when that version moves, so a
-#: schema change under an unchanged version leaves a serving pointer whose
-#: manifest name no longer matches its digest.
+#: The one current physical schema pin. A schema change must deliberately
+#: move its version and this expected digest; no historical reader matrix.
 STORAGE_SCHEMA_DIGESTS = {
-    6: "a9916f75438f179d3e775c72cd39390a5742474c91fca6b2e8e26b7f963a21db",
-    7: "67124ce0116d7204cf4a94ced9fc46733bd786663c8bb6439502ef71478404ee",
-    8: "4668de169407cd5af7b1811b5b249f3a3c821120ccacdd507b55c91771697f5b",
-    9: "93bd1a016b1d911c7b2058ca807f84cf246eaf00cac2dc4a48393015786cf3b3",
-    10: "21933be373eef1eea10fd56ae8ad74a2ee7bf3d3b6b6edcab7b6f88a5d966885",
-    11: "ced6a434e5834f00f7bbfe9430ba44df7fe63283cf967d12c143cb40ec045d33",
-    12: "0c0cd9e2fc899c49246c794488751e4163ebf07027bbfc3ef3fb5250dd0ad2c2",
-    13: "e494bcd4d686e8ecd837b336caeca727efda470fb0bb6a98fca96c3b187a9d9c",
-    14: "fc560f2059641b96bfcb85e00bfdf51329b24560111a1954318e9d57cdc59595",
-    15: "14e128128400d2428214aa33e39906da24b72f620e4cc9a9b012cbab82a2e036",
-    16: "bdd063abc1729cf26f0b93993f163bac09f2770838f385a253f61816da7780db",
-    17: "e23952289bc91d30a90d34f4935ecfba68f37520f9ead30eda49cef03c84c0c2",
-    18: "cb8b96c82761da76303be7fa0ec0abce1132eedd60d04b66c6e00d43cde00ce0",
-    19: "e48e494cb19d088844d60fdeacbc7b28dedde68fa2be3fffc73fd72aeb97a87a",
-    20: "e8023a3fdf5b200a87c08377045698ac13f50e688e673abfadc777e871556528",
-    21: "38b8959e7944c74e04c489622bfa17fb2011da2425b7ef9fb55fd1fdd6b843a2",
-    22: "254e56902a6bfdde8b2a15b4c269fd5518afcdb097e47a941223429ced38ac7b",
-    23: "a70fc55602839c406fadc3baca5be7c3f908f3ec94ead550116fbd7c99adfe30",
-    24: "10946be1ef0a8249b94c0536930468b85f0255a2f7dd52c7f12ac8abbd2cb8bf",
-    25: "7c13be8df631d40d1aa34d70211e982fc073b97ddaf910c6c1e7318faa41e0a5",
+    26: "6b0ced62904e9163c790289625dcada9ae8311df8aa98488c83fea9d82fa2699",
 }
 
 
