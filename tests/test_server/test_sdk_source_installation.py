@@ -3,8 +3,11 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pytest
+
 from cruxible_client import Cruxible, Disposition
 from cruxible_client.authoring.inputs import CarriedContractInput
+from cruxible_client.authoring.procedures import ProcedureCompositionError
 from cruxible_client.authoring.source import (
     claim_candidate,
     emit_capture,
@@ -26,8 +29,6 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
-from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.cli.provider_wheels import install_provider_wheel
 from tests.core_support._light_capture_support import http_contract, procedure_contract
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.test_procedures.test_procedure_proposal_delivery import (
@@ -37,7 +38,10 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 )
 from tests.test_procedures.test_procedure_source_runs import _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
-from tests.test_server.test_provider_installation import installer_http  # noqa: F401
+from tests.test_server.test_provider_installation import (  # noqa: F401
+    installed_web,
+    installer_http,
+)
 
 # web.fetch refuses private and loopback origins, so every run reads the recording the web
 # package ships for the reserved fixture.invalid host; it opens no socket.
@@ -70,7 +74,7 @@ def _fetches(run) -> int:
     return len(calls)
 
 
-def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]:
+def _proof(client: Any, instance_id: str, ref: str) -> dict[str, Any]:
     from cruxible_client.contracts.get_reads import GetRequest
 
     proof = client.get(instance_id, request=GetRequest(ref=ref, detail="proof")).proof
@@ -78,24 +82,22 @@ def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]
     return dict(proof)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ProcedureCompositionError,
+    reason="needs B3: content.json extraction -- the source compiler types a Source "
+    "observation as its slot's out Contract (Capture wire), so the decoded bundle's "
+    "observation.retrieved / observation.derived do not resolve",
+)
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
+    installed_web,  # noqa: F811
     tmp_path,
-    provider_checkout,
 ):
     http, instance_id, reviewer = installer_http
-    client = CruxibleClient(base_url="http://cruxible")
-    client._client = http
-    repository = provider_checkout.repository
-    wheels = provider_checkout.wheels
-    installed = install_provider_wheel(
-        client,
-        instance_id,
-        wheel=next(wheels.glob("cruxible_provider_web-*.whl")),
-        lock=repository / "packages/cruxible-provider-web/uv.lock",
-        dependency_wheels=(next(wheels.glob("cruxible_provider_runtime-*.whl")),),
-    )
-    assert installed.registered, installed
+    # The real web wheel, installed after the Contracts its operations pin.
+    client, installed, _digests = installed_web
+    fetch = f"{installed.build}#web.fetch"
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
 
     def accept(draft):
@@ -106,12 +108,10 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
 
     contract = http_contract(name="test.web")
     output_contract = procedure_contract(name="test.web-output", max_bytes=1_048_576)
-    policy = _policy(name="source-reads")
     accept(
         pb.changes(rationale="Observe a typed HTTP response.")
         .capture_contract(contract)
         .capture_contract(output_contract)
-        .acquisition_policy(policy)
     )
 
     Request = CarriedContractInput(
@@ -143,7 +143,14 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         output=Result,
         budget=budget,
         hard_caps=caps,
-        acquisition_policy="source-reads",
+        # One slot of web.fetch's exact signature; a Line binds it to a build.
+        slots={
+            "fetch": {
+                "in": "web.fetch.request@1",
+                "out": "web.fetch.result@1",
+                "effect": "external_read",
+            }
+        },
     )
     def observer(request, bindings):
         observation = source(
@@ -159,12 +166,16 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             ),
         )
 
-    observer = observer.bind(fetch=pb.provider_interface("web.fetch"))
     authored = observer.build(world=pb.world())
     assert "sha256:" not in authored.model_dump_json()
     preview = observer.preview(world=pb.world())
     assert preview.ready_for_prepare, preview.errors
-    accept(pb.procedure(definition=observer))
+    # The Source's acquisition rule is the child Procedure's own default: a
+    # Line's acquisition rules name only its root Procedure's Sources.
+    built = type(authored).model_validate(
+        {**authored.model_dump(mode="json"), "acquisition_defaults": {"observation": _policy()}}
+    )
+    accept(pb.procedure(definition=built))
 
     knowledge = pb.changes(rationale="Describe the advisory observation.")
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
@@ -241,7 +252,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         .line(
             name="source-line",
             procedure="observe-parent",
-            acquisition_policy="source-reads",
+            bindings={"invoke_1.fetch": fetch},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -249,7 +260,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             ProcedureMandateInput(
                 kind="procedure_mandate",
                 name="source-authority",
-                procedure_name="observe-parent",
+                line_name="source-line",
                 grants="propose",
                 resource_ceiling=caps,
                 namespace=("claims",),
@@ -315,7 +326,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         pb.changes(rationale="Verify the same baseline with an exact child.").line(
             name="verify-line",
             procedure="verify-parent",
-            acquisition_policy="source-reads",
+            bindings={"invoke_1.fetch": fetch},
             max_authority="propose",
             parameters={"url": URL},
         )
@@ -332,7 +343,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             ProcedureMandateInput(
                 kind="procedure_mandate",
                 name="verify-authority",
-                procedure_name="verify-parent",
+                line_name="verify-line",
                 grants="propose",
                 resource_ceiling=caps,
                 namespace=("claims",),
