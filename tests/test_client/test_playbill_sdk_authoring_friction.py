@@ -227,7 +227,7 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     draft.line(
         name="consume-feed",
         procedure="consume",
-        acquisition_policy="feed-policy",
+        acquisition={"feed": {"max_age": "PT10M", "on_unavailable": "refuse"}},
         max_authority="observe",
         trigger_input="feed",
     )
@@ -240,6 +240,8 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     members = draft._compiled().payload.members
     line = next(m for m in members if isinstance(m, LineAuthoringPayload))
     assert line.trigger_input == "feed" and "trigger_policy" not in line.model_dump()
+    assert line.acquisition["feed"].max_age.microseconds == 600_000_000
+    assert line.acquisition["feed"].on_unavailable == "refuse"
     triggers = {m.name: m for m in members if isinstance(m, TriggerAuthoringPayload)}
     assert (triggers["on-feed"].line_name, triggers["on-feed"].schedule) == (
         "consume-feed",
@@ -322,7 +324,7 @@ def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
 
     contract = foreign_source_capture_contract("security.advisory")
     (tmp_path / "instance").mkdir()
-    instance, _owner, line = _line_world(tmp_path / "instance")
+    instance, _owner, line, _mandate = _line_world(tmp_path / "instance")
     draft = pb.changes(rationale="Consume contract by name")
     if contract_first:
         draft.capture_contract(contract)
