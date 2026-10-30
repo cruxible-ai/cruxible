@@ -33,6 +33,9 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
 from cruxible_client.contracts.shapes import ContractRef
 from cruxible_core.errors import RequestRefusedError
+from cruxible_core.providers.provider_runtime_contract import (
+    PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
+)
 
 #: Resolve one Contract pin by name and version at the install base: its digest,
 #: or None when that version is not accepted there.
@@ -44,8 +47,8 @@ class _Strict(BaseModel):
 
 
 class PackageRuntimeRequirementV1(_Strict):
-    #: The manifest implementation row the requirement belongs to (its id).
-    interface_id: str
+    #: The manifest implementation row the requirement belongs to: its entrypoint.
+    entrypoint: str
     kind: Literal["python_extra", "runtime_resource"]
     name: str
     description: str
@@ -57,9 +60,9 @@ class PackageRegistrationDocumentV1(_Strict):
 
     ``operations`` are the package's typed operations, Contracts named
     ``name@N`` (unpinned until install). Every operation's entrypoint is one
-    manifest implementation's, every implementation serves at least one
-    operation, and an operation's effect agrees with the side effects its
-    implementation declares.
+    manifest implementation's (one entrypoint may serve several), every
+    implementation serves at least one operation, and no operation declares a
+    refusal code the provider runtime reserves.
     """
 
     schema_version: Literal[2]
@@ -72,29 +75,25 @@ class PackageRegistrationDocumentV1(_Strict):
         names = [item.name for item in self.operations]
         if not names or len(set(names)) != len(names):
             raise ValueError("a package declares one or more operations, each named once")
-        by_entrypoint: dict[str, bool] = {}
-        for item in self.manifest.implementations:
-            if item.entrypoint in by_entrypoint:
-                raise ValueError("each manifest implementation has its own entrypoint")
-            by_entrypoint[item.entrypoint] = item.side_effects
+        implementations = {item.entrypoint: item for item in self.manifest.implementations}
         used: set[str] = set()
         for operation in self.operations:
-            side_effects = by_entrypoint.get(operation.entrypoint)
-            if side_effects is None:
+            if operation.entrypoint not in implementations:
                 raise ValueError(
                     f"operation {operation.name!r} names entrypoint {operation.entrypoint!r}, "
                     "which the manifest does not export"
                 )
-            if side_effects != (operation.effect == "external_mutation"):
+            reserved = sorted(set(operation.refusals) & PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES)
+            if reserved:
                 raise ValueError(
-                    f"operation {operation.name!r} effect disagrees with its implementation"
+                    f"operation {operation.name!r} declares refusal codes the provider "
+                    f"runtime reserves: {reserved}"
                 )
             used.add(operation.entrypoint)
-        if used != set(by_entrypoint):
+        if used != set(implementations):
             raise ValueError("every manifest implementation serves at least one operation")
-        implementations = {item.interface_id: item for item in self.manifest.implementations}
         for requirement in self.runtime_requirements:
-            row = implementations.get(requirement.interface_id)
+            row = implementations.get(requirement.entrypoint)
             if row is None or (
                 requirement.kind == "python_extra" and requirement.name not in row.requires_extras
             ):

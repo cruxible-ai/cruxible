@@ -51,7 +51,7 @@ from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 PROCEDURE = "test.slotted"
@@ -120,7 +120,6 @@ def operation_build(
     provider_id: str = "demo-provider",
     build: str = "a",
     operations: tuple[ProviderOperation, ...] | None = None,
-    side_effects: bool = False,
 ) -> NamedProviderBuild:
     """One provider build declaring ``operations`` (pinned), as an install lowers it.
 
@@ -133,17 +132,12 @@ def operation_build(
     manifest = ProviderRuntimeManifest(
         provider_id=provider_id,
         distribution=ProviderDistributionRef(name=provider_id, version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=tuple(
             ProviderImplementationManifest(
-                # Protocol 1.0 names the operation in its interface fields.
-                interface_id=next(item.name for item in served if item.entrypoint == entry),
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint=entry,
                 backends=("local_env",),
-                declared_input_buckets=(),
                 deterministic=True,
-                side_effects=side_effects,
             )
             for entry in entrypoints
         ),
@@ -212,17 +206,17 @@ class Invoker:
         self.contexts.append(context)
         if self.refusal is not None:
             code, detail = self.refusal
-            envelope = ProviderRuntimeResultEnvelopeV1.model_validate(
+            envelope = ProviderRuntimeResultEnvelope.model_validate(
                 {
-                    "protocol_version": "1.0",
+                    "protocol_version": "2.0",
                     "run_id": context.run_id,
                     "status": "refused",
                     "refusal": {"code": code, "message": "refused", "detail": detail},
                 }
             )
         else:
-            envelope = ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope = ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
                 output=self.output(context),

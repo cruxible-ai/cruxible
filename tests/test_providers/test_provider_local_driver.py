@@ -65,8 +65,8 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseV1,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
 )
 from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
@@ -214,7 +214,7 @@ if len(sys.argv) > 1 and sys.argv[1].endswith("provider_child_fence.py"):
     threading.Thread(target=echo, daemon=True).start()
 document = json.loads(sys.stdin.buffer.read())
 json.dump({
-    "protocol_version": "1.0",
+    "protocol_version": "2.0",
     "run_id": document["run_id"],
     "status": "ok",
     "output": {"echo": document["input"]["value"]},
@@ -446,17 +446,17 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
             ),
         )
     )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="RUN-local",
-        interface_id="demo.interface",
-        interface_digest=_digest("interface"),
+        operation="demo.interface",
+        operation_signature_digest=_digest("interface"),
+        build_digest=_digest("provider"),
         implementation_digest=_digest("implementation"),
         entrypoint="demo.runtime:Provider",
         coordinates={"accepted_generation": 4},
         input={"value": "hello"},
-        input_bucket="size=small",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16_384),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=16_384),
     )
 
     leases = _lease_store(tmp_path / "process-leases")
@@ -481,16 +481,16 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(
 ) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     # Put the secret in the ordinary payload so the pre-spawn byte check is decisive.
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="RUN-leak",
-        interface_id="demo.interface",
-        interface_digest=_digest("interface"),
+        operation="demo.interface",
+        operation_signature_digest=_digest("interface"),
+        build_digest=_digest("provider"),
         implementation_digest=_digest("implementation"),
         entrypoint="demo.runtime:Provider",
         input={"value": "credential-value"},
-        input_bucket="size=small",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16_384),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=16_384),
     )
     bound = BoundLocalProviderV1(
         binding=VerifiedProviderBinding(
@@ -539,7 +539,7 @@ def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(
             _fake_interpreter(tmp_path / "secret-owner-python"),
             entrypoint="demo.runtime:Provider",
             context=b'{"run_id":"RUN-secret-owner","input":{"value":"ok"}}',
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
             secret_fd=secret_fd,
             invocation_id=unique_invocation_id(),
             process_leases=leases,
@@ -581,7 +581,7 @@ def test_successful_invocation_kills_only_inside_the_unreaped_zombie_window(
         _fake_interpreter(tmp_path / "success-python"),
         entrypoint="demo.runtime:Provider",
         context=b'{"run_id":"RUN-success","input":{"value":"ok"}}',
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
         invocation_id=unique_invocation_id(),
         process_leases=_lease_store(tmp_path / "success-leases"),
@@ -718,7 +718,7 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             tmp_path / "python",
             entrypoint="demo.runtime:Provider",
             context=b"{}",
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=1024),
             secret_fd=None,
             invocation_id=invocation_id,
             process_leases=leases,
@@ -752,7 +752,7 @@ def echo():
             data = connection.recv(4096).decode()
             connection.sendall(invocation_id.encode() if data == invocation_id else b"")
 threading.Thread(target=echo, daemon=True).start()
-sys.stdout.write('{{"protocol_version":"1.0","run_id":"RUN-x","status":"ok",'
+sys.stdout.write('{{"protocol_version":"2.0","run_id":"RUN-x","status":"ok",'
                  '"output":{{"a":1}},"trace":{{"endpoints_contacted":[],"events":[],"metrics":{{}}}}}}')
 sys.stdout.flush()
 os.close(1)
@@ -774,7 +774,7 @@ with open({str(marker)!r}, "a") as handle:
             interpreter,
             entrypoint="demo.runtime:Provider",
             context=b'{"run_id":"RUN-x"}',
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=0.25, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=0.25, output_bytes=65_536),
             secret_fd=None,
             invocation_id=invocation_id,
             process_leases=leases,
@@ -830,7 +830,7 @@ if pid == 0:
             handle.write("alive\\n")
             handle.flush()
     os._exit(0)
-json.dump({"protocol_version":"1.0","run_id":document["run_id"],"status":"ok",
+json.dump({"protocol_version":"2.0","run_id":document["run_id"],"status":"ok",
            "output":{"echo":"ok"},"refusal":None,"error":None,
            "trace":{"endpoints_contacted":[],"events":[],"metrics":{}}},
           sys.stdout, sort_keys=True, separators=(",", ":"))
@@ -845,7 +845,7 @@ sys.stdout.flush()
             interpreter,
             entrypoint=str(marker),
             context=b'{"run_id":"RUN-setsid","input":{"value":"ok"}}',
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=3, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=3, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=leases,
@@ -886,7 +886,7 @@ def test_fence_survivor_never_masks_the_original_typed_refusal(
             interpreter,
             entrypoint="demo.runtime:Provider",
             context=b'{"run_id":"RUN-original","input":{"value":"ok"}}',
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=1),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=1),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=leases,
@@ -1040,7 +1040,7 @@ def test_control_namespace_is_private_and_stale_socket_is_retryable(
         _fake_interpreter(tmp_path / "retry-python"),
         entrypoint="demo.runtime:Provider",
         context=b'{"run_id":"RUN-retry","input":{"value":"ok"}}',
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
         invocation_id=invocation_id,
         process_leases=leases,
@@ -1257,16 +1257,16 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
         implementation_digest=binding.implementation_digest,
         secret_plan=ProviderSecretResolutionPlan(),
     )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="RUN-bind",
-        interface_id=binding.operation,
-        interface_digest=binding.operation_signature_digest,
+        operation=binding.operation,
+        operation_signature_digest=binding.operation_signature_digest,
+        build_digest=binding.provider_artifact_digest,
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input={},
-        input_bucket="bucket",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=1024),
     )
 
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
@@ -1316,7 +1316,7 @@ time.sleep(5)
             interpreter,
             entrypoint="demo.runtime:Provider",
             context=b"{}",
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5, output_bytes=4096),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=5, output_bytes=4096),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=leases,
@@ -1354,16 +1354,16 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
         ),
         interpreter_path=interpreter,
     )
-    context = ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="RUN-dynamic",
-        interface_id="demo.interface",
-        interface_digest=_digest("interface"),
+        operation="demo.interface",
+        operation_signature_digest=_digest("interface"),
+        build_digest=_digest("provider"),
         implementation_digest=_digest("implementation"),
         entrypoint="demo.runtime:Provider",
         input={},
-        input_bucket="size=small",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=1024),
     )
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         LocalProviderExecutionDriver().invoke(
@@ -1375,3 +1375,76 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
             process_leases=_lease_store(tmp_path / "dynamic-leases"),
         )
     assert caught.value.code == "undeclared_egress"
+
+
+class _NeverResolved:
+    resolver_kind = "environment"
+
+    def resolve(self, reference: object) -> str:
+        raise AssertionError("no secret is resolved for a run context the binding refuses")
+
+
+@pytest.mark.parametrize(
+    ("update", "code", "field"),
+    [
+        ({"operation": "demo.other"}, "acceptance_divergence", "operation"),
+        (
+            {"operation_signature_digest": _digest("other-signature")},
+            "acceptance_divergence",
+            "operation signature",
+        ),
+        ({"build_digest": _digest("other-build")}, "acceptance_divergence", "build"),
+        ({"entrypoint": "demo.runtime:Other"}, "acceptance_divergence", "entrypoint"),
+        (
+            {"implementation_digest": _digest("other-implementation")},
+            "acceptance_divergence",
+            "implementation",
+        ),
+        ({"protocol_version": "1.0"}, "unsupported_protocol", None),
+    ],
+)
+def test_the_driver_runs_only_the_exact_admitted_binding_before_secrets_or_spawn(
+    _lease_store: Callable[[Path], ProviderProcessLeaseStore],
+    tmp_path: Path,
+    update: dict[str, object],
+    code: str,
+    field: str | None,
+) -> None:
+    interpreter = tmp_path / "never-spawned"
+    binding = BoundLocalProviderV1(
+        binding=VerifiedProviderBinding(
+            provider_artifact_digest=_digest("provider"),
+            operation="demo.interface",
+            operation_signature_digest=_digest("interface"),
+            implementation_digest=_digest("implementation"),
+            deployment_digest=_digest("deployment"),
+            materialization_digest=_digest("materialization"),
+            environment_manifest_digest=_digest("environment"),
+            entrypoint="demo.runtime:Provider",
+        ),
+        interpreter_path=interpreter,
+    )
+    context = ProviderRuntimeRunContext(
+        protocol_version="2.0",
+        run_id="RUN-exact",
+        operation="demo.interface",
+        operation_signature_digest=_digest("interface"),
+        build_digest=_digest("provider"),
+        implementation_digest=_digest("implementation"),
+        entrypoint="demo.runtime:Provider",
+        input={},
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=1, output_bytes=1024),
+    )
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        LocalProviderExecutionDriver().invoke(
+            binding,
+            context.model_copy(update=update),
+            secret_plan=_secret_plan(),
+            secret_resolvers=ProviderSecretResolverRegistry((_NeverResolved(),)),
+            invocation_id=_digest("exact"),
+            process_leases=_lease_store(tmp_path / "exact-leases"),
+        )
+    assert caught.value.code == code
+    if field is not None:
+        assert caught.value.details == {"field": field}
+    assert not interpreter.exists()

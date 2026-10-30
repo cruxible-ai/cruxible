@@ -1,15 +1,15 @@
 """Read a provider package's registration metadata.
 
 A provider package ships a ``registration.json`` (schema 2) naming its runtime
-manifest (by package-relative path and digest) and declaring its typed
-operations inline: ``{name, in, out, effect, refusals, enumerates?,
-entrypoint}``, Contracts named ``name@N``. The manifest's own bucket claims
-are inert: core classifies no input.
+manifest (schema 2, one row per entrypoint, by package-relative path and
+digest) and declaring its typed operations inline: ``{name, in, out, effect,
+refusals, enumerates?, entrypoint}``, Contracts named ``name@N``. Runtime
+requirements are keyed by the entrypoint they belong to, and the wheel's
+``cruxible.providers`` entry points are exactly ``{operation: entrypoint}``.
 
 Every resource reference, digest, entry point and extra is checked here, and
-no package code is imported or executed. A schema-1 registration (one
-ProviderInterface per implementation) refuses: rebuild the package with its
-operations declared.
+no package code is imported or executed. A schema-1 registration or manifest
+refuses: rebuild the package for provider runtime protocol 2.0.
 """
 
 from __future__ import annotations
@@ -100,15 +100,16 @@ class _ResourceRef(_Strict):
         return data
 
 
-class _RuntimeRequirement(_Strict):
-    interface_id: str
+class PackageRuntimeRequirement(_Strict):
+    #: The manifest implementation the requirement belongs to.
+    entrypoint: str
     kind: Literal["python_extra", "runtime_resource"]
     name: str
     description: str
     probe_entrypoint: str | None = None
 
     @model_validator(mode="after")
-    def _probe(self) -> _RuntimeRequirement:
+    def _probe(self) -> PackageRuntimeRequirement:
         if self.kind == "runtime_resource":
             if self.probe_entrypoint is None:
                 raise ValueError("runtime resources require a package readiness probe")
@@ -118,11 +119,13 @@ class _RuntimeRequirement(_Strict):
         return self
 
 
-class _Descriptor(_Strict):
+class PackageRegistrationDescriptor(_Strict):
+    """``registration.json`` schema 2, exactly as a package ships it."""
+
     schema_version: Literal[2]
     manifest: _ResourceRef
     operations: tuple[ProviderOperation, ...] = Field(min_length=1)
-    runtime_requirements: tuple[_RuntimeRequirement, ...] = ()
+    runtime_requirements: tuple[PackageRuntimeRequirement, ...] = ()
 
 
 def _yaml_document(content: bytes, *, label: str) -> object:
@@ -142,13 +145,18 @@ def read_package_registration(root: Path) -> PackageRegistrationDocumentV1:
         raise ValueError("registration.json is not a JSON object") from exc
     if version != 2:
         raise ValueError(
-            "registration.json schema 1 exports ProviderInterfaces, which core no longer "
-            "reads; rebuild the package with schema 2 and its typed operations declared"
+            f"registration.json schema {version!r} is not read; schema 2 declares the "
+            "package's typed operations (rebuild it for provider runtime protocol 2.0)"
         )
-    descriptor = _Descriptor.model_validate_json(raw)
+    descriptor = PackageRegistrationDescriptor.model_validate_json(raw)
     manifest_document = _yaml_document(descriptor.manifest.read(root), label="provider manifest")
     if not isinstance(manifest_document, dict):
         raise ValueError("provider manifest must be a mapping")
+    if manifest_document.get("schema_version") != 2:
+        raise ValueError(
+            f"provider manifest schema {manifest_document.get('schema_version')!r} is not "
+            "read; a schema-2 manifest keys implementations by entrypoint"
+        )
     manifest = ProviderRuntimeManifest.model_validate(manifest_document)
     return PackageRegistrationDocumentV1.model_validate(
         {
@@ -179,11 +187,12 @@ def _distribution_registration(distribution: PathDistribution) -> PackageRegistr
         raise ValueError("distribution name differs from manifest")
     if distribution.version != manifest.distribution.version:
         raise ValueError("distribution version differs from manifest")
-    expected = {item.interface_id: item.entrypoint for item in manifest.implementations}
+    # One entry point per operation, named by it and valued by its entrypoint.
+    expected = {item.name: item.entrypoint for item in document.operations}
     entries = [ep for ep in distribution.entry_points if ep.group == "cruxible.providers"]
     actual = {ep.name: ep.value for ep in entries}
     if len(actual) != len(entries) or actual != expected:
-        raise ValueError("distribution entry points differ from manifest")
+        raise ValueError("distribution entry points differ from the registered operations")
     extras = set(distribution.metadata.get_all("Provides-Extra") or ())
     for implementation in manifest.implementations:
         if not set(implementation.requires_extras) <= extras:
@@ -232,6 +241,8 @@ def read_wheel_registration(path: Path) -> PackageRegistrationDocumentV1:
 
 __all__ = [
     "MAX_UNPACKED_WHEEL_BYTES",
+    "PackageRegistrationDescriptor",
+    "PackageRuntimeRequirement",
     "read_package_registration",
     "read_wheel_registration",
 ]

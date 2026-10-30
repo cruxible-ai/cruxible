@@ -75,7 +75,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         read_at=fixture.result.observed_at,
     )
     provider_output = {
-        "input_bucket": fixture.receipt.input_bucket,
+        "input_bucket": "content_kind=text;byte_size=tiny",
         "source": {
             "logical_source": source_read.logical_source,
             "commitment_digest": source_read.derived_request_digest,

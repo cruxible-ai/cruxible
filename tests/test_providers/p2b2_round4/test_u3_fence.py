@@ -31,7 +31,7 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
     _socket_peer_pid,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from tests.support.invocation_ids import unique_invocation_id
 
 CONTEXT = b'{"run_id":"RUN-r4","input":{"value":"r4"}}'
@@ -81,7 +81,7 @@ document = json.loads(sys.stdin.buffer.read())
 import time as _t
 _t.sleep(float("@LINGER@"))
 envelope = {
-    "protocol_version": "1.0",
+    "protocol_version": "2.0",
     "run_id": document["run_id"],
     "status": "ok",
     "output": {"echo": document["input"]["value"]},
@@ -152,7 +152,7 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,
@@ -197,7 +197,7 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
             interpreter,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
             invocation_id=unique_invocation_id(),
             process_leases=store,
@@ -254,7 +254,7 @@ def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
                 interpreter,
                 entrypoint="demo:Provider",
                 context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=8, output_bytes=65_536),
                 secret_fd=None,
                 invocation_id=unique_invocation_id(),
                 process_leases=store,
@@ -462,7 +462,7 @@ def test_an_execd_grandchild_of_the_real_wrapper_cannot_read_the_secret(
         "import os, subprocess, sys\n"
         f"BODY = {body!r}\n"
         f"subprocess.run([sys.executable, '-c', BODY, {str(stolen)!r}], check=False)\n"
-        'print(\'{"protocol_version":"1.0"}\')\n',
+        'print(\'{"protocol_version":"2.0"}\')\n',
         encoding="utf-8",
     )
     wrapper = short_root / "provider_child_fence.py"

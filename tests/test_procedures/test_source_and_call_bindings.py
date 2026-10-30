@@ -24,7 +24,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.provider_execution import ProviderEgressObservation
 from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeResultEnvelope
 from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunRequest,
     service_run_playbill_procedure,
@@ -46,8 +46,8 @@ class _Invoker(fixtures._WorkspaceInvoker):
             )
         self.spawn_calls += 1
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0", run_id=context.run_id, status="ok", output={}
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0", run_id=context.run_id, status="ok", output={}
             ),
             stderr="",
             duration_seconds=0.001,

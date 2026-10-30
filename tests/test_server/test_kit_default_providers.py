@@ -4,9 +4,8 @@ The kit carried a Blueprint with a ``web.fetch`` slot and named a default
 implementation by package and exact version. Blueprint is removed (ruling
 C12: a Procedure declares its slots directly, with no separate open-slot
 artifact); the kit-level "default provider for a slot" mechanism this file
-exercised has not been re-authored for the operations/slots model, and the
-wheel-install path needs the external ``cruxible_provider_runtime`` package
-at protocol 2.0. Every test here is skipped until both land.
+exercised has not been re-authored for the operations/slots model. Every test
+here is skipped until it is.
 """
 
 from __future__ import annotations
@@ -41,9 +40,8 @@ from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import _add, _client, _install, _tree
 
 pytestmark = pytest.mark.skip(
-    reason="needs kit re-authoring: Blueprint/default-provider kit mechanism "
-    "not yet ported to operations/slots, and wheel install needs provider "
-    "runtime protocol 2.0"
+    reason="needs kit re-authoring: the Blueprint/default-provider kit mechanism "
+    "is not yet ported to operations/slots"
 )
 
 CONTRACT = "acme.web"

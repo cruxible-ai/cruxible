@@ -44,6 +44,13 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    # The bound provider operation refused under a code it declares: the code
+    # is the refusal's `detail_code`, its declared detail is `details`.
+    "operation_refused": (
+        "Read detail_code and details: the bound provider operation declined this "
+        "input under its own declared refusal. Revise the input it names, or bind "
+        "the slot to an operation that serves it, then rerun."
+    ),
     # The failure's `cause` carries the Provider's kind and message: a transport
     # error clears once the target is reachable; an HTTP status is the input's.
     "provider_execution_error": (

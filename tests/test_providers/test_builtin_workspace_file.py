@@ -42,7 +42,6 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_REVISION,
-    WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
     workspace_file_builtin_identity,
     workspace_file_builtin_provider,
 )
@@ -55,8 +54,8 @@ from cruxible_core.providers.builtin_workspace_file import (
     input_bucket_label,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
 )
 from tests.support.provider_checkout import provider_checkout_path
 
@@ -80,8 +79,8 @@ def _pseudo_random(length: int, *, seed: str) -> bytes:
     return bytes(output[:length])
 
 
-#: The package's six registration fixtures (byte-equal to its own), whose
-#: digests the seeded registration's (inert) conformance proofs still name.
+#: The package's six registration fixtures (byte-equal to the 0.2.x package's):
+#: the parity golden's registration-fixture inputs.
 _FIXTURE_BYTES: dict[str, bytes] = {
     "workspace-file-binary-medium": _pseudo_random(70_000, seed="workspace-file-binary-medium"),
     "workspace-file-binary-small": _pseudo_random(5_000, seed="workspace-file-binary-small"),
@@ -98,13 +97,7 @@ _FIXTURE_BYTES: dict[str, bytes] = {
 
 @dataclass(frozen=True)
 class _ConformanceFixture:
-    """Local stand-in for the removed ``ProviderBucketConformanceFixture``.
-
-    Bucket conformance is now just an inert ``{selector: fixture_id}`` string
-    mapping on the manifest (no embedded fixture bytes/digest object survives
-    in the current model); this file keeps the shape only to drive the parity
-    golden below, which exercises the adapter directly.
-    """
+    """One parity-golden input: its id, its run input and its bytes' bucket label."""
 
     fixture_id: str
     canonical_input: dict[str, object]
@@ -132,37 +125,43 @@ WORKSPACE_FILE_FIXTURES = tuple(
 )
 
 
-def _context(payload: object, bucket: str) -> ProviderRuntimeRunContextV1:
-    return ProviderRuntimeRunContextV1.model_construct(
-        protocol_version="1.0",
+#: The built-in's run identity in these vectors (the digests leave it out).
+_BUILD_DIGEST = "sha256:" + "4d" * 32
+_SIGNATURE_DIGEST = "sha256:" + "3c" * 32
+
+
+def _context(payload: object) -> ProviderRuntimeRunContext:
+    return ProviderRuntimeRunContext.model_construct(
+        protocol_version="2.0",
         run_id="parity",
-        interface_id="workspace.file",
-        interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
+        operation="workspace.file",
+        operation_signature_digest=_SIGNATURE_DIGEST,
+        build_digest=_BUILD_DIGEST,
         implementation_digest=WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
         entrypoint="cruxible_core.providers.builtin_workspace_file:WorkspaceFile",
         coordinates={},
         input=payload,
-        input_bucket=bucket,
         capture_contract=None,
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5.0, output_bytes=1 << 24),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=5.0, output_bytes=1 << 24),
         declared_endpoints=(),
         secret_channel=None,
         additive={},
     )
 
 
-def _envelope_digest(payload: object, bucket: str) -> tuple[str, dict[str, Any]]:
-    document = json.loads(WorkspaceFile()(_context(payload, bucket)).to_json())
+def _envelope_digest(payload: object) -> tuple[str, dict[str, Any]]:
+    """The envelope without its protocol version and run id, digested as the golden is.
+
+    The golden digests were taken under protocol 1.0 with the measured bucket in
+    the context; the adapter derives the output's bucket label from the bytes,
+    so they reproduce from the bytes alone under protocol 2.0.
+    """
+
+    document = json.loads(WorkspaceFile()(_context(payload)).to_json())
     document.pop("protocol_version")
     document.pop("run_id")
     raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
     return "sha256:" + hashlib.sha256(raw).hexdigest(), document
-
-
-#: What core now sends as the run context's bucket. The golden digests were
-#: taken with the measured bucket in the context; the adapter derives the
-#: output's bucket from the bytes, so they reproduce under the placeholder.
-PLACEHOLDER = "legacy=none"
 
 
 def _measured(payload: object) -> str | None:
@@ -176,7 +175,7 @@ def test_the_port_reproduces_the_package_on_every_registration_fixture() -> None
     for expected in GOLDEN["fixtures"]:
         fixture = fixtures[expected["fixture_id"]]
         assert _measured(fixture.canonical_input) == expected["input_bucket"]
-        digest, document = _envelope_digest(fixture.canonical_input, PLACEHOLDER)
+        digest, document = _envelope_digest(fixture.canonical_input)
         assert document["status"] == "ok"
         assert document["output"]["input_bucket"] == expected["input_bucket"]
         assert digest == expected["envelope_sha256"], expected["fixture_id"]
@@ -187,7 +186,7 @@ def test_the_port_reproduces_the_package_on_edge_and_refusal_vectors(
     vector: dict[str, Any],
 ) -> None:
     assert _measured(vector["input"]) == vector["measured_bucket"]
-    digest, document = _envelope_digest(vector["input"], PLACEHOLDER)
+    digest, document = _envelope_digest(vector["input"])
     assert document["status"] == vector["status"]
     if "refusal_code" in vector:
         assert document["refusal"]["code"] == vector["refusal_code"]
@@ -207,7 +206,7 @@ def test_the_built_in_refuses_more_than_one_mebibyte_typed() -> None:
             "byte_length": len(data),
             "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
         }
-        _digest, document = _envelope_digest(payload, PLACEHOLDER)
+        _digest, document = _envelope_digest(payload)
         assert document["status"] == status
     assert document["refusal"]["code"] == "provider_declined"
     assert document["refusal"]["detail"] == {
@@ -223,7 +222,7 @@ def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
         "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d"
     )
     assert WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST == (
-        "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c"
+        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994"
     )
     assert (
         len(
@@ -238,22 +237,23 @@ def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
     )
 
 
-def test_the_seeded_provider_declares_exactly_the_fixtures_bucket_conformance_names() -> None:
-    """The seeded provider's inert bucket claims still name exactly these fixtures.
-
-    ProviderInterfaceRegistration (with its own standalone definition file and
-    conformance-proof digests) is removed (B2 C12); bucket conformance is now
-    just an inert ``{selector: fixture_id}`` string mapping straight on the
-    manifest (``_INERT_BUCKETS`` in seed_artifacts/workspace_file.py), so
-    there is no surviving fixture-byte-digest proof to check -- only that the
-    claimed fixture ids are exactly these fixtures (the parity golden above
-    runs over the same fixture inputs).
-    """
+def test_the_seeded_provider_speaks_protocol_2_from_one_entrypoint() -> None:
+    """The built-in's manifest is schema 2: one entrypoint row, no interface or buckets."""
 
     provider = workspace_file_builtin_provider()
-    (manifest_implementation,) = provider.runtime_artifact.manifest.implementations
-    fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
-    assert set(manifest_implementation.bucket_conformance.values()) == set(fixtures)
+    manifest = provider.runtime_artifact.manifest
+    assert manifest.schema_version == 2
+    assert manifest.supported_protocol_majors == (2,)
+    (row,) = manifest.implementations
+    assert set(row.model_dump()) == {
+        "entrypoint",
+        "backends",
+        "declared_endpoints",
+        "requires_extras",
+        "deterministic",
+    }
+    assert WorkspaceFile.operations == ("workspace.file",)
+    assert [item.entrypoint for item in provider.operations] == [row.entrypoint]
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
@@ -306,12 +306,13 @@ def test_the_adapter_module_is_pure() -> None:
     assert imported == _ALLOWED_IMPORTS, imported ^ _ALLOWED_IMPORTS
 
 
-#: The frozen prefix of BUILTIN_IMPLEMENTATIONS: implementation digest and the
-#: revision it was derived from. A revision bump appends a line; an old line
-#: must never change or disappear, because seeded instances pin it forever.
+#: The frozen prefix of BUILTIN_IMPLEMENTATIONS: implementation digest (the
+#: ``cruxible.provider.implementation.v2`` identity) and the revision it was
+#: derived from. A revision bump appends a line; an old line must never change
+#: or disappear, because seeded instances pin it forever.
 FROZEN_BUILTIN_IMPLEMENTATIONS = (
     (
-        "sha256:67c337ac0a87cfe8ee42da30a21c4cce658a0ad6bb3944b39a81e921aaba843c",
+        "sha256:0e8608f13ed88c76d9706250787e8a447d75756e6a10c02199d578bdcda29994",
         "sha256:9010dd924943e5ba971d5326bfe4cb7673a90873d1a475e7b2651943d0091e0d",
     ),
 )
@@ -345,18 +346,16 @@ def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
     from cruxible_provider_runtime.provider_api import ProviderRunContext
     from cruxible_provider_workspace.file import WorkspaceFile as PackageWorkspaceFile
 
-    inputs = [
-        (fixture.canonical_input, fixture.measured_bucket_id) for fixture in WORKSPACE_FILE_FIXTURES
-    ]
-    inputs += [(vector["input"], vector["input_bucket"]) for vector in GOLDEN["vectors"]]
-    for payload, bucket in inputs:
+    inputs = [fixture.canonical_input for fixture in WORKSPACE_FILE_FIXTURES]
+    inputs += [vector["input"] for vector in GOLDEN["vectors"]]
+    for payload in inputs:
         result = PackageWorkspaceFile()(
             ProviderRunContext(
                 run_id="parity",
-                interface_id="workspace.file",
-                interface_digest=WORKSPACE_FILE_MANIFEST_INTERFACE_DIGEST,
+                operation="workspace.file",
+                operation_signature_digest=_SIGNATURE_DIGEST,
+                build_digest=_BUILD_DIGEST,
                 implementation_digest="sha256:" + "0" * 64,
-                input_bucket=bucket,
                 input=payload,  # type: ignore[arg-type]
                 coordinates={},
                 budgets=Budgets(wall_clock_seconds=5.0, output_bytes=1 << 24),
@@ -366,7 +365,7 @@ def test_the_port_matches_the_package_live_when_a_checkout_is_configured(
                 egress=EgressRecorder(),
             )
         )
-        _digest, ours = _envelope_digest(payload, bucket)
+        _digest, ours = _envelope_digest(payload)
         assert ours["status"] == result.status
         assert ours["output"] == result.output
         assert ours["trace"]["metrics"] == result.metrics

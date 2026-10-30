@@ -772,6 +772,11 @@ class ProposalIndex:
                         source.backup(memory)
                     finally:
                         source.close()
+            # History may have initialized the shared file before its first
+            # proposal read, or there may be no working file yet. Prepare only
+            # this private copy; never open the durable writer from a preview.
+            if not _schema_rows(memory):
+                memory.executescript(_SCHEMA)
             if _schema_rows(memory) != _EXPECTED_SCHEMA:
                 raise ProposalIntegrityError("proposal index schema differs; rebuild required")
             marker = self._marker(evidence.root)

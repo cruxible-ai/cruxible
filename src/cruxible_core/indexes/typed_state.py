@@ -325,7 +325,7 @@ OWNER_CODECS = (
         (
             ("contract_name", "TEXT NOT NULL"),
             ("contract_version", "INTEGER NOT NULL CHECK(contract_version>=1)"),
-            ("field_count", "INTEGER NOT NULL CHECK(field_count>=1)"),
+            ("field_count", "INTEGER NOT NULL CHECK(field_count>=0)"),
         ),
     ),
     OwnerCodec(

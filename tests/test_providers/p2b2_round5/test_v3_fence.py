@@ -27,7 +27,7 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
     kill_descendants,
 )
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from tests.support.invocation_ids import unique_invocation_id
 
 CONTEXT = b'{"run_id":"RUN-r5","input":{"value":"r5"}}'
@@ -82,7 +82,7 @@ if WHEN == "before":
     spawn()
 document = json.loads(sys.stdin.buffer.read())
 envelope = {
-    "protocol_version": "1.0",
+    "protocol_version": "2.0",
     "run_id": document["run_id"],
     "status": "ok",
     "output": {"echo": document["input"]["value"]},
@@ -121,8 +121,8 @@ def _reap(token: str) -> None:
                 os.kill(int(fields[0]), signal.SIGKILL)
 
 
-def _budgets() -> ProviderRuntimeBudgetsV1:
-    return ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536)
+def _budgets() -> ProviderRuntimeBudgets:
+    return ProviderRuntimeBudgets(wall_clock_seconds=10, output_bytes=65_536)
 
 
 def _invoke(store: ProviderProcessLeaseStore, interpreter: Path, invocation: str) -> object:

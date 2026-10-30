@@ -76,12 +76,12 @@ class _Invoker(_WorkspaceInvoker):
         from cruxible_client.contracts.provider_execution import ProviderEgressObservation
         from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
         from cruxible_core.providers.provider_runtime_contract import (
-            ProviderRuntimeResultEnvelopeV1,
+            ProviderRuntimeResultEnvelope,
         )
 
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0", run_id=context.run_id, status="ok", output={"value": 42}
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0", run_id=context.run_id, status="ok", output={"value": 42}
             ),
             stderr="",
             duration_seconds=0.001,
@@ -138,16 +138,12 @@ def _workspace_file_providers():
         manifest = ProviderRuntimeManifest(
             provider_id=provider_id,
             distribution=ProviderDistributionRef(name=provider_id, version="1.0.0"),
-            supported_protocol_majors=(1,),
+            supported_protocol_majors=(2,),
             implementations=(
                 ProviderImplementationManifest(
-                    interface_id="fetch",
-                    interface_digest="sha256:" + "9" * 64,
                     entrypoint="demo.runtime:Provider",
                     backends=("local_env",),
-                    declared_input_buckets=(),
                     deterministic=True,
-                    side_effects=False,
                 ),
             ),
         )

@@ -1748,11 +1748,10 @@ from one successful response.
 A successful conversion returns a result and execution evidence. It does not
 register a capture, submit a Claim, or accept knowledge.
 
-The `input_bucket` the example passes through is whatever the provider echoes.
-Cruxible classifies no input: a protocol 1.x run context carries the inert
-compatibility placeholder `legacy=none` in that field, so a provider that echoes
-it returns `legacy=none`, not a measured bucket. Provider invocation and
-Capture evidence omit a measured bucket on new runs.
+The `input_bucket` the example passes through is whatever the provider returns.
+Cruxible classifies no input: a run context (provider runtime protocol 2.0)
+names the bound operation and build and carries no bucket. Provider invocation
+and Capture evidence record no measured bucket.
 
 ### Example coverage and expected diagnostics
 

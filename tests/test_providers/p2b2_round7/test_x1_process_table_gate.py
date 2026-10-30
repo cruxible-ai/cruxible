@@ -16,7 +16,7 @@ from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from cruxible_core.runtime import playbill_manager as manager_module
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
@@ -43,7 +43,7 @@ def _invoke(
         interpreter,
         entrypoint="demo:Provider",
         context=b'{"run_id":"RUN-r7","input":{"value":"ok"}}',
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
         invocation_id=invocation_id,
         process_leases=store,

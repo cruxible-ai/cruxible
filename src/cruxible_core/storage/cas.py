@@ -156,15 +156,22 @@ class ContentAddressedBodyStore:
         )
         algorithm = self.root / "sha256"
         algorithm.mkdir(mode=0o700, exist_ok=True)
-        if algorithm.is_symlink() or not algorithm.is_dir():
+        named = algorithm.lstat()
+        if not stat.S_ISDIR(named.st_mode):
             raise CasError("CAS algorithm directory is not trustworthy")
-        os.chmod(algorithm, 0o700)
+        # chmod changes ctime even when the mode is already correct. Inspect
+        # before opening so restrictive modes (including 000) still repair.
+        if stat.S_IMODE(named.st_mode) != 0o700:
+            os.chmod(algorithm, 0o700)
         self._algorithm_root = algorithm.resolve(strict=True)
         descriptor = os.open(self._algorithm_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        opened, named = os.fstat(descriptor), self._algorithm_root.lstat()
-        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+        try:
+            opened, named = os.fstat(descriptor), self._algorithm_root.lstat()
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                raise CasError("CAS algorithm directory changed while it was opened")
+        except BaseException:
             os.close(descriptor)
-            raise CasError("CAS algorithm directory changed while it was opened")
+            raise
         self._root_fd = descriptor
         self._durable: set[str] = set()
         self._durability_lock = threading.RLock()

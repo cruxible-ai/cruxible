@@ -22,7 +22,7 @@ import pytest
 
 from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
-from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgets
 from tests.support.invocation_ids import unique_invocation_id
 from tests.support.short_temporary_root import short_temporary_directory
 
@@ -54,7 +54,7 @@ with open("@PIDFILE@", "w") as handle:
 time.sleep(float("@LINGER@"))
 json.dump(
     {
-        "protocol_version": "1.0",
+        "protocol_version": "2.0",
         "run_id": document["run_id"],
         "status": "ok",
         "output": {"echo": document["input"]["value"]},
@@ -123,7 +123,7 @@ def test_terminating_one_invocation_leaves_a_concurrent_child_with_another_id_al
                 slow,
                 entrypoint="demo:Provider",
                 context=CONTEXT,
-                budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=20, output_bytes=65_536),
+                budgets=ProviderRuntimeBudgets(wall_clock_seconds=20, output_bytes=65_536),
                 secret_fd=None,
                 invocation_id=slow_id,
                 process_leases=slow_store,
@@ -145,7 +145,7 @@ def test_terminating_one_invocation_leaves_a_concurrent_child_with_another_id_al
             fast,
             entrypoint="demo:Provider",
             context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=20, output_bytes=65_536),
+            budgets=ProviderRuntimeBudgets(wall_clock_seconds=20, output_bytes=65_536),
             secret_fd=None,
             invocation_id=fast_id,
             process_leases=fast_store,

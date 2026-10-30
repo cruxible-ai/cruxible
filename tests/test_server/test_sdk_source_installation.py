@@ -3,8 +3,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import pytest
-
 from cruxible_client import Cruxible, Disposition
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import (
@@ -32,7 +30,6 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
 from tests.core_support._light_capture_support import http_contract, procedure_contract
 from tests.core_support._subject_kind_support import declare_by_slug
-from tests.support.provider_checkout import checkout_predates_web_fetch_material
 from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_ID,
     SUBJECT_KIND,
@@ -81,14 +78,6 @@ def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]
     return dict(proof)
 
 
-@pytest.mark.xfail(
-    checkout_predates_web_fetch_material(),
-    reason=(
-        "the providers checkout's web.fetch declares no captured material schema "
-        "(cruxible-providers ff0dab1, not yet on its main), so the source compiler refuses"
-    ),
-    strict=True,
-)
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
     tmp_path,

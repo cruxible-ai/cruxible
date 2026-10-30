@@ -626,6 +626,21 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
     # a bare `claim_retirement` was satisfied by the sentence *below* the list.
     unwrapped = " ".join(help_result.output.split())
     member_family = unwrapped.split("Change-set member kind family: ", 1)[1].split(". ", 1)[0]
+    assert member_family.split(" | ") == [
+        "claim",
+        "claim_type",
+        "claim_type_succession",
+        "claim_retirement",
+        "subject",
+        "subject_kind",
+        "subject_succession",
+        "query_definition",
+        "procedure_mandate",
+        "line",
+        "trigger",
+        "contract",
+        "procedure",
+    ]
     assert (
         "approval_policy and procedure_runtime_policy are the reverse: the member union "
         "parses either, but a change set refuses either" in unwrapped

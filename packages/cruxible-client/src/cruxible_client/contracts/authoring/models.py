@@ -130,7 +130,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:785932b547b90a2ad275673370740dc1818a4fafd48bb1ca58198b57bb8a5458"
+    "sha256:73c66a7319fa9e7d2df340bd9c48bfd1091d42b32b300ad425dc9fd7756ffbdf"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1175,7 +1175,7 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
     name: str
     version: int = Field(ge=1, le=999_999_999)
     description: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    fields: dict[str, ContractField] = Field(min_length=1)
+    fields: dict[str, ContractField]
 
     @field_validator("name")
     @classmethod

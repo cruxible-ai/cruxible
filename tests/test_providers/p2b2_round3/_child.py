@@ -74,7 +74,7 @@ if wait_for_marker:
         time.sleep(0.01)
 
 envelope = {
-    "protocol_version": "1.0",
+    "protocol_version": "2.0",
     "run_id": document["run_id"],
     "status": "ok",
     "output": {"echo": document["input"]["value"]},

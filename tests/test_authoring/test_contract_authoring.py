@@ -114,6 +114,42 @@ def test_a_contract_and_its_successor_are_accepted(tmp_path: Path) -> None:
     assert tree[first_path] == first_bytes
 
 
+def test_a_zero_field_contract_is_accepted_and_nests(tmp_path: Path) -> None:
+    """``fields: {}`` is the closed empty record; a nested pin to it is digested."""
+
+    instance, owner = initialize_local(tmp_path)
+    _accept(
+        instance,
+        owner,
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ContractInput(kind="contract", name="security.empty", version=1, fields={}),
+                ContractInput(
+                    kind="contract",
+                    name="security.selected",
+                    version=1,
+                    fields={"selector": "security.empty@1"},  # type: ignore[dict-item]
+                ),
+            ),
+        ),
+    )
+    tree = _accepted_tree(instance)
+    empty_path = contract_path("security.empty", 1)
+    empty = parse_contract(tree[empty_path], path=empty_path)
+    assert empty.fields == {}
+    selected_path = contract_path("security.selected", 1)
+    (ref,) = parse_contract(tree[selected_path], path=selected_path).refs()
+    assert ref.digest == contract_digest(empty).tagged
+    # Orient lists it with its field count, zero.
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    rows = service_playbill_orient(instance, section="contracts").contracts or ()
+    listed = {row.contract: row for row in rows}
+    assert listed["security.empty@1"].fields == 0
+    assert listed["security.selected@1"].pins == ("security.empty@1",)
+
+
 def test_a_nested_contract_is_pinned_to_the_accepted_version(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     _accept(instance, owner, _contract())

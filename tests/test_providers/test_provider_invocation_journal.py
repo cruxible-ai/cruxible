@@ -70,8 +70,8 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeRefusalV1,
-    ProviderRuntimeResultEnvelopeV1,
+    ProviderRuntimeRefusal,
+    ProviderRuntimeResultEnvelope,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import accepted_provider, pin
@@ -91,7 +91,7 @@ from tests.test_procedures.test_procedure_execution import (
 class _Invoker:
     def __init__(self) -> None:
         self.calls: list[str] = []
-        self.input_buckets: list[str] = []
+        self.contexts: list[object] = []
 
     def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
         from cruxible_core.providers.provider_local_runtime import BoundLocalProviderV1
@@ -105,11 +105,11 @@ class _Invoker:
         self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.calls.append(invocation_id)
-        self.input_buckets.append(context.input_bucket)
+        self.contexts.append(context)
         assert bound.binding == occurrence.local_execution
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="ok",
                 output={"value": context.input["value"]},
@@ -164,7 +164,6 @@ def _provider_for(*, effect: str = "pure") -> AcceptedProvider:
         return accepted_provider()
     build = operation_build(
         operations=(operation(effect=effect),),  # type: ignore[arg-type]
-        side_effects=effect == "external_mutation",
     )
     return AcceptedProvider(
         path=provider_path(build.identity.name),
@@ -467,10 +466,13 @@ def test_provider_call_journals_completed_receipt_before_progress(
     )
     assert payload["receipt"]["duration_microseconds"] == 1234  # type: ignore[index]
     assert payload["receipt"]["fence_scope"] == "process_group+descendant_sweep"  # type: ignore[index]
-    # Core classifies no input: the child gets the meaningless k=v placeholder a
-    # protocol 1.x run context still requires, and nothing journals a bucket.
-    assert invoker.input_buckets == ["legacy=none"]
-    assert "input_bucket" not in payload["receipt"]  # type: ignore[operator]
+    # Core classifies no input: the child is told the bound operation of the
+    # bound build, and nothing journals a bucket.
+    (context,) = invoker.contexts
+    receipt = payload["receipt"]  # type: ignore[index]
+    assert context.operation == receipt["operation"]  # type: ignore[attr-defined]
+    assert context.build_digest == receipt["provider_artifact_digest"]  # type: ignore[attr-defined]
+    assert "input_bucket" not in receipt  # type: ignore[operator]
     started = parse_journal_payload(
         fixture.bodies.read(
             records[kinds.index("provider_invocation_started")].record.payload_digest,
@@ -1391,13 +1393,13 @@ class _BudgetCodeEnvelopeInvoker(_Invoker):
         self, *, occurrence, context, invocation_id, bound, deadline
     ):
         self.calls.append(invocation_id)
-        self.input_buckets.append(context.input_bucket)
+        self.contexts.append(context)
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0",
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0",
                 run_id=context.run_id,
                 status="refused",
-                refusal=ProviderRuntimeRefusalV1(
+                refusal=ProviderRuntimeRefusal(
                     code="budget_wall_clock",
                     message="provider declined on its own budget accounting",
                     detail={},
@@ -1506,7 +1508,7 @@ def _run_through_the_real_spawner(
                 spend()
             return _Invoker().bind_provider(occurrence=occurrence)
 
-    real_context = execution.ProviderRuntimeRunContextV1
+    real_context = execution.ProviderRuntimeRunContext
     real_prepare = leases.prepare_control_path
     real_run_child = runtime._run_child
 
@@ -1537,7 +1539,7 @@ def _run_through_the_real_spawner(
     )
     try:
         with (
-            patch.object(execution, "ProviderRuntimeRunContextV1", context_factory),
+            patch.object(execution, "ProviderRuntimeRunContext", context_factory),
             patch.object(leases, "prepare_control_path", prepare_control_path),
             patch.object(runtime, "_run_child", run_child),
             patch.object(runtime.subprocess, "Popen", popen),
@@ -1618,8 +1620,8 @@ def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path
             package.run_package_probe(
                 deployment,  # type: ignore[arg-type]
                 leases,
-                kind="resource",
-                digest="sha256:" + "b" * 64,
+                build_digest="sha256:" + "a" * 64,
+                implementation_digest="sha256:" + "b" * 64,
                 value={"entrypoint": "demo.resource:probe"},
             )
     finally:

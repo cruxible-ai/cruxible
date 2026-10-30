@@ -531,7 +531,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProviderInvocationReceipt", "duration_microseconds"): "VALIDITY WINDOW",
     ("ProviderResultToExternalCapture", "observed_at"): "EVALUATION INSTANT",
     ("ProviderResultToExternalCapture", "source_effective_time"): "VALIDITY WINDOW",
-    ("ProviderRuntimeBudgetsV1", "wall_clock_seconds"): "VALIDITY WINDOW",
+    ("ProviderRuntimeBudgets", "wall_clock_seconds"): "VALIDITY WINDOW",
     ("ProviderSigningKey", "valid_from"): "VALIDITY WINDOW",
     ("ProviderSigningKey", "valid_until"): "VALIDITY WINDOW",
     ("QueryEvaluationPolicy", "result_expiry"): "VALIDITY WINDOW",

@@ -32,16 +32,16 @@ from typing import Any
 
 from cruxible_core.providers.provider_runtime_contract import (
     PROVIDER_RUNTIME_PROTOCOL,
-    ProviderRuntimeRefusalCodeV1,
-    ProviderRuntimeRefusalV1,
-    ProviderRuntimeResultEnvelopeV1,
-    ProviderRuntimeRunContextV1,
-    ProviderRuntimeTraceV1,
+    ProviderRuntimeRefusal,
+    ProviderRuntimeResultEnvelope,
+    ProviderRuntimeRunContext,
+    ProviderRuntimeTrace,
 )
 
-INTERFACE_ID = "workspace.file"
+OPERATION = "workspace.file"
+"""The one operation the adapter serves."""
 CONTENT_ENCODING = "base64"
-"""The only content encoding the interface admits: RFC 4648 section 4, padded, no line breaks."""
+"""The only content encoding the operation admits: RFC 4648 section 4, padded, no line breaks."""
 
 INPUT_FIELDS: tuple[str, ...] = (
     "logical_source",
@@ -126,9 +126,10 @@ def input_bucket_label(data: bytes) -> str:
 class WorkspaceFile:
     """Structure the bytes core read from one workspace file into a result envelope."""
 
-    interface_id = INTERFACE_ID
+    #: The operations this entrypoint serves, as a runtime child reads them.
+    operations = (OPERATION,)
 
-    def __call__(self, context: ProviderRuntimeRunContextV1) -> ProviderRuntimeResultEnvelopeV1:
+    def __call__(self, context: ProviderRuntimeRunContext) -> ProviderRuntimeResultEnvelope:
         payload = context.input
         refusal = _validate_shape(payload)
         if refusal is not None:
@@ -189,7 +190,7 @@ class WorkspaceFile:
         if content["kind"] == "text":
             metrics["line_count"] = float(content["line_count"])
             metrics["character_count"] = float(content["character_count"])
-        return ProviderRuntimeResultEnvelopeV1(
+        return ProviderRuntimeResultEnvelope(
             protocol_version=PROVIDER_RUNTIME_PROTOCOL,
             run_id=context.run_id,
             status="ok",
@@ -203,20 +204,18 @@ class WorkspaceFile:
                 },
                 "content": content,
             },
-            trace=ProviderRuntimeTraceV1(metrics=metrics),
+            trace=ProviderRuntimeTrace(metrics=metrics),
         )
 
 
-def _refusal(
-    code: ProviderRuntimeRefusalCodeV1, message: str, **detail: Any
-) -> ProviderRuntimeRefusalV1:
-    return ProviderRuntimeRefusalV1(code=code, message=message, detail=detail)
+def _refusal(code: str, message: str, **detail: Any) -> ProviderRuntimeRefusal:
+    return ProviderRuntimeRefusal(code=code, message=message, detail=detail)
 
 
 def _refused(
-    context: ProviderRuntimeRunContextV1, refusal: ProviderRuntimeRefusalV1
-) -> ProviderRuntimeResultEnvelopeV1:
-    return ProviderRuntimeResultEnvelopeV1(
+    context: ProviderRuntimeRunContext, refusal: ProviderRuntimeRefusal
+) -> ProviderRuntimeResultEnvelope:
+    return ProviderRuntimeResultEnvelope(
         protocol_version=PROVIDER_RUNTIME_PROTOCOL,
         run_id=context.run_id,
         status="refused",
@@ -224,7 +223,7 @@ def _refused(
     )
 
 
-def _validate_shape(payload: Mapping[str, Any]) -> ProviderRuntimeRefusalV1 | None:
+def _validate_shape(payload: Mapping[str, Any]) -> ProviderRuntimeRefusal | None:
     """Check the run input's shape, field by field, failing closed on any surprise."""
 
     unknown = sorted(set(payload) - set(INPUT_FIELDS))
@@ -336,8 +335,8 @@ __all__ = [
     "BYTE_SIZE_CEILINGS",
     "CONTENT_ENCODING",
     "INPUT_FIELDS",
-    "INTERFACE_ID",
     "MAX_STRUCTURED_BYTES",
+    "OPERATION",
     "WorkspaceFile",
     "byte_size_class",
     "content_kind_class",

@@ -1,14 +1,12 @@
 """Kits: export owned definitions as a self-contained release; install one as a diff.
 
-A release is a snapshot. Every artifact in it is lineage-free (no predecessor)
-and pins only the release's own digests, so a release's content digest names the
-same definitions wherever it goes. History belongs to the consumer: installing
-diffs the release against the consumer's accepted state and proposes that diff.
-A path the consumer lacks is added as released; a path whose content changed is
-replaced by a successor naming the consumer's own current digest; a path the kit
-installed and the release no longer has is retired. Pins are remapped from
-release digests to the digests the consumer actually holds, so a dependent whose
-definition only moved in lineage compares equal and stays untouched.
+A release snapshots mutable definitions without their lineage. Immutable Contract
+versions retain their exact accepted bytes, nested pins and predecessor chain.
+Installing diffs the release against the consumer's accepted state. A missing
+path is added as released; a changed mutable definition becomes a successor of
+the consumer's current definition, and dropped mutable definitions may retire.
+Mutable pins follow the digests the consumer holds. Contract commitments never
+move: a conflicting version or a remap changing its pins refuses.
 """
 
 from __future__ import annotations
@@ -86,9 +84,14 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
-from cruxible_client.contracts.repairs import RepairOperation
-from cruxible_client.contracts.shapes import contract_path_for_identity
+from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair, RepairOperation
+from cruxible_client.contracts.shapes import (
+    Contract,
+    contract_path_for_identity,
+    evaluate_contract_law,
+)
 from cruxible_core.claims.artifact_references import (
+    immutable_contract_error,
     movable_references,
     move_references,
     referenced_digests,
@@ -256,7 +259,37 @@ def _dependency_order(
         (state.identity.kind, state.identity.name): path for path, state in states.items()
     }
 
+    @functools.cache
+    def contract_lookup(path: str) -> bytes | None:
+        if path in payloads:
+            return pretty_canonical_bytes(payloads[path])
+        return genesis_seed_files().get(path)
+
+    @functools.cache
     def exact(path: str) -> set[str]:
+        if path.startswith("contracts/"):
+            contract = Contract.model_validate(payloads[path])
+            problems = evaluate_contract_law(
+                contract,
+                path=path,
+                lookup=contract_lookup,
+                parent_content=None,
+                content=pretty_canonical_bytes(payloads[path]),
+            )
+            if problems:
+                problem = problems[0]
+                raise RequestRefusedError(
+                    problem.code,
+                    f"{path}: {problem.message}",
+                    repair=HandEditRepair(
+                        hand_edit=HandEditInstruction(
+                            target=path,
+                            required_change=(
+                                "Supply the exact nested Contract versions and predecessor chain."
+                            ),
+                        )
+                    ),
+                )
         found = set()
         for pin in states[path].pins:
             target = by_digest.get(getattr(pin, "artifact_digest", "")) or by_identity.get(
@@ -495,9 +528,10 @@ def build_kit(
 ) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
-    Owned live definitions and everything they pin become lineage-free
-    snapshots; each pin moves to the snapshot digest of what it names. A pin
-    into a Provider stays as it is and names a bundled package instead.
+    Mutable definitions become lineage-free snapshots; their pins move to the
+    snapshot digests. Immutable Contract versions retain exact bytes and carry
+    their nested closure and predecessor chain. A Provider pin names a bundled
+    package instead.
     """
 
     bundled: dict[str, InspectedProviderPackage] = {}
@@ -545,7 +579,8 @@ def build_kit(
                 raise DataValidationError(f"{path} pins retired {dependency}")
         _bundled_provider_pins(path, states[path], tree_providers, tree, bundled)
         payload = _substitute(path, payloads[path], remap)
-        payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
+        if not path.startswith("contracts/"):
+            payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
@@ -625,6 +660,9 @@ def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator
 def _successor_payload(
     payload: Mapping[str, Any], *, predecessor: str, state: str
 ) -> dict[str, Any]:
+    if payload.get("artifact_format") == "cruxible-contract-v1":
+        contract = Contract.model_validate(payload)
+        raise immutable_contract_error(contract_path_for_identity(contract.identity.name))
     successor = dict(payload)
     successor["lifecycle"] = {"predecessor_digest": predecessor, "state": state}
     return successor
@@ -721,8 +759,8 @@ def _diff_release(
 ) -> tuple[_Diff, set[str]]:
     """Plan every release path against the tree; returns the diff and the owned paths.
 
-    Nothing blocks: a definition this instance holds differently takes the
-    release's version as a successor of its own, named by what that does here,
+    A conflicting immutable Contract version refuses. A mutable definition held
+    differently takes the release's version as a successor of its own,
     unless ``keep`` (or ``keep_local_edits``) keeps this instance's version or an
     earlier install kept it on purpose against this same release version.
     """
@@ -751,6 +789,8 @@ def _diff_release(
             continue
         current_state = _artifact_state(path, current)
         current_payload = json.loads(current)
+        if path.startswith("contracts/") and current != contents[path]:
+            raise immutable_contract_error(path)
         live = current_state.lifecycle.state == "live"
         if live and _without_lifecycle(current_payload) == _without_lifecycle(payload):
             diff.plan.append(KitPathPlan(path=path, action="unchanged", identity=identity))
@@ -962,9 +1002,14 @@ def _settle_dropped(
         # Counted against the post-diff tree, including semantic consumers.
         diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
-        if identity in keep or (
-            not named_retire
-            and (dependents or (previously is not None and previously.release_digest is None))
+        immutable = state.artifact_kind == "contract"
+        if (
+            immutable
+            or identity in keep
+            or (
+                not named_retire
+                and (dependents or (previously is not None and previously.release_digest is None))
+            )
         ):
             diff.plan.append(
                 KitPathPlan(
@@ -973,7 +1018,9 @@ def _settle_dropped(
                     identity=identity,
                     consequence="release_dropped",
                     dependent_count=dependents,
-                    detail=None
+                    detail="Contract versions are immutable and remain accepted"
+                    if immutable
+                    else None
                     if identity in keep
                     else "the release dropped it and live artifacts depend on it; name it in "
                     "retire_dependents (--retire-dependents) to retire it and them"
@@ -2192,7 +2239,7 @@ def service_remove_kit(
     actor_id: str,
     timestamp: str,
 ) -> KitChangeResult:
-    """Propose retiring every definition a kit owns; carried ones stay.
+    """Propose retiring mutable definitions a kit owns; Contracts and carried ones stay.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
     """
@@ -2239,6 +2286,16 @@ def _remove_kit(
             continue
         state = _artifact_state(entry.path, current)
         if state.lifecycle.state != "live":
+            continue
+        if state.artifact_kind == "contract":
+            diff.plan.append(
+                KitPathPlan(
+                    path=entry.path,
+                    action="keep",
+                    identity=state.identity.qualified,
+                    detail="Contract versions are immutable and remain accepted",
+                )
+            )
             continue
         if not kit_content_matches(
             entry.path, json.loads(current), _installed_content(entry, tree), back

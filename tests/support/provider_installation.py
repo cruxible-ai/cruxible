@@ -1,4 +1,4 @@
-"""Build a new provider solely from its package metadata for integration tests."""
+"""Build a new provider package (protocol 2.0) solely from its metadata for integration tests."""
 
 import hashlib
 import json
@@ -7,43 +7,76 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-#: Bucket metadata the pre-removal installer refused three ways: the declared
-#: selector names a class the vocabulary lacks, no selector names a fixture, and
-#: the one fixture's measured bucket is not a bucket of the vocabulary. Core
-#: carries it as inert data; installing, binding and running ignore it.
-INERT_BUCKET_METADATA: dict[str, Any] = {
-    "declared_input_buckets": ["size=two"],
-    "bucket_conformance": {},
-    "fixtures": [
-        {"fixture_id": "integer", "canonical_input": {"n": 2}, "measured_bucket_id": "size=huge"}
-    ],
-}
+#: The one Contract ``local.increment`` reads and returns: ``{n: int}``. An
+#: install pins it, so a world accepts it (``local_call_contract_files``) before
+#: installing the package.
+LOCAL_CALL_VALUE = {"name": "local.increment.value", "version": 1, "fields": {"n": {"type": "int"}}}
+LOCAL_CALL_IN = "local.increment.value@1"
+LOCAL_CALL_OUT = "local.increment.value@1"
 
 
-def forbid_bucket_semantics(monkeypatch: Any) -> None:
-    """Make the provider runtime's validating reader and bucket model raise.
+def local_call_contract_files() -> dict[str, bytes]:
+    """The accepted-tree member of ``local.increment``'s Contract."""
 
-    Core reads package metadata itself, with bucket data inert; if any path it
-    runs reached one of these, the test would fail here.
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+    contract = Contract.model_validate(LOCAL_CALL_VALUE)
+    return {contract_path(contract.name, contract.version): render_contract(contract)}
+
+
+def accept_local_call_contract(instance_id: str, approve: Any) -> None:
+    """Accept ``local.increment``'s Contract in a world before any local-call install.
+
+    Every world that installs a package from ``build_local_call`` calls this
+    first: an install pins the operation's Contracts to the accepted ones.
+    ``approve(proposal_id)`` approves and activates the proposal the way the
+    world's policy requires. A world that already holds the Contract is left
+    as it is.
     """
 
-    from cruxible_provider_runtime import buckets, registration, registry, wheels
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from tests.core_support._candidate_support import submit_member_candidate
 
-    def forbidden(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("a bucket-semantic provider-runtime routine was reached")
+    instance = get_playbill_manager().get(instance_id)
+    members = local_call_contract_files()
+    if set(members) <= set(instance.tree_at(instance.accepted_coordinate().git_oid)):
+        return
+    proposal = submit_member_candidate(
+        instance,
+        members=members,
+        actor_id="operator",
+        proposal_name="local-call-contract",
+        proposal_family="procedure",
+        timestamp="2026-10-29T11:00:00.000000Z",
+    ).proposal
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    approve(proposal.admission.proposal_id)
 
-    for module, name in (
-        (wheels, "wheel_registration"),
-        (registration, "load_registration"),
-        (registration, "registration_from_distribution"),
-        (registration, "parse_bucket_id"),
-        (registration, "load_bucket_vocabulary"),
-        (buckets, "parse_bucket_id"),
-        (registry, "load_bucket_vocabulary"),
-    ):
-        monkeypatch.setattr(module, name, forbidden)
-    monkeypatch.setattr(buckets.BucketSelector, "parse", classmethod(forbidden))
-    monkeypatch.setattr(buckets.BucketSelector, "matches", forbidden)
+
+def noop_contract_files() -> dict[str, bytes]:
+    """The reference noop operation's actual typed input, output and refusals."""
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+
+    definitions = {
+        "noop.echo.request": {"mode": "string?", "text": "string?"},
+        "noop.echo.result": {
+            "echo": "string",
+            "credential_length": "int?",
+            "credential_fingerprint": "string?",
+            "context_repr": "string?",
+        },
+        "noop.echo.refusal.credential_missing": {"ref": "string"},
+        "noop.echo.refusal.provider_declined": {
+            "mode": "string?",
+            "known": "list<string>{max_items: 32}?",
+            "run_id": "string?",
+        },
+    }
+    members = {}
+    for name, fields in definitions.items():
+        contract = Contract.model_validate({"name": name, "version": 1, "fields": fields})
+        members[contract_path(name, 1)] = render_contract(contract)
+    return members
 
 
 def build_local_call(
@@ -53,306 +86,70 @@ def build_local_call(
     increment: int = 1,
     name: str = "local-call",
     backends: tuple[str, ...] = ("local_env",),
-    fixture_id: str = "integer",
-    bucket_metadata: dict[str, Any] | None = None,
+    operations: tuple[str, ...] = ("local.increment",),
+    runtime_requirements: tuple[dict[str, Any], ...] = (),
 ) -> tuple[Path, Path]:
-    """A ``local.increment`` package. ``bucket_metadata`` replaces its declared
-    selectors, selector -> fixture claims and fixtures as given, unchecked."""
-    from cruxible_provider_runtime.canonical import domain_digest
+    """A provider runtime protocol 2.0 package: registration and manifest schema 2.
 
-    project = directory / f"{name}-{increment}"
-    module = project / "src/local_call"
-    module.mkdir(parents=True)
-    (module / "__init__.py").write_text("")
-    (project / "pyproject.toml").write_text("""[project]
-name = "local-call"
-version = "0.2.0"
-requires-python = ">=3.11"
-dependencies = ["cruxible-provider-runtime>=0.2.0"]
-[project.entry-points."cruxible.providers"]
-"local.increment" = "local_call.operation:Increment"
-[build-system]
-requires = ["hatchling==1.32.1"]
-build-backend = "hatchling.build"
-[tool.hatch.build.targets.wheel]
-packages = ["src/local_call"]
-""")
-    resources = {}
-
-    def resource(name, value):
-        content = (
-            value.encode() if isinstance(value, str) else json.dumps(value, sort_keys=True).encode()
-        )
-        (module / name).write_bytes(content)
-        result = {"path": name, "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
-        resources[name] = result
-        return result
-
-    code = """from cruxible_provider_runtime.provider_api import ProviderResult
-
-def classify(value):
-    return {"size":"one"}
-
-class Increment:
-    interface_id = "local.increment"
-    def __call__(self, context):
-        return ProviderResult.ok({"n":context.input["n"]+INCREMENT})
-""".replace("INCREMENT", str(increment))
-    resource("operation.py", code)
-    schema = {"fields": {"n": {"type": "int"}}, "allow_extra": False}
-    definition = {
-        "interface_id": "local.increment",
-        "version": 2,
-        "effect_class": "pure",
-        "contracts": {"input": schema, "output": schema},
-    }
-    digest = domain_digest("cruxible.interface.stub.v1", definition)
-    resource("contract.json", definition)
-    resource(
-        "vocabulary.json",
-        {
-            "interface_id": "local.increment",
-            "version": 1,
-            "status": "draft",
-            "description": "One integer operation",
-            "dimensions": [
-                {
-                    "name": "size",
-                    "description": "input shape",
-                    "classes": [{"id": "one", "description": "one integer"}],
-                }
-            ],
-        },
-    )
-    resource(
-        "fixtures.json",
-        [{"fixture_id": fixture_id, "canonical_input": {"n": 2}, "measured_bucket_id": "size=one"}]
-        if bucket_metadata is None
-        else bucket_metadata["fixtures"],
-    )
-    resource(
-        "manifest.json",
-        {
-            "schema_version": 1,
-            "provider_id": "local-call",
-            "distribution": {"name": "local-call", "version": "0.2.0"},
-            "entrypoint_group": "cruxible.providers",
-            "supported_protocol_majors": [1],
-            "implementations": [
-                {
-                    "interface_id": "local.increment",
-                    "interface_digest": digest,
-                    "entrypoint": "local_call.operation:Increment",
-                    "backends": list(backends),
-                    "requires_extras": [],
-                    "declared_input_buckets": ["size=one"]
-                    if bucket_metadata is None
-                    else bucket_metadata["declared_input_buckets"],
-                    "bucket_conformance": {"size=one": fixture_id}
-                    if bucket_metadata is None
-                    else bucket_metadata["bucket_conformance"],
-                    "declared_endpoints": [],
-                    "capture_contract_families": [],
-                    "deterministic": True,
-                    "side_effects": False,
-                }
-            ],
-        },
-    )
-    resource(
-        "registration.json",
-        {
-            "schema_version": 1,
-            "manifest": resources["manifest.json"],
-            "interfaces": [
-                {
-                    "interface_id": "local.increment",
-                    "interface_digest": digest,
-                    "definition": resources["contract.json"],
-                    "vocabulary": resources["vocabulary.json"],
-                    "classifier": {
-                        "identity": "local.increment.input",
-                        "version": 1,
-                        "entrypoint": "local_call.operation:classify",
-                        "source": resources["operation.py"],
-                    },
-                    "fixtures": resources["fixtures.json"],
-                    "predecessors": [],
-                }
-            ],
-            "runtime_requirements": [],
-        },
-    )
-    lock = project / "uv.lock"
-    lock.write_text(
-        (repository / "packages/cruxible-provider-workspace/uv.lock")
-        .read_text()
-        .replace("cruxible-provider-workspace", "local-call")
-    )
-    if name != "local-call":
-        for file in (project / "pyproject.toml", lock):
-            file.write_text(file.read_text().replace("local-call", name))
-        manifest = json.loads((module / "manifest.json").read_text())
-        manifest["provider_id"] = name
-        manifest["distribution"]["name"] = name
-        reference = resource("manifest.json", manifest)
-        descriptor = json.loads((module / "registration.json").read_text())
-        descriptor["manifest"] = reference
-        resource("registration.json", descriptor)
-    uv = shutil.which("uv")
-    assert uv is not None
-    output = project / "dist"
-    subprocess.run(
-        [uv, "build", "--wheel", "--offline", "--out-dir", str(output), str(project)],
-        check=True,
-        capture_output=True,
-    )
-    return next(output.glob("*.whl")), lock
-
-
-#: The web.fetch buckets an alternative implementation claims by default: the one
-#: static light selector of core's four, under the fixture id core's proof names.
-STATIC_LIGHT = ("source_kind=static_html;access=*;page_weight=light", "web-fetch-static-light")
-
-#: The four conformance fixtures core's web.fetch registration's proofs name. The
-#: provider runtime 0.2.x package format still requires a package to export
-#: fixtures and a classifier beside its definition; core treats them as inert data.
-WEB_FETCH_PACKAGE_FIXTURES: tuple[dict[str, object], ...] = (
-    {
-        "fixture_id": "web-fetch-api-json",
-        "canonical_input": {"url": "https://fixture.invalid/api/v1/measurements.json"},
-        "measured_bucket_id": "source_kind=api_json;access=public;page_weight=light",
-    },
-    {
-        "fixture_id": "web-fetch-rendered",
-        "canonical_input": {"url": "https://fixture.invalid/dashboard", "render": True},
-        "measured_bucket_id": "source_kind=js_rendered;access=public;page_weight=light",
-    },
-    {
-        "fixture_id": "web-fetch-static-light",
-        "canonical_input": {"url": "https://fixture.invalid/articles/tide-gauge-recalibration"},
-        "measured_bucket_id": "source_kind=static_html;access=public;page_weight=light",
-    },
-    {
-        "fixture_id": "web-fetch-static-medium",
-        "canonical_input": {
-            "url": "https://fixture.invalid/reports/water-quality",
-            "max_bytes": 1048576,
-        },
-        "measured_bucket_id": "source_kind=static_html;access=public;page_weight=medium",
-    },
-)
-
-
-def build_web_fetch_alternative(
-    directory: Path,
-    repository: Path,
-    *,
-    name: str = "fetch-alt",
-    claims: tuple[tuple[str, str], ...] = (STATIC_LIGHT,),
-) -> tuple[Path, Path]:
-    """Another implementation of core's web.fetch v3 contract, as a third party ships it.
-
-    It exports the exact v3 definition, core's vocabulary and the fixtures its
-    claims name, with a classifier of its own (the package format requires one;
-    nothing runs it), and embeds its lock so it also installs by name from an
-    index. ``claims`` maps each declared selector to its fixture id.
+    One entrypoint, ``local_call.operation:Increment``, serves every name in
+    ``operations``; the wheel's ``cruxible.providers`` entry points are one per
+    operation, valued by that entrypoint.
     """
 
-    from cruxible_core.providers.web_fetch import (
-        WEB_FETCH_INTERFACE_DEFINITION,
-    )
-    from cruxible_provider_runtime.canonical import domain_digest
-
-    # The lock is the workspace package's, renamed: the same version and runtime.
-    version = "0.2.0"
-    module_name = name.replace("-", "_")
-    project = directory / name
-    module = project / "src" / module_name
+    module_name = "local_call"
+    entrypoint = f"{module_name}.operation:Increment"
+    project = directory / f"{name}-{increment}"
+    module = project / f"src/{module_name}"
     module.mkdir(parents=True)
     (module / "__init__.py").write_text("")
+    entry_points = "".join(f'"{operation}" = "{entrypoint}"\n' for operation in operations)
     (project / "pyproject.toml").write_text(f"""[project]
 name = "{name}"
-version = "{version}"
+version = "0.3.0"
 requires-python = ">=3.11"
-dependencies = ["cruxible-provider-runtime>=0.2.0"]
+dependencies = ["cruxible-provider-runtime>=0.3.0"]
 [project.entry-points."cruxible.providers"]
-"web.fetch" = "{module_name}.operation:Fetch"
-[build-system]
+{entry_points}[build-system]
 requires = ["hatchling==1.32.1"]
 build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/{module_name}"]
-[tool.hatch.build.targets.wheel.extra-metadata]
-"uv.lock" = "uv.lock"
 """)
-    resources: dict[str, dict[str, str]] = {}
 
     def resource(file: str, value: object) -> dict[str, str]:
         content = (
             value.encode() if isinstance(value, str) else json.dumps(value, sort_keys=True).encode()
         )
         (module / file).write_bytes(content)
-        resources[file] = {"path": file, "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
-        return resources[file]
+        return {"path": file, "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
 
     resource(
         "operation.py",
-        """from cruxible_provider_runtime.provider_api import ProviderResult
+        f"""from cruxible_provider_runtime.provider_api import ProviderResult
 
 
-def classify(value):
-    return {"source_kind": "static_html", "access": "public", "page_weight": "light"}
-
-
-class Fetch:
-    interface_id = "web.fetch"
+class Increment:
+    operations = {tuple(operations)!r}
 
     def __call__(self, context):
-        return ProviderResult.failed("not_implemented", "a test double never fetches")
+        return ProviderResult.ok({{"n": context.input["n"] + {increment}}})
 """,
     )
-    definition = dict(WEB_FETCH_INTERFACE_DEFINITION)
-    digest = domain_digest("cruxible.interface.stub.v1", definition)
-    resource("contract.json", definition)
-    # Historical package metadata, independent of the new contract-only registration.
-    from importlib.resources import files
-
-    from cruxible_client.contracts.provider_interfaces import parse_provider_interface
-
-    content = (
-        files("cruxible_core.providers").joinpath("web-fetch-registration-v3.json").read_bytes()
-    )
-    legacy = parse_provider_interface(content, path="provider-interfaces/web.fetch.json")
-    vocabulary = dict(legacy.vocabulary_document)
-    vocabulary["status"] = "draft"
-    resource("vocabulary.json", vocabulary)
-    claimed = {fixture_id for _selector, fixture_id in claims}
-    resource(
-        "fixtures.json",
-        [fixture for fixture in WEB_FETCH_PACKAGE_FIXTURES if fixture["fixture_id"] in claimed],
-    )
-    resource(
+    manifest = resource(
         "manifest.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "provider_id": name,
-            "distribution": {"name": name, "version": version},
+            "distribution": {"name": name, "version": "0.3.0"},
             "entrypoint_group": "cruxible.providers",
-            "supported_protocol_majors": [1],
+            "supported_protocol_majors": [2],
             "implementations": [
                 {
-                    "interface_id": "web.fetch",
-                    "interface_digest": digest,
-                    "entrypoint": f"{module_name}.operation:Fetch",
-                    "backends": ["local_env"],
+                    "entrypoint": entrypoint,
+                    "backends": list(backends),
                     "requires_extras": [],
-                    "declared_input_buckets": sorted(selector for selector, _id in claims),
-                    "bucket_conformance": dict(claims),
-                    "declared_endpoints": ["dynamic:target-from-run-input"],
-                    "capture_contract_families": [],
-                    "deterministic": False,
-                    "side_effects": False,
+                    "declared_endpoints": [],
+                    "deterministic": True,
                 }
             ],
         },
@@ -360,25 +157,19 @@ class Fetch:
     resource(
         "registration.json",
         {
-            "schema_version": 1,
-            "manifest": resources["manifest.json"],
-            "interfaces": [
+            "schema_version": 2,
+            "manifest": manifest,
+            "operations": [
                 {
-                    "interface_id": "web.fetch",
-                    "interface_digest": digest,
-                    "definition": resources["contract.json"],
-                    "vocabulary": resources["vocabulary.json"],
-                    "classifier": {
-                        "identity": f"{name}.web.fetch",
-                        "version": 1,
-                        "entrypoint": f"{module_name}.operation:classify",
-                        "source": resources["operation.py"],
-                    },
-                    "fixtures": resources["fixtures.json"],
-                    "predecessors": [],
+                    "name": operation,
+                    "in": LOCAL_CALL_IN,
+                    "out": LOCAL_CALL_OUT,
+                    "effect": "pure",
+                    "entrypoint": entrypoint,
                 }
+                for operation in sorted(operations)
             ],
-            "runtime_requirements": [],
+            "runtime_requirements": list(runtime_requirements),
         },
     )
     lock = project / "uv.lock"

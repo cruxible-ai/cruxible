@@ -48,16 +48,12 @@ def _registration_document() -> PackageRegistrationDocumentV1:
     manifest = ProviderRuntimeManifest(
         provider_id=NAME,
         distribution=ProviderDistributionRef(name=NAME, version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
             ProviderImplementationManifest(
-                interface_id="compute",
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint=_ENTRYPOINT,
                 backends=("local_env",),
-                declared_input_buckets=(),
                 deterministic=True,
-                side_effects=False,
             ),
         ),
     )

@@ -264,14 +264,16 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderSpawnDeadline,
 )
 from cruxible_core.providers.provider_outcomes import (
+    RefusalDetailCheck,
     map_provider_envelope,
     map_provider_refusal,
+    operation_refusal_is_declared,
     provider_canonical_value,
+    provider_refusal_is_absorbable,
 )
 from cruxible_core.providers.provider_runtime_contract import (
-    PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET,
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
     ProviderRuntimeWireError,
 )
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -1309,7 +1311,7 @@ class ProviderRuntimeInvokerProtocol(Protocol):
         self,
         *,
         occurrence: ProviderExternalOccurrencePlan,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         invocation_id: str,
         bound: BoundLocalProviderV1,
         deadline: ProviderSpawnDeadline,
@@ -2491,11 +2493,20 @@ class ProcedureBoundaryRefused(ExecutionError):
 
 
 class _ProviderNodeRefusal(_RunRefusal):
-    def __init__(self, outcome: ProviderInvocationOutcome, *, node_id: str) -> None:
+    """A node refusal from a Provider call.
+
+    A refusal the bound operation declares is served as ``operation_refused``
+    with the operation's own code as its ``detail_code``; a runtime refusal
+    (a budget, say) keeps its runtime code.
+    """
+
+    def __init__(self, outcome: ProviderInvocationOutcome, *, node_id: str, declared: bool) -> None:
+        code = outcome.code or "operation_refused"
         super().__init__(
-            outcome.code or "provider_declined",
+            "operation_refused" if declared else code,
             outcome.message or "Provider invocation refused.",
             node_id=node_id,
+            detail_code=code if declared else None,
             details=outcome.detail,
         )
         self.outcome = outcome
@@ -2634,20 +2645,6 @@ class _RunState:
         return frozenset() if found is None else found.item(index)
 
 
-def provider_operation_context(occurrence: ProviderExternalOccurrencePlan) -> dict[str, object]:
-    """The run context's additive region: the bound operation, signature and build.
-
-    Protocol 1.x children ignore it; a provider serving several operations from
-    one entrypoint reads ``operation`` here.
-    """
-
-    return {
-        "operation": occurrence.operation.name,
-        "operation_signature_digest": occurrence.operation_signature_digest,
-        "build_digest": occurrence.provider_artifact_digest,
-    }
-
-
 def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
     return (
         admission.hard_caps.max_items
@@ -2664,12 +2661,6 @@ def _kernel_list_boundary(
     if not isinstance(field_path, str):
         return None
     return (f"contract-out:{contract.target.name}", field_path)
-
-
-# Refusal codes core itself synthesizes around a Provider call -- never
-# returned by the Provider -- so they never need the admitted operation to
-# declare them (see ``ProcedureExecutor._typed_refusal``).
-_CORE_SYNTHESIZED_REFUSAL_CODES: frozenset[str] = frozenset({"budget_wall_clock"})
 
 
 class ProcedureExecutor:
@@ -4158,11 +4149,11 @@ class ProcedureExecutor:
                 occurrence=occurrence,
             )
         except _ProviderNodeRefusal as exc:
-            declared = occurrence.operation.refusals.get(exc.outcome.code or "")
             # Only a typed refusal the operation declares absorbable, under a
             # rule that omits an unavailable input, is absorbed.
             absorbable = (
-                declared is not None and declared.absorbable and rule.on_unavailable == "omit"
+                provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
+                and rule.on_unavailable == "omit"
             )
             if not absorbable:
                 raise
@@ -5409,63 +5400,30 @@ class ProcedureExecutor:
             ) from exc
         return normalize_canonical(value)
 
-    def _typed_refusal(
-        self,
-        occurrence: ProviderExternalOccurrencePlan,
-        outcome: ProviderInvocationOutcome,
-        *,
-        node_id: str,
-        core_synthesized: bool,
-    ) -> None:
-        """A refusal code the operation declares carries a detail of its Contract.
+    def _refusal_detail_check(
+        self, occurrence: ProviderExternalOccurrencePlan
+    ) -> RefusalDetailCheck:
+        """Check a declared refusal's detail against the Contract the operation pins."""
 
-        An operation's ``refusals`` is its complete domain vocabulary (F10): a
-        provider-declared node refusal (``outcome.outcome_class ==
-        "node_refusal"``) whose code the operation never declared is a
-        protocol violation, never an undeclared pass-through. Core/transport
-        failures are a different outcome class and never reach here.
-
-        ``budget_wall_clock`` is the one exception, and only when
-        ``core_synthesized`` is true: it is core's own pre-spawn/mid-invoke
-        deadline check (``ProviderSpawnDeadline`` and the executor's
-        ``effective_wall_clock_seconds`` gate), synthesized before or around
-        the Provider call rather than returned by it. ``core_synthesized``
-        reflects where the caller built ``outcome`` from -- a
-        ``ProviderLocalRuntimeRefused``/``ProviderRuntimeWireError`` that core
-        raised itself, never a parsed Provider envelope -- so a provider that
-        returns ``budget_wall_clock`` through its own envelope is not
-        exempted and still needs operation declaration.
-        """
-
-        if core_synthesized and outcome.code in _CORE_SYNTHESIZED_REFUSAL_CODES:
-            return
-        declared = occurrence.operation.refusals.get(outcome.code or "")
-        if declared is None:
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={
-                    "node_id": node_id,
-                    "reason": (
-                        f"operation {occurrence.operation.name!r} declares no refusal "
-                        f"{outcome.code!r}"
-                    ),
-                },
-            )
         resolve = closure_lookup(occurrence.contracts)
-        contract = resolve(declared.contract)
-        detail = outcome.detail if isinstance(outcome.detail, dict) else {}
-        try:
+
+        def check(code: str, detail: object) -> tuple[str, ...] | None:
+            declared = occurrence.operation.refusals[code]
+            contract = resolve(declared.contract)
             if contract is None:
-                raise OperationValueRefused((f"{declared.contract.spelling} is not in the plan",))
-            validate_operation_value(
-                detail, contract, resolve=resolve, enum_members=self.enum_resolver
-            )
-        except OperationValueRefused as exc:
-            raise _RunRefusal(
-                "contract_output_refused",
-                f"typed refusal {outcome.code!r} detail is not {declared.contract.spelling}: {exc}",
-                node_id=node_id,
-            ) from exc
+                return (f"{declared.contract.spelling} is not in the plan",)
+            try:
+                validate_operation_value(
+                    provider_canonical_value(detail) if isinstance(detail, dict) else detail,
+                    contract,
+                    resolve=resolve,
+                    enum_members=self.enum_resolver,
+                )
+            except OperationValueRefused as exc:
+                return exc.problems or (str(exc),)
+            return None
+
+        return check
 
     def _invoke_provider_v4(
         self,
@@ -5666,13 +5624,13 @@ class ProcedureExecutor:
         try:
             if wall_clock_seconds <= 0:
                 raise ProviderLocalRuntimeRefused("budget_wall_clock", no_budget_message)
-            context = ProviderRuntimeRunContextV1(
+            context = ProviderRuntimeRunContext(
                 protocol_version=occurrence.local_execution.protocol_version,
                 run_id=admission.run_id,
-                # Protocol 1.x names the served operation in its interface
-                # fields; the bound build and signature ride in ``additive``.
-                interface_id=occurrence.operation.name,
-                interface_digest=occurrence.operation_signature_digest,
+                # One operation of one build: exactly the admitted binding.
+                operation=occurrence.operation.name,
+                operation_signature_digest=occurrence.operation_signature_digest,
+                build_digest=occurrence.provider_artifact_digest,
                 implementation_digest=occurrence.implementation_digest,
                 entrypoint=occurrence.local_execution.entrypoint,
                 coordinates={
@@ -5681,15 +5639,13 @@ class ProcedureExecutor:
                     "invocation_id": invocation_id,
                 },
                 input=payload,
-                input_bucket=PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET,
                 capture_contract=occurrence.capture_contract_digest,
-                budgets=ProviderRuntimeBudgetsV1(
+                budgets=ProviderRuntimeBudgets(
                     wall_clock_seconds=wall_clock_seconds,
                     output_bytes=budget.runtime_output_bytes_cap,
                     cost_units=None,
                 ),
                 declared_endpoints=occurrence.local_execution.declared_endpoints,
-                additive=provider_operation_context(occurrence),
             )
             driver_result = self.provider_runtime_invoker.invoke_provider(
                 occurrence=occurrence,
@@ -5698,20 +5654,23 @@ class ProcedureExecutor:
                 bound=bound,
                 deadline=deadline,
             )
-            outcome = map_provider_envelope(driver_result.envelope)
-            core_synthesized = False
+            # The provider's word: a harness runtime code or one the operation
+            # declares, its detail checked before it is attributed to either.
+            outcome = map_provider_envelope(
+                driver_result.envelope,
+                operation=occurrence.operation,
+                check_detail=self._refusal_detail_check(occurrence),
+            )
         except ProviderLocalRuntimeRefused as exc:
-            # Core itself raised this (bind/spawn/deadline failure), never a
-            # parsed Provider envelope: see _typed_refusal's core_synthesized.
+            # Core itself raised this (bind/spawn/deadline/budget failure), never
+            # a parsed Provider envelope, so its runtime code is core's own.
             outcome = map_provider_refusal(
                 exc.code,
                 message=str(exc),
                 detail=exc.details,
             )
-            core_synthesized = True
         except ProviderRuntimeWireError as exc:
             outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
-            core_synthesized = True
         if driver_result is None:
             egress = ProviderEgressObservation(
                 declared_endpoints=tuple(
@@ -5819,10 +5778,11 @@ class ProcedureExecutor:
         state.invocation_receipt_digests.append(receipt_digest)
         if outcome.status != "ok":
             if outcome.outcome_class == "node_refusal":
-                self._typed_refusal(
-                    occurrence, outcome, node_id=node_id, core_synthesized=core_synthesized
+                raise _ProviderNodeRefusal(
+                    outcome,
+                    node_id=node_id,
+                    declared=operation_refusal_is_declared(occurrence.operation, outcome),
                 )
-                raise _ProviderNodeRefusal(outcome, node_id=node_id)
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
                     outcome.code or "provider_execution_error",

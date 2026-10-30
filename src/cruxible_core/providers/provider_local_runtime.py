@@ -62,14 +62,14 @@ from cruxible_core.providers.provider_process_leases import (
 from cruxible_core.providers.provider_runtime_contract import (
     MAX_PROVIDER_SECRET_BUNDLE_BYTES,
     PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
-    PROVIDER_RUNTIME_PROTOCOL,
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeResultEnvelopeV1,
-    ProviderRuntimeRunContextV1,
-    ProviderRuntimeSecretChannelSpecV1,
-    ProviderRuntimeSecretRefV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeResultEnvelope,
+    ProviderRuntimeRunContext,
+    ProviderRuntimeSecretChannelSpec,
+    ProviderRuntimeSecretRef,
     ProviderRuntimeWireError,
     parse_provider_runtime_result,
+    require_supported_protocol,
 )
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
@@ -413,7 +413,7 @@ class ProviderSpawnDeadline:
 class ProviderDriverOutcomeV1:
     """Local result whose ``duration_seconds`` reads VALIDITY WINDOW."""
 
-    envelope: ProviderRuntimeResultEnvelopeV1
+    envelope: ProviderRuntimeResultEnvelope
     stderr: str
     duration_seconds: float
     egress: ProviderEgressObservation
@@ -562,7 +562,7 @@ class ProviderLocalRuntimeInvoker:
             occurrence.operation.signature()
         ):
             raise ProviderLocalRuntimeRefused(
-                "unknown_interface",
+                "acceptance_divergence",
                 "the admitted operation's signature does not reproduce its recorded digest",
             )
         bound = self._driver.bind(
@@ -582,7 +582,7 @@ class ProviderLocalRuntimeInvoker:
         self,
         *,
         occurrence: ProviderExternalOccurrencePlan,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         invocation_id: str,
         bound: BoundLocalProviderV1,
         deadline: ProviderSpawnDeadline,
@@ -665,6 +665,44 @@ def translate_provider_budget(
     )
 
 
+def require_exact_binding(
+    context: ProviderRuntimeRunContext, binding: VerifiedProviderBinding
+) -> None:
+    """The run context is exactly the admitted binding, or the run refuses.
+
+    Checked before any secret is resolved or any child exists: the operation,
+    its signature, the governed build, the entrypoint and the implementation
+    the child is told are the ones the Line bound, at the protocol major core
+    speaks.
+    """
+
+    try:
+        require_supported_protocol(context.protocol_version, where="the run context")
+    except ProviderRuntimeWireError as exc:
+        raise ProviderLocalRuntimeRefused("unsupported_protocol", str(exc)) from exc
+    if context.protocol_version != binding.protocol_version:
+        raise ProviderLocalRuntimeRefused(
+            "unsupported_protocol", "run context protocol differs from the admitted binding"
+        )
+    for label, told, admitted in (
+        ("operation", context.operation, binding.operation),
+        (
+            "operation signature",
+            context.operation_signature_digest,
+            binding.operation_signature_digest,
+        ),
+        ("build", context.build_digest, binding.provider_artifact_digest),
+        ("entrypoint", context.entrypoint, binding.entrypoint),
+        ("implementation", context.implementation_digest, binding.implementation_digest),
+    ):
+        if told != admitted:
+            raise ProviderLocalRuntimeRefused(
+                "acceptance_divergence",
+                f"run context names another {label} than the admitted binding",
+                details={"field": label},
+            )
+
+
 class LocalProviderExecutionDriver:
     """Verify a pre-materialized local environment and invoke its runtime child."""
 
@@ -686,7 +724,7 @@ class LocalProviderExecutionDriver:
             )
         if operation not in provider.operations:
             raise ProviderLocalRuntimeRefused(
-                "undeclared_interface", "the bound operation is not declared by this build"
+                "undeclared_operation", "the bound operation is not declared by this build"
             )
         implementation_record = next(
             (
@@ -705,14 +743,12 @@ class LocalProviderExecutionDriver:
                 item
                 for item in provider.runtime_artifact.manifest.implementations
                 if item.entrypoint == implementation_record.entrypoint
-                and item.interface_id == implementation_record.interface_id
-                and item.interface_digest == implementation_record.interface_digest
             ),
             None,
         )
         if manifest is None or operation.entrypoint != implementation_record.entrypoint:
             raise ProviderLocalRuntimeRefused(
-                "ambiguous_implementation", "implementation is absent from accepted closure"
+                "acceptance_divergence", "implementation is absent from accepted closure"
             )
         local_ref = next(
             (
@@ -867,7 +903,7 @@ class LocalProviderExecutionDriver:
     def invoke(
         self,
         binding: BoundLocalProviderV1,
-        context: ProviderRuntimeRunContextV1,
+        context: ProviderRuntimeRunContext,
         *,
         secret_plan: ProviderSecretResolutionPlan,
         secret_resolvers: ProviderSecretResolverRegistry,
@@ -880,14 +916,7 @@ class LocalProviderExecutionDriver:
         # run this profile will refuse must not decrypt customer secret material
         # into the daemon on its way to the refusal.
         enforce_customer_code_execution_supported()
-        if context.implementation_digest != binding.binding.implementation_digest:
-            raise ProviderLocalRuntimeRefused(
-                "provider_protocol_violation", "run context names another implementation"
-            )
-        if context.protocol_version != PROVIDER_RUNTIME_PROTOCOL:
-            raise ProviderLocalRuntimeRefused(
-                "unsupported_protocol", "run context protocol is unsupported"
-            )
+        require_exact_binding(context, binding.binding)
         unknown_dynamic = tuple(
             endpoint
             for endpoint in binding.binding.declared_endpoints
@@ -906,10 +935,10 @@ class LocalProviderExecutionDriver:
             join_timeout_seconds=process_leases.secret_writer_join_timeout_seconds,
         ) as secret_fd:
             channel = (
-                ProviderRuntimeSecretChannelSpecV1(
+                ProviderRuntimeSecretChannelSpec(
                     fd=secret_fd,
                     refs=tuple(
-                        ProviderRuntimeSecretRefV1(ref=item.ref, purpose=item.purpose)
+                        ProviderRuntimeSecretRef(ref=item.ref, purpose=item.purpose)
                         for item in secret_plan.references
                     ),
                 )
@@ -1339,7 +1368,7 @@ def _run_child(
     *,
     entrypoint: str,
     context: bytes,
-    budgets: ProviderRuntimeBudgetsV1,
+    budgets: ProviderRuntimeBudgets,
     secret_fd: int | None,
     invocation_id: str,
     process_leases: ProviderProcessLeaseStore,
@@ -1508,7 +1537,7 @@ def _collect_child_output(
     process: subprocess.Popen[bytes],
     *,
     context: bytes,
-    budgets: ProviderRuntimeBudgetsV1,
+    budgets: ProviderRuntimeBudgets,
     started: float,
     writer_join_timeout_seconds: float,
     observe_descendants: Callable[[], None] | None = None,

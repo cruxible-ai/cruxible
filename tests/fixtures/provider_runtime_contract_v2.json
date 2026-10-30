@@ -1,0 +1,1598 @@
+{
+  "digest_goldens": {
+    "implementation": {
+      "sample-echo": "sha256:85047346b24f10fb8012f83115082f4460f08db4929e8277bb816beb173a4ea5",
+      "sample-echo-other-distribution": "sha256:fb0e77db333e122649cecdff18f189853dfcf3c49a4859eb446467fcdddb3ca0",
+      "sample-echo-other-entrypoint": "sha256:59a1ea62638246a0f244e98220334522cf19a9f56861b0c3e40ad536027524da"
+    },
+    "materialization": {
+      "linux-cp311": "sha256:b9fd12a340526c7028fe78ad86abc75ccffd570ade80c4a544027fa70ca26f6a",
+      "macos-arm-cp311": "sha256:a78c7107d36b69bad4cfa5d11172fd7addecc00eb5532e62b1ffa87c4d51c062",
+      "windows-cp312": "sha256:c25078f483310e47c5b845f0f2f14a9ea1d4257827741a9cb19b82da3a3065bd"
+    },
+    "operation_signature": {
+      "external-read": "sha256:82688773bd6b4b4fbf681837c4884aeb37d56acc7a93b8f8134c38e49408dc19",
+      "other-out": "sha256:4b40db407fce118991b93e85a276f9830807621e57d968f010ba986f740981fb",
+      "pure": "sha256:3c2d2c67e7aa810e74970998493b3c93716fc4df5b94ab5ac2c3b71cc1cb4b02"
+    }
+  },
+  "domains": {
+    "artifact": "cruxible.provider.artifact.v1",
+    "implementation": "cruxible.provider.implementation.v2",
+    "manifest": "cruxible.provider.manifest.v1",
+    "materialization": "cruxible.provider.materialization.v1",
+    "operation_signature": "cruxible-operation-signature-v1"
+  },
+  "dynamic_endpoint_forms": [
+    "dynamic:target-from-configuration",
+    "dynamic:target-from-run-input"
+  ],
+  "harness_refusal_codes": [
+    "non_finite_output",
+    "provider_protocol_violation",
+    "undeclared_operation",
+    "unknown_run_context_field",
+    "unresolved_secret_ref",
+    "unsupported_protocol"
+  ],
+  "implementation_cases": {
+    "sample-echo": {
+      "distribution_sha256": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "entrypoint": "sample_provider.impl:Echo"
+    },
+    "sample-echo-other-distribution": {
+      "distribution_sha256": "sha256:3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+      "entrypoint": "sample_provider.impl:Echo"
+    },
+    "sample-echo-other-entrypoint": {
+      "distribution_sha256": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "entrypoint": "sample_provider.impl:EchoFast"
+    }
+  },
+  "invalid_vectors": {
+    "context_protocol_1": {
+      "additive": {
+        "future": {
+          "kept": true
+        }
+      },
+      "budgets": {
+        "cost_units": null,
+        "output_bytes": 4096,
+        "wall_clock_seconds": 3.0
+      },
+      "capture_contract": null,
+      "coordinates": {
+        "generation": 7
+      },
+      "declared_endpoints": [
+        "https://example.test"
+      ],
+      "entrypoint": "demo.echo:Echo",
+      "implementation_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "input": {
+        "value": "hello"
+      },
+      "input_bucket": "legacy=none",
+      "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "interface_id": "demo.echo",
+      "protocol_version": "1.0",
+      "run_id": "RUN-contract-vector",
+      "secret_channel": {
+        "fd": 3,
+        "kind": "fd",
+        "refs": [
+          {
+            "purpose": "test",
+            "ref": "operator/demo"
+          }
+        ]
+      }
+    },
+    "context_unknown_field": {
+      "additive": {
+        "future": {
+          "kept": true
+        }
+      },
+      "budgets": {
+        "cost_units": null,
+        "output_bytes": 4096,
+        "wall_clock_seconds": 3.0
+      },
+      "build_digest": "sha256:4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+      "capture_contract": null,
+      "coordinates": {
+        "generation": 7
+      },
+      "declared_endpoints": [
+        "https://example.test"
+      ],
+      "entrypoint": "demo.echo:Echo",
+      "implementation_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "input": {
+        "value": "hello"
+      },
+      "not_additive": true,
+      "operation": "demo.echo",
+      "operation_signature_digest": "sha256:3c2d2c67e7aa810e74970998493b3c93716fc4df5b94ab5ac2c3b71cc1cb4b02",
+      "protocol_version": "2.0",
+      "run_id": "RUN-contract-vector",
+      "secret_channel": {
+        "fd": 3,
+        "kind": "fd",
+        "refs": [
+          {
+            "purpose": "test",
+            "ref": "operator/demo"
+          }
+        ]
+      }
+    },
+    "result_missing_output": {
+      "error": null,
+      "output": null,
+      "protocol_version": "2.0",
+      "refusal": null,
+      "run_id": "RUN-contract-vector",
+      "status": "ok",
+      "trace": {
+        "endpoints_contacted": [],
+        "events": [],
+        "metrics": {}
+      }
+    },
+    "result_protocol_1": {
+      "error": null,
+      "output": {
+        "echo": "hello"
+      },
+      "protocol_version": "1.0",
+      "refusal": null,
+      "run_id": "RUN-contract-vector",
+      "status": "ok",
+      "trace": {
+        "endpoints_contacted": [],
+        "events": [],
+        "metrics": {}
+      }
+    }
+  },
+  "invocation_outcome_receipt_fields": [
+    "build_digest",
+    "duration_seconds",
+    "dynamic_endpoint_forms",
+    "endpoints_contacted",
+    "implementation_digest",
+    "materialization_digest",
+    "operation",
+    "operation_signature_digest",
+    "protocol_version",
+    "status"
+  ],
+  "operation_name_pattern": "^[a-z][a-z0-9_.-]{0,255}$",
+  "operation_refusal_code_pattern": "^[a-z][a-z0-9_]{0,63}$",
+  "operation_signature_cases": {
+    "external-read": {
+      "effect": "external_read",
+      "in_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "out_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+    },
+    "other-out": {
+      "effect": "pure",
+      "in_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "out_digest": "sha256:3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+    },
+    "pure": {
+      "effect": "pure",
+      "in_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "out_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+    }
+  },
+  "protocol_version": "2.0",
+  "runtime_refusal_codes": [
+    "acceptance_divergence",
+    "air_gapped_cache_miss",
+    "artifact_hash_mismatch",
+    "budget_cost",
+    "budget_output_size",
+    "budget_wall_clock",
+    "cache_integrity",
+    "cache_permissions",
+    "environment_divergence",
+    "image_provenance_mismatch",
+    "index_not_pinned",
+    "index_redirect",
+    "lock_ambiguous_fork",
+    "lock_bytes_mismatch",
+    "lock_mismatch",
+    "lock_missing_hash",
+    "manifest_divergence",
+    "network_disabled",
+    "no_compatible_artifact",
+    "non_finite_output",
+    "provider_protocol_violation",
+    "secret_bundle_too_large",
+    "secret_leak",
+    "unaccepted_provider",
+    "undeclared_egress",
+    "undeclared_operation",
+    "undeclared_refusal",
+    "unknown_extra",
+    "unknown_manifest_field",
+    "unknown_run_context_field",
+    "unresolvable_source",
+    "unresolved_secret_ref",
+    "unsupported_backend",
+    "unsupported_protocol"
+  ],
+  "runtime_version": "0.3.0",
+  "schemas": {
+    "Budgets": {
+      "additionalProperties": false,
+      "description": "Caps the executor enforces out-of-process.\n\n``cost_units`` travels with the run so a provider can report against it, but\nRP-0 enforces only the two caps it can enforce locally: wall clock and output\nsize. Cost enforcement belongs to the metering substrate.",
+      "properties": {
+        "cost_units": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Units"
+        },
+        "output_bytes": {
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "wall_clock_seconds": {
+          "title": "Wall Clock Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wall_clock_seconds",
+        "output_bytes"
+      ],
+      "title": "Budgets",
+      "type": "object"
+    },
+    "ContractRef": {
+      "additionalProperties": false,
+      "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+      "properties": {
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "maximum": 999999999,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "ContractRef",
+      "type": "object"
+    },
+    "ImplementationManifest": {
+      "additionalProperties": false,
+      "description": "One entrypoint inside a provider package: how and where it runs.",
+      "properties": {
+        "backends": {
+          "items": {
+            "enum": [
+              "local_env",
+              "container"
+            ],
+            "type": "string"
+          },
+          "title": "Backends",
+          "type": "array"
+        },
+        "declared_endpoints": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Endpoints",
+          "type": "array"
+        },
+        "deterministic": {
+          "title": "Deterministic",
+          "type": "boolean"
+        },
+        "entrypoint": {
+          "description": "module path and object, e.g. 'pkg.mod:Object'",
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "requires_extras": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Requires Extras",
+          "type": "array"
+        }
+      },
+      "required": [
+        "entrypoint",
+        "backends",
+        "deterministic"
+      ],
+      "title": "ImplementationManifest",
+      "type": "object"
+    },
+    "OperationRefusal": {
+      "$defs": {
+        "ContractRef": {
+          "additionalProperties": false,
+          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "properties": {
+            "digest": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Digest"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "version": {
+              "maximum": 999999999,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "title": "ContractRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "One typed refusal an operation may return: its detail Contract.\n\n``absorbable`` declares that the refusal means \"this input is unavailable\",\nwhich a Line acquisition rule may absorb instead of failing the run.",
+      "properties": {
+        "absorbable": {
+          "default": false,
+          "title": "Absorbable",
+          "type": "boolean"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "required": [
+        "contract"
+      ],
+      "title": "OperationRefusal",
+      "type": "object"
+    },
+    "PackageRegistration": {
+      "$defs": {
+        "ContractRef": {
+          "additionalProperties": false,
+          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "properties": {
+            "digest": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Digest"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "version": {
+              "maximum": 999999999,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "title": "ContractRef",
+          "type": "object"
+        },
+        "EnumeratedField": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "at"
+          ],
+          "title": "EnumeratedField",
+          "type": "object"
+        },
+        "OperationEnumeration": {
+          "additionalProperties": false,
+          "description": "What a provider-parsed operation enumerates. Declared and recorded, not verified.",
+          "properties": {
+            "capture": {
+              "title": "Capture",
+              "type": "string"
+            },
+            "fields": {
+              "additionalProperties": {
+                "$ref": "#/$defs/EnumeratedField"
+              },
+              "maxProperties": 256,
+              "minProperties": 1,
+              "title": "Fields",
+              "type": "object"
+            },
+            "selector": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          "required": [
+            "capture",
+            "selector",
+            "fields"
+          ],
+          "title": "OperationEnumeration",
+          "type": "object"
+        },
+        "OperationRefusal": {
+          "additionalProperties": false,
+          "description": "One typed refusal an operation may return: its detail Contract.\n\n``absorbable`` declares that the refusal means \"this input is unavailable\",\nwhich a Line acquisition rule may absorb instead of failing the run.",
+          "properties": {
+            "absorbable": {
+              "default": false,
+              "title": "Absorbable",
+              "type": "boolean"
+            },
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "required": [
+            "contract"
+          ],
+          "title": "OperationRefusal",
+          "type": "object"
+        },
+        "ProviderOperation": {
+          "additionalProperties": false,
+          "description": "One operation a provider package serves.",
+          "properties": {
+            "effect": {
+              "enum": [
+                "pure",
+                "external_read",
+                "external_mutation"
+              ],
+              "title": "Effect",
+              "type": "string"
+            },
+            "entrypoint": {
+              "title": "Entrypoint",
+              "type": "string"
+            },
+            "enumerates": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OperationEnumeration"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "in": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "out": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "refusals": {
+              "additionalProperties": {
+                "$ref": "#/$defs/OperationRefusal"
+              },
+              "title": "Refusals",
+              "type": "object"
+            }
+          },
+          "required": [
+            "name",
+            "in",
+            "out",
+            "effect",
+            "entrypoint"
+          ],
+          "title": "ProviderOperation",
+          "type": "object"
+        },
+        "ResourceRef": {
+          "additionalProperties": false,
+          "properties": {
+            "digest": {
+              "title": "Digest",
+              "type": "string"
+            },
+            "path": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "digest"
+          ],
+          "title": "ResourceRef",
+          "type": "object"
+        },
+        "RuntimeRequirement": {
+          "additionalProperties": false,
+          "description": "Something an implementation's environment needs beyond its lock.\n\nKeyed by the manifest implementation it belongs to: its ``entrypoint``.",
+          "properties": {
+            "description": {
+              "title": "Description",
+              "type": "string"
+            },
+            "entrypoint": {
+              "title": "Entrypoint",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "python_extra",
+                "runtime_resource"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "probe_entrypoint": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Probe Entrypoint"
+            }
+          },
+          "required": [
+            "entrypoint",
+            "kind",
+            "name",
+            "description"
+          ],
+          "title": "RuntimeRequirement",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "``registration.json``, schema 2.",
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/ResourceRef"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ProviderOperation"
+          },
+          "minItems": 1,
+          "title": "Operations",
+          "type": "array"
+        },
+        "runtime_requirements": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RuntimeRequirement"
+          },
+          "title": "Runtime Requirements",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": 2,
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "manifest",
+        "operations"
+      ],
+      "title": "PackageRegistration",
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "major": {
+          "title": "Major",
+          "type": "integer"
+        },
+        "minor": {
+          "title": "Minor",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "major",
+        "minor"
+      ],
+      "title": "ProtocolVersion",
+      "type": "object"
+    },
+    "ProviderErrorPayload": {
+      "additionalProperties": false,
+      "description": "A provider-reported failure (an attempted answer that did not succeed).",
+      "properties": {
+        "detail": {
+          "additionalProperties": true,
+          "title": "Detail",
+          "type": "object"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "ProviderErrorPayload",
+      "type": "object"
+    },
+    "ProviderManifest": {
+      "$defs": {
+        "DistributionRef": {
+          "additionalProperties": false,
+          "description": "Names the distribution this manifest belongs to.\n\nThe distribution's own sha256 is deliberately absent: a manifest shipped\ninside an artifact cannot contain that artifact's hash. The hash is carried\nby the accepted Provider artifact and is what the implementation digest\nconsumes.",
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "version": {
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "title": "DistributionRef",
+          "type": "object"
+        },
+        "ImplementationManifest": {
+          "additionalProperties": false,
+          "description": "One entrypoint inside a provider package: how and where it runs.",
+          "properties": {
+            "backends": {
+              "items": {
+                "enum": [
+                  "local_env",
+                  "container"
+                ],
+                "type": "string"
+              },
+              "title": "Backends",
+              "type": "array"
+            },
+            "declared_endpoints": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Declared Endpoints",
+              "type": "array"
+            },
+            "deterministic": {
+              "title": "Deterministic",
+              "type": "boolean"
+            },
+            "entrypoint": {
+              "description": "module path and object, e.g. 'pkg.mod:Object'",
+              "title": "Entrypoint",
+              "type": "string"
+            },
+            "requires_extras": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Requires Extras",
+              "type": "array"
+            }
+          },
+          "required": [
+            "entrypoint",
+            "backends",
+            "deterministic"
+          ],
+          "title": "ImplementationManifest",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The whole package-side manifest.",
+      "properties": {
+        "distribution": {
+          "$ref": "#/$defs/DistributionRef"
+        },
+        "entrypoint_group": {
+          "const": "cruxible.providers",
+          "default": "cruxible.providers",
+          "title": "Entrypoint Group",
+          "type": "string"
+        },
+        "implementations": {
+          "items": {
+            "$ref": "#/$defs/ImplementationManifest"
+          },
+          "title": "Implementations",
+          "type": "array"
+        },
+        "provider_id": {
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 2,
+          "default": 2,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "supported_protocol_majors": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Supported Protocol Majors",
+          "type": "array"
+        }
+      },
+      "required": [
+        "provider_id",
+        "distribution",
+        "supported_protocol_majors",
+        "implementations"
+      ],
+      "title": "ProviderManifest",
+      "type": "object"
+    },
+    "ProviderOperation": {
+      "$defs": {
+        "ContractRef": {
+          "additionalProperties": false,
+          "description": "A pin to one Contract version. Packages write ``name@N``; the install adds the digest.",
+          "properties": {
+            "digest": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Digest"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "version": {
+              "maximum": 999999999,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "title": "ContractRef",
+          "type": "object"
+        },
+        "EnumeratedField": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "at"
+          ],
+          "title": "EnumeratedField",
+          "type": "object"
+        },
+        "OperationEnumeration": {
+          "additionalProperties": false,
+          "description": "What a provider-parsed operation enumerates. Declared and recorded, not verified.",
+          "properties": {
+            "capture": {
+              "title": "Capture",
+              "type": "string"
+            },
+            "fields": {
+              "additionalProperties": {
+                "$ref": "#/$defs/EnumeratedField"
+              },
+              "maxProperties": 256,
+              "minProperties": 1,
+              "title": "Fields",
+              "type": "object"
+            },
+            "selector": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          "required": [
+            "capture",
+            "selector",
+            "fields"
+          ],
+          "title": "OperationEnumeration",
+          "type": "object"
+        },
+        "OperationRefusal": {
+          "additionalProperties": false,
+          "description": "One typed refusal an operation may return: its detail Contract.\n\n``absorbable`` declares that the refusal means \"this input is unavailable\",\nwhich a Line acquisition rule may absorb instead of failing the run.",
+          "properties": {
+            "absorbable": {
+              "default": false,
+              "title": "Absorbable",
+              "type": "boolean"
+            },
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "required": [
+            "contract"
+          ],
+          "title": "OperationRefusal",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "One operation a provider package serves.",
+      "properties": {
+        "effect": {
+          "enum": [
+            "pure",
+            "external_read",
+            "external_mutation"
+          ],
+          "title": "Effect",
+          "type": "string"
+        },
+        "entrypoint": {
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "enumerates": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationEnumeration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "in": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "out": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "refusals": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationRefusal"
+          },
+          "title": "Refusals",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "in",
+        "out",
+        "effect",
+        "entrypoint"
+      ],
+      "title": "ProviderOperation",
+      "type": "object"
+    },
+    "Refusal": {
+      "additionalProperties": false,
+      "description": "A typed refusal, serialisable into receipts and result envelopes.\n\n``code`` is either one of the runtime's :class:`RefusalCode` values or a\ncode the bound operation declares. Which one is decided by the spelling,\nbecause the two vocabularies are disjoint.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "additionalProperties": true,
+          "title": "Detail",
+          "type": "object"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Refusal",
+      "type": "object"
+    },
+    "ResultEnvelope": {
+      "$defs": {
+        "ProviderErrorPayload": {
+          "additionalProperties": false,
+          "description": "A provider-reported failure (an attempted answer that did not succeed).",
+          "properties": {
+            "detail": {
+              "additionalProperties": true,
+              "title": "Detail",
+              "type": "object"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "title": "ProviderErrorPayload",
+          "type": "object"
+        },
+        "Refusal": {
+          "additionalProperties": false,
+          "description": "A typed refusal, serialisable into receipts and result envelopes.\n\n``code`` is either one of the runtime's :class:`RefusalCode` values or a\ncode the bound operation declares. Which one is decided by the spelling,\nbecause the two vocabularies are disjoint.",
+          "properties": {
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "detail": {
+              "additionalProperties": true,
+              "title": "Detail",
+              "type": "object"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "Refusal",
+          "type": "object"
+        },
+        "Trace": {
+          "additionalProperties": false,
+          "description": "Trace material destined for exhaust.\n\n``endpoints_contacted`` is what was *actually* contacted, recorded by the\ninstrumented client locally and by the proxy log in cloud. It is compared\nagainst the accepted declaration; a contacted endpoint outside the\ndeclaration is a typed conformance violation attributed to the\nimplementation digest.",
+          "properties": {
+            "endpoints_contacted": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Endpoints Contacted",
+              "type": "array"
+            },
+            "events": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Events",
+              "type": "array"
+            },
+            "metrics": {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "title": "Metrics",
+              "type": "object"
+            }
+          },
+          "title": "Trace",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Everything a provider process returns.",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderErrorPayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Refusal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "refused",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace": {
+          "$ref": "#/$defs/Trace"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "run_id",
+        "status"
+      ],
+      "title": "ResultEnvelope",
+      "type": "object"
+    },
+    "RunContext": {
+      "$defs": {
+        "Budgets": {
+          "additionalProperties": false,
+          "description": "Caps the executor enforces out-of-process.\n\n``cost_units`` travels with the run so a provider can report against it, but\nRP-0 enforces only the two caps it can enforce locally: wall clock and output\nsize. Cost enforcement belongs to the metering substrate.",
+          "properties": {
+            "cost_units": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cost Units"
+            },
+            "output_bytes": {
+              "title": "Output Bytes",
+              "type": "integer"
+            },
+            "wall_clock_seconds": {
+              "title": "Wall Clock Seconds",
+              "type": "number"
+            }
+          },
+          "required": [
+            "wall_clock_seconds",
+            "output_bytes"
+          ],
+          "title": "Budgets",
+          "type": "object"
+        },
+        "SecretChannelSpec": {
+          "additionalProperties": false,
+          "description": "Where the provider process reads credential material from.",
+          "properties": {
+            "fd": {
+              "title": "Fd",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "fd",
+              "default": "fd",
+              "title": "Kind",
+              "type": "string"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SecretRef"
+              },
+              "title": "Refs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "fd"
+          ],
+          "title": "SecretChannelSpec",
+          "type": "object"
+        },
+        "SecretRef": {
+          "additionalProperties": false,
+          "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+          "properties": {
+            "purpose": {
+              "default": "",
+              "title": "Purpose",
+              "type": "string"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "title": "SecretRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Everything the executor passes into a provider process.\n\n``operation`` is the one operation this run executes, by name;\n``operation_signature_digest`` is the exact ``{in, out, effect}`` signature\nthe Line bound it under; ``build_digest`` is the accepted provider build.\n``entrypoint`` is the object the child dispatches to, and it must declare\n``operation`` among the operations it serves.",
+      "properties": {
+        "additive": {
+          "additionalProperties": true,
+          "description": "the additive region: unknown keys here are ignored by a provider",
+          "title": "Additive",
+          "type": "object"
+        },
+        "budgets": {
+          "$ref": "#/$defs/Budgets"
+        },
+        "build_digest": {
+          "title": "Build Digest",
+          "type": "string"
+        },
+        "capture_contract": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capture Contract"
+        },
+        "coordinates": {
+          "additionalProperties": true,
+          "title": "Coordinates",
+          "type": "object"
+        },
+        "declared_endpoints": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Endpoints",
+          "type": "array"
+        },
+        "entrypoint": {
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "implementation_digest": {
+          "title": "Implementation Digest",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "operation_signature_digest": {
+          "title": "Operation Signature Digest",
+          "type": "string"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "secret_channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretChannelSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "protocol_version",
+        "run_id",
+        "operation",
+        "operation_signature_digest",
+        "build_digest",
+        "implementation_digest",
+        "entrypoint",
+        "budgets"
+      ],
+      "title": "RunContext",
+      "type": "object"
+    },
+    "RuntimeRequirement": {
+      "additionalProperties": false,
+      "description": "Something an implementation's environment needs beyond its lock.\n\nKeyed by the manifest implementation it belongs to: its ``entrypoint``.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "entrypoint": {
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "python_extra",
+            "runtime_resource"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "probe_entrypoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Probe Entrypoint"
+        }
+      },
+      "required": [
+        "entrypoint",
+        "kind",
+        "name",
+        "description"
+      ],
+      "title": "RuntimeRequirement",
+      "type": "object"
+    },
+    "SecretChannelSpec": {
+      "$defs": {
+        "SecretRef": {
+          "additionalProperties": false,
+          "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+          "properties": {
+            "purpose": {
+              "default": "",
+              "title": "Purpose",
+              "type": "string"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "title": "SecretRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Where the provider process reads credential material from.",
+      "properties": {
+        "fd": {
+          "title": "Fd",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "fd",
+          "default": "fd",
+          "title": "Kind",
+          "type": "string"
+        },
+        "refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SecretRef"
+          },
+          "title": "Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "fd"
+      ],
+      "title": "SecretChannelSpec",
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+      "properties": {
+        "purpose": {
+          "default": "",
+          "title": "Purpose",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "SecretRef",
+      "type": "object"
+    },
+    "Trace": {
+      "additionalProperties": false,
+      "description": "Trace material destined for exhaust.\n\n``endpoints_contacted`` is what was *actually* contacted, recorded by the\ninstrumented client locally and by the proxy log in cloud. It is compared\nagainst the accepted declaration; a contacted endpoint outside the\ndeclaration is a typed conformance violation attributed to the\nimplementation digest.",
+      "properties": {
+        "endpoints_contacted": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Endpoints Contacted",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Metrics",
+          "type": "object"
+        }
+      },
+      "title": "Trace",
+      "type": "object"
+    }
+  },
+  "valid_vectors": {
+    "results": {
+      "error": {
+        "error": {
+          "detail": {},
+          "kind": "FixtureError",
+          "message": "fixture failure"
+        },
+        "output": null,
+        "protocol_version": "2.0",
+        "refusal": null,
+        "run_id": "RUN-contract-vector",
+        "status": "error",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "ok": {
+        "error": null,
+        "output": {
+          "echo": "hello"
+        },
+        "protocol_version": "2.0",
+        "refusal": null,
+        "run_id": "RUN-contract-vector",
+        "status": "ok",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "refused_by_operation": {
+        "error": null,
+        "output": null,
+        "protocol_version": "2.0",
+        "refusal": {
+          "code": "too_long",
+          "detail": {
+            "limit": 3
+          },
+          "message": "declined by fixture"
+        },
+        "run_id": "RUN-contract-vector",
+        "status": "refused",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "refused_by_runtime": {
+        "error": null,
+        "output": null,
+        "protocol_version": "2.0",
+        "refusal": {
+          "code": "undeclared_operation",
+          "detail": {
+            "operation": "demo.other"
+          },
+          "message": "refused by fixture"
+        },
+        "run_id": "RUN-contract-vector",
+        "status": "refused",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      }
+    },
+    "run_context": {
+      "additive": {
+        "future": {
+          "kept": true
+        }
+      },
+      "budgets": {
+        "cost_units": null,
+        "output_bytes": 4096,
+        "wall_clock_seconds": 3.0
+      },
+      "build_digest": "sha256:4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+      "capture_contract": null,
+      "coordinates": {
+        "generation": 7
+      },
+      "declared_endpoints": [
+        "https://example.test"
+      ],
+      "entrypoint": "demo.echo:Echo",
+      "implementation_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "input": {
+        "value": "hello"
+      },
+      "operation": "demo.echo",
+      "operation_signature_digest": "sha256:3c2d2c67e7aa810e74970998493b3c93716fc4df5b94ab5ac2c3b71cc1cb4b02",
+      "protocol_version": "2.0",
+      "run_id": "RUN-contract-vector",
+      "secret_channel": {
+        "fd": 3,
+        "kind": "fd",
+        "refs": [
+          {
+            "purpose": "test",
+            "ref": "operator/demo"
+          }
+        ]
+      }
+    }
+  }
+}

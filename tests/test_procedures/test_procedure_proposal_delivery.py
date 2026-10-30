@@ -396,14 +396,22 @@ def test_a_line_requesting_rung_one_is_capped_before_the_proposal_door(tmp_path:
 
 
 def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> None:
-    """A declared built-in read refusal stops before proposal delivery."""
+    """A Source failure never reaches the terminal, whatever shape it takes.
+
+    The genesis-seeded ``workspace.file`` operation declares the built-in's own
+    ``provider_declined``, so a provider decline is a typed node refusal
+    naming the operation's code, and the run stops before the terminal.
+    """
 
     instance, _owner, root, line, _procedure = proposal_world(tmp_path)
 
     state = run_line(instance, root, line, invoker=fixtures._DecliningInvoker())
 
     assert state.status == "node_refused", state.terminal
-    assert state.terminal.code == "provider_declined"
+    assert (state.terminal.code, state.terminal.detail_code) == (
+        "operation_refused",
+        "provider_declined",
+    )
     assert state.terminal_egress == ()
     assert _proposal_refs(instance) == []
 

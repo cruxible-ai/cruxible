@@ -25,8 +25,8 @@ from cruxible_core.providers.builtin_runtime import (
 )
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import (
-    ProviderRuntimeBudgetsV1,
-    ProviderRuntimeRunContextV1,
+    ProviderRuntimeBudgets,
+    ProviderRuntimeRunContext,
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.procedures.procedure_runs import (
@@ -56,16 +56,16 @@ def _accepted() -> tuple[AcceptedProvider, Any]:
 
 
 def _context(binding: Any, payload: dict[str, object], *, output_bytes: int = 1 << 20) -> Any:
-    return ProviderRuntimeRunContextV1(
-        protocol_version="1.0",
+    return ProviderRuntimeRunContext(
+        protocol_version="2.0",
         run_id="run-1",
-        interface_id=binding.operation,
-        interface_digest=binding.operation_signature_digest,
+        operation=binding.operation,
+        operation_signature_digest=binding.operation_signature_digest,
+        build_digest=binding.provider_artifact_digest,
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input=payload,
-        input_bucket="legacy=none",
-        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5.0, output_bytes=output_bytes),
+        budgets=ProviderRuntimeBudgets(wall_clock_seconds=5.0, output_bytes=output_bytes),
     )
 
 
@@ -141,6 +141,24 @@ def test_a_provider_row_that_borrows_the_built_in_digest_refuses() -> None:
     assert builtin_provider_binding(provider, interface, "sha256:" + "0" * 64) is None
 
 
+def test_a_package_operation_of_the_built_in_signature_never_runs_as_the_built_in() -> None:
+    """A package may serve workspace.file's exact signature beside the built-in.
+
+    Its operation is its own (its entrypoint), so naming the built-in's
+    implementation digest for it refuses: a signature is never a licence to run
+    the in-process adapter.
+    """
+
+    provider, operation = _accepted()
+    package = operation.model_copy(
+        update={"entrypoint": "cruxible_provider_workspace.file:WorkspaceFile"}
+    )
+    assert package.signature() == operation.signature()
+    with pytest.raises(ProviderLocalRuntimeRefused) as refused:
+        builtin_provider_binding(provider, package, WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST)
+    assert refused.value.code == "acceptance_divergence"
+
+
 def test_the_built_in_honours_its_output_budget() -> None:
     provider, interface = _accepted()
     binding = builtin_provider_binding(
@@ -158,6 +176,119 @@ def test_the_built_in_honours_its_output_budget() -> None:
             deadline=None,
         )
     assert refused.value.code == "budget_output_size"
+
+
+def _builtin_with(adapter: Any) -> tuple[BuiltinProviderInvoker, Any, Any]:
+    """The built-in invoker with its one revision's adapter replaced by ``adapter``."""
+
+    from dataclasses import replace
+
+    import cruxible_core.providers.builtin_runtime as runtime
+
+    provider, interface = _accepted()
+    binding = builtin_provider_binding(
+        provider, interface, WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST
+    )
+    assert binding is not None
+    original = runtime.BUILTIN_IMPLEMENTATIONS[WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST]
+    swapped = {
+        **runtime.BUILTIN_IMPLEMENTATIONS,
+        WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST: replace(original, adapter=adapter),
+    }
+    return BuiltinProviderInvoker(), binding, swapped
+
+
+def _invoke_builtin(
+    monkeypatch: pytest.MonkeyPatch, adapter: Any, *, context_update: dict[str, Any] | None = None
+) -> Any:
+    import cruxible_core.providers.builtin_runtime as runtime
+
+    invoker, binding, swapped = _builtin_with(adapter)
+    monkeypatch.setattr(runtime, "BUILTIN_IMPLEMENTATIONS", swapped)
+    occurrence = SimpleNamespace(local_execution=binding)
+    context = _context(binding, _payload(b"high\n"))
+    if context_update:
+        context = context.model_copy(update=context_update)
+    return invoker.invoke_provider(
+        occurrence=occurrence,  # type: ignore[arg-type]
+        context=context,
+        invocation_id="sha256:" + "1" * 64,
+        bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
+        deadline=None,
+    )
+
+
+class _ReturnsRuntimeCode:
+    operations = ("workspace.file",)
+
+    def __call__(self, context: Any) -> Any:
+        from cruxible_core.providers.provider_runtime_contract import (
+            ProviderRuntimeRefusal,
+            ProviderRuntimeResultEnvelope,
+        )
+
+        return ProviderRuntimeResultEnvelope(
+            protocol_version="2.0",
+            run_id=context.run_id,
+            status="refused",
+            refusal=ProviderRuntimeRefusal(code="budget_wall_clock", message="invented"),
+        )
+
+
+class _RaisesRuntimeCode:
+    operations = ("workspace.file",)
+
+    def __call__(self, context: Any) -> Any:
+        from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeWireError
+
+        raise ProviderRuntimeWireError("unresolved_secret_ref", "invented")
+
+
+class _DeclaresOtherOperation:
+    operations = ("workspace.other",)
+
+    def __call__(self, context: Any) -> Any:
+        raise AssertionError("an undeclared operation is never called")
+
+
+@pytest.mark.parametrize("adapter", [_ReturnsRuntimeCode(), _RaisesRuntimeCode()])
+def test_a_runtime_code_from_built_in_adapter_code_is_a_protocol_violation(
+    monkeypatch: pytest.MonkeyPatch, adapter: Any
+) -> None:
+    """The child's provider-code guard, applied in-process: adapter code is provider code."""
+
+    outcome = _invoke_builtin(monkeypatch, adapter)
+    refusal = outcome.envelope.refusal
+    assert refusal is not None and refusal.code == "provider_protocol_violation"
+    assert refusal.detail["stage"] == "call"
+    assert refusal.detail["refused_code"] in {"budget_wall_clock", "unresolved_secret_ref"}
+
+
+def test_a_built_in_that_does_not_declare_the_operation_refuses_undeclared_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _invoke_builtin(monkeypatch, _DeclaresOtherOperation())
+    refusal = outcome.envelope.refusal
+    assert refusal is not None and refusal.code == "undeclared_operation"
+
+
+@pytest.mark.parametrize(
+    ("update", "field"),
+    [
+        ({"operation": "workspace.other"}, "operation"),
+        ({"operation_signature_digest": "sha256:" + "9" * 64}, "operation signature"),
+        ({"build_digest": "sha256:" + "9" * 64}, "build"),
+        ({"entrypoint": "elsewhere:Other"}, "entrypoint"),
+        ({"implementation_digest": "sha256:" + "9" * 64}, "implementation"),
+    ],
+)
+def test_a_built_in_runs_only_the_exact_admitted_binding(
+    monkeypatch: pytest.MonkeyPatch, update: dict[str, Any], field: str
+) -> None:
+    with pytest.raises(ProviderLocalRuntimeRefused) as refused:
+        _invoke_builtin(monkeypatch, _DeclaresOtherOperation(), context_update=update)
+    assert refused.value.code == "acceptance_divergence"
+    assert refused.value.details == {"field": field}
 
 
 class _Crash(BaseException):

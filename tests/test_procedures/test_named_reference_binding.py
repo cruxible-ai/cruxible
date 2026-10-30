@@ -31,9 +31,7 @@ def authored_policy_call():
     from tests.test_procedures.test_named_reference_closure import authored_procedure
 
     base = authored_procedure(name="effectful", query=None)
-    build = operation_build(
-        operations=(operation("act", effect="external_mutation"),), side_effects=True
-    )
+    build = operation_build(operations=(operation("act", effect="external_mutation"),))
     provider = AcceptedProvider(
         path=provider_path(build.identity.name),
         provider=build,

@@ -49,6 +49,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.workspace_file import (
+    WORKSPACE_FILE_OPERATION,
     WorkspaceFileSourceRequestV2,
     workspace_file_contracts,
 )
@@ -57,7 +58,6 @@ from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-    WORKSPACE_FILE_INTERFACE_ID,
 )
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -399,7 +399,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert provider_proof is not None
     assert provider_proof["envelope"]["identity"]["name"] == WORKSPACE_FILE_BUILTIN_PROVIDER_ID
     operations = provider_proof["envelope"]["operations"]
-    assert any(item["name"] == WORKSPACE_FILE_INTERFACE_ID for item in operations)
+    assert any(item["name"] == WORKSPACE_FILE_OPERATION for item in operations)
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
@@ -558,7 +558,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert state.run_id is not None
     # The built-in ran in-process, and its durable receipt says so.
     (invocation,) = _provider_receipts(instance_id)
-    assert invocation["operation"] == WORKSPACE_FILE_INTERFACE_ID
+    assert invocation["operation"] == WORKSPACE_FILE_OPERATION
     assert invocation["fence_scope"] == "in_process"
     assert invocation["egress"]["observer_backend"] == "core.in-process"
     assert invocation["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST

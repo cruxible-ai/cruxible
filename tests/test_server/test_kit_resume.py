@@ -19,6 +19,7 @@ from cruxible_core.service import kit_resume
 from tests.support.provider_checkout import ProviderCheckout
 from tests.test_server.test_kit_providers import (
     PROCEDURE,
+    _accept_local_call_contract,
     _add,
     _author,
     _build,
@@ -62,6 +63,10 @@ def test_the_activation_that_lands_the_last_install_proposes_the_definitions(
     try:
         bundled = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
         release = _release(publisher, bundled)
+        # The install kit add proposes pins local.increment's Contract to the
+        # accepted one, so the consumer accepts it first, as every world that
+        # installs a local-call package does.
+        _accept_local_call_contract(consumer)
 
         added = _add(consumer, release, dry_run=False)
 

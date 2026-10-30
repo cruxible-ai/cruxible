@@ -402,17 +402,28 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    # A Line retires with the Mandate that grants it (line_world pairs one): a
+    # changed Line carries or retires every live Mandate pinning it, in the same
+    # change (cruxible.procedure_mandate.successor_pair_required).
     from cruxible_client.contracts.procedure_mandates import (
-        parse_procedure_mandate,
+        parse_procedure_mandate_any,
         procedure_mandate_digest,
         render_procedure_mandate,
     )
 
-    mandate_path = "procedure-mandates/served-line-mandate.json"
-    mandate = parse_procedure_mandate(tree[mandate_path], path=mandate_path)
+    mandates = {
+        path: parse_procedure_mandate_any(content, path=path)
+        for path, content in tree.items()
+        if path.startswith("procedure-mandates/")
+    }
+    (mandate_path, mandate) = next(
+        (path, item) for path, item in mandates.items() if item.line.target == line.identity
+    )
     tree[mandate_path] = render_procedure_mandate(
         mandate.model_copy(
             update={
+                # Every pin resolves in the candidate tree: the retired Mandate
+                # names the retired Line successor it retires with.
                 "line": mandate.line.model_copy(
                     update={"artifact_digest": line_spec_digest(retired).tagged}
                 ),

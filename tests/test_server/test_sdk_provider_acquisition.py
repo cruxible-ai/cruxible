@@ -69,8 +69,6 @@ URL = "https://fixture.invalid/api/v1/measurements.json"
 def web_provider(
     operation: ProviderOperation,
     contracts: tuple[Contract, ...],
-    *,
-    selectors: dict[str, str] | None = None,
 ):
     """A fresh build serving ``operation``, declaring exactly ``contracts``.
 
@@ -81,9 +79,6 @@ def web_provider(
     interface artifact.
     """
 
-    if selectors is None:
-        selectors = {}
-
     def digests(ref: object) -> str | None:
         for item in contracts:
             if (ref.name, ref.version) == (item.name, item.version):  # type: ignore[attr-defined]
@@ -93,18 +88,13 @@ def web_provider(
     manifest = ProviderRuntimeManifest(
         provider_id="web-fetch-demo",
         distribution=ProviderDistributionRef(name="web-fetch-demo", version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
             ProviderImplementationManifest(
-                interface_id=operation.name,
-                interface_digest="sha256:" + "9" * 64,
                 entrypoint="cruxible_provider_web.fetch:WebFetch",
                 backends=("local_env",),
-                declared_input_buckets=tuple(sorted(selectors.values())),
-                bucket_conformance={selector: name for name, selector in selectors.items()},
                 declared_endpoints=("https://fixture.invalid",),
                 deterministic=False,
-                side_effects=False,
             ),
         ),
     )
@@ -133,14 +123,21 @@ def web_provider(
 # ProviderResultToExternalCapture's own fields exactly (closed), the same way
 # a real external-read provider's operation would.
 _FETCH_COORDINATE = Contract.model_validate(
-    {"name": "test.sdk-fetch-coordinate", "version": 1, "fields": {"status": {"type": "int"}}}
-)
-_FETCH_SELECTOR = Contract.model_validate(
     {
-        "name": "test.sdk-fetch-selector",
+        "name": "test.sdk-fetch-coordinate",
         "version": 1,
-        "fields": {"whole": {"type": "bool", "optional": True}},
+        "fields": {
+            "status": {"type": "int"},
+            # What cruxible-provider-web's web.fetch also records of the exchange.
+            "request_digest": {"type": "string", "optional": True},
+            "body_sha256": {"type": "string", "optional": True},
+            "source": {"type": "string", "optional": True},
+        },
     }
+)
+# The whole response: the closed empty record, which accepts only ``{}``.
+_FETCH_SELECTOR = Contract.model_validate(
+    {"name": "test.sdk-fetch-selector", "version": 1, "fields": {}}
 )
 _FETCH_EFFECTIVE = Contract.model_validate(
     {
@@ -186,7 +183,10 @@ _FETCH_OUTPUT = Contract.model_validate(
             "byte_length": {"type": "int"},
             "bytes_digest": {"type": "string"},
             "observed_at": {"type": "datetime"},
-            "source_effective_time": {"type": _pinned_nested(_FETCH_EFFECTIVE)},
+            "source_effective_time": {
+                "type": _pinned_nested(_FETCH_EFFECTIVE),
+                "optional": True,
+            },
         },
     }
 )
@@ -336,7 +336,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         from cruxible_client.contracts.provider_execution import ProviderEgressObservation
         from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
         from cruxible_core.providers.provider_runtime_contract import (
-            ProviderRuntimeResultEnvelopeV1,
+            ProviderRuntimeResultEnvelope,
         )
 
         self.spawn_calls += 1
@@ -349,8 +349,8 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
             assert occurrence.occurrence_kind == "call"
             assert context.input == (self.expected_input or {"size": 1})
         return ProviderDriverOutcomeV1(
-            envelope=ProviderRuntimeResultEnvelopeV1(
-                protocol_version="1.0", run_id=context.run_id, status="ok", output=self.output
+            envelope=ProviderRuntimeResultEnvelope(
+                protocol_version="2.0", run_id=context.run_id, status="ok", output=self.output
             ),
             stderr="",
             duration_seconds=0.001,
@@ -403,18 +403,17 @@ def test_sdk_source_retains_and_reads_acquisition(
         from cruxible_provider_runtime.egress import EgressRecorder
         from cruxible_provider_runtime.protocol import Budgets
         from cruxible_provider_runtime.provider_api import ProviderRunContext
-        from cruxible_provider_web.interfaces import FETCH_PREIMAGE
 
-        del FETCH_PREIMAGE
+        assert "web.fetch" in web.WebFetch.operations
         result = web.WebFetch()(
             ProviderRunContext(
                 run_id="sdk-acquisition",
                 input={"url": URL},
-                interface_id="web.fetch",
-                interface_digest="sha256:" + "9" * 64,
+                operation="web.fetch",
+                operation_signature_digest="sha256:" + "9" * 64,
+                build_digest="sha256:" + "b" * 64,
                 implementation_digest="sha256:" + "a" * 64,
                 declared_endpoints=("https://fixture.invalid",),
-                input_bucket="legacy=none",
                 budgets=Budgets(wall_clock_seconds=30, output_bytes=1_000_000),
                 coordinates={},
                 capture_contract=None,
@@ -524,9 +523,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
             "entrypoint": "cruxible_provider_web.fetch:WebFetch",
         }
     )
-    provider = web_provider(
-        operation, (call_input, call_output), selectors={"demo.small": "size=*"}
-    )
+    provider = web_provider(operation, (call_input, call_output))
     proposal = source.submit_member_candidate(
         instance,
         members={

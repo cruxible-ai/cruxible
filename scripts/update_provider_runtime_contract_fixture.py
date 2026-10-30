@@ -1,161 +1,49 @@
-"""Generate the reviewed provider-runtime mirror fixture from a pinned checkout.
+"""Vendor the provider-runtime protocol 2.0 wire contract from a pinned checkout.
 
-This updater is intentionally not part of ordinary CI.  It imports the provider
-runtime only while producing bytes for review; core tests consume the committed
-fixture and never import the provider package.
+cruxible-providers produces the fixture (``scripts/export_runtime_contract.py``
+there); core copies its exact bytes at the commit it pins
+(``PROVIDER_RUNTIME_CONTRACT_COMMIT``) and holds its own mirror to it
+(``tests/test_guardrails/test_provider_runtime_contract_mirror.py``). This
+updater is intentionally not part of ordinary CI, and core never imports the
+provider package.
+
+    CRUXIBLE_PROVIDERS_CHECKOUT=<checkout> uv run python \
+        scripts/update_provider_runtime_contract_fixture.py
 """
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "packages/cruxible-client/src"))
+
 # The same variable the provider-runtime tests read (tests/support/provider_checkout.py).
 CHECKOUT_ENV = "CRUXIBLE_PROVIDERS_CHECKOUT"
-EXPECTED_COMMIT = "389e9f44de56c1adebae731228cf4628c6fbeca8"
-
-
-def _schema(model: type[Any]) -> dict[str, Any]:
-    return json.loads(json.dumps(model.model_json_schema(), sort_keys=True))
+SOURCE = "packages/cruxible-provider-runtime/tests/fixtures/provider_runtime_contract_v2.json"
+DESTINATION = REPO_ROOT / "tests/fixtures/provider_runtime_contract_v2.json"
 
 
 def main() -> None:
+    from cruxible_core.providers.provider_runtime_contract import (
+        PROVIDER_RUNTIME_CONTRACT_COMMIT,
+    )
+
     checkout = os.environ.get(CHECKOUT_ENV)
     if not checkout:
-        raise SystemExit(
-            f"set {CHECKOUT_ENV} to a cruxible-providers checkout at {EXPECTED_COMMIT}"
-        )
-    provider_root = Path(checkout).resolve()
-    commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=provider_root, text=True
-    ).strip()
-    if commit != EXPECTED_COMMIT:
-        raise SystemExit(f"provider checkout is {commit}, expected {EXPECTED_COMMIT}")
-    sys.path.insert(0, str(provider_root / "packages/cruxible-provider-runtime/src"))
-
-    from cruxible_provider_runtime.errors import ProviderErrorPayload, Refusal, RefusalCode
-    from cruxible_provider_runtime.protocol import (
-        Budgets,
-        ProtocolVersion,
-        ResultEnvelope,
-        RunContext,
-        SecretChannelSpec,
-        SecretRef,
-        Trace,
+        raise SystemExit(f"set {CHECKOUT_ENV} to a cruxible-providers checkout")
+    # The bytes at the pinned commit, whatever the checkout's working tree holds.
+    content = subprocess.check_output(
+        ["git", "show", f"{PROVIDER_RUNTIME_CONTRACT_COMMIT}:{SOURCE}"],
+        cwd=Path(checkout).resolve(),
     )
-
-    models = {
-        "Budgets": Budgets,
-        "ProtocolVersion": ProtocolVersion,
-        "ProviderErrorPayload": ProviderErrorPayload,
-        "Refusal": Refusal,
-        "ResultEnvelope": ResultEnvelope,
-        "RunContext": RunContext,
-        "SecretChannelSpec": SecretChannelSpec,
-        "SecretRef": SecretRef,
-        "Trace": Trace,
-    }
-    context = RunContext(
-        protocol_version="1.0",
-        run_id="RUN-contract-vector",
-        interface_id="demo.echo",
-        interface_digest="sha256:" + "1a" * 32,
-        implementation_digest="sha256:" + "2b" * 32,
-        entrypoint="demo.echo:run",
-        coordinates={"generation": 7},
-        input={"value": "hello"},
-        input_bucket="shape=text",
-        capture_contract=None,
-        budgets=Budgets(wall_clock_seconds=3.0, output_bytes=4096),
-        declared_endpoints=("https://example.test",),
-        secret_channel=SecretChannelSpec(
-            fd=3, refs=(SecretRef(ref="operator/demo", purpose="test"),)
-        ),
-        additive={"future": {"kept": True}},
-    )
-    result_vectors = {
-        "ok": ResultEnvelope(
-            protocol_version="1.0", run_id=context.run_id, status="ok", output={"echo": "hello"}
-        ),
-        "refused": ResultEnvelope(
-            protocol_version="1.0",
-            run_id=context.run_id,
-            status="refused",
-            refusal=Refusal(
-                code=RefusalCode.PROVIDER_DECLINED,
-                message="declined by fixture",
-                detail={"reason": "fixture"},
-            ),
-        ),
-        "error": ResultEnvelope(
-            protocol_version="1.0",
-            run_id=context.run_id,
-            status="error",
-            error=ProviderErrorPayload(kind="FixtureError", message="fixture failure"),
-        ),
-    }
-    provider_golden = json.loads(
-        (
-            provider_root
-            / "packages/cruxible-provider-runtime/tests/fixtures/golden/expected-digests.json"
-        ).read_text(encoding="utf-8")
-    )
-    implementation_cases = json.loads(
-        (
-            provider_root
-            / "packages/cruxible-provider-runtime/tests/fixtures/golden/implementation-cases.json"
-        ).read_text(encoding="utf-8")
-    )
-    document = {
-        "provider_commit": commit,
-        "protocol_version": "1.0",
-        "schemas": {name: _schema(model) for name, model in sorted(models.items())},
-        "valid_vectors": {
-            "run_context": json.loads(context.model_dump_json()),
-            "results": {
-                name: json.loads(value.model_dump_json())
-                for name, value in sorted(result_vectors.items())
-            },
-        },
-        "invalid_vectors": {
-            "context_unknown_field": {
-                **json.loads(context.model_dump_json()),
-                "not_additive": True,
-            },
-            "result_missing_output": {
-                "protocol_version": "1.0",
-                "run_id": context.run_id,
-                "status": "ok",
-                "output": None,
-                "refusal": None,
-                "error": None,
-                "trace": {"endpoints_contacted": [], "events": [], "metrics": {}},
-            },
-        },
-        "refusal_codes": sorted(code.value for code in RefusalCode),
-        "dynamic_endpoint_forms": ["dynamic:target-from-run-input"],
-        "provider_digest_goldens": provider_golden,
-        "provider_implementation_cases": implementation_cases,
-        "invocation_outcome_receipt_fields": [
-            "duration_seconds",
-            "dynamic_endpoint_forms",
-            "endpoints_contacted",
-            "implementation_digest",
-            "input_bucket",
-            "materialization_digest",
-            "protocol_version",
-            "status",
-        ],
-    }
-    destination = REPO_ROOT / "tests/fixtures/provider_runtime_contract_v1.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"Wrote {destination.relative_to(REPO_ROOT)}")
+    DESTINATION.parent.mkdir(parents=True, exist_ok=True)
+    DESTINATION.write_bytes(content)
+    print(f"Wrote {DESTINATION.relative_to(REPO_ROOT)} from {PROVIDER_RUNTIME_CONTRACT_COMMIT}")
 
 
 if __name__ == "__main__":

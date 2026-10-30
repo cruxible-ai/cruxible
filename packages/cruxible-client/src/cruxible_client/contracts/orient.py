@@ -189,7 +189,7 @@ class OrientContract(_StrictOrientModel):
     """
 
     contract: str
-    fields: int = Field(ge=1)
+    fields: int = Field(ge=0)
     description: str | None = Field(default=None, exclude_if=_is_none)
     pins: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
 

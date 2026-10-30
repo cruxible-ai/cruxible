@@ -9,14 +9,15 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.provider_operations import OperationRefusal
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     ProviderDistributionRef,
-    ProviderImplementationManifestV1,
+    ProviderImplementationManifest,
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,
     ProviderRuntimeArtifactPayloadV1,
-    ProviderRuntimeManifestV1,
+    ProviderRuntimeManifest,
     ProviderSigningKey,
     ProviderV1,
     ProviderV2,
@@ -36,27 +37,23 @@ from tests.support.operation_world import VALUE, operation
 def _bare_v2() -> ProviderV2:
     """A bare ProviderV2 (not a build/named build): this file's whole subject.
 
-    Protocol-1 runtime wire (``ProviderRuntimeArtifactPayloadV1``, schema
-    version 1), with one ``compute`` operation layered on top the way B2 adds
-    operations to ProviderV2 -- the shared ``provider_v2()`` fixture builds the
-    newer ``NamedProviderBuild`` (schema version 2) directly, which this file's
-    dict round-trip tests cannot validate back through the bare V1 field type.
+    The runtime artifact payload ``ProviderRuntimeArtifactPayloadV1`` carries
+    the one (schema 2) manifest, with one ``compute`` operation layered on top
+    the way B2 adds operations to ProviderV2 -- the shared ``provider_v2()``
+    fixture builds a ``NamedProviderBuild`` directly, which this file's dict
+    round-trip tests cannot validate back through the bare field type.
     """
 
-    manifest = ProviderRuntimeManifestV1(
+    manifest = ProviderRuntimeManifest(
         provider_id="demo-provider",
         distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
-        supported_protocol_majors=(1,),
+        supported_protocol_majors=(2,),
         implementations=(
-            ProviderImplementationManifestV1(
-                interface_id="compute",
-                interface_digest="sha256:" + "9" * 64,
+            ProviderImplementationManifest(
                 entrypoint="demo.runtime:Provider",
                 backends=("local_env",),
-                declared_input_buckets=(),
                 requires_extras=("engine",),
                 deterministic=True,
-                side_effects=False,
             ),
         ),
     )
@@ -114,8 +111,6 @@ def test_provider_v2_round_trip_external_digests_and_filtered_materializations()
     )
     implementation = provider.implementations[0]
     assert implementation.implementation_digest == provider_implementation_digest(
-        interface_id=implementation.interface_id,
-        interface_digest=implementation.interface_digest,
         entrypoint=implementation.entrypoint,
         distribution_sha256=provider.runtime_artifact.distribution.sha256,
     )
@@ -130,22 +125,22 @@ def test_provider_v2_round_trip_external_digests_and_filtered_materializations()
     assert provider_digest(provider).tagged.startswith("sha256:")
 
 
-def test_implementation_digest_is_backend_invariant_and_four_field_exact() -> None:
+def test_implementation_digest_is_backend_invariant_and_two_field_exact() -> None:
     provider = _bare_v2()
     row = provider.implementations[0]
     manifest = provider.runtime_artifact.manifest.implementations[0]
 
     assert row.implementation_digest == provider_implementation_digest(
-        interface_id=manifest.interface_id,
-        interface_digest=manifest.interface_digest,
         entrypoint=manifest.entrypoint,
         distribution_sha256=provider.runtime_artifact.distribution.sha256,
     )
     assert row.implementation_digest != provider_implementation_digest(
-        interface_id=manifest.interface_id,
-        interface_digest=manifest.interface_digest,
         entrypoint="demo.runtime:OtherProvider",
         distribution_sha256=provider.runtime_artifact.distribution.sha256,
+    )
+    assert row.implementation_digest != provider_implementation_digest(
+        entrypoint=manifest.entrypoint,
+        distribution_sha256="sha256:" + "e" * 64,
     )
 
 
@@ -172,7 +167,7 @@ def test_provider_runtime_mirror_rejects_unknown_endpoint_forms() -> None:
     payload["declared_endpoints"] = ["dynamic:not-a-runtime-form"]
 
     with pytest.raises(ValidationError, match="unknown dynamic endpoint form"):
-        ProviderImplementationManifestV1.model_validate(payload)
+        ProviderImplementationManifest.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -208,7 +203,7 @@ def test_provider_v1_bytes_remain_version_discriminated() -> None:
     assert provider_digest(historical) != provider_digest(provider)
 
 
-def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
+def test_provider_v1_to_v2_succession_and_reserved_refusal_codes() -> None:
     provider = _bare_v2()
     historical_payload = provider.model_dump(mode="json")
     historical_payload.pop("runtime_artifact")
@@ -238,20 +233,31 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
         == "accepted"
     )
 
-    mismatched_effect = successor.model_copy(
+    # An operation's effect is its one declaration; the manifest repeats none.
+    # A refusal code the runtime reserves is not an operation's to declare.
+    reserved = successor.model_copy(
         update={
             "operations": (
-                successor.operations[0].model_copy(update={"effect": "external_mutation"}),
+                successor.operations[0].model_copy(
+                    update={
+                        "refusals": {
+                            "budget_wall_clock": OperationRefusal(
+                                contract=successor.operations[0].in_
+                            )
+                        }
+                    }
+                ),
             )
         }
     )
     refused = evaluate_provider_law(
-        mismatched_effect,
+        reserved,
         path=predecessor.path,
         predecessor=predecessor,
         contracts=contracts,
+        reserved_refusal_codes=frozenset({"budget_wall_clock"}),
     )
-    assert refused.diagnostics[0].code == "cruxible.provider.effect_declaration_mismatch"
+    assert refused.diagnostics[0].code == "cruxible.provider.operation_refusal_reserved"
 
     # ProviderInterface pinning (the old "interface_pin_missing" refusal) is
     # removed (C12); there is no surviving equivalent to probe here.

@@ -255,7 +255,7 @@ class VerifiedProviderBinding(_StrictProviderExecutionModel):
     materialization_digest: str
     environment_manifest_digest: str
     entrypoint: str
-    protocol_version: Literal["1.0"] = "1.0"
+    protocol_version: Literal["2.0"] = "2.0"
     declared_endpoints: tuple[str, ...] = ()
     # Omitted when it is the subprocess default, so every binding digested
     # before core built-ins existed keeps its bytes.
@@ -467,9 +467,6 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     operation: str
     operation_signature_digest: str
     protocol_version: str
-    # The measured input bucket of a call admitted before core stopped
-    # classifying inputs; omitted on every later call, so both digest as written.
-    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
     capture_contract_digest: str | None = None
     input_digest: str
     outcome: ProviderInvocationOutcome
@@ -655,9 +652,6 @@ class ProviderInvocationStarted(_StrictProviderExecutionModel):
     implementation_digest: str
     materialization_digest: str
     input_digest: str
-    # Historical: the measured input bucket of a call started before core
-    # stopped classifying inputs. Omitted on every later start.
-    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _digests = field_validator("implementation_digest", "materialization_digest", "input_digest")(
         _digest

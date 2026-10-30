@@ -229,15 +229,27 @@ def test_procedure_slot_bindings_use_instance_names_with_typed_provider_values()
     schema = _schemas()["cruxible_procedure_run"].inputSchema
     assert schema["properties"]["bindings"]["anyOf"][0] == {"$ref": "#/$defs/McpProcedureBindings"}
     binding_schema = schema["$defs"]["McpProcedureBindings"]
+    from cruxible_client.contracts.procedures.bindings import (
+        MAX_PROCEDURE_BINDINGS,
+        MAX_PROCEDURE_PROVIDER_REFERENCE,
+        MAX_PROCEDURE_SLOT_NAME,
+    )
+
+    # A value names ``Provider:<name>#<operation>``; a key is a slot or
+    # ``<invoke node path>.<slot>``.
     assert binding_schema["additionalProperties"] == {
         "type": "string",
         "minLength": 1,
-        "maxLength": 650,
+        "maxLength": MAX_PROCEDURE_PROVIDER_REFERENCE,
     }
-    assert binding_schema["propertyNames"] == {"minLength": 1, "maxLength": 512}
-    assert binding_schema["maxProperties"] == 256
-    assert McpProcedureBindings.model_validate({"fetch": "web/build"}).root == {
-        "fetch": "web/build"
+    assert MAX_PROCEDURE_PROVIDER_REFERENCE == len("Provider:") + 384 + len("#") + 256
+    assert binding_schema["propertyNames"] == {
+        "minLength": 1,
+        "maxLength": MAX_PROCEDURE_SLOT_NAME,
+    }
+    assert binding_schema["maxProperties"] == MAX_PROCEDURE_BINDINGS == 256
+    assert McpProcedureBindings.model_validate({"fetch": "web/build#web.fetch"}).root == {
+        "fetch": "web/build#web.fetch"
     }
     assert McpProcedureBindings.model_validate({"fetch": "web/build#fetch"}).root == {
         "fetch": "web/build#fetch"
