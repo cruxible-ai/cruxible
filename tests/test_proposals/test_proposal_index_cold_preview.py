@@ -48,15 +48,8 @@ def _disk(root: Path) -> dict:
 
 
 def _preview_disk(instance) -> dict:
-    # The proposal repair owns these durable indexes/evidence. CAS opening in
-    # unchanged code reapplies directory permissions (ctime), tracked separately
-    # in the handoff; retain body bytes and every regular-file metadata check.
-    snapshot = _disk(instance.root)
-    cas_directory = "cas/sha256"
-    if cas_directory in snapshot:
-        mode, inode, size, mtime, _ctime, content = snapshot[cas_directory]
-        snapshot[cas_directory] = mode, inode, size, mtime, content
-    return snapshot
+    """Full byte/metadata equality, including every directory's ctime."""
+    return _disk(instance.root)
 
 
 def _forbidden(*args, **kwargs):
