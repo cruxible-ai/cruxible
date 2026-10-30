@@ -50,7 +50,6 @@ def test_state_tap_refusal_is_emitted_by_the_public_preparer(tmp_path) -> None:
         prepare_direct_procedure_run(
             accepted,
             instance_id="instance-a",
-            run_id="run-state-refusal",
             accepted_coordinate=_coordinate(),
             invocation_input={},
             actor_context=SimpleNamespace(),  # type: ignore[arg-type]
