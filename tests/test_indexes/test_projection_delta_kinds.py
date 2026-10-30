@@ -17,7 +17,6 @@ from cruxible_client.contracts.subjects import SubjectShell, render_subject, sub
 from cruxible_core.compiler import projection_delta as delta_module
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from tests.core_support._support import initialize_local
-from tests.test_integration.test_graph_v4_provider_closure import contracted_demo  # noqa: F401
 
 TIMESTAMP = "2026-08-28T15:01:00.000000Z"
 
@@ -103,14 +102,21 @@ def test_a_subject_kind_successor_equals_cold(tmp_path: Path, delta_kinds: set[s
     assert "subject-kind" in delta_kinds
 
 
-@pytest.mark.usefixtures("contracted_demo")
-def test_a_blueprint_successor_equals_cold(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delta_kinds: set[str]
+def test_an_open_procedure_and_exact_line_successors_equal_cold(
+    tmp_path: Path, delta_kinds: set[str]
 ) -> None:
-    from tests.test_procedures.test_blueprints import accept_blueprint_world
+    from tests.support.operation_world import (
+        author_line,
+        author_procedure,
+        operation_build,
+        slotted_spec,
+        world,
+    )
 
-    accept_blueprint_world(_world(tmp_path), monkeypatch)
-    assert "blueprint" in delta_kinds
+    instance = world(_world(tmp_path), operation_build())
+    author_procedure(instance, slotted_spec())
+    author_line(instance)
+    assert {"procedure", "line"} <= delta_kinds
 
 
 def test_a_resolution_contract_successor_equals_cold(tmp_path: Path, delta_kinds: set[str]) -> None:

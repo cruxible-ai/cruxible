@@ -10,7 +10,6 @@ import pytest
 from cruxible_core.indexes import provider_heads
 from cruxible_core.indexes.sql_batch import insert_rows
 from cruxible_core.indexes.typed_state import schema_sql
-from tests.test_integration.test_graph_v4_provider_closure import contracted_demo as contracted_demo
 
 
 def _writes(statements):
@@ -43,33 +42,11 @@ def test_provider_maintenance_batches_every_changed_table(monkeypatch, size):
         for i in range(size)
         for build in ("a", "b")
     ]
-    interfaces = [
-        (
-            f"ProviderInterface:i{i}/contract",
-            f"provider-interfaces/i{i}/contract.json",
-            "fixture",
-            "digest",
-            None,
-            1,
-            "live",
-            f"i{i}",
-            "digest",
-            "none",
-            "contract",
-            0,
-        )
-        for i in range(size)
-    ]
+    operations = [(row[0], "compute", "in-digest", "out-digest", "pure") for row in providers]
     insert_rows(connection, "providers", providers)
-    insert_rows(connection, "provider_interfaces", interfaces)
-    sources = {row[1]: b"" for row in providers + interfaces}
-    members = tuple(
-        SimpleNamespace(
-            artifact_kind="provider" if path.startswith("providers/") else "provider-interface",
-            path=path,
-        )
-        for path in sources
-    )
+    insert_rows(connection, "provider_operations", operations)
+    sources = {row[1]: b"" for row in providers}
+    members = tuple(SimpleNamespace(artifact_kind="provider", path=path) for path in sources)
     record = SimpleNamespace(sequence=10, members=members)
     monkeypatch.setattr(provider_heads, "parse_change_set_record", lambda *a, **kw: record)
     sources["changesets/10.json"] = b"record"
@@ -80,7 +57,6 @@ def test_provider_maintenance_batches_every_changed_table(monkeypatch, size):
     assert _writes(statements) == {
         "provider_registration_order": 1,
         "providers": 1,
-        "provider_interfaces": 1,
         "provider_control_domains": 1,
         "provider_heads": 1,
     }
@@ -88,8 +64,11 @@ def test_provider_maintenance_batches_every_changed_table(monkeypatch, size):
         "SELECT provider_name,identity,ambiguous FROM provider_heads ORDER BY provider_name"
     ).fetchall() == sorted((f"p{i}", f"Provider:p{i}/a", 1) for i in range(size))
     assert connection.execute(
-        "SELECT DISTINCT registration_sequence FROM provider_interfaces"
+        "SELECT DISTINCT registration_sequence FROM providers"
     ).fetchall() == [(10,)]
+    assert sorted(connection.execute("SELECT * FROM provider_operations").fetchall()) == sorted(
+        operations
+    )
 
     # Later metadata preserves the earliest registration; retirement falls back
     # to the other build and subtract/add leaves the domain count unchanged.
@@ -175,35 +154,38 @@ def test_domain_removal_aggregates_across_parameter_chunks():
     connection.close()
 
 
-@pytest.mark.usefixtures("contracted_demo")
 def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
-    from cruxible_client.contracts.procedures.blueprints import (
-        blueprint_digest,
-        instantiate_blueprint,
-    )
-
-    from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.procedures.artifacts import (
-        procedure_artifact_digest,
-        render_procedure,
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        parse_line_spec,
+        render_line_spec,
     )
     from cruxible_core.derived.derived_state import SnapshotTree
     from cruxible_core.indexes.typed_sqlite import parse_static_owners, replace_rows
-    from tests.test_providers.test_legacy_blueprint_build_move import legacy_blueprint_move
+    from tests.support.operation_world import (
+        LINE,
+        author_line,
+        author_procedure,
+        operation_build,
+        slotted_spec,
+        world,
+    )
     from tests.test_scale.test_provider_build_install import _instance
 
-    old, _new, blueprint, _procedure, path, tree, _move = legacy_blueprint_move()
-    del tree[path]
-    procedures = [
-        instantiate_blueprint(
-            blueprint,
-            blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
-            name=f"batch.p{i}",
-            providers={"lookup": old},
-        )
+    (tmp_path / "accepted").mkdir()
+    accepted = world(tmp_path / "accepted", operation_build())
+    author_procedure(accepted, slotted_spec())
+    author_line(accepted)
+    tree = dict(accepted.tree_at(accepted.accepted_coordinate().git_oid))
+    path = line_spec_path(LINE)
+    prototype = parse_line_spec(tree.pop(path), path=path)
+    lines = [
+        prototype.model_copy(update={"identity": ArtifactIdentity(kind="Line", name=f"batch.p{i}")})
         for i in range(20)
     ]
-    sources = tree | {f"procedures/{p.identity.name}.json": render_procedure(p) for p in procedures}
+    sources = tree | {line_spec_path(line.identity.name): render_line_spec(line) for line in lines}
     instance = _instance(tmp_path / "warm", SnapshotTree({}))
     instance.connection.execute("PRAGMA foreign_keys=ON")
 
@@ -224,14 +206,13 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     assert _writes(statements)["provider_pinners"] == 1
     expected = sorted(
         (
-            p.identity.qualified,
-            pin.target.qualified,
-            pin.artifact_digest,
-            pin.target.name.partition("/")[0],
+            line.identity.qualified,
+            binding.build.target.qualified,
+            binding.build.artifact_digest,
+            binding.build.target.name.partition("/")[0],
         )
-        for p in procedures
-        for pin in p.pins
-        if pin.target.kind == "Provider"
+        for line in lines
+        for binding in line.bindings.values()
     )
     assert expected
     assert (
@@ -242,18 +223,18 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     )
 
     changes = {
-        f"procedures/{p.identity.name}.json": render_procedure(
-            p.model_copy(
+        line_spec_path(line.identity.name): render_line_spec(
+            line.model_copy(
                 update={
                     "lifecycle": ArtifactLifecycle(
-                        state="retired", predecessor_digest=procedure_artifact_digest(p).tagged
+                        state="retired", predecessor_digest=line_spec_digest(line).tagged
                     ),
                 }
             )
         )
-        for p in procedures[:10]
+        for line in lines[:10]
     }
-    gone = [f"procedures/{p.identity.name}.json" for p in procedures[10:19]]
+    gone = [line_spec_path(line.identity.name) for line in lines[10:19]]
     statements.clear()
     instance.connection.set_trace_callback(statements.append)
     replace_rows(
@@ -268,7 +249,7 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     assert _writes(statements)["provider_pinners"] == 1  # one DELETE, no retired INSERTs
     assert next(
         i for i, sql in enumerate(statements) if sql.startswith("DELETE FROM provider_pinners")
-    ) < next(i for i, sql in enumerate(statements) if sql.startswith("DELETE FROM procedures"))
+    ) < next(i for i, sql in enumerate(statements) if sql.startswith("DELETE FROM lines"))
     cold_sources = sources | changes
     for path in gone:
         del cold_sources[path]
@@ -277,7 +258,9 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     for table in (
         "members",
         "providers",
-        "provider_interfaces",
+        "provider_operations",
+        "contracts",
+        "lines",
         "procedures",
         "pins",
         "provider_pinners",
