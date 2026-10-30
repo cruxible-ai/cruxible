@@ -517,6 +517,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
         render_line_spec,
     )
     from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_dispatch import _carry_line_mandate
 
     instance, line, procedure, owner = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
@@ -538,6 +539,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(line.identity.name)] = render_line_spec(successor)
+    _carry_line_mandate(tree, successor)
     original = dispatch_service.service_check_line_trigger
 
     def revised_meanwhile(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -1155,6 +1157,7 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
     )
     from tests.support.lines import line_trigger, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_dispatch import _carry_line_mandate
 
     instance, line, procedure, owner = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
@@ -1184,16 +1187,14 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
             )
         )
     else:
-        tree[line_spec_path(line.identity.name)] = render_line_spec(
-            line.model_copy(
-                update={
-                    "parameters": {"status": "closed"},
-                    "lifecycle": ArtifactLifecycle(
-                        predecessor_digest=line_spec_digest(line).tagged
-                    ),
-                }
-            )
+        revised = line.model_copy(
+            update={
+                "parameters": {"status": "closed"},
+                "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+            }
         )
+        tree[line_spec_path(line.identity.name)] = render_line_spec(revised)
+        _carry_line_mandate(tree, revised)
     original = runs._CurrentProcedureAuthority.current_procedure_digest
     injected = False
 
@@ -1771,13 +1772,19 @@ def test_a_dry_run_evaluation_reads_without_enqueueing_and_only_it_may_omit_the_
 
 
 def _retire_line(instance, owner, line):  # type: ignore[no-untyped-def]
-    """Accept a retired successor of the Line, retiring the Trigger aimed at it with it.
+    """Retire the Line, its exact Mandate and its Trigger in one ChangeSet.
 
     A Line change may not strand a live Trigger aimed at it, so both retire in
     one ChangeSet; the listener stops on the retired Line before reading Triggers.
     """
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedure_mandates import (
+        parse_procedure_mandate,
+        procedure_mandate_digest,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
         line_spec_path,
@@ -1788,12 +1795,25 @@ def _retire_line(instance, owner, line):  # type: ignore[no-untyped-def]
     from tests.test_procedures.test_line_triggers import TRIGGER
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[line_spec_path(line.identity.name)] = render_line_spec(
-        line.model_copy(
+    retired = line.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=line_spec_digest(line).tagged
+            )
+        }
+    )
+    tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    mandate_path = procedure_mandate_path("served-line-mandate")
+    mandate = parse_procedure_mandate(tree[mandate_path], path=mandate_path)
+    tree[mandate_path] = render_procedure_mandate(
+        mandate.model_copy(
             update={
+                "line": mandate.line.model_copy(
+                    update={"artifact_digest": line_spec_digest(retired).tagged}
+                ),
                 "lifecycle": ArtifactLifecycle(
-                    state="retired", predecessor_digest=line_spec_digest(line).tagged
-                )
+                    state="retired", predecessor_digest=procedure_mandate_digest(mandate).tagged
+                ),
             }
         )
     )
