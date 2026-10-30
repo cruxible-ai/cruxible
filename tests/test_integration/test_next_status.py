@@ -432,7 +432,7 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
                 ),
                 "lifecycle": ArtifactLifecycle(
                     state="retired", predecessor_digest=procedure_mandate_digest(mandate).tagged
-                )
+                ),
             }
         )
     )

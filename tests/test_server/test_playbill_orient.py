@@ -26,7 +26,7 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "procedures",
         "documents",
         "queries",
-        "interfaces",
+        "operations",
         # Operational families: counted in the map, paged by their own section.
         "lines",
         "captures",
