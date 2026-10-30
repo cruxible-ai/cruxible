@@ -55,7 +55,8 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("evidence_admission_policy", "rules", "*", "allowed_reducer_digests", "*"),
         ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
     ),
-    "query-definitions/": (("pins", *_PIN),),
+    # A Query names the ClaimTypes it reads by predicate and holds no digest.
+    "query-definitions/": (),
     "claims/": (
         ("statement", "claim_type_digest"),
         ("pins", *_REQUIRED_CLAIM_PIN),
