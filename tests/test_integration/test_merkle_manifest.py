@@ -12,11 +12,10 @@ import pytest
 
 from cruxible_client.contracts.canonical import (
     CanonicalEncodingError,
-    SemanticManifestRoot,
     SemanticMerkleRoot,
+    SemanticRoot,
     canonical_bytes,
     manifest_for_tree,
-    manifest_root,
 )
 from cruxible_client.contracts.errors import MerkleIntegrityError
 from cruxible_client.contracts.merkle import (
@@ -93,30 +92,29 @@ def test_independent_builds_agree_on_root_and_every_node() -> None:
     assert left.members() == dict(sorted(MEMBERS.items()))
 
 
-def test_merkle_and_flat_roots_read_the_same_tree_from_the_same_members() -> None:
+def test_the_manifest_root_reads_a_tree_through_its_member_digests() -> None:
     tree = {path: f"content for {path}".encode() for path in MEMBERS}
     assert merkle_manifest_root(tree) == build_merkle_manifest(manifest_for_tree(tree)).root
 
 
-def test_merkle_and_flat_root_spellings_can_never_be_confused() -> None:
+def test_a_manifest_root_spelling_can_never_be_confused_with_a_sha256_digest() -> None:
+    """The one manifest root is `merkle-sha256:`; no `sha256:` value verifies as one."""
+
     tree = {path: f"content for {path}".encode() for path in MEMBERS}
-    flat = manifest_root(tree)
     merkle = merkle_manifest_root(tree)
-    assert flat.tagged.startswith("sha256:")
     assert merkle.tagged.startswith("merkle-sha256:")
-    assert flat.value != merkle.value
+    respelled = "sha256:" + merkle.value
+    with pytest.raises(ValueError, match="merkle-sha256"):
+        SemanticMerkleRoot.from_tagged(respelled)
     with pytest.raises(ValueError):
-        SemanticMerkleRoot.from_tagged(flat.tagged)
+        SemanticRoot.from_tagged(merkle.tagged)
     with pytest.raises(ValueError):
-        SemanticManifestRoot.from_tagged(merkle.tagged)
-    # Even a hypothetical hex collision cannot cross: the prefixes disagree.
-    assert SemanticMerkleRoot(flat.value).tagged != flat.tagged
+        verify_merkle_manifest(manifest_for_tree(tree), claimed_root=respelled)
+    # A well-spelled root over other bytes refuses as an integrity failure.
     with pytest.raises(MerkleIntegrityError):
         verify_merkle_manifest(
-            manifest_for_tree(tree), claimed_root=SemanticMerkleRoot(flat.value).tagged
+            manifest_for_tree(tree), claimed_root=SemanticMerkleRoot("00" * 32).tagged
         )
-    with pytest.raises(ValueError):
-        verify_merkle_manifest(manifest_for_tree(tree), claimed_root=flat.tagged)
 
 
 def test_verification_accepts_the_true_root_and_refuses_a_perturbed_leaf() -> None:

@@ -22,10 +22,11 @@ from cruxible_client.contracts.canonical import (
     ChangeSetDigest,
     GenerationRoot,
     SemanticRoot,
-    manifest_root,
+    semantic_projection,
     typed_digest,
 )
 from cruxible_client.contracts.errors import BootstrapError
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -41,6 +42,7 @@ from cruxible_client.contracts.types import (
     TrustRoot,
 )
 from cruxible_core.ledger.git import GitLedger
+from cruxible_core.ledger.semantic_root import compute_semantic_root
 
 
 @dataclass(frozen=True)
@@ -87,20 +89,24 @@ def bootstrap_changeset_digest(parent: BootstrapRoot) -> ChangeSetDigest:
 
 
 def genesis_semantic_root(
-    tree: dict[str, bytes],
+    tree: Mapping[str, bytes],
     *,
     parent: BootstrapRoot,
 ) -> tuple[ChangeSetDigest, SemanticRoot]:
+    """Name generation zero with the one semantic-root derivation.
+
+    Its manifest root is the Merkle root of the tree's semantic projection,
+    exactly as every later generation's is; it has no approvals; and its parent
+    is the bootstrap anchor, which enters typed as `bootstrap` rather than as a
+    semantic root.
+    """
+
     changeset = bootstrap_changeset_digest(parent)
-    root = typed_digest(
-        SemanticRoot,
-        "playbill-sroot-v1",
-        {
-            "manifest_root": manifest_root(tree).value,
-            "changeset_digest": changeset.value,
-            "approval_digests": [],
-            "parent_semantic_root": parent.value,
-        },
+    root = compute_semantic_root(
+        manifest_root=merkle_manifest_root(semantic_projection(tree)).tagged,
+        changeset_digest=changeset.tagged,
+        approval_digests=(),
+        parent=parent,
     )
     return changeset, root
 

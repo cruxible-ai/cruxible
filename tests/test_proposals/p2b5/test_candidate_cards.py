@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_projection
+from cruxible_client.contracts.canonical import canonical_bytes, semantic_projection
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -18,6 +18,7 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
     SettlementIntegrityError,
 )
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
@@ -68,7 +69,7 @@ def test_cards_cover_changes_removals_and_renames_without_semantic_authority() -
     assert rendered[candidate_card_path(old)] == b"removed at " + b"a" * 40 + b"\n"
     assert b"# procedure: new" in rendered[candidate_card_path(new)]
     assert b"# procedure: kept" in rendered[candidate_card_path(kept)]
-    assert manifest_root(semantic_projection(rendered)) == manifest_root(candidate)
+    assert merkle_manifest_root(semantic_projection(rendered)) == merkle_manifest_root(candidate)
     # Re-derivation is idempotent, which is the property settlement and recovery
     # rely on when they compare the whole re-evaluated tree.
     assert (

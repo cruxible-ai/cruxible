@@ -481,23 +481,17 @@ class ChangeSetDigest(Sha256Value):
     kind = "change-set digest"
 
 
-class SemanticManifestRoot(Sha256Value):
-    kind = "semantic manifest root"
-
-
 class MerkleNodeDigest(Sha256Value):
     kind = "merkle node digest"
 
 
 class SemanticMerkleRoot(Sha256Value):
-    """Merkle-structured manifest root, spelled so it can never read as flat.
+    """The semantic manifest root: a Merkle root over the member manifest.
 
-    The flat `SemanticManifestRoot` commits to every member in one preimage; this
-    root commits to a path-segment trie whose interior nodes are recomputed only
-    along the changed paths. Both are 32-byte SHA-256 values, so the tagged
-    spellings are deliberately disjoint: a flat root never parses as a merkle
-    root and a merkle root never parses as a flat root, and no field can silently
-    accept the wrong structure.
+    It commits to a path-segment trie whose interior nodes are recomputed only
+    along the changed paths. It is the only manifest root; its `merkle-sha256:`
+    spelling is disjoint from every `sha256:` digest kind, so no other 32-byte
+    value parses where a manifest root is expected.
     """
 
     algorithm = "merkle-sha256"
@@ -708,25 +702,6 @@ def manifest_for_tree_carrying(
     return manifest
 
 
-def manifest_root_from_members(manifest: Mapping[str, str]) -> SemanticManifestRoot:
-    """Hash one already-built path-to-member-digest manifest."""
-
-    entries: list[CanonicalValue] = [
-        [path, cast(CanonicalScalar, digest)] for path, digest in manifest.items()
-    ]
-    return typed_digest(
-        SemanticManifestRoot,
-        "playbill-manifest-v1",
-        {"entries": entries},
-    )
-
-
-def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
-    """Hash sorted path and exact-content digest entries."""
-
-    return manifest_root_from_members(manifest_for_tree(tree))
-
-
 CARD_NAMESPACE = "cards/"
 """The one spelling of the derivative-card sidecar namespace.
 
@@ -819,7 +794,6 @@ __all__ = [
     "LogicalDigest",
     "MerkleNodeDigest",
     "ProposalDigest",
-    "SemanticManifestRoot",
     "SemanticMerkleRoot",
     "SemanticDiffDigest",
     "SemanticRoot",
@@ -834,8 +808,6 @@ __all__ = [
     "file_digest",
     "manifest_for_tree",
     "manifest_for_tree_carrying",
-    "manifest_root",
-    "manifest_root_from_members",
     "model_canonical_bytes",
     "normalize_canonical",
     "normalize_ledger_path",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
@@ -30,19 +30,16 @@ from cruxible_client.contracts.candidates import (
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import (
-    ApprovalDigest,
     CandidateDigest,
     ChangeSetDigest,
     DependencyEdgeRoot,
     GenerationRoot,
-    SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
     canonical_list_bytes,
     composed_canonical_digest,
     model_canonical_bytes,
-    typed_digest,
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
 from cruxible_client.contracts.content_memo import ParseMemo, seal, sealed_memo
@@ -75,6 +72,7 @@ from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
 from cruxible_core.ledger.bootstrap import generation_root
 from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.ledger.git import GitLedger
+from cruxible_core.ledger.semantic_root import compute_semantic_root
 from cruxible_core.proposals.prepared_evaluation import AdmittedEvaluation
 from cruxible_core.proposals.proposal_message import generation_commit_message
 from cruxible_core.proposals.proposals import (
@@ -385,132 +383,28 @@ def render_generation_descriptor(descriptor: GenerationDescriptor) -> bytes:
     return canonical_bytes(descriptor.model_dump(mode="json")) + b"\n"
 
 
-SemanticRootDerivation = Literal["playbill-sroot-v1", "playbill-sroot-v2"]
-
-SEMANTIC_ROOT_V2_DOMAIN: Final = "playbill-sroot-v2"
-
-
-def compute_semantic_root_v2(
-    *,
-    manifest_root_value: str,
-    changeset_digest_value: str,
-    approval_digests: tuple[str, ...],
-    parent_semantic_root: str,
-    parent_derivation: SemanticRootDerivation,
-) -> SemanticRoot:
-    """Derive a semantic root from tagged inputs and an explicit parent derivation.
-
-    The genesis root (`playbill-sroot-v1`) hashes bare hex over the flat genesis
-    manifest. Every receipt's root hashes each input in its full tagged
-    spelling, so a merkle manifest root can never be read as a flat one inside
-    the preimage any more than it can on the wire.
-
-    The preimage is exactly, and only:
-
-    - `tag`: `"playbill-sroot-v2"`, this derivation's own name, supplied by the
-      canonical digest domain and thus present in every preimage byte string;
-    - `manifest_root`: the candidate manifest root's tagged spelling, which is a
-      `merkle-sha256:` merkle root -- a flat root is refused;
-    - `changeset_digest`: the change-set digest's tagged spelling;
-    - `approval_digests`: the sorted, unique approval digests, each tagged;
-    - `parent_semantic_root`: the parent semantic root's tagged spelling;
-    - `parent_derivation`: the name of the derivation that produced the parent.
-
-    The last field is the succession chain rule. A v1 and a v2 semantic root are
-    both `SemanticRoot` values with the same `sha256:` spelling, so the parent's
-    spelling alone cannot say which derivation produced it. The first accepted
-    generation's parent is the genesis root, and it enters as
-    `parent_derivation="playbill-sroot-v1"`; every later generation's parent
-    enters as `"playbill-sroot-v2"`. The same 32-byte parent value therefore
-    yields two different children under the two claims, so a chain cannot be
-    re-narrated after the fact.
-    """
-
-    manifest = SemanticMerkleRoot.from_tagged(manifest_root_value)
-    changeset = ChangeSetDigest.from_tagged(changeset_digest_value)
-    parent = SemanticRoot.from_tagged(parent_semantic_root)
-    parsed_approvals = tuple(ApprovalDigest.from_tagged(value) for value in approval_digests)
-    if approval_digests != tuple(sorted(set(approval_digests))):
-        raise SettlementIntegrityError("semantic-root approval digests must be sorted and unique")
-    return typed_digest(
-        SemanticRoot,
-        SEMANTIC_ROOT_V2_DOMAIN,
-        {
-            "manifest_root": manifest.tagged,
-            "changeset_digest": changeset.tagged,
-            "approval_digests": [approval.tagged for approval in parsed_approvals],
-            "parent_semantic_root": parent.tagged,
-            "parent_derivation": parent_derivation,
-        },
-    )
-
-
-def record_semantic_root_derivation(
-    record: ChangeSetRecord | None,
-) -> SemanticRootDerivation:
-    """Name the derivation that produced one accepted generation's semantic root.
-
-    Every receipt's root is derived by `playbill-sroot-v2`. Genesis has no
-    receipt, and its root is derived by `playbill-sroot-v1` over the flat
-    genesis manifest, so the first accepted generation of every instance names
-    a v1 parent and every later one a v2 parent.
-    """
-
-    return "playbill-sroot-v1" if record is None else SEMANTIC_ROOT_V2_DOMAIN
-
-
 def semantic_root_for_record(
     record: ChangeSetRecord,
     *,
     approval_digests: tuple[str, ...],
     parent_semantic_root: str,
-    parent_record: ChangeSetRecord | None = None,
-    parent_derivation: SemanticRootDerivation | None = None,
 ) -> SemanticRoot:
-    """Derive one accepted generation's semantic root under its own derivation.
+    """Derive one accepted generation's semantic root.
 
     Settlement, replay, and checkpoint prefix re-derivation all ask this one
-    question, so they ask it in one place: whether the parent is genesis decides
-    the parent derivation the preimage names. The manifest root enters from the receipt the caller
-    has already reproduced from member bytes, so nothing here is believed that
-    was not first recomputed. The parent enters as its record or as the one
-    fact of it the derivation reads (``parent_derivation``), never both.
+    question, so they ask it in one place. Every accepted generation's parent
+    is a semantic root under the one derivation (generation zero's included),
+    so a successor needs nothing of its parent but that root. The manifest root
+    enters from the receipt the caller has already reproduced from member
+    bytes, so nothing here is believed that was not first recomputed.
     """
 
-    if parent_derivation is not None and parent_record is not None:
-        raise SettlementIntegrityError("a parent enters as its record or its derivation, not both")
-    return compute_semantic_root_v2(
-        manifest_root_value=record.candidate.candidate_manifest_root,
-        changeset_digest_value=record.changeset_digest,
+    return compute_semantic_root(
+        manifest_root=record.candidate.candidate_manifest_root,
+        changeset_digest=record.changeset_digest,
         approval_digests=approval_digests,
-        parent_semantic_root=parent_semantic_root,
-        parent_derivation=(
-            record_semantic_root_derivation(parent_record)
-            if parent_derivation is None
-            else parent_derivation
-        ),
+        parent=cast(SemanticRoot, SemanticRoot.from_tagged(parent_semantic_root)),
     )
-
-
-def parent_change_set_record(
-    parent_tree: Mapping[str, bytes],
-    *,
-    sequence: int,
-) -> ChangeSetRecord | None:
-    """Read the receipt of the generation a new one succeeds, or None for genesis.
-
-    `changesets/` is append-only in accepted history, so the parent's own receipt
-    is present in the parent's daemon-signed tree and its version is a fact about
-    that tree rather than a claim the new generation makes about its parent.
-    """
-
-    if sequence <= 1:
-        return None
-    path = f"changesets/cs-{sequence - 1:020d}.json"
-    content = parent_tree.get(path)
-    if content is None:
-        raise SettlementIntegrityError("settlement base is missing its own change-set record")
-    return parse_change_set_record(content, path=path)
 
 
 @dataclass(frozen=True)
@@ -591,7 +485,6 @@ def prepare_generation(
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     admitted: AdmittedEvaluation | None = None,
-    parent_derivation: SemanticRootDerivation | None = None,
     accepting_admission: AcceptingAdmission | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state.
@@ -603,11 +496,8 @@ def prepare_generation(
     observed body read and fact build answering the same) and the laws are the
     build's own; every check below runs on it as on a fresh evaluation.
 
-    ``parent_derivation`` is the base generation's own semantic-root derivation,
-    read off the receipt its acceptance verified (``record_semantic_root_derivation``)
-    by a caller that holds it. The new root needs only that one fact of the
-    parent, so the parent's whole receipt is read and parsed only when no caller
-    carries it: a settle's cost then follows its own change, not its parent's.
+    The new semantic root needs only the base's own root, never its receipt,
+    so a settle's cost follows its own change, not its parent's.
     """
 
     if actor_binding.actor_id != proposal_actor_id:
@@ -781,11 +671,6 @@ def prepare_generation(
         record,
         approval_digests=approval_digests,
         parent_semantic_root=base.semantic_root,
-        parent_derivation=(
-            record_semantic_root_derivation(parent_change_set_record(base_tree, sequence=sequence))
-            if parent_derivation is None
-            else parent_derivation
-        ),
     )
     parent_generation = GenerationRoot.from_tagged(base.generation_root)
     descriptor = GenerationDescriptor(
@@ -814,22 +699,17 @@ def prepare_generation(
 
 
 __all__ = [
-    "SEMANTIC_ROOT_V2_DOMAIN",
     "ChangeActorBinding",
     "ChangeSetRecord",
     "GENERATION_CONSTRUCTION",
-    "SemanticRootDerivation",
     "SettlementBinding",
     "SettlementCrashHook",
     "VerifiedGenerationBundle",
     "build_change_set_record",
     "change_set_digest",
     "change_set_path",
-    "compute_semantic_root_v2",
     "prepare_generation",
-    "parent_change_set_record",
     "parse_change_set_record",
-    "record_semantic_root_derivation",
     "render_change_set",
     "render_generation_descriptor",
     "semantic_root_for_record",

@@ -24,7 +24,7 @@ from cruxible_core.indexes.serving import (
 from cruxible_core.indexes.sqlite import bind_projection
 from cruxible_core.ledger.checkpoints import (
     DEFAULT_CHECKPOINT_INTERVAL,
-    ReplayCheckpointBodyV2,
+    ReplayCheckpointBodyV3,
     checkpoint_body,
     write_checkpoint,
 )
@@ -340,7 +340,7 @@ class ActivationPublisher:
         *,
         base: AcceptedProjectionCoordinate,
         parent: AcceptedCoordinate,
-    ) -> ReplayCheckpointBodyV2:
+    ) -> ReplayCheckpointBodyV3:
         assert self.genesis is not None
         sequence = bundle.record.sequence
         return checkpoint_body(

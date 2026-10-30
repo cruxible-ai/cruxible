@@ -13,8 +13,8 @@ import pytest
 from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import (
     DependencyEdgeRoot,
-    SemanticManifestRoot,
     SemanticMerkleRoot,
+    SemanticRoot,
     canonical_bytes,
 )
 from cruxible_client.contracts.errors import CanonicalEncodingError, MerkleIntegrityError
@@ -132,7 +132,7 @@ def test_a_dependency_edge_root_can_never_be_read_as_a_manifest_root() -> None:
 
     assert edge_root.tagged.startswith("depgraph-sha256:")
     assert merkle_root.tagged.startswith("merkle-sha256:")
-    for wrong in (SemanticMerkleRoot, SemanticManifestRoot):
+    for wrong in (SemanticMerkleRoot, SemanticRoot):
         with pytest.raises(ValueError):
             wrong.from_tagged(edge_root.tagged)
     with pytest.raises(ValueError):

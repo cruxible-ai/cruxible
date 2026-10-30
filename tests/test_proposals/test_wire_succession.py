@@ -2,8 +2,9 @@
 
 `playbill-candidate-v2`, `playbill-sroot-v2`, `playbill-dependency-graph-v3`, and
 `playbill-changeset-v3` are pinned here against their goldens, and every one of
-them is what a new proposal produces. Genesis alone keeps the flat manifest root
-and `playbill-sroot-v1`; no other receipt or candidate version parses.
+them is what a new proposal produces. Genesis is named by the same
+`playbill-sroot-v2` derivation with a typed `bootstrap` parent; no flat manifest
+root, and no other receipt or candidate version, parses.
 """
 
 from __future__ import annotations
@@ -24,11 +25,12 @@ from cruxible_client.contracts.candidates import (
     render_candidate_record,
 )
 from cruxible_client.contracts.canonical import (
+    BootstrapRoot,
     DependencyEdgeRoot,
-    SemanticManifestRoot,
+    GenerationRoot,
     SemanticMerkleRoot,
+    SemanticRoot,
     canonical_bytes,
-    manifest_root,
     semantic_projection,
 )
 from cruxible_client.contracts.documents import (
@@ -45,14 +47,13 @@ from cruxible_core.claims.closure import (
     dependency_edge_root,
     evaluate_dependency_closure,
 )
+from cruxible_core.ledger.semantic_root import SEMANTIC_ROOT_DOMAIN, compute_semantic_root
 from cruxible_core.proposals.proposals import evaluate_proposal_tree
 from cruxible_core.proposals.settlement import (
-    SEMANTIC_ROOT_V2_DOMAIN,
     ChangeActorBinding,
     ChangeSetRecord,
     build_change_set_record,
     change_set_digest,
-    compute_semantic_root_v2,
     parse_change_set_record,
     render_change_set,
 )
@@ -177,19 +178,18 @@ def test_candidate_v2_preimage_and_digest_match_golden() -> None:
 
 def _sroot_v2(**overrides: object) -> str:
     values: dict[str, object] = {
-        "manifest_root_value": MERKLE_ROOT,
-        "changeset_digest_value": CHANGESET_DIGEST,
+        "manifest_root": MERKLE_ROOT,
+        "changeset_digest": CHANGESET_DIGEST,
         "approval_digests": APPROVALS,
-        "parent_semantic_root": PARENT_ROOT,
-        "parent_derivation": "playbill-sroot-v2",
+        "parent": SemanticRoot.from_tagged(PARENT_ROOT),
     }
-    return compute_semantic_root_v2(**cast(Any, {**values, **overrides})).tagged
+    return compute_semantic_root(**cast(Any, {**values, **overrides})).tagged
 
 
-def test_sroot_v2_hashes_tagged_spellings_and_v1_hashed_bare_hex() -> None:
+def test_sroot_v2_hashes_tagged_spellings() -> None:
     preimage = canonical_bytes(
         {
-            "tag": SEMANTIC_ROOT_V2_DOMAIN,
+            "tag": SEMANTIC_ROOT_DOMAIN,
             "manifest_root": MERKLE_ROOT,
             "changeset_digest": CHANGESET_DIGEST,
             "approval_digests": list(APPROVALS),
@@ -197,35 +197,34 @@ def test_sroot_v2_hashes_tagged_spellings_and_v1_hashed_bare_hex() -> None:
             "parent_derivation": "playbill-sroot-v2",
         }
     )
+    assert SEMANTIC_ROOT_DOMAIN == "playbill-sroot-v2"
     assert b"merkle-sha256:" in preimage
     assert _sroot_v2() == "sha256:" + hashlib.sha256(preimage).hexdigest()
 
-    v1_preimage = canonical_bytes(
-        {
-            "tag": "playbill-sroot-v1",
-            "manifest_root": "22" * 32,
-            "changeset_digest": "44" * 32,
-            "approval_digests": ["55" * 32, "66" * 32],
-            "parent_semantic_root": "11" * 32,
-        }
-    )
-    assert b"sha256:" not in v1_preimage
-
 
 def test_sroot_v2_requires_a_merkle_manifest_root() -> None:
-    with pytest.raises(ValueError):
-        _sroot_v2(manifest_root_value=FLAT_ROOT)
+    with pytest.raises(ValueError, match="merkle-sha256"):
+        _sroot_v2(manifest_root=FLAT_ROOT)
 
 
-def test_the_chain_rule_distinguishes_a_genesis_parent_from_a_receipt_parent() -> None:
-    from_genesis = _sroot_v2(parent_derivation="playbill-sroot-v1")
-    from_receipt = _sroot_v2(parent_derivation="playbill-sroot-v2")
+def test_sroot_v2_refuses_every_wrong_digest_kind() -> None:
+    with pytest.raises(ValueError, match="change-set digest must use the 'sha256'"):
+        _sroot_v2(changeset_digest=MERKLE_ROOT)
+    with pytest.raises(ValueError, match="merkle-sha256"):
+        _sroot_v2(manifest_root="depgraph-sha256:" + "22" * 32)
+    with pytest.raises(SettlementIntegrityError, match="bootstrap root or a semantic root"):
+        _sroot_v2(parent=GenerationRoot("11" * 32))
+
+
+def test_the_chain_rule_distinguishes_a_bootstrap_parent_from_a_semantic_root() -> None:
+    from_bootstrap = _sroot_v2(parent=BootstrapRoot("11" * 32))
+    from_root = _sroot_v2(parent=SemanticRoot("11" * 32))
     # The same 32-byte parent value, and yet two different children: a chain
     # cannot be re-narrated after the fact.
-    assert from_genesis != from_receipt
+    assert from_bootstrap != from_root
 
 
-def test_sroot_v2_keeps_the_v1_approval_digest_laws() -> None:
+def test_sroot_v2_keeps_the_approval_digest_laws() -> None:
     with pytest.raises(SettlementIntegrityError, match="sorted and unique"):
         _sroot_v2(approval_digests=(APPROVALS[1], APPROVALS[0]))
     with pytest.raises(SettlementIntegrityError, match="sorted and unique"):
@@ -236,20 +235,19 @@ def test_sroot_v2_keeps_the_v1_approval_digest_laws() -> None:
 
 
 def test_a_v2_semantic_root_is_still_an_ordinary_generation_descriptor_value() -> None:
-    root = compute_semantic_root_v2(
-        manifest_root_value=MERKLE_ROOT,
-        changeset_digest_value=CHANGESET_DIGEST,
-        approval_digests=APPROVALS,
-        parent_semantic_root=PARENT_ROOT,
-        parent_derivation="playbill-sroot-v1",
+    root = compute_semantic_root(
+        manifest_root=MERKLE_ROOT,
+        changeset_digest=CHANGESET_DIGEST,
+        approval_digests=(),
+        parent=BootstrapRoot("11" * 32),
     )
     descriptor = GenerationDescriptor(
         semantic_root=root.value,
         git_oid="aa" * 20,
         parent_generation_root="77" * 32,
     )
-    # The descriptor preimage is untouched by the succession: only the
-    # derivation of the value inside `semantic_root` moved.
+    # The descriptor preimage is untouched: only the derivation of the value
+    # inside `semantic_root` is the sroot-v2 one.
     assert sorted(descriptor.model_dump(mode="json")) == [
         "git_oid",
         "parent_generation_root",
@@ -261,20 +259,27 @@ def test_a_v2_semantic_root_is_still_an_ordinary_generation_descriptor_value() -
 
 def test_sroot_v2_vectors_match_golden() -> None:
     golden = json.loads(SROOT_GOLDEN.read_bytes())
-    assert golden["format"] == "playbill-sroot-v2-golden-v1"
+    assert golden["format"] == "playbill-sroot-v2-golden-v2"
     names = set()
     for vector in golden["vectors"]:
         names.add(vector["name"])
         arguments = dict(vector["input"])
-        arguments["approval_digests"] = tuple(arguments["approval_digests"])
-        root = compute_semantic_root_v2(**cast(Any, arguments))
+        parent_kind = (
+            BootstrapRoot if arguments["parent_derivation"] == "bootstrap" else SemanticRoot
+        )
+        root = compute_semantic_root(
+            manifest_root=arguments["manifest_root"],
+            changeset_digest=arguments["changeset_digest"],
+            approval_digests=tuple(arguments["approval_digests"]),
+            parent=parent_kind.from_tagged(arguments["parent_semantic_root"]),  # type: ignore[arg-type]
+        )
         assert root.tagged == vector["semantic_root"]
         assert (
             canonical_bytes(
                 {
-                    "tag": SEMANTIC_ROOT_V2_DOMAIN,
-                    "manifest_root": arguments["manifest_root_value"],
-                    "changeset_digest": arguments["changeset_digest_value"],
+                    "tag": SEMANTIC_ROOT_DOMAIN,
+                    "manifest_root": arguments["manifest_root"],
+                    "changeset_digest": arguments["changeset_digest"],
                     "approval_digests": list(arguments["approval_digests"]),
                     "parent_semantic_root": arguments["parent_semantic_root"],
                     "parent_derivation": arguments["parent_derivation"],
@@ -282,7 +287,8 @@ def test_sroot_v2_vectors_match_golden() -> None:
             ).decode()
             == vector["preimage"]
         )
-    assert names == {"succession_boundary_v1_parent", "steady_state_v2_parent", "no_approvals"}
+        assert root.tagged == "sha256:" + hashlib.sha256(vector["preimage"].encode()).hexdigest()
+    assert names == {"bootstrap_parent", "steady_state_v2_parent", "no_approvals"}
 
 
 # --------------------------------------------------------------------------
@@ -441,9 +447,10 @@ def test_the_manifest_root_a_new_candidate_signs_is_the_trie_over_its_own_member
     assert candidate.candidate.candidate_manifest_root == (
         merkle_manifest_root(semantic_projection(proposed)).tagged
     )
-    # And it is not the flat root, which no longer parses in that field at all.
-    with pytest.raises(ValueError):
-        SemanticMerkleRoot.from_tagged(manifest_root(semantic_projection(proposed)).tagged)
+    # A `sha256:` spelling of the same 32 bytes never parses in that field.
+    merkle = SemanticMerkleRoot.from_tagged(candidate.candidate.candidate_manifest_root)
+    with pytest.raises(ValueError, match="merkle-sha256"):
+        SemanticMerkleRoot.from_tagged("sha256:" + merkle.value)
 
 
 def test_the_v3_edge_root_reproduces_from_the_receipt_it_travels_in() -> None:
@@ -452,10 +459,12 @@ def test_the_v3_edge_root_reproduces_from_the_receipt_it_travels_in() -> None:
     assert dependency_edge_root(edges).tagged == record.closure_proof.dependency_edge_root
 
 
-def test_flat_and_merkle_manifest_roots_stay_mutually_unparseable() -> None:
+def test_manifest_roots_stay_disjoint_from_every_other_digest_spelling() -> None:
     with pytest.raises(ValueError):
-        SemanticManifestRoot.from_tagged(MERKLE_ROOT)
+        SemanticRoot.from_tagged(MERKLE_ROOT)
     with pytest.raises(ValueError):
         SemanticMerkleRoot.from_tagged(FLAT_ROOT)
     with pytest.raises(ValueError):
         DependencyEdgeRoot.from_tagged(FLAT_ROOT)
+    with pytest.raises(ValueError):
+        DependencyEdgeRoot.from_tagged(MERKLE_ROOT)

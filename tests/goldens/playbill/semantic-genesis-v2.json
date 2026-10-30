@@ -9,10 +9,11 @@
       "principals/reviewer.json": "{\n  \"algorithm\": \"ed25519-v1\",\n  \"kind\": \"ordinary\",\n  \"principal_id\": \"reviewer\",\n  \"public_key\": \"0303030303030303030303030303030303030303030303030303030303030303\",\n  \"status\": \"active\",\n  \"tag\": \"playbill-principal-v1\"\n}\n"
     },
     "changeset_digest": "sha256:b350212b4995e277b9b89cd536a9a7d5967340d15f793ccd8bdde63f73516ea2",
-    "manifest_root": "sha256:290bad8e75cdeac2285bf4df142a7cfb0959f2e57011e6fb0a8b16245ddfe133",
-    "semantic_root": "sha256:fbcd55fbe08cb7c4e2a0c72faa5932ca26253aec39d2c0dffb37788ef4065f3a"
+    "manifest_root": "merkle-sha256:934b7890d5443f72200e1e4e3c1083bffc1f7830fab8eff87ac06e82c0445eca",
+    "semantic_root": "sha256:d67955ddd2d2a1e2fa4def2c1ca021edd1b33f5b54b675d21a860ed7b494ef72",
+    "semantic_root_preimage": "{\"approval_digests\":[],\"changeset_digest\":\"sha256:b350212b4995e277b9b89cd536a9a7d5967340d15f793ccd8bdde63f73516ea2\",\"manifest_root\":\"merkle-sha256:934b7890d5443f72200e1e4e3c1083bffc1f7830fab8eff87ac06e82c0445eca\",\"parent_derivation\":\"bootstrap\",\"parent_semantic_root\":\"sha256:6e976c089fe7038f6f657e17bb4fe89de4dd4a56557da5ddb0afa80e5b7c1830\",\"tag\":\"playbill-sroot-v2\"}"
   },
-  "format": "playbill-semantic-genesis-golden-v1",
+  "format": "playbill-semantic-genesis-golden-v2",
   "input": {
     "approval_policy": {
       "mode": "self_approval_allowed",

@@ -39,7 +39,7 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
         "query-definition-v1.json",
         "changeset-v3.json",
         "subject-v1.json",
-        "semantic-genesis-v1.json",
+        "semantic-genesis-v2.json",
         "source-reference-v1.json",
     ):
         shutil.copy2(

@@ -9,18 +9,21 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, semantic_projection
 from cruxible_client.contracts.errors import (
     BootstrapError,
     FormatError,
     SigningKeyError,
 )
+from cruxible_client.contracts.merkle import merkle_manifest_root
 from cruxible_client.contracts.types import PrincipalRecord, TrustRoot
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
     generate_daemon_key,
 )
 from cruxible_core.ledger.bootstrap import (
+    bootstrap_changeset_digest,
+    generation_root,
     genesis_seed_files,
     genesis_tree,
     prepare_genesis,
@@ -28,6 +31,7 @@ from cruxible_core.ledger.bootstrap import (
     verify_genesis,
 )
 from cruxible_core.ledger.git import GitLedger
+from cruxible_core.ledger.semantic_root import compute_semantic_root
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from tests.core_support._support import FIXED_TIMESTAMP, generate_client, initialize_local
 
@@ -86,6 +90,19 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     assert sha1.changeset_digest == sha256.changeset_digest
     assert sha1.semantic_root == sha256.semantic_root
     assert sha1.generation_root != sha256.generation_root
+    # Both name generation zero with the one derivation over the same Merkle
+    # manifest; only the Git OID in the generation-root preimage differs.
+    assert sha1.semantic_root == compute_semantic_root(
+        manifest_root=merkle_manifest_root(semantic_projection(sha1.tree)).tagged,
+        changeset_digest=bootstrap_changeset_digest(sha1.bootstrap_root).tagged,
+        approval_digests=(),
+        parent=sha1.bootstrap_root,
+    )
+    for item in verified:
+        assert item.descriptor.semantic_root == item.semantic_root.value
+        assert item.descriptor.git_oid == item.oid
+        assert item.descriptor.parent_generation_root == item.bootstrap_root.value
+        assert item.generation_root == generation_root(item.descriptor)
 
     legacy_ledger = GitLedger.initialize(
         tmp_path / "ledger-legacy-genesis.git",
