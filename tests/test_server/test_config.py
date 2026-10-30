@@ -344,6 +344,11 @@ def test_run_server_warns_for_volatile_state_dir_and_instance_location(
     def capture_run(*_args: object, **kwargs: object) -> None:
         called.update(kwargs)
 
+    # Treat this test's own temp dir as volatile, wherever pytest put it, so the
+    # warning is asserted without depending on the run's basetemp location.
+    import cruxible_core.server.config as server_config
+
+    monkeypatch.setattr(server_config, "_VOLATILE_STATE_ROOTS", (tmp_path,))
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     reset_registry()
     reset_runtime_credential_store()
