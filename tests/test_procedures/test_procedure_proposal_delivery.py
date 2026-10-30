@@ -396,23 +396,14 @@ def test_a_line_requesting_rung_one_is_capped_before_the_proposal_door(tmp_path:
 
 
 def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> None:
-    """A Source failure never reaches the terminal, whatever shape it takes.
-
-    The genesis-seeded ``workspace.file`` operation declares no refusals, so
-    per F10's closed refusal vocabulary (execution.py:_typed_refusal) a
-    provider decline is now an internal failure
-    (provider_protocol_violation), not a typed node refusal -- see the finding
-    recorded in test_procedure_source_runs.py's
-    test_a_required_rule_refuses_the_same_declined_read_at_the_source_node.
-    Either way, the run stops before the terminal.
-    """
+    """A declared built-in read refusal stops before proposal delivery."""
 
     instance, _owner, root, line, _procedure = proposal_world(tmp_path)
 
     state = run_line(instance, root, line, invoker=fixtures._DecliningInvoker())
 
-    assert state.status == "internal_failed", state.terminal
-    assert state.terminal.code == "provider_protocol_violation"
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "provider_declined"
     assert state.terminal_egress == ()
     assert _proposal_refs(instance) == []
 

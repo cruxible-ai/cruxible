@@ -140,6 +140,8 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "cruxible.acquisition.stale",
         "cruxible.acquisition.oversized",
         "cruxible.acquisition.refused",
+        "cruxible.acquisition.origin_ineligible",
+        "cruxible.acquisition.replayability_ineligible",
         "effect_grant_unrecognized",
         "effect_dispatch_requires_actor",
         "effect_dispatch_requires_authenticated_actor",
