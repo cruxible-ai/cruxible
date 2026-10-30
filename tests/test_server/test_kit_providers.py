@@ -554,28 +554,64 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
             pass
 
 
-def test_kit_build_refuses_providers_and_interfaces_it_cannot_reproduce(
+def _run_exact_build(world: Any, procedure: str, build: Provider, *, name: str, n: int) -> Any:
+    """Accept an exact Line over the released open Procedure and invoke the real child."""
+    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+    from tests.test_server.test_provider_installation import _run_line
+
+    intent = (
+        world.pb.changes(rationale="Select this exact coexisting build.")
+        .line(
+            name=name,
+            procedure=procedure,
+            bindings={"increment": build.identity.name},
+            parameters={"n": n},
+        )
+        .prepare()
+    )
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+    path = f"lines/{name}.json"
+    line = parse_line_spec(_tree(world)[path], path=path)
+    pin = line.bindings["increment"].build
+    assert pin.target == build.identity
+    assert pin.artifact_digest == provider_digest(build).tagged
+    return _run_line(world.instance_id, name)
+
+
+def test_open_procedure_exports_with_independent_wheel_and_lock_builds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
+    """F001: open signatures impose no publisher-build or bundle exclusivity.
+
+    Wheel and lock commitments are checked at staging, installation and exact Lines.
+    """
+    from cruxible_client.contracts.providers import provider_path
+    from cruxible_client.errors import ConfigError
+
     opened = _worlds(tmp_path, monkeypatch)
-    publisher, _consumer = next(opened)
+    publisher, consumer = next(opened)
     try:
         bundled = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
         _install(publisher, bundled)
         _author(publisher)
-        # The Procedure pins kit-call, which the kit must bundle; another package
-        # registering the same interface bytes does not stand in for it.
+        unbundled = _build(publisher)
+        assert unbundled.manifest.providers == ()
+        procedure_path = f"procedures/{PROCEDURE}.json"
+        procedure = parse_procedure(unbundled.contents()[procedure_path], path=procedure_path)
+        assert set(procedure.definition.slots) == {"increment"}
+        assert not any(pin.target.kind == "Provider" for pin in procedure.pins)
+        assert not any(path.startswith("providers/") for path in unbundled.contents())
         alternative = _package(tmp_path / "alternative", provider_checkout, name="other-call")
-        with pytest.raises(RequestRefusedError) as unbundled:
-            _build(publisher, alternative)
-        assert unbundled.value.error_code == "cruxible.kit.provider_not_bundled"
-        # Another build of kit-call (same registration, other wheel bytes) is not
-        # the one installed here.
+        independent = _build(publisher, alternative)
+        assert independent.contents() == unbundled.contents()
+        assert independent.manifest.providers[0].provider_id == "other-call"
+
         rebuilt = tmp_path / "rebuilt"
         shutil.copytree(bundled, rebuilt)
         (rebuilt / "src/local_call/NOTES.txt").write_text("a later build\n")
-        for wheel in (rebuilt / "dist").glob("local_call-*.whl"):
-            wheel.unlink()
         for wheel in (rebuilt / "dist").glob("kit_call-*.whl"):
             wheel.unlink()
         uv = shutil.which("uv")
@@ -585,48 +621,117 @@ def test_kit_build_refuses_providers_and_interfaces_it_cannot_reproduce(
             check=True,
             capture_output=True,
         )
-        with pytest.raises(RequestRefusedError) as differs:
-            _build(publisher, rebuilt)
-        assert differs.value.error_code == "cruxible.kit.provider_build_differs"
-        # The same wheel under another lock is another build too (review F-002).
         relocked = tmp_path / "relocked"
         shutil.copytree(bundled, relocked)
         with (relocked / "uv.lock").open("a") as stream:
             stream.write("\n# another lock identity\n")
-        with pytest.raises(RequestRefusedError) as lock_differs:
-            _build(publisher, relocked)
-        assert lock_differs.value.error_code == "cruxible.kit.provider_build_differs"
-        assert "lock" in str(lock_differs.value)
+        releases = tuple(
+            _build(publisher, project, version=f"{i}.0.0")
+            for i, project in enumerate((bundled, rebuilt, relocked), start=1)
+        )
+        packages = [release.manifest.providers[0] for release in releases]
+        original, different_wheel, different_lock = packages
+        assert original.wheel != different_wheel.wheel
+        assert original.lock == different_wheel.lock
+        assert original.wheel == different_lock.wheel
+        assert original.lock != different_lock.lock
+        assert len({package.build for package in packages}) == 3
+        assert releases[2].contents() == unbundled.contents()
+        for release in releases[:2]:
+            assert release.contents() == unbundled.contents()
+            added = _add(consumer, release, dry_run=False)
+            assert added.status == "accepted", added
+            assert [step.action for step in added.providers] == ["install"]
+        tree = _tree(consumer)
+        assert len([p for p in tree if p.startswith("providers/kit-call/")]) == 2
+        for i, package in enumerate(packages[:2]):
+            path = provider_path(package.build)
+            held = parse_provider(tree[path], path=path)
+            assert _run_exact_build(consumer, PROCEDURE, held, name=f"acme.build-{i}", n=2) == {
+                "n": 3
+            }
+
+        # Forged file commitments fail in ordinary SDK staging before installation.
+        with monkeypatch.context() as guard:
+            installs: list[object] = []
+            guard.setattr(
+                playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
+            )
+            before = _tree(consumer)
+            coordinate = get_playbill_manager().get(consumer.instance_id).accepted_coordinate()
+            for field in ("wheel", "lock"):
+                held_file = getattr(original, field)
+                forged = original.model_copy(
+                    update={field: held_file.model_copy(update={"sha256": _ZERO})}
+                )
+                bad = releases[0].model_copy(
+                    update={
+                        "manifest": releases[0].manifest.model_copy(update={"providers": (forged,)})
+                    }
+                )
+                with pytest.raises(ConfigError, match="under another digest"):
+                    _add(consumer, bad, dry_run=False)
+                assert installs == []
+                assert _tree(consumer) == before
+                assert (
+                    get_playbill_manager().get(consumer.instance_id).accepted_coordinate()
+                    == coordinate
+                )
+        # A different lock names a distinct actual build even when its resolved
+        # set and primary wheel are unchanged. Preserve the real coexistence
+        # expectation: a runtime cache/lock verification failure is not kit policy.
+        added = _add(consumer, releases[2], dry_run=False)
+        assert added.status == "accepted", added
+        assert [step.action for step in added.providers] == ["install"]
+        tree = _tree(consumer)
+        assert len([p for p in tree if p.startswith("providers/kit-call/")]) == 3
+        path = provider_path(different_lock.build)
+        held = parse_provider(tree[path], path=path)
+        assert _run_exact_build(consumer, PROCEDURE, held, name="acme.build-lock", n=2) == {"n": 3}
     finally:
         for _ in opened:
             pass
 
 
-def test_a_carried_interface_must_be_what_a_bundled_wheel_registers(
+def test_open_signature_allows_coexisting_registered_builds_and_exact_lines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
+    """F001: a slot declares a signature; consumer Lines choose each actual build."""
+    from cruxible_client.contracts.providers import provider_path
+
     opened = _worlds(tmp_path, monkeypatch)
     publisher, consumer = next(opened)
     try:
         installed = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
         _install(publisher, installed)
-        # A Blueprint alone carries the interface, so its bytes decide.
         _author(publisher, procedure=False)
-        with pytest.raises(RequestRefusedError) as unbundled:
-            _build(publisher)
-        assert unbundled.value.error_code == "cruxible.kit.interface_not_bundled"
-        # A code-only change shares the same contract registration.
+        unbundled = _build(publisher)
+        assert unbundled.manifest.providers == ()
+        path = f"procedures/{BLUEPRINT}.json"
+        assert path in unbundled.contents()
+        procedure = parse_procedure(unbundled.contents()[path], path=path)
+        assert not any(pin.target.kind == "Provider" for pin in procedure.pins)
         other = _package(tmp_path / "other", provider_checkout, name="kit-call", increment=2)
         compatible = _build(publisher, other)
         original = _build(publisher, installed)
-        assert compatible.contents() == original.contents()
-        # Another build already installed on the consumer remains beside the kit build.
+        assert compatible.contents() == original.contents() == unbundled.contents()
+        original_package = original.manifest.providers[0]
+        other_package = compatible.manifest.providers[0]
+        assert original_package.operations == other_package.operations == (INTERFACE,)
+        assert original_package.build != other_package.build
         _install(consumer, other)
         added = _add(consumer, original, dry_run=False)
         assert added.status == "accepted", added
-        (step,) = added.providers
-        assert step.action == "install"
-        assert len([p for p in _tree(consumer) if p.startswith("providers/kit-call/")]) == 2
+        assert [step.action for step in added.providers] == ["install"]
+        tree = _tree(consumer)
+        assert len([p for p in tree if p.startswith("providers/kit-call/")]) == 2
+        for package, delta in ((original_package, 1), (other_package, 2)):
+            build_path = provider_path(package.build)
+            held = parse_provider(tree[build_path], path=build_path)
+            assert tuple(op.name for op in held.operations) == (INTERFACE,)
+            assert _run_exact_build(consumer, BLUEPRINT, held, name=f"acme.delta-{delta}", n=2) == {
+                "n": 2 + delta
+            }
     finally:
         for _ in opened:
             pass
@@ -670,21 +775,31 @@ def test_a_bundled_provider_matches_only_with_its_whole_dependency_closure(
         assert runtime_a.read_bytes() != runtime_b.read_bytes()
         _install(publisher, project)
         _author(publisher)
-        # Build: the bundled runtime B is not the closure installed here (A).
-        with pytest.raises(RequestRefusedError) as differs:
-            _build(publisher, other)
-        assert differs.value.error_code == "cruxible.kit.provider_build_differs"
-        assert "dependency closure" in str(differs.value)
-
-        # Add: the consumer runs kit-call over runtime B; the kit bundles A.
+        # An open Procedure commits no publisher build. Both packages export;
+        # the primary wheel+lock agree while their materializations differ.
+        alternative = _build(publisher, other)
         release = _build(publisher, project)
+        assert alternative.contents() == release.contents()
+        a, b = release.manifest.providers[0], alternative.manifest.providers[0]
+        assert a.wheel == b.wheel and a.lock == b.lock and a.build == b.build
+        assert a.dependencies != b.dependencies
+
+        # Add commits a particular materialization of that exact build.
         _install(consumer, other)
+        installs: list[object] = []
+        monkeypatch.setattr(
+            playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
+        )
         before = _tree(consumer)
+        coordinate = get_playbill_manager().get(consumer.instance_id).accepted_coordinate()
         refused = _add(consumer, release, dry_run=False)
         assert refused.status == "blocked", refused
         (step,) = refused.providers
         assert step.action == "blocked" and "dependency closure" in (step.detail or "")
+        assert "cruxible.provider.build_rematerialized" in (step.detail or "")
+        assert installs == []
         assert _tree(consumer) == before
+        assert get_playbill_manager().get(consumer.instance_id).accepted_coordinate() == coordinate
     finally:
         for _ in opened:
             pass
@@ -943,23 +1058,45 @@ def test_a_kit_pins_the_compiler_seeded_workspace_file_built_ins_as_they_are(
 def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
-    """Review F-006 (delta): another kit owns a different version of a definition the
-    release carries; the commit refuses as its preview does, installing nothing."""
-
+    """F002: feature.reader really carries a mutable Query owned by the prior kit."""
     from cruxible_client.contracts.kits import KitArtifact, KitArtifactBytes
-    from cruxible_client.contracts.shapes import Contract, render_contract
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.query.definitions import (
+        parse_query_definition,
+        render_query_definition,
+    )
     from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
     from cruxible_core.service.kits import _artifact_state
-    from tests.test_server import test_kit_providers as helpers
+    from tests.core_support._candidate_support import submit_member_candidate
+    from tests.test_procedures.test_named_reference_closure import (
+        authored_procedure,
+        authored_query,
+    )
 
     opened = _worlds(tmp_path, monkeypatch)
     publisher, consumer = next(opened)
     try:
         project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
         _install(publisher, project)
-        monkeypatch.setattr(helpers, "PROCEDURE", "feature.increment")
-        monkeypatch.setattr(helpers, "BLUEPRINT", "feature.skeleton")
-        _author(publisher)
+        query_name = "acme.shared"
+        query_path = f"query-definitions/{query_name}.json"
+        reader_path = "procedures/feature.reader.json"
+        query = authored_query(query_name)
+        reader = authored_procedure("feature.reader", query=query_name)
+        publisher_instance = get_playbill_manager().get(publisher.instance_id)
+        proposed = submit_member_candidate(
+            publisher_instance,
+            members={
+                query_path: render_query_definition(query),
+                reader_path: render_procedure(reader),
+            },
+            actor_id="operator",
+            proposal_name="foreign-query-dependency",
+            proposal_family="procedure",
+            timestamp="2026-10-24T11:00:00.000000Z",
+        ).proposal
+        assert proposed.candidate is not None, proposed.evaluation.diagnostics
+        publisher.approve(proposed.admission.proposal_id)
         release = playbill_api.playbill_kit_build(
             publisher.instance_id,
             KitBuildRequest(
@@ -973,10 +1110,22 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
                 ),
             ),
         ).bundle
-        policy_path = f"contracts/{POLICY}/v1.json"
-        raw = json.loads(release.contents()[policy_path])
-        raw["fields"]["n"]["type"]["min"] = 1
-        changed = render_contract(Contract.model_validate(raw))
+        assert {reader_path, query_path} <= release.contents().keys()
+        released_reader = parse_procedure(release.contents()[reader_path], path=reader_path)
+        (tap,) = released_reader.definition.nodes
+        assert tap.kind == "state_tap"
+        assert tap.query.target.kind == "QueryDefinition"
+        assert tap.query.target.name == query_name
+        assert not query_name.startswith(release.manifest.owns)
+        query = parse_query_definition(release.contents()[query_path], path=query_path)
+        changed = render_query_definition(
+            query.model_copy(
+                update={
+                    "default_budgets": query.default_budgets.model_copy(update={"max_results": 9}),
+                }
+            )
+        )
+        assert changed != release.contents()[query_path]
         prior = KitBundle(
             manifest=release.manifest.model_copy(
                 update={
@@ -985,34 +1134,34 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
                     "providers": (),
                     "artifacts": (
                         KitArtifact(
-                            path=policy_path,
-                            artifact_digest=_artifact_state(policy_path, changed).artifact_digest,
+                            path=query_path,
+                            artifact_digest=_artifact_state(query_path, changed).artifact_digest,
                         ),
                     ),
                 }
             ),
-            artifacts=(KitArtifactBytes.of(policy_path, changed),),
+            artifacts=(KitArtifactBytes.of(query_path, changed),),
         )
         accepted = playbill_api.playbill_kit_add(
             consumer.instance_id, KitAddRequest(bundle=prior, dry_run=False)
         )
         assert accepted.status == "accepted", accepted
+        assert _tree(consumer)[query_path] == changed
         installs: list[object] = []
         monkeypatch.setattr(
             playbill_api, "service_install_provider", lambda *a, **k: installs.append(k)
         )
         instance = get_playbill_manager().get(consumer.instance_id)
-        coordinate = instance.accepted_coordinate().git_oid
-        preview = _add(consumer, release, dry_run=True)
-        assert preview.status == "would_block", preview
-        assert "owned by kit prior" in (preview.detail or "")
-
-        refused = _add(consumer, release, dry_run=False)
-
-        assert refused.status == "blocked", refused
-        assert "owned by kit prior" in (refused.detail or "")
-        assert installs == []
-        assert instance.accepted_coordinate().git_oid == coordinate
+        coordinate = instance.accepted_coordinate()
+        before = _tree(consumer)
+        for dry_run in (True, False):
+            refused = _add(consumer, release, dry_run=dry_run)
+            assert refused.status == ("would_block" if dry_run else "blocked"), refused
+            assert "owned by kit prior" in (refused.detail or "")
+            assert installs == []
+            assert _tree(consumer) == before
+            assert instance.accepted_coordinate() == coordinate
+            assert not any(path.startswith("providers/kit-call/") for path in _tree(consumer))
     finally:
         for _ in opened:
             pass
