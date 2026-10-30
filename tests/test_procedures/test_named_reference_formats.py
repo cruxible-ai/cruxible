@@ -304,12 +304,36 @@ def test_a_collapsed_kind_has_one_format_and_no_other_law(path, old, new):
 
 def test_sdk_root_record_constructor_accepts_a_named_owner_contract():
     from cruxible_client.authoring.procedures import procedure_record_constructor
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.contract_schema import (
+        ContractSchema,
+        PropertySchema,
+    )
+    from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
     from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 
-    procedure = _artifact(_definition())
-    for direction in ("input", "output"):
+    # Each direction's named owner Contract gets its own closed field, so a
+    # constructor read off the wrong root has the wrong schema and refuses the
+    # other direction's field.
+    schemas = {
+        "empty-input": ContractSchema(fields={"status": PropertySchema(type="string")}),
+        "claim-rows": ContractSchema(fields={"row_count": PropertySchema(type="int")}),
+    }
+    raw = _artifact(_definition()).model_dump(mode="json", by_alias=True)
+    for contract in raw["owned_contracts"]:
+        contract["schema"] = schemas[contract["identity"]["name"]].model_dump(mode="json")
+    procedure = ProcedureArtifact.model_validate(raw)
+
+    expected = {
+        "input": ("empty-input", "status", "open", "row_count", 3),
+        "output": ("claim-rows", "row_count", 3, "status", "open"),
+    }
+    for direction, (name, field, value, other, other_value) in expected.items():
         constructor = procedure_record_constructor(procedure, direction)
-        assert constructor() == constructor()
+        assert constructor.schema == schemas[name]
+        assert dict(constructor(**{field: value})) == {field: value}
+        with pytest.raises(ProcedureContractValidationError):
+            constructor(**{other: other_value})
 
 
 def test_named_query_read_can_be_submitted_through_the_typed_authoring_surface():
