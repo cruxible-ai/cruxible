@@ -58,11 +58,12 @@ def noop_contract_files() -> dict[str, bytes]:
     from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
 
     definitions = {
-        "noop.echo.request": {"mode": "string?", "text": "string?", "seconds": "int?"},
+        "noop.echo.request": {"mode": "string?", "text": "string?"},
         "noop.echo.result": {
             "echo": "string",
             "credential_length": "int?",
             "credential_fingerprint": "string?",
+            "context_repr": "string?",
         },
         "noop.echo.refusal.credential_missing": {"ref": "string"},
         "noop.echo.refusal.provider_declined": {
