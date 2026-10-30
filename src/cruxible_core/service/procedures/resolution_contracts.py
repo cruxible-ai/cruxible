@@ -213,6 +213,10 @@ def read_capture_event(
         not isinstance(payload, dict)
         or payload.get("tag") != "playbill-procedure-produced-capture-v1"
         or not isinstance(payload.get("capture_contract_digest"), str)
+        or (
+            isinstance(selector, CaptureEventSelector)
+            and payload["capture_contract_digest"] != selector.capture_contract_digest
+        )
         or capture_contract_name(instance, cast(str, payload["capture_contract_digest"]))
         != selector.capture_contract_identity.qualified
     ):

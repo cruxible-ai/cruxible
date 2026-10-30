@@ -35,13 +35,14 @@ from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER_CONTRACT,
 from tests.test_procedures.test_procedure_run_surface import READ_TIME
 
 
-def _landing(instance, procedure, source, *, partition, at=READ_TIME):
+def _landing(instance, procedure, source, *, partition, at=READ_TIME, contract=TRIGGER_CONTRACT):
     """Store a real envelope; the event itself carries no source field."""
     store = instance.body_store()
     body = store.store(b"{}")
     digest = "sha256:" + "a" * 64
+    contract_digest = capture_contract_digest(contract).tagged
     envelope = CaptureEnvelopeV1(
-        capture_contract_digest=capture_contract_digest(TRIGGER_CONTRACT).tagged,
+        capture_contract_digest=contract_digest,
         source=(
             ExternalSourceReference(
                 source_identity=source,
@@ -71,7 +72,14 @@ def _landing(instance, procedure, source, *, partition, at=READ_TIME):
         observed_at=at,
     )
     stored = store.store(render_capture_envelope(envelope))
-    return capture(instance, procedure, partition=partition, at=at, capture_digest=stored.digest)
+    return capture(
+        instance,
+        procedure,
+        partition=partition,
+        at=at,
+        digest=contract_digest,
+        capture_digest=stored.digest,
+    )
 
 
 def _reference(stored):
