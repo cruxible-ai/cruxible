@@ -428,13 +428,49 @@ def test_orient_pages_the_contracts_section(tmp_path: Path) -> None:
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     instance = accept_contract_world(tmp_path)
-    first = service_playbill_orient(instance, section="contracts", limit=2)
-    assert first.contracts is not None
-    assert [row.contract for row in first.contracts] == [
+    # Three authored versions plus all seven genesis Contracts, by name/version.
+    expected = [
         "security.epss-page@1",
         "security.epss-row@1",
+        "security.epss-row@2",
+        "workspace.file.content@1",
+        "workspace.file.refusal.invalid_parameter@1",
+        "workspace.file.refusal.mismatched_lengths@1",
+        "workspace.file.refusal.provider_declined@1",
+        "workspace.file.request@1",
+        "workspace.file.result@1",
+        "workspace.file.source@1",
     ]
-    assert first.contracts[0].pins == ("security.epss-row@2",)
-    assert first.truncated and first.next_cursor is not None
-    rest = service_playbill_orient(instance, section="contracts", cursor=first.next_cursor)
-    assert [row.contract for row in rest.contracts or ()] == ["security.epss-row@2"]
+    page = service_playbill_orient(instance, section="contracts", limit=2)
+    coordinate = page.coordinate
+    seen = []
+    cursors = set()
+    pins = {}
+    for offset in range(0, len(expected), 2):
+        assert page.section == "contracts" and page.coordinate == coordinate
+        assert page.contracts is not None
+        names = [row.contract for row in page.contracts]
+        assert names == expected[offset : offset + 2]
+        seen.extend(names)
+        pins.update((row.contract, row.pins) for row in page.contracts)
+        more = offset + 2 < len(expected)
+        assert page.truncated is more
+        if more:
+            assert page.next_cursor is not None and page.next_cursor not in cursors
+            cursors.add(page.next_cursor)
+            page = service_playbill_orient(
+                instance, section="contracts", limit=2, cursor=page.next_cursor
+            )
+        else:
+            assert page.next_cursor is None
+    assert seen == expected and len(set(seen)) == 10
+    assert pins == {
+        name: (
+            ("security.epss-row@2",)
+            if name == "security.epss-page@1"
+            else ("workspace.file.content@1", "workspace.file.source@1")
+            if name == "workspace.file.result@1"
+            else ()
+        )
+        for name in expected
+    }
