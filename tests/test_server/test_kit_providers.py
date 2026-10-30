@@ -62,9 +62,7 @@ def _installer(
 
 
 def _client(http: TestClient) -> CruxibleClient:
-    from tests.support.core_provider_world import CoreProviderClient
-
-    if isinstance(http, CoreProviderClient):
+    if not isinstance(http, TestClient):
         return http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http  # type: ignore[assignment]
@@ -87,7 +85,7 @@ def test_the_same_wheel_and_lock_reproduce_identical_definitions_on_fresh_instan
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
 ) -> None:
     """The precondition for a kit pinning its bundled provider: the transfer install of
-    one wheel and lock writes byte-identical Provider and ProviderInterface artifacts on
+    one wheel and lock writes byte-identical Provider operation declarations on
     any fresh instance of the same daemon environment."""
 
     wheels = provider_checkout.wheels
@@ -99,7 +97,11 @@ def test_the_same_wheel_and_lock_reproduce_identical_definitions_on_fresh_instan
         root = tmp_path / name
         root.mkdir()
         opened = _installer(root, monkeypatch)
-        http, instance_id, _reviewer = next(opened)
+        http, instance_id, reviewer = next(opened)
+        from tests.support.provider_installation import noop_contract_files
+        from tests.test_server.test_provider_installation import _accept
+
+        _accept(http, instance_id, reviewer, noop_contract_files(), name="noop-kit-contracts")
         result = install_provider_wheel(
             _client(http), instance_id, wheel=noop, lock=lock, dependency_wheels=(runtime,)
         )
@@ -124,8 +126,6 @@ def test_the_same_wheel_and_lock_reproduce_identical_definitions_on_fresh_instan
     assert set(local_env.materialization_digests) == {environment}
     (implementation,) = provider.implementations
     assert implementation.implementation_digest == provider_implementation_digest(
-        interface_id=implementation.interface_id,
-        interface_digest=implementation.interface_digest,
         entrypoint=implementation.entrypoint,
         distribution_sha256=provider.runtime_artifact.distribution.sha256,
     )
@@ -232,175 +232,56 @@ def _install(world: Any, project: Path, *, control_domain: str = "operator") -> 
     assert result.registered, result
 
 
-def _interface_entry(world: Any) -> dict[str, Any]:
-    from cruxible_client.contracts.get_reads import GetRequest
-
-    proof = (
-        _client(world.http)
-        .get(
-            world.instance_id,
-            request=GetRequest(ref=f"ProviderInterface:{INTERFACE}", detail="proof"),
-        )
-        .proof
-    )
-    assert proof is not None
-    return dict(proof["entry"])
-
-
 def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[Any, ...]]:
-    """The increment graph: bound to ``provider``, or (None) a Blueprint slot."""
+    """One open operation slot; provider selection belongs to a consumer Line."""
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
+    from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-
-    interface = _interface_entry(world)
-
-    def carried(name: str, role: str) -> dict[str, str]:
-        return {"kind": "carried_contract", "name": name, "role": role}
-
-    node: dict[str, Any] = {
-        "kind": "call",
-        "node_id": "invoke",
-        "as": "result",
-        "input": {"n": "$input.n"},
-        "interface": {
-            "kind": "accepted",
-            "role": "provider-interface",
-            "target": interface["identity"],
-        },
-    }
-    if provider is None:
-        node["provider"] = {"kind": "slot", "slot_name": "increment"}
-    else:
-        (row,) = (
-            item
-            for item in interface["providers"]
-            if item["provider_identity"].partition(":")[2].partition("/")[0] == provider
-            and item.get("newest", True)
-        )
-        node["provider"] = {
-            "kind": "accepted",
-            "role": "provider",
-            "target": row["provider_identity"],
-        }
-    example = procedure_example()
-    definition = {
-        **example.definition,
-        "name": PROCEDURE if provider is not None else BLUEPRINT,
-        "graph_format": 6,
-        "returns": "result",
-        "contract_in": carried("request", "contract-in"),
-        "contract_out": carried("result", "contract-out"),
-        "nodes": [node],
-        "budget": {
-            **example.definition["budget"],  # type: ignore[dict-item]
-            "wall_clock": _RUN_WALL_CLOCK,
-            "max_items": None,
-            "max_provider_calls": 1,
-            "max_capture_bytes": 1048576,
-        },
-        "hard_caps": {
-            **example.definition["hard_caps"],  # type: ignore[dict-item]
-            "max_wall_clock": _MAX_WALL_CLOCK,
-            "max_provider_calls": 2,
-            "max_capture_bytes": 2097152,
-        },
-    }
-    if provider is None:
-        definition["pin_slots"] = [
+    authored = lower_procedure_spec(
+        ProcedureSpec.model_validate(
             {
-                "slot_name": "increment",
-                "pin_role": "provider",
-                "artifact_kind": "Provider",
+                "procedure": PROCEDURE if provider is not None else BLUEPRINT,
+                "input": {"n": "integer"},
+                "output": {"n": "integer"},
+                "slots": {
+                    "increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}
+                },
+                "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+                "returns": "result",
+                "budget": {"wall_clock": "PT30S", "provider_calls": 1},
             }
-        ]
-    schema = {"n": PropertySchema(type="int")}
-    contracts = (
-        CarriedContractInput(name="request", fields=schema),
-        CarriedContractInput(name="result", fields=schema),
+        )
     )
-    return definition, contracts
+    return authored.definition, authored.contracts
 
 
 def _author(world: Any, *, procedure: bool = True) -> None:
-    """The kit's definitions: a policy, a Procedure pinning the bundled provider (and
-    the policy), and a Blueprint whose one slot takes any provider of its interface."""
-
-    from cruxible_client.authoring.examples import acquisition_policy_example
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    """Current owned shapes and open Procedures, never kit-carried authority."""
     from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+    from tests.core_support._candidate_support import submit_member_candidate
 
-    example = acquisition_policy_example().acquisition_policy
-    draft = world.pb.changes(rationale="Ship an increment kit.")
-    draft.acquisition_policy(
-        example.model_copy(
-            update={"identity": ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY)}
-        )
-    )
-    if procedure:
-        definition, contracts = _graph(world, provider="kit-call")
-        draft.procedure(
-            definition=ProcedureInput(
-                kind="procedure",
-                definition=definition,
-                activation_policy="drain",
-                contracts=contracts,
-                acquisition_policy=POLICY,
-            )
-        )
-    if hasattr(world, "instance"):
-        # Preserve the original frozen Blueprint fixture in revision-35 tests.
-        # The removed new-authoring model is not needed to construct old bytes.
-        from cruxible_client.contracts.procedures.blueprints import blueprint_path, render_blueprint
-
-        from cruxible_client.contracts.procedures.artifacts import BlueprintArtifact
-        from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-        from cruxible_client.contracts.procedures.models import ProcedureDefinition
-        from cruxible_core.authoring.lowering import lower_authoring
-        from tests.support.core_provider_world import AT
-
-        definition, contracts = _graph(world, provider="kit-call")
-        definition["name"] = BLUEPRINT
-        prototype_intent = (
-            world.pb.changes(rationale="Resolve a frozen fixture graph.")
-            .procedure(
-                definition=ProcedureInput(
-                    kind="procedure", definition=definition, contracts=contracts
-                )
-            )
-            .prepare()
-        )
-        assert not prototype_intent.refused, prototype_intent.diagnostics
-        prototype_path = f"procedures/{BLUEPRINT}.json"
-        lowered = lower_authoring(world.instance, intent=prototype_intent.intent, actor_id="owner")
-        prototype = parse_procedure(lowered.proposed_tree[prototype_path], path=prototype_path)
-        raw = prototype.definition.model_dump(mode="json", by_alias=True)
-        node = raw["nodes"][0]
-        node["provider"] = {"slot_name": "increment"}
-        node["implementation_digest"] = None
-        raw["pin_slots"] = [
-            {
-                "slot_name": "increment",
-                "pin_role": "provider",
-                "artifact_kind": "Provider",
-                "interface_digest": node["interface_digest"],
-            }
-        ]
-        frozen_definition = ProcedureDefinition.model_validate(raw)
-        frozen = BlueprintArtifact(
-            identity=ArtifactIdentity(kind="Blueprint", name=BLUEPRINT),
-            definition=frozen_definition,
-            definition_digest=compute_procedure_definition_digest(frozen_definition).tagged,
-            pins=tuple(pin for pin in prototype.pins if pin.role != "provider"),
-            owned_contracts=prototype.owned_contracts,
-            activation_policy="snapshot",
-        )
-        world.accept_members({blueprint_path(BLUEPRINT): render_blueprint(frozen)}, timestamp=AT)
-        if not procedure:
-            return
+    # Ownership/downgrade tests concern governed definition ownership, not the
+    # removed acquisition-policy artifact. Keep a real typed shape in that role.
+    shape = Contract.model_validate({"name": POLICY, "version": 1, "fields": {"n": "int"}})
+    members = {contract_path(shape.name, 1): render_contract(shape)}
+    if hasattr(world, "accept_members"):
+        world.accept_members(members, timestamp="2026-10-24T11:00:00.000000Z")
     else:
-        definition, contracts = _graph(world, provider=None)
+        instance = get_playbill_manager().get(world.instance_id)
+        proposed = submit_member_candidate(
+            instance,
+            members=members,
+            actor_id="operator",
+            proposal_name="kit-owned-shape",
+            proposal_family="procedure",
+            timestamp="2026-10-24T11:00:00.000000Z",
+        ).proposal
+        assert proposed.candidate is not None, proposed.evaluation.diagnostics
+        world.approve(proposed.admission.proposal_id)
+    draft = world.pb.changes(rationale="Ship open increment Procedures.")
+    for selected in ("kit-call", None) if procedure else (None,):
+        definition, contracts = _graph(world, provider=selected)
         draft.procedure(
             definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
         )
@@ -416,11 +297,12 @@ def _author(world: Any, *, procedure: bool = True) -> None:
             _tree(world)[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
         (call,) = stored.definition.nodes
-        assert call.contract_in is None and call.contract_out is None
-        assert {contract.identity.name for contract in stored.owned_contracts} == {
-            "request",
-            "result",
-        }
+        assert call.slot == "increment"
+        assert set(stored.definition.slots) == {"increment"}
+        assert len(stored.owned_contracts) == 2
+        for owned in stored.owned_contracts:
+            assert set(owned.contract_schema.fields) == {"n"}
+            assert owned.contract_schema.fields["n"].type in {"int", "integer"}
 
 
 def _build(world: Any, *projects: Path, version: str = "1.0.0") -> KitBundle:
@@ -474,12 +356,100 @@ def _tree(world: Any) -> dict[str, bytes]:
 
 
 def _run(world: Any, name: str, n: int) -> Any:
-    if hasattr(world, "instance"):
-        return world.run(name, n)
-    procedure = world.pb.accepted_procedure(name)
-    run = procedure.run(input=procedure.input(n=n))
-    assert run.status == "succeeded", run
-    return run.result.model_dump()
+    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+    from tests.test_server.test_provider_installation import _run_line
+
+    tree = _tree(world)
+    path = next(p for p in tree if p.startswith("providers/kit-call/"))
+    build = parse_provider(tree[path], path=path)
+    line_name = name + "-run"
+    intent = (
+        world.pb.changes(rationale="Bind the installed kit operation.")
+        .line(
+            name=line_name,
+            procedure=name,
+            bindings={"increment": build.identity.name},
+            parameters={"n": n},
+        )
+        .prepare()
+    )
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+    line_path = "lines/" + line_name + ".json"
+    line = parse_line_spec(_tree(world)[line_path], path=line_path)
+    assert line.bindings["increment"].build.artifact_digest == provider_digest(build).tagged
+    return _run_line(world.instance_id, line_name)
+
+
+def test_fresh_consumer_provisions_the_operation_contract_before_bundled_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Isolate install prerequisites from the separately blocked slot-Contract export.
+
+    A kit may bundle an operation alongside a pure definition. The installer
+    still validates its real input/output Contract before kit definitions land.
+    The original slotted export scenarios below keep their stronger assertions.
+    """
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+    from tests.support.provider_installation import local_call_contract_files
+    from tests.test_server.test_provider_installation import _run_call
+
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        pure = ProcedureInput(
+            kind="procedure",
+            spec=ProcedureSpec.model_validate(
+                {
+                    "procedure": "acme.installation-marker",
+                    "input": {},
+                    "output": {"n": "integer"},
+                    "steps": [{"project": "result", "fields": {"n": 2}}],
+                    "returns": "result",
+                    "budget": {"provider_calls": 0},
+                }
+            ),
+        )
+        intent = (
+            publisher.pb.changes(rationale="A pure kit definition.")
+            .procedure(definition=pure)
+            .prepare()
+        )
+        assert not intent.refused, intent.diagnostics
+        submitted = intent.submit(accept="never")
+        publisher.approve(submitted._candidate_status.proposal_id)
+        release = _build(publisher, project)
+        assert set(release.contents()) == {"procedures/acme.installation-marker.json"}
+        assert len(release.manifest.providers) == 1
+        before = _tree(consumer)
+        assert all(before[path] == content for path, content in local_call_contract_files().items())
+        preview = _add(consumer, release)
+        assert preview.status == "would_propose", preview
+        assert [step.action for step in preview.providers] == ["would_install"]
+        assert _tree(consumer) == before
+        assert not any(path.startswith("providers/kit-call/") for path in before)
+        added = _add(consumer, release, dry_run=False)
+        assert added.status == "accepted", added
+        assert [step.action for step in added.providers] == ["install"]
+        tree = _tree(consumer)
+        path = next(path for path in tree if path.startswith("providers/kit-call/"))
+        provider = parse_provider(tree[path], path=path)
+        assert _run_call(
+            consumer.http,
+            consumer.instance_id,
+            consumer.reviewer_key,
+            build=provider.identity.name,
+            value={"n": 2},
+            name="bundled-prerequisite",
+        ) == {"n": 3}
+    finally:
+        for _ in opened:
+            pass
 
 
 def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_another(
@@ -498,15 +468,17 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
 
         manifest = release.manifest
         assert [item.path for item in manifest.artifacts] == [
+            f"contracts/{POLICY}/v1.json",
+            "contracts/local.increment.value/v1.json",
             f"procedures/{PROCEDURE}.json",
             f"procedures/{BLUEPRINT}.json",
-            next(
-                p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
-            ),
-            f"source-acquisition-policies/{POLICY}.json",
         ]
+        assert (
+            release.contents()["contracts/local.increment.value/v1.json"]
+            == (_tree(publisher)["contracts/local.increment.value/v1.json"])
+        )
         (provider,) = manifest.providers
-        assert (provider.provider_id, provider.package, provider.interfaces) == (
+        assert (provider.provider_id, provider.package, provider.operations) == (
             "kit-call",
             "kit-call",
             (INTERFACE,),
@@ -532,37 +504,21 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert added.status == "accepted", added
         assert [step.action for step in added.providers] == ["install"]
         tree = _tree(consumer)
-        interface_path = next(
-            p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
-        )
-        assert tree[interface_path] == release.contents()[interface_path]
         procedure = parse_procedure(
             tree[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
-        from cruxible_client.contracts.artifacts import ArtifactPin
-        from cruxible_client.contracts.dependencies import dependency_pins
-        from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
-
-        (provider_pin,) = (
-            pin for pin in dependency_pins(procedure, by_name=False) if pin.role == "provider"
-        )
-        held_path = next(p for p in tree if p.startswith("providers/kit-call/"))
-        here = parse_provider(tree[held_path], path=held_path)
-        assert provider_pin.target == here.identity
         released = parse_procedure(
             release.contents()[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
-        if isinstance(provider_pin, ArtifactPin):
-            assert provider_pin.artifact_digest == provider_digest(here).tagged
-            assert provider_pin.artifact_digest != next(
-                pin.artifact_digest for pin in released.pins if pin.role == "provider"
-            )
-        else:
-            assert procedure_artifact_digest(procedure) == procedure_artifact_digest(released)
-            publisher_tree = _tree(publisher)
-            publisher_provider = parse_provider(publisher_tree[held_path], path=held_path)
-            assert provider_digest(here) != provider_digest(publisher_provider)
-            assert released.definition.nodes[0].provider.target == provider_pin.target
+        from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+
+        assert procedure_artifact_digest(procedure) == procedure_artifact_digest(released)
+        assert procedure.definition.slots == released.definition.slots
+        held_path = next(p for p in tree if p.startswith("providers/kit-call/"))
+        here = parse_provider(tree[held_path], path=held_path)
+        publisher_provider = parse_provider(_tree(publisher)[held_path], path=held_path)
+        assert here.identity == publisher_provider.identity
+        assert provider_digest(here) != provider_digest(publisher_provider)
         (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
         assert [(item.provider_id, item.state) for item in status.providers] == [
             ("kit-call", "installed")
@@ -872,7 +828,7 @@ def test_refusals_the_current_state_decides_come_before_any_provider_install(
         _install(publisher, project)
         _author(publisher)
         release = _build(publisher, project)
-        policy_path = f"source-acquisition-policies/{POLICY}.json"
+        policy_path = f"contracts/{POLICY}/v1.json"
         installed = KitBundle(
             manifest=release.manifest.model_copy(
                 update={
@@ -990,12 +946,8 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
     """Review F-006 (delta): another kit owns a different version of a definition the
     release carries; the commit refuses as its preview does, installing nothing."""
 
-    from cruxible_client.contracts.acquisition_policies import (
-        SourceAcquisitionPolicy,
-        render_acquisition_policy,
-    )
-
     from cruxible_client.contracts.kits import KitArtifact, KitArtifactBytes
+    from cruxible_client.contracts.shapes import Contract, render_contract
     from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
     from cruxible_core.service.kits import _artifact_state
     from tests.test_server import test_kit_providers as helpers
@@ -1021,10 +973,10 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
                 ),
             ),
         ).bundle
-        policy_path = f"source-acquisition-policies/{POLICY}.json"
+        policy_path = f"contracts/{POLICY}/v1.json"
         raw = json.loads(release.contents()[policy_path])
-        raw["max_age"] = {"microseconds": 1}
-        changed = render_acquisition_policy(SourceAcquisitionPolicy.model_validate(raw))
+        raw["fields"]["n"]["type"]["min"] = 1
+        changed = render_contract(Contract.model_validate(raw))
         prior = KitBundle(
             manifest=release.manifest.model_copy(
                 update={
