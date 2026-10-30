@@ -224,11 +224,12 @@ def test_a_head_checkpoint_verifies_against_its_own_merkle_root(
         parent_generation_root=genesis_rooted.accepted_history()[-2].generation_root.tagged,
         tree=genesis_rooted.tree_at(head.oid),
     )
-    # The root the head change set accepted is the merkle root; the flat member
-    # manifest root the body also carries is not what it is checked on.
+    # The one manifest root the body carries is the Merkle root the head change
+    # set accepted; there is no flat root beside it.
     head_record = genesis_rooted.accepted_history()[-1].record
     assert isinstance(head_record, ChangeSetRecord)
     assert body.merkle_root == head_record.candidate.candidate_manifest_root
+    assert "manifest_root" not in body.model_dump(mode="json")
     write_checkpoint(directory, body, written_at="2026-08-19T00:00:00.000000Z")
 
     checkpointed = _reopen(instance)
@@ -251,7 +252,7 @@ def test_a_stale_checkpoint_file_is_discarded_and_replay_falls_back(
 
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     stale = []
-    for version in (1,):
+    for version in (1, 2):
         path = directory / f"replay-checkpoint-v{version}.json"
         path.write_bytes(b'{"tag":"playbill-replay-checkpoint-file-v%d"}\n' % version)
         stale.append(path)
@@ -259,6 +260,33 @@ def test_a_stale_checkpoint_file_is_discarded_and_replay_falls_back(
     reopened = _reopen(instance)
     assert reopened.accepted_coordinate() == expected
     assert not any(path.exists() for path in stale)
+
+
+def test_a_checkpoint_carrying_a_flat_manifest_root_is_refused_and_replaced(
+    crossed_ledger: tuple[PlaybillInstance, _Builder],
+) -> None:
+    """A body in the retired two-root shape is malformed, never half-read."""
+
+    import json
+
+    instance, _builder = crossed_ledger
+    directory = instance._checkpoint_directory(instance.root)
+    checkpoint_path(directory).unlink(missing_ok=True)
+    expected = _reopen(instance).accepted_coordinate()
+    current = load_checkpoint_file(directory)
+    assert current is not None
+
+    payload = json.loads(checkpoint_path(directory).read_bytes())
+    payload["body"]["manifest_root"] = "sha256:" + "12" * 32
+    checkpoint_path(directory).write_bytes(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode() + b"\n"
+    )
+
+    reopened = _reopen(instance)
+    assert reopened.accepted_coordinate() == expected
+    rewritten = load_checkpoint_file(directory)
+    assert rewritten is not None
+    assert rewritten.body == current.body
 
 
 def test_accepted_projection_reads_the_ledger(

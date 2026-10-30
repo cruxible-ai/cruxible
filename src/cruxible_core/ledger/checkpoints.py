@@ -41,11 +41,10 @@ accepted answer that a genesis-rooted replay would not have produced.
    roots. A forged root does not survive the recomputation.
 
 3. The checkpoint coordinate's own tree is read from the ledger, its semantic
-   manifest is rebuilt by hashing those bytes, and that manifest's root -- flat
-   and merkle both -- is required to equal the root the accepted change-set
-   record at that sequence commits to, in whichever structure that record's own
-   version signs. The manifest trie the suffix carries forward is rebuilt from
-   those member digests rather than read out of this file, and its root is
+   manifest is rebuilt by hashing those bytes, and that manifest's Merkle root
+   is required to equal the root the accepted change-set record at that
+   sequence commits to. The manifest trie the suffix carries forward is rebuilt
+   from those member digests rather than read out of this file, and its root is
    required to reproduce, so no node the suffix updates in place was ever
    accepted on the file's word. The dependency index is likewise rebuilt from
    the coordinate's own member bytes. So everything the suffix carries is bound
@@ -85,13 +84,11 @@ from cruxible_client.contracts.attestations import approval_digest
 from cruxible_client.contracts.canonical import (
     GenerationRoot,
     Manifest,
-    SemanticManifestRoot,
     SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
     manifest_for_tree,
-    manifest_root_from_members,
     semantic_projection,
     typed_digest,
 )
@@ -127,9 +124,9 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 CHECKPOINT_DIRECTORY: Final = "checkpoints"
-CHECKPOINT_FILE: Final = "replay-checkpoint-v2.json"
-CHECKPOINT_TAG: Final = "playbill-replay-checkpoint-v2"
-_SUPERSEDED_CHECKPOINT_FILES: Final = ("replay-checkpoint-v1.json",)
+CHECKPOINT_FILE: Final = "replay-checkpoint-v3.json"
+CHECKPOINT_TAG: Final = "playbill-replay-checkpoint-v3"
+_SUPERSEDED_CHECKPOINT_FILES: Final = ("replay-checkpoint-v1.json", "replay-checkpoint-v2.json")
 DEFAULT_CHECKPOINT_INTERVAL: Final = 50
 # The daemon summarizes an off-stride head after this long without an acceptance.
 QUIET_CHECKPOINT_SECONDS: Final = 5.0
@@ -153,25 +150,24 @@ class _StrictCheckpointModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ReplayCheckpointBodyV2(_StrictCheckpointModel):
+class ReplayCheckpointBodyV3(_StrictCheckpointModel):
     """Exactly the fields the checkpoint digest commits to.
 
     No wall-clock value appears here. The file records when it was written
     outside this preimage, so an identical accepted coordinate always produces
     an identical digest.
 
-    The body carries both manifest roots over the same members, because the
-    coordinate it summarizes may sit on either side of the wire succession and
-    the accepted receipt at that sequence signs exactly one of them. It does not
-    carry the manifest trie's nodes: the nodes would have to be recomputed from
+    The body carries the Merkle manifest root over its members, the one root
+    the accepted receipt at that sequence signs. It does not carry the manifest
+    trie's nodes: the nodes would have to be recomputed from
     the members to be worth anything, the members are already re-derived from the
     coordinate's own bytes on every load, and rebuilding the trie from them costs
     a hash per path where storing it would cost a node per path on disk and prove
     nothing extra.
     """
 
-    tag: Literal["playbill-replay-checkpoint-v2"] = CHECKPOINT_TAG
-    format_version: Literal[2] = 2
+    tag: Literal["playbill-replay-checkpoint-v3"] = CHECKPOINT_TAG
+    format_version: Literal[3] = 3
     instance_id: str
     git_object_format: GitObjectFormat
     compiler: CompilerCoordinate
@@ -181,7 +177,6 @@ class ReplayCheckpointBodyV2(_StrictCheckpointModel):
     semantic_root: str
     generation_root: str
     parent_generation_root: str
-    manifest_root: str
     merkle_root: str
     members: dict[str, str]
     principals: PrincipalRegistrySnapshot
@@ -212,12 +207,6 @@ class ReplayCheckpointBodyV2(_StrictCheckpointModel):
         GenerationRoot.from_tagged(value)
         return value
 
-    @field_validator("manifest_root")
-    @classmethod
-    def _manifest_root(cls, value: str) -> str:
-        SemanticManifestRoot.from_tagged(value)
-        return value
-
     @field_validator("merkle_root")
     @classmethod
     def _merkle_root(cls, value: str) -> str:
@@ -225,11 +214,11 @@ class ReplayCheckpointBodyV2(_StrictCheckpointModel):
         return value
 
 
-class ReplayCheckpointFileV2(_StrictCheckpointModel):
+class ReplayCheckpointFileV3(_StrictCheckpointModel):
     """The on-disk record: one digest-committed body plus non-committed metadata."""
 
-    tag: Literal["playbill-replay-checkpoint-file-v2"] = "playbill-replay-checkpoint-file-v2"
-    body: ReplayCheckpointBodyV2
+    tag: Literal["playbill-replay-checkpoint-file-v3"] = "playbill-replay-checkpoint-file-v3"
+    body: ReplayCheckpointBodyV3
     checkpoint_digest: str
     written_at: str
 
@@ -358,7 +347,7 @@ class QuietCheckpointWriter:
             return
 
 
-def checkpoint_digest(body: ReplayCheckpointBodyV2) -> ReplayCheckpointDigest:
+def checkpoint_digest(body: ReplayCheckpointBodyV3) -> ReplayCheckpointDigest:
     return typed_digest(
         ReplayCheckpointDigest,
         CHECKPOINT_TAG,
@@ -366,8 +355,8 @@ def checkpoint_digest(body: ReplayCheckpointBodyV2) -> ReplayCheckpointDigest:
     )
 
 
-def render_checkpoint(body: ReplayCheckpointBodyV2, *, written_at: str) -> bytes:
-    record = ReplayCheckpointFileV2(
+def render_checkpoint(body: ReplayCheckpointBodyV3, *, written_at: str) -> bytes:
+    record = ReplayCheckpointFileV3(
         body=body,
         checkpoint_digest=checkpoint_digest(body).tagged,
         written_at=written_at,
@@ -389,7 +378,7 @@ def checkpoint_body(
     tree: Mapping[str, bytes],
     members: Mapping[str, str] | None = None,
     merkle: MerkleManifest | None = None,
-) -> ReplayCheckpointBodyV2:
+) -> ReplayCheckpointBodyV3:
     """Summarize one already-verified accepted coordinate.
 
     Both the member manifest and the principal registry are derived from the
@@ -407,7 +396,7 @@ def checkpoint_body(
         raise ValueError("a supplied member trie needs the member manifest it was built from")
     resolved = members if members is not None else members_for_tree(tree)
     principals = principal_registry_from_tree(tree, semantic_root=semantic_root)
-    return ReplayCheckpointBodyV2(
+    return ReplayCheckpointBodyV3(
         instance_id=instance_id,
         git_object_format=object_format,
         compiler=compiler,
@@ -417,7 +406,6 @@ def checkpoint_body(
         semantic_root=semantic_root,
         generation_root=generation_root,
         parent_generation_root=parent_generation_root,
-        manifest_root=manifest_root_from_members(resolved).tagged,
         merkle_root=(merkle if merkle is not None else build_merkle_manifest(resolved)).root.tagged,
         members=dict(resolved),
         principals=principals,
@@ -465,7 +453,7 @@ def _trusted_checkpoints(directory: Path) -> set[str]:
         return trusted
 
 
-def _checkpoint_verified(directory: Path, record: ReplayCheckpointFileV2) -> bool:
+def _checkpoint_verified(directory: Path, record: ReplayCheckpointFileV3) -> bool:
     """Whether a process already re-derived this exact checkpoint body.
 
     The record names the body digest it covers; the checkpoint file itself
@@ -500,7 +488,7 @@ def _record_checkpoint_verified(directory: Path, digest: str) -> None:
 
 def write_checkpoint(
     directory: Path,
-    body: ReplayCheckpointBodyV2,
+    body: ReplayCheckpointBodyV3,
     *,
     written_at: str | None = None,
     verified: bool = False,
@@ -581,7 +569,7 @@ def _discard_superseded_checkpoints(directory: Path) -> None:
             continue
 
 
-def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV2 | None:
+def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV3 | None:
     """Read and self-verify one checkpoint file, or report its absence."""
 
     if directory.is_dir():
@@ -593,7 +581,7 @@ def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV2 | None:
         return None
     raw = target.read_bytes()
     try:
-        record = ReplayCheckpointFileV2.model_validate_json(raw)
+        record = ReplayCheckpointFileV3.model_validate_json(raw)
     except (ValidationError, ValueError) as exc:
         raise ReplayCheckpointError("checkpoint file is malformed") from exc
     if canonical_bytes(record.model_dump(mode="json")) + b"\n" != raw:
@@ -752,7 +740,7 @@ def _rederive_prefix(
 
 def verify_checkpoint(
     ledger: GitLedger,
-    record: ReplayCheckpointFileV2,
+    record: ReplayCheckpointFileV3,
     *,
     genesis: VerifiedGenesis,
     instance_id: str,
@@ -805,21 +793,14 @@ def verify_checkpoint(
             tree = ledger.read_tree(body.git_oid)
             projected = semantic_projection(tree)
             members = manifest_for_tree(projected)
-            manifest_root = manifest_root_from_members(members)
-            if manifest_root.tagged != body.manifest_root or members != body.members:
+            if members != body.members:
                 raise ReplayCheckpointError(
                     "checkpoint member manifest differs from its coordinate tree"
                 )
             merkle = verify_merkle_tree(
                 members, claimed_root=body.merkle_root, domains=MANIFEST_MERKLE_DOMAINS
             )
-            head_record = records[-1]
-            accepted_root = (
-                merkle.root.tagged
-                if isinstance(head_record, ChangeSetRecord)
-                else manifest_root.tagged
-            )
-            if accepted_root != head_record.candidate.candidate_manifest_root:
+            if merkle.root.tagged != records[-1].candidate.candidate_manifest_root:
                 raise ReplayCheckpointError(
                     "checkpoint coordinate tree differs from the manifest root its change set "
                     "accepted"
@@ -836,9 +817,7 @@ def verify_checkpoint(
     tree = ledger.read_tree(body.git_oid)
     projected = semantic_projection(tree)
     members = manifest_for_tree(projected)
-    manifest_root = manifest_root_from_members(members)
     records = _prefix_records(tree, sequence=body.sequence)
-    head_record = records[-1]
     # The trie is rebuilt from the re-derived members and its root is required to
     # reproduce, so the warm cache the suffix updates in place is proven at the
     # cold start rather than trusted from the file.
@@ -852,14 +831,11 @@ def verify_checkpoint(
         raise ReplayCheckpointError(
             "checkpoint merkle manifest root does not reproduce from its coordinate tree"
         ) from exc
-    accepted_root = (
-        merkle.root.tagged if isinstance(head_record, ChangeSetRecord) else manifest_root.tagged
-    )
-    if accepted_root != head_record.candidate.candidate_manifest_root:
+    if merkle.root.tagged != records[-1].candidate.candidate_manifest_root:
         raise ReplayCheckpointError(
             "checkpoint coordinate tree differs from the manifest root its change set accepted"
         )
-    if manifest_root.tagged != body.manifest_root or members != body.members:
+    if members != body.members:
         raise ReplayCheckpointError("checkpoint member manifest differs from its coordinate tree")
 
     prefix = _rederive_prefix(
@@ -887,7 +863,7 @@ def verify_checkpoint(
 
 def _require_prefix_matches(
     ledger: GitLedger,
-    body: ReplayCheckpointBodyV2,
+    body: ReplayCheckpointBodyV3,
     prefix: tuple[CheckpointGeneration, ...],
 ) -> None:
     head = prefix[-1]
@@ -970,9 +946,9 @@ __all__ = [
     "CheckpointGeneration",
     "CheckpointSeed",
     "QuietCheckpointWriter",
-    "ReplayCheckpointBodyV2",
+    "ReplayCheckpointBodyV3",
     "ReplayCheckpointDigest",
-    "ReplayCheckpointFileV2",
+    "ReplayCheckpointFileV3",
     "checkpoint_body",
     "checkpoint_digest",
     "checkpoint_path",

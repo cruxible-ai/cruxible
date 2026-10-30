@@ -1,11 +1,11 @@
 """Path-segment merkle trie whose recompute cost tracks the change set.
 
-The flat `manifest_root` commits to every member of the semantic projection in a
-single preimage, so recomputing it after a change touching five members still
-re-hashes all of them: verification is O(total members) per generation and
-replay is O(generations x total members). This module builds the same commitment
-as a path-segment trie, so accepting or replaying a change set re-hashes only the
-touched leaves and the interior nodes on their root paths.
+A commitment to every member of the semantic projection in a single preimage
+would re-hash all of them after a change touching five: verification would be
+O(total members) per generation and replay O(generations x total members). This
+module builds the commitment as a path-segment trie, so accepting or replaying
+a change set re-hashes only the touched leaves and the interior nodes on their
+root paths. Its root is the one semantic manifest root, genesis's included.
 
 The same shape commits to the accepted dependency edge set, which had the same
 O(total) problem for the same reason. One tree implementation serves both: a
@@ -455,7 +455,7 @@ def _member_digest(path: str, value: str) -> str:
 
 
 def normalize_member_manifest(manifest: Mapping[str, str]) -> Manifest:
-    """Normalize a path-to-member-digest map exactly as the flat manifest does."""
+    """Normalize a path-to-member-digest map exactly as `manifest_for_tree` does."""
 
     raw_by_normalized: dict[str, str] = {}
     for raw_path in manifest:
@@ -516,7 +516,7 @@ def build_merkle_manifest(manifest: Mapping[str, str]) -> MerkleManifest:
 
 
 def merkle_manifest_root(tree: Mapping[str, bytes]) -> SemanticMerkleRoot:
-    """Hash a tree's members through the trie, the merkle analogue of `manifest_root`."""
+    """Hash a tree's members through the trie: the semantic manifest root of `tree`."""
 
     return build_merkle_manifest(manifest_for_tree(tree)).root
 

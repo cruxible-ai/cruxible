@@ -70,7 +70,7 @@ from cruxible_core.indexes.sqlite import (
 )
 from cruxible_core.ledger.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.ledger.checkpoints import (
-    ReplayCheckpointBodyV2,
+    ReplayCheckpointBodyV3,
     checkpoint_body,
     discard_checkpoint,
     load_verified_checkpoint,
@@ -1142,7 +1142,7 @@ def recover_instance(
         history.append(window.generation)
     head = history[-1]
     compiler = head.compiler
-    checkpoint: ReplayCheckpointBodyV2 | None = None
+    checkpoint: ReplayCheckpointBodyV3 | None = None
     # A checkpoint already at the head is left as it is; only a replayed
     # suffix (or a genesis walk) produces a new one.
     if checkpoint_directory is not None and head.sequence > 0 and window is not None:

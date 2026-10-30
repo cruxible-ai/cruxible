@@ -18,13 +18,12 @@ from cruxible_client.contracts.canonical import (
     file_digest,
     manifest_for_tree,
     manifest_for_tree_carrying,
-    manifest_root,
-    manifest_root_from_members,
     semantic_diff,
     semantic_diff_from_members,
     semantic_projection,
 )
 from cruxible_client.contracts.errors import CanonicalEncodingError
+from cruxible_client.contracts.merkle import build_merkle_manifest, merkle_manifest_root
 
 # One constant drives every randomized law below. Replay determinism is the
 # property under test, so the generator must never read a clock.
@@ -107,8 +106,8 @@ def test_carried_manifest_reproduces_the_from_scratch_manifest_over_a_seeded_wal
         assert members == _cold(successor)
         assert list(members) == list(_cold(successor))
         assert (
-            manifest_root_from_members(members).tagged
-            == manifest_root(semantic_projection(successor)).tagged
+            build_merkle_manifest(members).root.tagged
+            == merkle_manifest_root(semantic_projection(successor)).tagged
         )
         expected_digest, expected_scope = semantic_diff(tree, successor)
         digest, scope = semantic_diff_from_members(manifest, members)
@@ -139,7 +138,7 @@ def test_the_seeded_walk_is_reproducible_across_independent_runs() -> None:
                 previous_manifest=manifest,
             )
             tree = successor
-        return manifest_root_from_members(manifest).tagged
+        return build_merkle_manifest(manifest).root.tagged
 
     assert walk() == walk()
 

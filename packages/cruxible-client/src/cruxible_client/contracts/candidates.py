@@ -76,8 +76,8 @@ class SemanticCandidate(_StrictCandidateModel):
     """The complete locator-free object signed by reviewers, with a merkle manifest root.
 
     The validator asks for exactly this root type and nothing else parses: a
-    flat manifest root is refused here, so the structure of a candidate's
-    commitment can never be ambiguous.
+    `sha256:` digest of any kind is refused here, so the structure of a
+    candidate's commitment can never be ambiguous.
     """
 
     tag: Literal["playbill-candidate-v2"] = "playbill-candidate-v2"
