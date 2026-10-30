@@ -538,48 +538,6 @@ class ProcedureChildInvocation(_StrictResultModel):
     status: Literal["succeeded", "refused", "failed", "halted"]
 
 
-class ProcedureRunReceiptV2(_StrictResultModel):
-    tag: Literal["playbill-procedure-run-receipt-v2"] = "playbill-procedure-run-receipt-v2"
-    run_id: str
-    admission_binding_digest: str
-    semantic_replay_key_digest: str
-    semantic_result_digest: str | None
-    bound_coordinate: AcceptedCoordinate
-    head_at_admission: AcceptedCoordinate
-    lane: Literal["current", "replay"]
-    evaluation_time: datetime
-    validated_pins: tuple[ArtifactPin, ...]
-    admitted_inputs: tuple[dict[str, object], ...]
-    attribution: ProcedureRunAttribution
-    stream_instance_id: str
-    journal_family: str
-    stream_id: str
-    partition_id: str
-    first_sequence: int = Field(ge=1)
-    last_sequence: int = Field(ge=1)
-    record_digests: tuple[str, ...]
-    chain_head_digest: str
-
-    _digests = field_validator(
-        "admission_binding_digest",
-        "semantic_replay_key_digest",
-        "semantic_result_digest",
-        "chain_head_digest",
-    )(_digest)
-
-    @field_validator("record_digests")
-    @classmethod
-    def _record_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for digest in value:
-            _digest(digest)
-        return value
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _evaluation_time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-
 class ProcedureBudgetExceededDetail(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-exceeded-detail-v1"] = (
         "playbill-procedure-budget-exceeded-detail-v1"
@@ -643,15 +601,6 @@ class ProcedureBudgetBoundaryObservation(_StrictResultModel):
         return self
 
 
-class ProcedureRunBudgetDeclaredV1(_StrictResultModel):
-    tag: Literal["playbill-procedure-run-budget-declared-v1"] = (
-        "playbill-procedure-run-budget-declared-v1"
-    )
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
-    result_bytes_cap: int = Field(default=1_048_576, ge=1)
-
-
 class ProcedureRunBudgetObserved(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-observed-v1"] = (
         "playbill-procedure-run-budget-observed-v1"
@@ -661,25 +610,6 @@ class ProcedureRunBudgetObserved(_StrictResultModel):
     provider_calls: int = Field(ge=0)
     capture_bytes: int = Field(ge=0)
     wall_clock_microseconds: int = Field(ge=0)
-
-
-class ProcedureRunBudgetV1(_StrictResultModel):
-    tag: Literal["playbill-procedure-run-budget-v1"] = "playbill-procedure-run-budget-v1"
-    declared: ProcedureRunBudgetDeclaredV1
-    observed: ProcedureRunBudgetObserved
-
-
-class ProcedureRunReceiptV3(ProcedureRunReceiptV2):
-    tag: Literal["playbill-procedure-run-receipt-v3"] = "playbill-procedure-run-receipt-v3"  # type: ignore[assignment]
-    status: Literal[
-        "succeeded",
-        "node_refused",
-        "operational_failed",
-        "internal_failed",
-        "halted",
-    ]
-    terminal: ProcedureTerminal | None
-    budget: ProcedureRunBudgetV1
 
 
 class ProcedureRunNodePinSet(_StrictResultModel):
@@ -732,110 +662,11 @@ class ProcedureReplayInputProjection(_StrictResultModel):
         return self
 
 
-class ProcedureProviderBindingV1(_StrictResultModel):
-    tag: Literal["playbill-procedure-provider-binding-v1"] = (
-        "playbill-procedure-provider-binding-v1"
-    )
-    node_id: str
-    provider_artifact_digest: str
-    interface_artifact_digest: str
-    interface_digest: str
-    classifier_digest: str
-    accepted_bucket_selectors: tuple[str, ...]
-    implementation_digest: str
-    secret_binding_identity_digests: tuple[str, ...]
-
-    _binding_digests = field_validator(
-        "provider_artifact_digest",
-        "interface_artifact_digest",
-        "interface_digest",
-        "classifier_digest",
-        "implementation_digest",
-    )(_digest)
-
-    @field_validator("accepted_bucket_selectors", "secret_binding_identity_digests")
-    @classmethod
-    def _sets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Provider binding sets must be sorted and unique")
-        return value
-
-    @field_validator("secret_binding_identity_digests")
-    @classmethod
-    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for item in value:
-            _digest(item)
-        return value
-
-
-class ProviderBucketClassificationPlan(_StrictResultModel):
-    """Accepted, measured-bucket-free classifier plan for one occurrence."""
-
-    tag: Literal["playbill-provider-bucket-classification-plan-v1"] = (
-        "playbill-provider-bucket-classification-plan-v1"
-    )
-    node_id: str
-    interface_artifact_digest: str
-    interface_digest: str
-    vocabulary_digest: str
-    classifier_digest: str
-    accepted_bucket_selectors: tuple[str, ...]
-
-    _plan_digests = field_validator(
-        "interface_artifact_digest",
-        "interface_digest",
-        "vocabulary_digest",
-        "classifier_digest",
-    )(_digest)
-
-    @field_validator("accepted_bucket_selectors")
-    @classmethod
-    def _selectors(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("classification selectors must be nonempty, sorted, and unique")
-        return value
-
-
 class ProcedureProviderBinding(_StrictResultModel):
-    """Successor binding carrying the full classification and RAT-9 authority."""
-
-    tag: Literal["playbill-procedure-provider-binding-v2"] = (
-        "playbill-procedure-provider-binding-v2"
-    )
-    node_id: str
-    provider_artifact_digest: str
-    classification_plan: ProviderBucketClassificationPlan
-    implementation_digest: str
-    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
-    secret_binding_identity_digests: tuple[str, ...]
-
-    _binding_digests = field_validator(
-        "provider_artifact_digest",
-        "implementation_digest",
-    )(_digest)
-
-    @field_validator("secret_binding_identity_digests")
-    @classmethod
-    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("Provider secret binding identities must be sorted and unique")
-        for item in value:
-            _digest(item)
-        return value
-
-    @model_validator(mode="after")
-    def _node_correspondence(self) -> "ProcedureProviderBinding":
-        if self.classification_plan.node_id != self.node_id:
-            raise ValueError("Provider binding and classification plan node ids disagree")
-        return self
-
-
-class ProcedureProviderBindingV3(_StrictResultModel):
     """What one slotted node binds at admission: its slot's exact build and operation.
 
     The binding is the Line's (or, for a direct run, the request's ephemeral
-    spec), never chosen at run time. Binding v1 and v2 stay readable for the
-    runs admitted under them.
+    spec), never chosen at run time.
     """
 
     tag: Literal["cruxible-procedure-provider-binding-v4"] = (
@@ -868,7 +699,7 @@ class ProcedureProviderBindingV3(_StrictResultModel):
 
 def procedure_provider_bindings(
     occurrences: Sequence[ProviderExternalOccurrencePlan],
-) -> tuple[ProcedureProviderBindingV3, ...]:
+) -> tuple[ProcedureProviderBinding, ...]:
     """One binding per planned occurrence, in the node-id order admission requires.
 
     Occurrences are planned in occurrence-path order (``call/...`` before
@@ -878,7 +709,7 @@ def procedure_provider_bindings(
     """
 
     return tuple(
-        ProcedureProviderBindingV3(
+        ProcedureProviderBinding(
             node_id=item.node_id,
             slot=item.slot,
             operation=item.operation.name,
@@ -1365,46 +1196,109 @@ class ProcedureTerminalEgress(_StrictResultModel):
 
 
 class ProcedureRunBudgetDeclared(_StrictResultModel):
-    tag: Literal["playbill-procedure-run-budget-declared-v2"] = (
-        "playbill-procedure-run-budget-declared-v2"
+    """The run's declared budget: what it admitted, and the caps in force.
+
+    ``provider_output_bytes_cap`` is present exactly for a run that planned
+    Provider occurrences.
+    """
+
+    tag: Literal["playbill-procedure-run-budget-declared-v3"] = (
+        "playbill-procedure-run-budget-declared-v3"
     )
     budget: ProcedureBudget
     hard_caps: ProcedureHardCaps
     result_bytes_cap: int = Field(ge=1)
-    provider_output_bytes_cap: int = Field(ge=1)
+    provider_output_bytes_cap: int | None = Field(default=None, ge=1)
 
 
 class ProcedureRunBudget(_StrictResultModel):
-    tag: Literal["playbill-procedure-run-budget-v2"] = "playbill-procedure-run-budget-v2"
+    """The one budget grammar: declared bounds and observed high-water values."""
+
+    tag: Literal["playbill-procedure-run-budget-v3"] = "playbill-procedure-run-budget-v3"
     declared: ProcedureRunBudgetDeclared
     observed: ProcedureRunBudgetObserved
 
 
-class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
-    tag: Literal["playbill-procedure-run-receipt-v4"] = "playbill-procedure-run-receipt-v4"  # type: ignore[assignment]
-    invocation_origin: Literal["line"] = "line"
-    line_identity: ArtifactIdentity
-    line_spec_digest: str
-    occurrence_id: str
+ProcedureRunReceiptStatus: TypeAlias = Literal[
+    "succeeded",
+    "node_refused",
+    "operational_failed",
+    "internal_failed",
+    "halted",
+]
+
+
+class ProcedureRunReceipt(_StrictResultModel):
+    """The one public run receipt, for every run lane.
+
+    A direct run (``invocation_origin="actor"``) names no Line coordinate; a
+    Line run names its LineSpec, occurrence, deployment, acquisition policy,
+    sensitivity and mandate coordinates. A run that planned Provider
+    occurrences names its acquisition plan, selection decision and Provider
+    bindings, its durable invocation receipts and its Source Capture
+    associations; a pure run names none of them.
+
+    ``bound_coordinate.generation``, ``head_at_admission.generation`` and the
+    ``first_sequence``/``last_sequence`` journal range read SETTLEMENT ORDER.
+    ``evaluation_time``, ``occurrence_evaluation_time`` and
+    ``attribution.recorded_time`` read EVALUATION INSTANT. Every
+    ``admission_material_manifest.members[].retain_until`` and Provider budget
+    or duration field reads VALIDITY WINDOW.
+    """
+
+    tag: Literal["playbill-procedure-run-receipt-v8"] = "playbill-procedure-run-receipt-v8"
+    run_id: str
+    admission_binding_digest: str
+    semantic_replay_key_digest: str
+    semantic_result_digest: str | None
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    evaluation_time: datetime
+    validated_pins: tuple[ArtifactPin, ...]
+    admitted_inputs: tuple[dict[str, object], ...]
+    attribution: ProcedureRunAttribution
+    stream_instance_id: str
+    journal_family: str
+    stream_id: str
+    partition_id: str
+    first_sequence: int = Field(ge=1)
+    last_sequence: int = Field(ge=1)
+    record_digests: tuple[str, ...]
+    chain_head_digest: str
+    status: ProcedureRunReceiptStatus
+    terminal: ProcedureTerminal | None
+    budget: ProcedureRunBudget
+    invocation_origin: Literal["actor", "line"]
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
     occurrence_evaluation_time: datetime
     node_pin_sets: tuple[ProcedureRunNodePinSet, ...]
     pin_set_digest: str
     replay_input_vector: tuple[ProcedureReplayInputProjection, ...]
-    deployment_snapshot_digest: str
-    acquisition_policy_digest: str
-    selection_receipt_digest: str | None
-    selection_decision: ProcedureSelectionDecision
-    selection_decision_digest: str
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
-    sensitivity_policy_digest: str
-    mandate_coordinate_digest: str
-    taint_labels: tuple[str, ...]
-    epsilon_member: bool
+    deployment_snapshot_digest: str | None = None
+    acquisition_policy_digest: str | None = None
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecision | None = None
+    selection_decision_digest: str | None = None
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...] = ()
+    sensitivity_policy_digest: str | None = None
+    mandate_coordinate_digest: str | None = None
+    taint_labels: tuple[str, ...] = ()
+    epsilon_member: bool = False
     admission_material_manifest: ProcedureAdmissionMaterialManifest
     admission_material_manifest_digest: str
-    budget: ProcedureRunBudget  # type: ignore[assignment]
+    acquisition_plan_digest: str | None = None
+    exhaust_access_binding_digest: str | None = None
+    invocation_receipt_digests: tuple[str, ...] = ()
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
 
-    _line_digests = field_validator(
+    _digests = field_validator(
+        "admission_binding_digest",
+        "semantic_replay_key_digest",
+        "semantic_result_digest",
+        "chain_head_digest",
         "line_spec_digest",
         "pin_set_digest",
         "deployment_snapshot_digest",
@@ -1414,11 +1308,20 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
         "sensitivity_policy_digest",
         "mandate_coordinate_digest",
         "admission_material_manifest_digest",
+        "acquisition_plan_digest",
+        "exhaust_access_binding_digest",
     )(_digest)
 
-    @field_validator("occurrence_evaluation_time")
+    @field_validator("record_digests")
     @classmethod
-    def _occurrence_time(cls, value: datetime) -> datetime:
+    def _record_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            _digest(digest)
+        return value
+
+    @field_validator("evaluation_time", "occurrence_evaluation_time")
+    @classmethod
+    def _instants(cls, value: datetime) -> datetime:
         return ensure_utc(value)
 
     @field_validator("node_pin_sets")
@@ -1447,8 +1350,8 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     @classmethod
     def _bindings(
         cls,
-        value: tuple[ProcedureProviderBindingV1, ...],
-    ) -> tuple[ProcedureProviderBindingV1, ...]:
+        value: tuple[ProcedureProviderBinding, ...],
+    ) -> tuple[ProcedureProviderBinding, ...]:
         node_ids = tuple(item.node_id for item in value)
         if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("receipt Provider bindings must be sorted and unique")
@@ -1460,83 +1363,6 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
         if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
             raise ValueError("receipt taint labels must be sorted and unique")
         return value
-
-    @model_validator(mode="after")
-    def _line_shape(self) -> "ProcedureRunReceiptV4":
-        if self.line_identity.kind != "Line":
-            raise ValueError("v4 receipt requires a Line identity")
-        if self.selection_decision.policy_digest != self.acquisition_policy_digest:
-            raise ValueError("v4 selection decision names another acquisition policy")
-        if self.selection_decision_digest != procedure_selection_decision_digest(
-            self.selection_decision
-        ):
-            raise ValueError("v4 selection decision digest does not reproduce")
-        if self.admission_material_manifest_digest != procedure_admission_material_digest(
-            self.admission_material_manifest
-        ):
-            raise ValueError("v4 admission material digest does not reproduce")
-        admitted_names = tuple(
-            item.get("input_name") if isinstance(item, dict) else None
-            for item in self.admitted_inputs
-        )
-        replay_names = tuple(item.input_name for item in self.replay_input_vector)
-        if admitted_names != replay_names:
-            raise ValueError("v4 admitted inputs and replay projections disagree")
-        material_names = tuple(item.input_name for item in self.admission_material_manifest.members)
-        expected_material_names = tuple(
-            name
-            for item, name in zip(self.admitted_inputs, admitted_names, strict=True)
-            if isinstance(item, dict)
-            and item.get("tag")
-            in {
-                "playbill-landed-capture-run-input-v1",
-                "playbill-exhaust-run-input-v1",
-            }
-        )
-        if material_names != expected_material_names:
-            raise ValueError("v4 material manifest does not cover Capture/exhaust inputs")
-        return self
-
-
-class ProcedureRunReceiptV5(ProcedureRunReceiptV4):
-    """Receipt successor embedding Provider binding v2 without rewriting v4."""
-
-    tag: Literal["playbill-procedure-run-receipt-v5"] = "playbill-procedure-run-receipt-v5"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...]  # type: ignore[assignment]
-
-    @field_validator("resolved_provider_bindings")
-    @classmethod
-    def _v2_bindings(
-        cls,
-        value: tuple[ProcedureProviderBinding, ...],
-    ) -> tuple[ProcedureProviderBinding, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("receipt Provider v2 bindings must be sorted and unique")
-        return value
-
-
-class ProcedureRunReceipt(ProcedureRunReceiptV5):
-    """Receipt successor exposing the complete B2 plan and durable call evidence.
-
-    The inherited ``bound_coordinate.generation`` and
-    ``head_at_admission.generation`` fields and the inherited
-    ``first_sequence``/``last_sequence`` journal range read SETTLEMENT ORDER.
-    The inherited ``evaluation_time``, ``occurrence_evaluation_time``, and
-    ``attribution.recorded_time`` fields read EVALUATION INSTANT.  Every nested
-    ``admission_material_manifest.members[].retain_until`` and Provider budget
-    or duration field reads VALIDITY WINDOW.
-    """
-
-    tag: Literal["playbill-procedure-run-receipt-v6"] = "playbill-procedure-run-receipt-v6"  # type: ignore[assignment]
-    acquisition_plan_digest: str
-    exhaust_access_binding_digest: str | None = None
-    invocation_receipt_digests: tuple[str, ...] = ()
-    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
-
-    _v6_digests = field_validator("acquisition_plan_digest", "exhaust_access_binding_digest")(
-        _digest
-    )
 
     @field_validator("invocation_receipt_digests")
     @classmethod
@@ -1558,27 +1384,72 @@ class ProcedureRunReceipt(ProcedureRunReceiptV5):
             raise ValueError("Source Capture associations must be path-sorted and unique")
         return value
 
-
-class ProcedureRunReceiptV7(ProcedureRunReceipt):
-    """Receipt successor embedding Provider binding v3: no classification plan.
-
-    Everything else reads as the v6 receipt it extends; v6 stays readable for
-    the runs admitted with classification plans.
-    """
-
-    tag: Literal["playbill-procedure-run-receipt-v7"] = "playbill-procedure-run-receipt-v7"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV3, ...]  # type: ignore[assignment]
-
-    @field_validator("resolved_provider_bindings")
-    @classmethod
-    def _v3_bindings(
-        cls,
-        value: tuple[ProcedureProviderBindingV3, ...],
-    ) -> tuple[ProcedureProviderBindingV3, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("receipt Provider v3 bindings must be sorted and unique")
-        return value
+    @model_validator(mode="after")
+    def _receipt_shape(self) -> "ProcedureRunReceipt":
+        line_fields = (
+            self.line_identity,
+            self.line_spec_digest,
+            self.occurrence_id,
+            self.deployment_snapshot_digest,
+            self.acquisition_policy_digest,
+            self.sensitivity_policy_digest,
+            self.mandate_coordinate_digest,
+        )
+        if self.invocation_origin == "line":
+            if any(value is None for value in line_fields) or self.acquisition_plan_digest is None:
+                raise ValueError("a Line receipt names every Line coordinate and its plan")
+            assert self.line_identity is not None
+            if self.line_identity.kind != "Line":
+                raise ValueError("a Line receipt requires a Line identity")
+        elif (
+            self.line_identity is not None
+            or self.line_spec_digest is not None
+            or self.occurrence_id is not None
+            or self.mandate_coordinate_digest is not None
+        ):
+            raise ValueError("a direct receipt names no Line coordinate")
+        planned = self.acquisition_plan_digest is not None
+        if planned != (self.selection_decision is not None):
+            raise ValueError("a receipt names a selection decision exactly with its plan")
+        if self.selection_decision is not None:
+            if self.selection_decision.policy_digest != self.acquisition_policy_digest:
+                raise ValueError("receipt selection decision names another acquisition policy")
+            if self.selection_decision_digest != procedure_selection_decision_digest(
+                self.selection_decision
+            ):
+                raise ValueError("receipt selection decision digest does not reproduce")
+        elif (
+            self.selection_decision_digest is not None
+            or self.resolved_provider_bindings
+            or self.invocation_receipt_digests
+            or self.source_capture_associations
+        ):
+            raise ValueError("a run without an acquisition plan names no Provider evidence")
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
+        ):
+            raise ValueError("receipt admission material digest does not reproduce")
+        admitted_names = tuple(
+            item.get("input_name") if isinstance(item, dict) else None
+            for item in self.admitted_inputs
+        )
+        replay_names = tuple(item.input_name for item in self.replay_input_vector)
+        if admitted_names != replay_names:
+            raise ValueError("receipt admitted inputs and replay projections disagree")
+        material_names = tuple(item.input_name for item in self.admission_material_manifest.members)
+        expected_material_names = tuple(
+            name
+            for item, name in zip(self.admitted_inputs, admitted_names, strict=True)
+            if isinstance(item, dict)
+            and item.get("tag")
+            in {
+                "playbill-landed-capture-run-input-v1",
+                "playbill-exhaust-run-input-v1",
+            }
+        )
+        if material_names != expected_material_names:
+            raise ValueError("receipt material manifest does not cover Capture/exhaust inputs")
+        return self
 
 
 __all__ = [
@@ -1606,25 +1477,16 @@ __all__ = [
     "FAILURE_CAUSE_MESSAGE_LIMIT",
     "failure_cause_message",
     "strip_url_userinfo",
-    "ProviderBucketClassificationPlan",
-    "ProcedureProviderBindingV1",
     "ProcedureProviderBinding",
-    "ProcedureProviderBindingV3",
     "ProcedureReplayInputProjection",
     "ProcedureRunAttribution",
     "ProcedureRunAttributionWithheld",
-    "ProcedureRunBudgetDeclaredV1",
     "ProcedureRunBudgetDeclared",
     "ProcedureRunBudgetObserved",
-    "ProcedureRunBudgetV1",
     "ProcedureRunBudget",
     "ProcedureRunNodePinSet",
-    "ProcedureRunReceiptV2",
-    "ProcedureRunReceiptV3",
-    "ProcedureRunReceiptV4",
-    "ProcedureRunReceiptV5",
     "ProcedureRunReceipt",
-    "ProcedureRunReceiptV7",
+    "ProcedureRunReceiptStatus",
     "ProcedureRunReceiptWithheld",
     "ProcedureSourceCaptureAssociation",
     "ProcedureSelectionDecision",

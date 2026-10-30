@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Final, Literal, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy
 
@@ -113,12 +113,10 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureFailureCause,
     ProcedureNodeRefusalCode,
     ProcedureProviderBinding,
-    ProcedureProviderBindingV1,
-    ProcedureProviderBindingV3,
     ProcedureReplayInputProjection,
-    ProcedureRunBudgetDeclaredV1,
+    ProcedureRunBudget,
+    ProcedureRunBudgetDeclared,
     ProcedureRunBudgetObserved,
-    ProcedureRunBudgetV1,
     ProcedureSelectionDecision,
     ProcedureSourceCaptureAssociation,
     procedure_acquisition_plan_digest,
@@ -212,7 +210,6 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.procedures.input_planes import (
     AcceptedClaimRunInputV1,
-    AcceptedStateRunInputV1,
     AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
@@ -292,24 +289,19 @@ ProcedureRunStatusV1 = Literal[
     "halted",
 ]
 
-PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v1"
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
-PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
-PROCEDURE_ADMISSION_BINDING_V3_DOMAIN = "playbill-procedure-run-admission-v3"
-PROCEDURE_ADMISSION_BINDING_V4_DOMAIN = "playbill-procedure-run-admission-v4"
-PROCEDURE_ADMISSION_BINDING_V5_DOMAIN = "playbill-procedure-run-admission-v5"
-PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN = "playbill-procedure-semantic-replay-key-v3"
-PROCEDURE_SEMANTIC_REPLAY_KEY_V4_DOMAIN = "playbill-procedure-semantic-replay-key-v4"
-PROCEDURE_SEMANTIC_REPLAY_KEY_V5_DOMAIN = "playbill-procedure-semantic-replay-key-v5"
+#: The one admitted-run family: its admission tag is also its binding-digest
+#: domain, and its replay key hashes one explicit semantic projection.
+PROCEDURE_RUN_ADMISSION_TAG: Final = "playbill-procedure-run-admission-v10"
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN: Final = "playbill-procedure-replay-key-v10"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
-PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
-PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
-PROCEDURE_RUN_RECEIPT_V4_DOMAIN = "playbill-procedure-run-receipt-v4"
-PROCEDURE_RUN_RECEIPT_V5_DOMAIN = "playbill-procedure-run-receipt-v5"
-PROCEDURE_RUN_RECEIPT_V6_DOMAIN = "playbill-procedure-run-receipt-v6"
-PROCEDURE_RUN_RECEIPT_V7_DOMAIN = "playbill-procedure-run-receipt-v7"
+#: The one public run receipt's tag, which is also its digest domain.
+PROCEDURE_RUN_RECEIPT_DOMAIN: Final = "playbill-procedure-run-receipt-v8"
+
+_ZERO_DIGEST: Final = "sha256:" + "0" * 64
+_ZERO_RUN_ID: Final = "RUN-" + "0" * 64
 
 
 class _StrictExecutionModel(BaseModel):
@@ -322,6 +314,10 @@ def _sha256(value: str, *, label: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{label} must be tagged lowercase SHA-256") from exc
     return value
+
+
+def _sorted_unique(value: tuple[str, ...]) -> bool:
+    return value == tuple(sorted(set(value), key=lambda item: item.encode("utf-8")))
 
 
 def run_value_digest(domain: str, value: object) -> str:
@@ -356,30 +352,17 @@ class ProcedureNodePinSetV1(_StrictExecutionModel):
         return value
 
 
-class AcceptedStateRunMaterialV1(_StrictExecutionModel):
-    tag: Literal["playbill-accepted-state-run-material-v1"] = (
-        "playbill-accepted-state-run-material-v1"
-    )
-    input: AcceptedStateRunInputV1
-    value: object
-
-    @field_validator("value", mode="before")
-    @classmethod
-    def _value(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-    @model_validator(mode="after")
-    def _digest(self) -> "AcceptedStateRunMaterialV1":
-        if self.input.result_digest != run_value_digest("state-result", self.value):
-            raise ValueError("accepted-state material does not reproduce its result digest")
-        return self
+#: The accepted-state plane's two arms: a Query result and a Claim selection.
+AcceptedStateRunInput = AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
 
 
-class AcceptedStateRunMaterialV2(_StrictExecutionModel):
+class AcceptedStateRunMaterial(_StrictExecutionModel):
+    """One admitted accepted-state read and the exact value its digest reproduces."""
+
     tag: Literal["playbill-accepted-state-run-material-v2"] = (
         "playbill-accepted-state-run-material-v2"
     )
-    input: AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
+    input: AcceptedStateRunInput
     value: object
 
     @field_validator("value", mode="before")
@@ -388,7 +371,7 @@ class AcceptedStateRunMaterialV2(_StrictExecutionModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _digest(self) -> "AcceptedStateRunMaterialV2":
+    def _digest(self) -> "AcceptedStateRunMaterial":
         if self.input.result_digest != run_value_digest("state-result", self.value):
             raise ValueError("accepted-state material does not reproduce its result digest")
         return self
@@ -399,6 +382,21 @@ class ProcedureResourceBudgetV1(_StrictExecutionModel):
 
     result_bytes_cap: int = Field(ge=1)
     repeat_attempts_cap: int = Field(ge=1)
+
+
+def procedure_run_declared_budget(admission: "ProcedureRunAdmission") -> ProcedureRunBudgetDeclared:
+    """The declared half of a run's one budget grammar, read off its admission."""
+
+    return ProcedureRunBudgetDeclared(
+        budget=admission.budget,
+        hard_caps=admission.hard_caps,
+        result_bytes_cap=(
+            admission.resource_budget.result_bytes_cap
+            if admission.resource_budget is not None
+            else 1_048_576
+        ),
+        provider_output_bytes_cap=admission.provider_output_bytes_cap,
+    )
 
 
 def resolve_procedure_resource_budget(
@@ -424,365 +422,6 @@ def resolve_procedure_resource_budget(
         ),
         repeat_attempts_cap=min(policy.repeat_attempts_cap or 25, hard_caps.max_repeat_attempts),
     )
-
-
-class ProcedureRunAdmissionV1(_StrictExecutionModel):
-    """The complete run binding fixed before any result is visible.
-
-    A direct actor invocation binds the accepted-state plane alone.  A Line run
-    additionally binds the occurrence, deployment snapshot, acquisition policy,
-    mandate and calibration coordinates, sensitivity policy, and epsilon
-    membership, and may bind the landed-Capture and exhaust planes.
-    """
-
-    resource_budget: ProcedureResourceBudgetV1 | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    tag: Literal["playbill-procedure-run-admission-v1"] = "playbill-procedure-run-admission-v1"
-    instance_id: str
-    run_id: str
-    attempt: int = Field(ge=1)
-    accepted_coordinate: AcceptedCoordinate
-    procedure_identity: ArtifactIdentity
-    procedure_path: str
-    procedure_artifact_digest: str
-    definition_digest: str
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    full_pins: tuple[ArtifactPin, ...]
-    node_pin_sets: tuple[ProcedureNodePinSetV1, ...]
-    pin_set_digest: str
-    invocation_input: object
-    accepted_state_inputs: tuple[AcceptedStateRunInputV1, ...]
-    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
-    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
-    actor_context: GovernedActorContext
-    invocation_origin: Literal["actor", "line"] = "actor"
-    journal_stream: JournalStreamIdentityV1
-    journal_partition_id: str
-    line_spec_digest: str | None = None
-    occurrence_id: str | None = None
-    deployment_snapshot_digest: str | None = None
-    acquisition_policy_digest: str | None = None
-    selection_receipt_digest: str | None = None
-    sensitivity_policy_digest: str | None = None
-    mandate_coordinate_digest: str | None = None
-    calibration_coordinate_digest: str | None = None
-    taint_labels: tuple[str, ...] = ()
-    epsilon_member: bool = False
-    admitted_at: datetime
-    admission_binding_digest: str
-
-    @field_validator("invocation_input", mode="before")
-    @classmethod
-    def _invocation_input(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-    @field_validator(
-        "procedure_artifact_digest",
-        "definition_digest",
-        "pin_set_digest",
-        "line_spec_digest",
-        "deployment_snapshot_digest",
-        "acquisition_policy_digest",
-        "selection_receipt_digest",
-        "sensitivity_policy_digest",
-        "mandate_coordinate_digest",
-        "calibration_coordinate_digest",
-        "admission_binding_digest",
-    )
-    @classmethod
-    def _digests(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        return _sha256(value, label=str(getattr(info, "field_name", "run digest")))
-
-    @field_validator("admitted_at")
-    @classmethod
-    def _admitted_at(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_validator("accepted_state_inputs")
-    @classmethod
-    def _state_inputs(
-        cls, value: tuple[AcceptedStateRunInputV1, ...]
-    ) -> tuple[AcceptedStateRunInputV1, ...]:
-        names = tuple(item.input_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("accepted-state run inputs must be sorted and unique")
-        return value
-
-    @field_validator("node_pin_sets")
-    @classmethod
-    def _node_pin_sets(
-        cls, value: tuple[ProcedureNodePinSetV1, ...]
-    ) -> tuple[ProcedureNodePinSetV1, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure node pin sets must be sorted and unique")
-        return value
-
-    @field_validator("taint_labels")
-    @classmethod
-    def _taint(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("admitted taint labels must be sorted and unique")
-        return value
-
-    @property
-    def run_inputs(self) -> tuple[ProcedureRunInputV1, ...]:
-        """Return the complete discriminated union bound before any result is visible."""
-
-        return merge_run_input_vector(
-            self.accepted_state_inputs,
-            self.landed_capture_inputs,
-            self.exhaust_inputs,
-        )
-
-    @property
-    def direct_acquisition_carrier(self) -> bool:
-        """Whether this carrier may bind acquisition state on a direct run.
-
-        Only the V5 carrier plans external occurrences, so only it can bind the
-        acquisition policy and deployment snapshot a direct Source run reads.
-        """
-
-        return False
-
-    @model_validator(mode="after")
-    def _admission_shape(self) -> "ProcedureRunAdmissionV1":
-        if self.procedure_identity.kind != "Procedure":
-            raise ValueError("Procedure run admission requires a Procedure identity")
-        if self.journal_stream.instance_id != self.instance_id:
-            raise ValueError("Procedure run and journal stream instance identities differ")
-        validate_run_input_vector(
-            self.run_inputs,
-            expected_accepted=self.accepted_coordinate,
-        )
-        line_state = (
-            self.line_spec_digest,
-            self.occurrence_id,
-            self.deployment_snapshot_digest,
-            self.acquisition_policy_digest,
-            self.mandate_coordinate_digest,
-            self.calibration_coordinate_digest,
-        )
-        if self.invocation_origin == "actor":
-            # A direct run of a graph-v4 Procedure with Source nodes acquires
-            # under a governed policy and a real deployment, so its admission
-            # binds those two coordinates. It still binds no Line, occurrence,
-            # mandate, or calibration coordinate: those are the Line's, and the
-            # older direct carriers keep refusing all six.
-            allowed = (
-                {"deployment_snapshot_digest", "acquisition_policy_digest"}
-                if self.direct_acquisition_carrier
-                else set()
-            )
-            claimed = {
-                name
-                for name, value in (
-                    ("line_spec_digest", self.line_spec_digest),
-                    ("occurrence_id", self.occurrence_id),
-                    ("deployment_snapshot_digest", self.deployment_snapshot_digest),
-                    ("acquisition_policy_digest", self.acquisition_policy_digest),
-                    ("mandate_coordinate_digest", self.mandate_coordinate_digest),
-                    ("calibration_coordinate_digest", self.calibration_coordinate_digest),
-                )
-                if value is not None
-            }
-            if claimed - allowed or self.epsilon_member:
-                raise ValueError("PC-E1 direct admission cannot claim Line/deployment policy state")
-            if (
-                self.landed_capture_inputs
-                or self.exhaust_inputs
-                or self.selection_receipt_digest is not None
-                or self.sensitivity_policy_digest is not None
-                or self.taint_labels
-            ):
-                raise ValueError("direct admission binds only the accepted-state input plane")
-        elif any(value is None for value in line_state):
-            raise ValueError(
-                "Line run admission must bind LineSpec, occurrence, deployment snapshot, "
-                "acquisition policy, mandate, and calibration coordinates together"
-            )
-        elif self.sensitivity_policy_digest is None:
-            raise ValueError("Line run admission must bind its sensitivity policy")
-        expected_pin_digest = procedure_pin_set_digest(self.full_pins, self.node_pin_sets)
-        if self.pin_set_digest != expected_pin_digest:
-            raise ValueError("Procedure run pin_set_digest does not reproduce")
-        expected = procedure_admission_digest(self)
-        if self.admission_binding_digest != expected:
-            raise ValueError("Procedure run admission_binding_digest does not reproduce")
-        return self
-
-
-class ProcedureRunAdmissionV2(ProcedureRunAdmissionV1):
-    tag: Literal["playbill-procedure-run-admission-v2"] = "playbill-procedure-run-admission-v2"  # type: ignore[assignment]
-    accepted_state_inputs: tuple[AcceptedStateRunInputV2 | AcceptedClaimRunInputV1, ...]  # type: ignore[assignment]
-    bound_coordinate: AcceptedCoordinate
-    head_at_admission: AcceptedCoordinate
-    lane: Literal["current", "replay"]
-    semantic_replay_key_digest: str
-
-    @field_validator("semantic_replay_key_digest")
-    @classmethod
-    def _semantic_replay_key(cls, value: str) -> str:
-        return _sha256(value, label="semantic_replay_key_digest")
-
-    @model_validator(mode="after")
-    def _v2_shape(self) -> "ProcedureRunAdmissionV2":
-        if self.accepted_coordinate != self.bound_coordinate:
-            raise ValueError("v2 admission bound and accepted coordinates differ")
-        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
-            raise ValueError("semantic replay key does not reproduce")
-        return self
-
-
-class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
-    """Line-only admission whose digest identifies byte-replay semantics."""
-
-    tag: Literal["playbill-procedure-run-admission-v3"] = "playbill-procedure-run-admission-v3"  # type: ignore[assignment]
-    invocation_origin: Literal["actor", "line"] = "line"
-    line_identity: ArtifactIdentity | None = None
-    occurrence_evaluation_time: datetime
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
-    selection_decision: ProcedureSelectionDecision
-    selection_decision_digest: str
-    provider_output_bytes_cap: int = Field(ge=1)
-
-    @field_validator("occurrence_evaluation_time")
-    @classmethod
-    def _occurrence_time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_validator("selection_decision_digest")
-    @classmethod
-    def _selection_digest(cls, value: str) -> str:
-        return _sha256(value, label="selection_decision_digest")
-
-    @field_validator("resolved_provider_bindings")
-    @classmethod
-    def _provider_bindings(
-        cls,
-        value: tuple[ProcedureProviderBindingV1, ...],
-    ) -> tuple[ProcedureProviderBindingV1, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("resolved Provider bindings must be sorted and node-id unique")
-        return value
-
-    @model_validator(mode="after")
-    def _v3_shape(self) -> "ProcedureRunAdmissionV3":
-        if self.acquisition_policy_digest != self.selection_decision.policy_digest:
-            raise ValueError("selection decision must name the admitted acquisition policy")
-        if self.selection_decision_digest != procedure_selection_decision_digest(
-            self.selection_decision
-        ):
-            raise ValueError("selection decision digest does not reproduce")
-        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
-            raise ValueError("v3 semantic replay key does not reproduce")
-        if self.invocation_origin == "actor":
-            # A direct acquisition carrier is not an occurrence of anything: it
-            # names no Line, no occurrence, and keeps the direct lane's own
-            # stream, partition, and semantic run id.
-            if self.line_identity is not None or self.occurrence_id is not None:
-                raise ValueError("direct admission cannot claim a Line occurrence")
-            if self.occurrence_evaluation_time != self.admitted_at:
-                raise ValueError("direct admission evaluates at the instant it was admitted")
-            if self.run_id != procedure_semantic_run_id(self.semantic_replay_key_digest):
-                raise ValueError("direct admission run_id does not reproduce")
-            return self
-        if self.line_identity is None or self.line_identity.kind != "Line":
-            raise ValueError("v3 admission line_identity must have kind Line")
-        if self.journal_stream != procedure_line_journal_stream(self.instance_id):
-            raise ValueError("Line admission must use the Procedure exhaust stream")
-        expected_partition = (
-            procedure_direct_partition(self.semantic_replay_key_digest)
-            if procedure_parent_binding(self) is not None
-            else procedure_line_partition(self.line_identity)
-        )
-        if self.journal_partition_id != expected_partition:
-            raise ValueError("Line admission partition does not reproduce its Line identity")
-        if self.occurrence_id is None:
-            raise ValueError("Line admission requires an occurrence id")
-        if self.run_id != procedure_line_run_id(
-            occurrence_id=self.occurrence_id,
-            attempt=self.attempt,
-            admission_binding_digest=self.admission_binding_digest,
-            occurrence_evaluation_time=self.occurrence_evaluation_time,
-        ):
-            raise ValueError("Line admission run_id does not reproduce")
-        return self
-
-
-class ProcedureRunAdmissionV4(ProcedureRunAdmissionV3):
-    """Line admission successor carrying the complete Provider binding v2."""
-
-    tag: Literal["playbill-procedure-run-admission-v4"] = "playbill-procedure-run-admission-v4"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...]  # type: ignore[assignment]
-
-    @field_validator("resolved_provider_bindings")
-    @classmethod
-    def _provider_bindings_v2(
-        cls,
-        value: tuple[ProcedureProviderBinding, ...],
-    ) -> tuple[ProcedureProviderBinding, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("resolved Provider v2 bindings must be sorted and node-id unique")
-        return value
-
-
-class ProcedureRunAdmissionV5(ProcedureRunAdmissionV4):
-    """Line admission successor binding the complete B2 acquisition plan.
-
-    The inherited ``accepted_coordinate.generation``,
-    ``bound_coordinate.generation``, and ``head_at_admission.generation`` fields
-    read SETTLEMENT ORDER.  The inherited ``admitted_at`` and
-    ``occurrence_evaluation_time`` fields read EVALUATION INSTANT.
-    """
-
-    tag: Literal["playbill-procedure-run-admission-v5"] = "playbill-procedure-run-admission-v5"  # type: ignore[assignment]
-    acquisition_plan_digest: str
-    exhaust_access_binding_digest: str | None = None
-
-    @property
-    def direct_acquisition_carrier(self) -> bool:
-        return True
-
-    @field_validator("acquisition_plan_digest", "exhaust_access_binding_digest")
-    @classmethod
-    def _v5_digests(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        return _sha256(value, label=str(getattr(info, "field_name", "v5 digest")))
-
-    @model_validator(mode="after")
-    def _v5_shape(self) -> ProcedureRunAdmissionV5:
-        if bool(self.exhaust_inputs) != (self.exhaust_access_binding_digest is not None):
-            raise ValueError(
-                "exhaust_binding_carrier_required: Exhaust inputs require their opaque binding"
-            )
-        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
-            raise ValueError("v5 semantic replay key does not reproduce")
-        return self
-
-
-class ProcedureRunAdmissionV6(ProcedureRunAdmissionV2):
-    """Direct investigation successor; older admission digest domains stay frozen."""
-
-    tag: Literal["playbill-procedure-run-admission-v6"] = "playbill-procedure-run-admission-v6"  # type: ignore[assignment]
-    investigation: InvestigationBinding | None = None
-
-
-class ProcedureRunAdmissionV7(ProcedureRunAdmissionV5):
-    """Acquisition/Line admission with exact investigation and trigger bindings."""
-
-    tag: Literal["playbill-procedure-run-admission-v7"] = "playbill-procedure-run-admission-v7"  # type: ignore[assignment]
-    investigation: InvestigationBinding | None = None
-    trigger_binding: LineTriggerBinding | None = None
 
 
 class ProcedureParentBindingV1(_StrictExecutionModel):
@@ -811,76 +450,300 @@ class ProcedureParentBindingV1(_StrictExecutionModel):
         return self
 
 
-class ProcedureRunAdmissionV8(ProcedureRunAdmissionV7):
-    """Nested execution retains the root lane, with an explicit delegation binding."""
+class ProcedureRunAdmission(_StrictExecutionModel):
+    """The one complete run binding, fixed before any result is visible.
 
-    tag: Literal["playbill-procedure-run-admission-v8"] = "playbill-procedure-run-admission-v8"  # type: ignore[assignment]
-    parent_binding: ProcedureParentBindingV1
+    Every supported run admits under this one schema; what kind of run it is
+    reads off explicit fields, never off a model version:
 
-    @model_validator(mode="after")
-    def _nonrecursive(self) -> ProcedureRunAdmissionV8:
-        if self.procedure_identity in {pin.target for pin in self.parent_binding.ancestors}:
-            raise ValueError("recursive Procedure invocation is not supported")
-        return self
+    - ``invocation_origin``: an actor's direct run or a Line occurrence. A Line
+      run binds its LineSpec, occurrence, deployment snapshot, acquisition
+      policy, mandate, calibration and sensitivity coordinates together; a
+      direct run binds none of the Line's own coordinates.
+    - ``parent_binding``: present exactly for a nested child, which keeps its
+      root's actor, lane and authority coordinates.
+    - ``lane``: the current lane or exact replay.
+    - ``acquisition_plan_digest``: present exactly when the run plans external
+      Provider occurrences (every Line run, and a direct run with Source or
+      Call nodes). A pure direct run plans none, so it carries no Provider
+      bindings, selection decision or Provider output cap.
+    - ``investigation`` and ``trigger_binding``: the run's exact investigation
+      and Line trigger, when it has them.
 
-
-class ProcedureRunAdmissionV9(ProcedureRunAdmissionV7):
-    """The current acquisition carrier: Provider binding v3, no classification.
-
-    One carrier holds every role V5, V7 and V8 split between them: a direct or
-    Line run, with or without an investigation or trigger binding, and a nested
-    child, which carries ``parent_binding``. Its bindings name each node's
-    slot, its exact build and operation, and the implementation that serves it;
-    nothing about buckets, because core classifies no input. V5, V7 and V8 stay
-    readable for the runs admitted under them.
+    ``accepted_coordinate.generation``, ``bound_coordinate.generation`` and
+    ``head_at_admission.generation`` read SETTLEMENT ORDER; ``admitted_at`` and
+    ``occurrence_evaluation_time`` read EVALUATION INSTANT.
     """
 
-    tag: Literal["playbill-procedure-run-admission-v9"] = "playbill-procedure-run-admission-v9"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV3, ...]  # type: ignore[assignment]
-    parent_binding: ProcedureParentBindingV1 | None = Field(
-        default=None, exclude_if=lambda value: value is None
+    resource_budget: ProcedureResourceBudgetV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
     )
+    tag: Literal["playbill-procedure-run-admission-v10"] = PROCEDURE_RUN_ADMISSION_TAG
+    instance_id: str
+    run_id: str
+    attempt: int = Field(ge=1)
+    accepted_coordinate: AcceptedCoordinate
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    procedure_identity: ArtifactIdentity
+    procedure_path: str
+    procedure_artifact_digest: str
+    definition_digest: str
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
+    full_pins: tuple[ArtifactPin, ...]
+    node_pin_sets: tuple[ProcedureNodePinSetV1, ...]
+    pin_set_digest: str
+    invocation_input: object
+    accepted_state_inputs: tuple[AcceptedStateRunInput, ...]
+    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
+    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
+    actor_context: GovernedActorContext
+    invocation_origin: Literal["actor", "line"] = "actor"
+    journal_stream: JournalStreamIdentityV1
+    journal_partition_id: str
+    line_identity: ArtifactIdentity | None = None
+    line_spec_digest: str | None = None
+    occurrence_id: str | None = None
+    occurrence_evaluation_time: datetime
+    deployment_snapshot_digest: str | None = None
+    acquisition_policy_digest: str | None = None
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecision | None = None
+    selection_decision_digest: str | None = None
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...] = ()
+    provider_output_bytes_cap: int | None = Field(default=None, ge=1)
+    acquisition_plan_digest: str | None = None
+    exhaust_access_binding_digest: str | None = None
+    sensitivity_policy_digest: str | None = None
+    mandate_coordinate_digest: str | None = None
+    calibration_coordinate_digest: str | None = None
+    taint_labels: tuple[str, ...] = ()
+    epsilon_member: bool = False
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
+    parent_binding: ProcedureParentBindingV1 | None = None
+    admitted_at: datetime
+    semantic_replay_key_digest: str
+    admission_binding_digest: str
+
+    @field_validator("invocation_input", mode="before")
+    @classmethod
+    def _invocation_input(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @field_validator(
+        "procedure_artifact_digest",
+        "definition_digest",
+        "pin_set_digest",
+        "line_spec_digest",
+        "deployment_snapshot_digest",
+        "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "selection_decision_digest",
+        "acquisition_plan_digest",
+        "exhaust_access_binding_digest",
+        "sensitivity_policy_digest",
+        "mandate_coordinate_digest",
+        "calibration_coordinate_digest",
+        "semantic_replay_key_digest",
+        "admission_binding_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        return _sha256(value, label=str(getattr(info, "field_name", "run digest")))
+
+    @field_validator("admitted_at", "occurrence_evaluation_time")
+    @classmethod
+    def _instants(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("accepted_state_inputs")
+    @classmethod
+    def _state_inputs(
+        cls, value: tuple[AcceptedStateRunInput, ...]
+    ) -> tuple[AcceptedStateRunInput, ...]:
+        if not _sorted_unique(tuple(item.input_name for item in value)):
+            raise ValueError("accepted-state run inputs must be sorted and unique")
+        return value
+
+    @field_validator("node_pin_sets")
+    @classmethod
+    def _node_pin_sets(
+        cls, value: tuple[ProcedureNodePinSetV1, ...]
+    ) -> tuple[ProcedureNodePinSetV1, ...]:
+        if not _sorted_unique(tuple(item.node_id for item in value)):
+            raise ValueError("Procedure node pin sets must be sorted and unique")
+        return value
 
     @field_validator("resolved_provider_bindings")
     @classmethod
-    def _provider_bindings_v3(
-        cls,
-        value: tuple[ProcedureProviderBindingV3, ...],
-    ) -> tuple[ProcedureProviderBindingV3, ...]:
-        node_ids = tuple(item.node_id for item in value)
-        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("resolved Provider v3 bindings must be sorted and node-id unique")
+    def _provider_bindings(
+        cls, value: tuple[ProcedureProviderBinding, ...]
+    ) -> tuple[ProcedureProviderBinding, ...]:
+        if not _sorted_unique(tuple(item.node_id for item in value)):
+            raise ValueError("resolved Provider bindings must be sorted and node-id unique")
         return value
 
+    @field_validator("taint_labels")
+    @classmethod
+    def _taint(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not _sorted_unique(value):
+            raise ValueError("admitted taint labels must be sorted and unique")
+        return value
+
+    @property
+    def run_inputs(self) -> tuple[ProcedureRunInputV1, ...]:
+        """Return the complete discriminated union bound before any result is visible."""
+
+        return merge_run_input_vector(
+            self.accepted_state_inputs,
+            self.landed_capture_inputs,
+            self.exhaust_inputs,
+        )
+
+    @property
+    def plans_providers(self) -> bool:
+        """Whether this run planned external Provider occurrences at admission."""
+
+        return self.acquisition_plan_digest is not None
+
     @model_validator(mode="after")
-    def _nonrecursive_child(self) -> ProcedureRunAdmissionV9:
+    def _admission_shape(self) -> "ProcedureRunAdmission":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("Procedure run admission requires a Procedure identity")
+        if self.journal_stream.instance_id != self.instance_id:
+            raise ValueError("Procedure run and journal stream instance identities differ")
+        if self.accepted_coordinate != self.bound_coordinate:
+            raise ValueError("admission bound and accepted coordinates differ")
+        validate_run_input_vector(self.run_inputs, expected_accepted=self.accepted_coordinate)
+        self._plan_shape()
+        if bool(self.exhaust_inputs) != (self.exhaust_access_binding_digest is not None):
+            raise ValueError(
+                "exhaust_binding_carrier_required: Exhaust inputs require their opaque binding"
+            )
         if self.parent_binding is not None and self.procedure_identity in {
             pin.target for pin in self.parent_binding.ancestors
         }:
             raise ValueError("recursive Procedure invocation is not supported")
+        if self.pin_set_digest != procedure_pin_set_digest(self.full_pins, self.node_pin_sets):
+            raise ValueError("Procedure run pin_set_digest does not reproduce")
+        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
+            raise ValueError("semantic replay key does not reproduce")
+        if self.admission_binding_digest != procedure_admission_digest(self):
+            raise ValueError("Procedure run admission_binding_digest does not reproduce")
+        if self.invocation_origin == "actor":
+            self._direct_shape()
+        else:
+            self._line_shape()
         return self
 
+    def _plan_shape(self) -> None:
+        if not self.plans_providers:
+            if (
+                self.resolved_provider_bindings
+                or self.selection_decision is not None
+                or self.selection_decision_digest is not None
+                or self.provider_output_bytes_cap is not None
+                or self.trigger_binding is not None
+            ):
+                raise ValueError(
+                    "a run that plans no Provider occurrence binds no Provider, selection, "
+                    "output cap or trigger"
+                )
+            return
+        if (
+            self.selection_decision is None
+            or self.selection_decision_digest is None
+            or self.provider_output_bytes_cap is None
+        ):
+            raise ValueError(
+                "a run that plans Provider occurrences binds its selection decision and "
+                "Provider output cap"
+            )
+        if self.acquisition_policy_digest != self.selection_decision.policy_digest:
+            raise ValueError("selection decision must name the admitted acquisition policy")
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
+        ):
+            raise ValueError("selection decision digest does not reproduce")
 
-#: An admission whose run is a nested child of an executing parent.
-NestedProcedureRunAdmission = ProcedureRunAdmissionV8 | ProcedureRunAdmissionV9
+    def _direct_shape(self) -> None:
+        # A direct run is not an occurrence of anything: it names no Line,
+        # occurrence, mandate or calibration, and evaluates at its admission
+        # instant. A run that plans Providers also binds the acquisition
+        # policy and deployment snapshot it acquires under.
+        if (
+            self.line_identity is not None
+            or self.line_spec_digest is not None
+            or self.occurrence_id is not None
+            or self.mandate_coordinate_digest is not None
+            or self.calibration_coordinate_digest is not None
+            or self.epsilon_member
+        ):
+            raise ValueError("direct admission cannot claim Line state")
+        if not self.plans_providers and (
+            self.deployment_snapshot_digest is not None
+            or self.acquisition_policy_digest is not None
+        ):
+            raise ValueError("a direct run without Provider occurrences binds no deployment")
+        if (
+            self.landed_capture_inputs
+            or self.exhaust_inputs
+            or self.selection_receipt_digest is not None
+            or self.sensitivity_policy_digest is not None
+            or self.taint_labels
+        ):
+            raise ValueError("direct admission binds only the accepted-state input plane")
+        if self.occurrence_evaluation_time != self.admitted_at:
+            raise ValueError("direct admission evaluates at the instant it was admitted")
+        if self.run_id != procedure_semantic_run_id(self.semantic_replay_key_digest):
+            raise ValueError("direct admission run_id does not reproduce")
 
-
-def procedure_parent_binding(admission: object) -> ProcedureParentBindingV1 | None:
-    """The delegation binding of a nested child admission, or None for a root run."""
-
-    if isinstance(admission, (ProcedureRunAdmissionV8, ProcedureRunAdmissionV9)):
-        return admission.parent_binding
-    return None
-
-
-def nested_admission(admission: object) -> NestedProcedureRunAdmission | None:
-    """The admission itself when it is a nested child's, else None."""
-
-    if isinstance(admission, ProcedureRunAdmissionV8) or (
-        isinstance(admission, ProcedureRunAdmissionV9) and admission.parent_binding is not None
-    ):
-        return admission
-    return None
+    def _line_shape(self) -> None:
+        if not self.plans_providers:
+            raise ValueError("Line run admission binds its acquisition plan")
+        if any(
+            value is None
+            for value in (
+                self.line_spec_digest,
+                self.occurrence_id,
+                self.deployment_snapshot_digest,
+                self.acquisition_policy_digest,
+                self.mandate_coordinate_digest,
+                self.calibration_coordinate_digest,
+            )
+        ):
+            raise ValueError(
+                "Line run admission must bind LineSpec, occurrence, deployment snapshot, "
+                "acquisition policy, mandate, and calibration coordinates together"
+            )
+        if self.sensitivity_policy_digest is None:
+            raise ValueError("Line run admission must bind its sensitivity policy")
+        if self.line_identity is None or self.line_identity.kind != "Line":
+            raise ValueError("Line admission line_identity must have kind Line")
+        if self.journal_stream != procedure_line_journal_stream(self.instance_id):
+            raise ValueError("Line admission must use the Procedure exhaust stream")
+        expected_partition = (
+            procedure_direct_partition(self.semantic_replay_key_digest)
+            if self.parent_binding is not None
+            else procedure_line_partition(self.line_identity)
+        )
+        if self.journal_partition_id != expected_partition:
+            raise ValueError("Line admission partition does not reproduce its Line identity")
+        assert self.occurrence_id is not None
+        if self.run_id != procedure_line_run_id(
+            occurrence_id=self.occurrence_id,
+            attempt=self.attempt,
+            admission_binding_digest=self.admission_binding_digest,
+            occurrence_evaluation_time=self.occurrence_evaluation_time,
+        ):
+            raise ValueError("Line admission run_id does not reproduce")
 
 
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
@@ -920,85 +783,32 @@ class ExhaustRunMaterialV1(_StrictExecutionModel):
         return self
 
 
-class PreparedProcedureRunV1(_StrictExecutionModel):
-    tag: Literal["playbill-prepared-procedure-run-v1"] = "playbill-prepared-procedure-run-v1"
-    admission: ProcedureRunAdmissionV1
-    accepted_state_materials: tuple[AcceptedStateRunMaterialV1, ...]
-    landed_capture_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    exhaust_materials: tuple[ExhaustRunMaterialV1, ...] = ()
-    acquisition_outcomes: tuple[AcquisitionInputOutcomeV1, ...] = ()
+class _AdmissionCarrier(_StrictExecutionModel):
+    """What both the prepared run and its durable admission record carry.
 
-    @model_validator(mode="after")
-    def _materials(self) -> "PreparedProcedureRunV1":
-        if tuple(item.input for item in self.accepted_state_materials) != (
-            self.admission.accepted_state_inputs
-        ):
-            raise ValueError("prepared run materials must exactly match admitted state inputs")
-        if tuple(item.input for item in self.landed_capture_materials) != (
-            self.admission.landed_capture_inputs
-        ):
-            raise ValueError("prepared run materials must exactly match admitted landed Captures")
-        if tuple(item.input for item in self.exhaust_materials) != self.admission.exhaust_inputs:
-            raise ValueError("prepared run materials must exactly match admitted exhaust inputs")
-        names = tuple(item.input_name for item in self.acquisition_outcomes)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("prepared acquisition outcomes must be sorted and unique")
-        return self
-
-
-class PreparedProcedureRunV2(PreparedProcedureRunV1):
-    tag: Literal["playbill-prepared-procedure-run-v2"] = "playbill-prepared-procedure-run-v2"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV2
-    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]  # type: ignore[assignment]
-
-
-class PreparedProcedureRunV3(PreparedProcedureRunV2):
-    tag: Literal["playbill-prepared-procedure-run-v3"] = "playbill-prepared-procedure-run-v3"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV3
-    admission_material_manifest: ProcedureAdmissionMaterialManifest
-    admission_material_manifest_digest: str
-
-    @field_validator("admission_material_manifest_digest")
-    @classmethod
-    def _manifest_digest(cls, value: str) -> str:
-        return _sha256(value, label="admission_material_manifest_digest")
-
-    @model_validator(mode="after")
-    def _manifest(self) -> "PreparedProcedureRunV3":
-        if self.admission_material_manifest_digest != procedure_admission_material_digest(
-            self.admission_material_manifest
-        ):
-            raise ValueError("admission material manifest digest does not reproduce")
-        _validate_admission_material_manifest(
-            self.admission,
-            self.admission_material_manifest,
-        )
-        return self
-
-
-class PreparedProcedureRunV4(PreparedProcedureRunV3):
-    tag: Literal["playbill-prepared-procedure-run-v4"] = "playbill-prepared-procedure-run-v4"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV4
-
-
-class PreparedProcedureRunV5(PreparedProcedureRunV4):
-    """Prepared B2 run carrying admission and acquisition-plan clock declarations.
+    The material manifest covers the landed-Capture and exhaust inputs (empty
+    when there are none). The acquisition plan is present exactly when the
+    admission planned Provider occurrences, and the admission's bindings are
+    then exactly the plan's own.
 
     Nested coordinate generations read SETTLEMENT ORDER; nested ``admitted_at``
     and ``occurrence_evaluation_time`` read EVALUATION INSTANT; nested retention
     deadlines and Provider budget windows read VALIDITY WINDOW.
     """
 
-    tag: Literal["playbill-prepared-procedure-run-v5"] = "playbill-prepared-procedure-run-v5"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV5
-    acquisition_plan: ProcedureAcquisitionPlan
-    acquisition_plan_digest: str
+    admission: ProcedureRunAdmission
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
+    admission_material_manifest_digest: str
+    acquisition_plan: ProcedureAcquisitionPlan | None = None
+    acquisition_plan_digest: str | None = None
     required_reservation_ids: tuple[str, ...] = ()
 
-    @field_validator("acquisition_plan_digest")
+    @field_validator("admission_material_manifest_digest", "acquisition_plan_digest")
     @classmethod
-    def _plan_digest(cls, value: str) -> str:
-        return _sha256(value, label="acquisition_plan_digest")
+    def _carrier_digests(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        return _sha256(value, label=str(getattr(info, "field_name", "carrier digest")))
 
     @field_validator("required_reservation_ids")
     @classmethod
@@ -1010,119 +820,92 @@ class PreparedProcedureRunV5(PreparedProcedureRunV4):
         return value
 
     @model_validator(mode="after")
-    def _plan(self) -> PreparedProcedureRunV5:
-        if self.acquisition_plan_digest != procedure_acquisition_plan_digest(self.acquisition_plan):
-            raise ValueError("prepared acquisition plan digest does not reproduce")
-        if self.admission.acquisition_plan_digest != self.acquisition_plan_digest:
-            raise ValueError("prepared acquisition plan differs from admission")
-        if (
-            self.acquisition_plan.exhaust_access_binding_digest
-            != self.admission.exhaust_access_binding_digest
-        ):
-            raise ValueError("prepared Exhaust binding differs from admission")
-        if (
-            self.acquisition_plan.accepted_coordinate != self.admission.accepted_coordinate
-            or self.acquisition_plan.line_identity != self.admission.line_identity
-            or self.acquisition_plan.line_spec_digest != self.admission.line_spec_digest
-            or self.acquisition_plan.occurrence_id != self.admission.occurrence_id
-            or self.acquisition_plan.occurrence_evaluation_time
-            != self.admission.occurrence_evaluation_time
-        ):
-            raise ValueError("prepared acquisition plan names another Line coordinate")
-        if any(
-            item.budget_translation.policy_output_bytes_cap
-            != self.admission.provider_output_bytes_cap
-            for item in self.acquisition_plan.external_occurrences
-        ):
-            raise ValueError("acquisition plan budget does not use policy-in-force")
-        admitted_bindings = tuple(
-            sorted(
-                (
-                    item.node_id,
-                    item.provider_artifact_digest,
-                    item.implementation_digest,
-                )
-                for item in self.admission.resolved_provider_bindings
-            )
-        )
-        planned_bindings = tuple(
-            sorted(
-                (
-                    item.node_id,
-                    item.provider_artifact_digest,
-                    item.implementation_digest,
-                )
-                for item in self.acquisition_plan.external_occurrences
-            )
-        )
-        if planned_bindings != admitted_bindings:
-            raise ValueError("acquisition plan does not cover admitted Provider bindings")
-        return self
-
-
-class ProcedureAdmissionBoundPayloadV2(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-admission-bound-payload-v2"] = (
-        "playbill-procedure-admission-bound-payload-v2"
-    )
-    admission: ProcedureRunAdmissionV2
-    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]
-
-
-class ProcedureAdmissionBoundPayloadV3(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-admission-bound-payload-v3"] = (
-        "playbill-procedure-admission-bound-payload-v3"
-    )
-    admission: ProcedureRunAdmissionV3
-    admission_material_manifest: ProcedureAdmissionMaterialManifest
-    admission_material_manifest_digest: str
-
-    @model_validator(mode="after")
-    def _manifest(self) -> "ProcedureAdmissionBoundPayloadV3":
+    def _carrier(self) -> "_AdmissionCarrier":
         if self.admission_material_manifest_digest != procedure_admission_material_digest(
             self.admission_material_manifest
         ):
-            raise ValueError("admission-bound manifest digest does not reproduce")
-        _validate_admission_material_manifest(
-            self.admission,
-            self.admission_material_manifest,
-        )
+            raise ValueError("admission material manifest digest does not reproduce")
+        _validate_admission_material_manifest(self.admission, self.admission_material_manifest)
+        plan = self.acquisition_plan
+        if (plan is None) != (self.acquisition_plan_digest is None):
+            raise ValueError("an acquisition plan and its digest travel together")
+        if self.acquisition_plan_digest != self.admission.acquisition_plan_digest:
+            raise ValueError("prepared acquisition plan differs from admission")
+        if plan is None:
+            return self
+        admission = self.admission
+        if self.acquisition_plan_digest != procedure_acquisition_plan_digest(plan):
+            raise ValueError("prepared acquisition plan digest does not reproduce")
+        if plan.exhaust_access_binding_digest != admission.exhaust_access_binding_digest:
+            raise ValueError("prepared Exhaust binding differs from admission")
+        if (
+            plan.accepted_coordinate != admission.accepted_coordinate
+            or plan.line_identity != admission.line_identity
+            or plan.line_spec_digest != admission.line_spec_digest
+            or plan.occurrence_id != admission.occurrence_id
+            or plan.occurrence_evaluation_time != admission.occurrence_evaluation_time
+        ):
+            raise ValueError("prepared acquisition plan names another Line coordinate")
+        if any(
+            item.budget_translation.policy_output_bytes_cap != admission.provider_output_bytes_cap
+            for item in plan.external_occurrences
+        ):
+            raise ValueError("acquisition plan budget does not use policy-in-force")
+        if admission.resolved_provider_bindings != procedure_provider_bindings(
+            plan.external_occurrences
+        ):
+            raise ValueError("Provider bindings are not the acquisition plan's own")
         return self
 
 
-class ProcedureAdmissionBoundPayloadV4(ProcedureAdmissionBoundPayloadV3):
-    tag: Literal["playbill-procedure-admission-bound-payload-v4"] = (
-        "playbill-procedure-admission-bound-payload-v4"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV4
+class PreparedProcedureRun(_AdmissionCarrier):
+    """An admitted run and every material it observes, ready to execute."""
 
-
-class ProcedureAdmissionBoundPayloadV5(ProcedureAdmissionBoundPayloadV4):
-    """Durable B2 admission carrier preserving its nested clock declarations.
-
-    Nested coordinate generations read SETTLEMENT ORDER; nested ``admitted_at``
-    and ``occurrence_evaluation_time`` read EVALUATION INSTANT; nested retention
-    deadlines and Provider budget windows read VALIDITY WINDOW.
-    """
-
-    tag: Literal["playbill-procedure-admission-bound-payload-v5"] = (
-        "playbill-procedure-admission-bound-payload-v5"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV5
-    acquisition_plan: ProcedureAcquisitionPlan
-    acquisition_plan_digest: str
-    required_reservation_ids: tuple[str, ...] = ()
+    tag: Literal["playbill-prepared-procedure-run-v10"] = "playbill-prepared-procedure-run-v10"
+    accepted_state_materials: tuple[AcceptedStateRunMaterial, ...]
+    landed_capture_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
+    exhaust_materials: tuple[ExhaustRunMaterialV1, ...] = ()
+    acquisition_outcomes: tuple[AcquisitionInputOutcomeV1, ...] = ()
 
     @model_validator(mode="after")
-    def _plan(self) -> ProcedureAdmissionBoundPayloadV5:
-        if self.acquisition_plan_digest != procedure_acquisition_plan_digest(self.acquisition_plan):
-            raise ValueError("admission-bound acquisition plan digest does not reproduce")
-        if self.admission.acquisition_plan_digest != self.acquisition_plan_digest:
-            raise ValueError("admission-bound acquisition plan differs from admission")
-        if self.required_reservation_ids != tuple(
-            sorted(set(self.required_reservation_ids), key=lambda item: item.encode("ascii"))
+    def _materials(self) -> "PreparedProcedureRun":
+        admission = self.admission
+        if tuple(item.input for item in self.accepted_state_materials) != (
+            admission.accepted_state_inputs
         ):
-            raise ValueError("admission-bound reservations must be sorted and unique")
+            raise ValueError("prepared run materials must exactly match admitted state inputs")
+        if tuple(item.input for item in self.landed_capture_materials) != (
+            admission.landed_capture_inputs
+        ):
+            raise ValueError("prepared run materials must exactly match admitted landed Captures")
+        if tuple(item.input for item in self.exhaust_materials) != admission.exhaust_inputs:
+            raise ValueError("prepared run materials must exactly match admitted exhaust inputs")
+        if not _sorted_unique(tuple(item.input_name for item in self.acquisition_outcomes)):
+            raise ValueError("prepared acquisition outcomes must be sorted and unique")
         return self
+
+    def bound_payload(self) -> "ProcedureAdmissionBoundPayload":
+        """The durable admission record of this prepared run."""
+
+        return ProcedureAdmissionBoundPayload.model_validate(
+            {
+                name: getattr(self, name)
+                for name in ProcedureAdmissionBoundPayload.model_fields
+                if name != "tag"
+            }
+        )
+
+
+class ProcedureAdmissionBoundPayload(_AdmissionCarrier):
+    """The ``admission_bound`` journal record: the admission and its carried commitments.
+
+    Accepted-state values are not repeated here: each admitted read already
+    names its retained body (``material_body_digest``).
+    """
+
+    tag: Literal["playbill-procedure-admission-bound-payload-v10"] = (
+        "playbill-procedure-admission-bound-payload-v10"
+    )
 
 
 class ProcedureRunRefusalV1(_StrictExecutionModel):
@@ -1392,9 +1175,7 @@ def procedure_pin_set_digest(
 def procedure_replay_input_projection(
     run_input: ProcedureRunInputV1,
 ) -> ProcedureReplayInputProjection:
-    if isinstance(
-        run_input, AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
-    ):
+    if isinstance(run_input, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1):
         provenance = {
             "plane": "accepted_state",
             (
@@ -1404,11 +1185,7 @@ def procedure_replay_input_projection(
             ): accepted_read_definition_digest(run_input),
             "parameters_digest": run_input.parameters_digest,
             "read_coordinate": run_input.read_coordinate.model_dump(mode="json"),
-            "effective_query_budgets": (
-                run_input.effective_query_budgets.model_dump(mode="json")
-                if isinstance(run_input, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1)
-                else None
-            ),
+            "effective_query_budgets": run_input.effective_query_budgets.model_dump(mode="json"),
         }
         return ProcedureReplayInputProjection(
             input_name=run_input.input_name,
@@ -1459,13 +1236,13 @@ def procedure_replay_input_projection(
 
 
 def procedure_replay_input_vector(
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
 ) -> tuple[ProcedureReplayInputProjection, ...]:
     return tuple(procedure_replay_input_projection(item) for item in admission.run_inputs)
 
 
 def _validate_admission_material_manifest(
-    admission: ProcedureRunAdmissionV3,
+    admission: ProcedureRunAdmission,
     manifest: ProcedureAdmissionMaterialManifest,
 ) -> None:
     expected: dict[str, tuple[str, str, str | None]] = {
@@ -1590,7 +1367,7 @@ def _source_capture_association_fields(
 
 
 def verify_line_admission_spec(
-    admission: ProcedureRunAdmissionV3,
+    admission: ProcedureRunAdmission,
     accepted_line: AcceptedLineSpec,
     *,
     procedure_binding: ArtifactPin | None = None,
@@ -1650,170 +1427,14 @@ def procedure_line_run_id(
     return "RUN-" + digest.removeprefix("sha256:")
 
 
-class PreparedProcedureRunV6(PreparedProcedureRunV2):
-    tag: Literal["playbill-prepared-procedure-run-v6"] = "playbill-prepared-procedure-run-v6"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV6
+def parse_admission_payload(payload: object) -> ProcedureAdmissionBoundPayload:
+    """Read the one current ``admission_bound`` record; any other envelope is refused."""
 
-
-def _require_plan_bindings(
-    admission: ProcedureRunAdmissionV9, plan: ProcedureAcquisitionPlan
-) -> None:
-    if admission.resolved_provider_bindings != procedure_provider_bindings(
-        plan.external_occurrences
-    ):
-        raise ValueError("Provider v3 bindings are not the acquisition plan's own")
-
-
-class PreparedProcedureRunV9(PreparedProcedureRunV5):
-    """A prepared run under the current carrier; its bindings are its plan's."""
-
-    tag: Literal["playbill-prepared-procedure-run-v9"] = "playbill-prepared-procedure-run-v9"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV9
-
-    @model_validator(mode="after")
-    def _v9_bindings(self) -> PreparedProcedureRunV9:
-        _require_plan_bindings(self.admission, self.acquisition_plan)
-        return self
-
-
-class ProcedureAdmissionBoundPayloadV6(ProcedureAdmissionBoundPayloadV2):
-    tag: Literal["playbill-procedure-admission-bound-payload-v6"] = (
-        "playbill-procedure-admission-bound-payload-v6"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV6
-
-
-class ProcedureAdmissionBoundPayloadV7(ProcedureAdmissionBoundPayloadV5):
-    tag: Literal["playbill-procedure-admission-bound-payload-v7"] = (
-        "playbill-procedure-admission-bound-payload-v7"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV7
-
-
-class ProcedureAdmissionBoundPayloadV8(ProcedureAdmissionBoundPayloadV5):
-    tag: Literal["playbill-procedure-admission-bound-payload-v8"] = (
-        "playbill-procedure-admission-bound-payload-v8"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV8
-
-
-class ProcedureAdmissionBoundPayloadV9(ProcedureAdmissionBoundPayloadV5):
-    tag: Literal["playbill-procedure-admission-bound-payload-v9"] = (
-        "playbill-procedure-admission-bound-payload-v9"  # type: ignore[assignment]
-    )
-    admission: ProcedureRunAdmissionV9
-
-    @model_validator(mode="after")
-    def _v9_bindings(self) -> ProcedureAdmissionBoundPayloadV9:
-        _require_plan_bindings(self.admission, self.acquisition_plan)
-        return self
-
-
-#: The admission-bound payload tags whose run carries an acquisition plan
-#: (V5 and every successor of it), oldest first.
-ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS = frozenset(
-    {
-        "playbill-procedure-admission-bound-payload-v5",
-        "playbill-procedure-admission-bound-payload-v7",
-        "playbill-procedure-admission-bound-payload-v8",
-        "playbill-procedure-admission-bound-payload-v9",
-    }
-)
-
-
-def parse_admission_payload(
-    payload: object,
-) -> ProcedureAdmissionBoundPayloadV2 | ProcedureAdmissionBoundPayloadV3:
     if not isinstance(payload, dict):
         raise ExecutionError("admission payload is not an object")
-    models = {
-        model.model_fields["tag"].default: model
-        for model in (
-            ProcedureAdmissionBoundPayloadV2,
-            ProcedureAdmissionBoundPayloadV3,
-            ProcedureAdmissionBoundPayloadV4,
-            ProcedureAdmissionBoundPayloadV5,
-            ProcedureAdmissionBoundPayloadV6,
-            ProcedureAdmissionBoundPayloadV7,
-            ProcedureAdmissionBoundPayloadV8,
-            ProcedureAdmissionBoundPayloadV9,
-        )
-    }
-    model = models.get(payload.get("tag"))
-    if model is None:
+    if payload.get("tag") != ProcedureAdmissionBoundPayload.model_fields["tag"].default:
         raise ExecutionError("admission payload version is unsupported")
-    return model.model_validate(payload)
-
-
-@overload
-def bind_prepared_investigation(
-    prepared: PreparedProcedureRunV9,
-    *,
-    investigation: InvestigationBinding | None,
-    trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV9: ...
-@overload
-def bind_prepared_investigation(
-    prepared: PreparedProcedureRunV2,
-    *,
-    investigation: InvestigationBinding | None,
-    trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV6 | PreparedProcedureRunV9: ...
-
-
-def bind_prepared_investigation(
-    prepared: PreparedProcedureRunV2 | PreparedProcedureRunV9,
-    *,
-    investigation: InvestigationBinding | None,
-    trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV6 | PreparedProcedureRunV9:
-    """Bind an investigation (and a Line trigger) into a prepared run's admission.
-
-    An acquisition run's V9 admission carries both fields itself; a run with no
-    acquisition plan moves to the direct investigation carrier V6.
-    """
-
-    modern = isinstance(prepared, PreparedProcedureRunV9)
-    admission_type: type[ProcedureRunAdmissionV6] | type[ProcedureRunAdmissionV9] = (
-        ProcedureRunAdmissionV9 if modern else ProcedureRunAdmissionV6
-    )
-    if not modern and isinstance(prepared, PreparedProcedureRunV5):
-        raise ExecutionError("an acquisition run is prepared under the current V9 carrier")
-    fields = {
-        name: getattr(prepared.admission, name)
-        for name in type(prepared.admission).model_fields
-        if name != "tag"
-    }
-    fields["investigation"] = investigation
-    if modern:
-        fields["trigger_binding"] = trigger
-    elif trigger is not None:
-        raise ExecutionError("Line trigger requires a Line acquisition admission")
-    provisional = admission_type.model_construct(**fields)
-    replay = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay})
-    digest = procedure_admission_digest(provisional)
-    updates: dict[str, object] = {"admission_binding_digest": digest}
-    if isinstance(provisional, ProcedureRunAdmissionV9) and provisional.invocation_origin == "line":
-        assert provisional.occurrence_id is not None
-        updates["run_id"] = procedure_line_run_id(
-            occurrence_id=provisional.occurrence_id,
-            attempt=provisional.attempt,
-            admission_binding_digest=digest,
-            occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-        )
-    else:
-        updates.update(
-            run_id=procedure_semantic_run_id(replay),
-            journal_partition_id=procedure_direct_partition(replay),
-        )
-    admission = admission_type.model_validate({**provisional.model_dump(mode="python"), **updates})
-    prepared_type: type[PreparedProcedureRunV6] | type[PreparedProcedureRunV9] = (
-        PreparedProcedureRunV9 if modern else PreparedProcedureRunV6
-    )
-    return prepared_type.model_validate(
-        {**prepared.model_dump(mode="python", exclude={"tag", "admission"}), "admission": admission}
-    )
+    return ProcedureAdmissionBoundPayload.model_validate(payload)
 
 
 def procedure_semantic_run_id(semantic_replay_key_digest: str) -> str:
@@ -1838,241 +1459,23 @@ class ProcedureRuntimePolicyAbsent(ExecutionError):
     code = "procedure_runtime_policy_absent"
 
 
-_LineAdmission = TypeVar("_LineAdmission", bound="ProcedureRunAdmissionV3")
+def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmission) -> str:
+    """Hash the one explicit semantic projection of an admission.
 
+    The projection names exactly what decides a run's replay identity, and
+    nothing volatile: the exact Procedure, invocation input, bound coordinate,
+    evaluation instant and pins; each admitted input as its value (or body)
+    digest beside a separate provenance digest; the budget, caps and runtime
+    resource budget; the acquisition plan and exhaust binding (which carry the
+    Line, occurrence, selection and Provider bindings); the authority
+    coordinates, lane, taint and epsilon membership; the Provider output cap;
+    and the exact investigation, trigger and parent binding. Who admitted it,
+    when the head moved, and where its material bodies are stored are not
+    replay semantics and never enter.
+    """
 
-def bind_line_admission_runtime_policy(
-    admission: _LineAdmission,
-    policy: ProcedureRuntimePolicy,
-) -> _LineAdmission:
-    """Derive the complete Line admission identity from its governed runtime cap."""
-
-    provisional = admission.model_copy(
-        update={
-            "run_id": "RUN-" + "0" * 64,
-            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
-            "resource_budget": resolve_procedure_resource_budget(
-                admission.budget, admission.hard_caps, policy
-            ),
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
-    )
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    if provisional.occurrence_id is None:  # pragma: no cover - V3 validation proves this
-        raise ExecutionError("Line admission lacks its occurrence id")
-    run_id = procedure_line_run_id(
-        occurrence_id=provisional.occurrence_id,
-        attempt=provisional.attempt,
-        admission_binding_digest=admission_digest,
-        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-    )
-    return type(admission).model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "run_id": run_id,
-            "admission_binding_digest": admission_digest,
-        }
-    )
-
-
-def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
-    if isinstance(admission, ProcedureRunAdmissionV9):
-        # The V7 replay semantics over the same fields (its key never read the
-        # Provider bindings: the acquisition plan digest covers them), under the
-        # V9 domain, with the delegation binding of a nested child.
-        execution: ProcedureRunAdmissionV2 = ProcedureRunAdmissionV7.model_construct(
-            **{
-                name: getattr(admission, name)
-                for name in ProcedureRunAdmissionV7.model_fields
-                if name != "tag"
-            }
-        )
-        return typed_digest(
-            Sha256Value,
-            "playbill-procedure-replay-key-v9",
-            {
-                "execution": procedure_semantic_replay_key_digest(execution),
-                "parent_binding": None
-                if admission.parent_binding is None
-                else admission.parent_binding.model_dump(mode="json"),
-            },
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV8):
-        base: ProcedureRunAdmissionV2 = ProcedureRunAdmissionV7.model_construct(
-            **{
-                name: getattr(admission, name)
-                for name in ProcedureRunAdmissionV7.model_fields
-                if name != "tag"
-            }
-        )
-        return typed_digest(
-            Sha256Value,
-            "playbill-nested-procedure-replay-key-v1",
-            {
-                "execution": procedure_semantic_replay_key_digest(base),
-                "parent_binding": admission.parent_binding.model_dump(mode="json"),
-            },
-        ).tagged
-    if admission.resource_budget is not None:
-        legacy = admission.model_copy(update={"resource_budget": None})
-        return typed_digest(
-            Sha256Value,
-            "playbill-procedure-resource-replay-key-v1",
-            {
-                "execution": procedure_semantic_replay_key_digest(legacy),
-                "resource_budget": admission.resource_budget.model_dump(mode="json"),
-            },
-        ).tagged
-    if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7)):
-        base_type = (
-            ProcedureRunAdmissionV5
-            if isinstance(admission, ProcedureRunAdmissionV7)
-            else ProcedureRunAdmissionV2
-        )
-        base = base_type.model_construct(
-            **{name: getattr(admission, name) for name in base_type.model_fields if name != "tag"}
-        )
-        return typed_digest(
-            Sha256Value,
-            "playbill-investigation-replay-key-v1",
-            {
-                "execution": procedure_semantic_replay_key_digest(base),
-                "investigation": None
-                if admission.investigation is None
-                else admission.investigation.model_dump(mode="json"),
-                "trigger": admission.trigger_binding.model_dump(mode="json")
-                if isinstance(admission, ProcedureRunAdmissionV7)
-                and admission.trigger_binding is not None
-                else None,
-            },
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV5):
-        pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
-        pins.sort(key=canonical_bytes)
-        return typed_digest(
-            Sha256Value,
-            PROCEDURE_SEMANTIC_REPLAY_KEY_V5_DOMAIN,
-            {
-                "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
-                "procedure_artifact_digest": admission.procedure_artifact_digest,
-                "invocation_input": admission.invocation_input,
-                "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
-                "validated_pins": pins,
-                "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
-                "pin_set_digest": admission.pin_set_digest,
-                "replay_input_vector": [
-                    item.model_dump(mode="json")
-                    for item in procedure_replay_input_vector(admission)
-                ],
-                "budget": admission.budget.model_dump(mode="json"),
-                "hard_caps": admission.hard_caps.model_dump(mode="json"),
-                "acquisition_plan_digest": admission.acquisition_plan_digest,
-                "exhaust_access_binding_digest": admission.exhaust_access_binding_digest,
-                "mandate_coordinate_digest": admission.mandate_coordinate_digest,
-                "calibration_coordinate_digest": admission.calibration_coordinate_digest,
-                "sensitivity_policy_digest": admission.sensitivity_policy_digest,
-                "lane": admission.lane,
-                "taint_labels": list(admission.taint_labels),
-                "epsilon_member": admission.epsilon_member,
-                "provider_output_bytes_cap": admission.provider_output_bytes_cap,
-            },
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV4):
-        pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
-        pins.sort(key=canonical_bytes)
-        return typed_digest(
-            Sha256Value,
-            PROCEDURE_SEMANTIC_REPLAY_KEY_V4_DOMAIN,
-            {
-                "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
-                "procedure_artifact_digest": admission.procedure_artifact_digest,
-                "invocation_input": admission.invocation_input,
-                "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
-                "validated_pins": pins,
-                "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
-                "pin_set_digest": admission.pin_set_digest,
-                "replay_input_vector": [
-                    item.model_dump(mode="json")
-                    for item in procedure_replay_input_vector(admission)
-                ],
-                "budget": admission.budget.model_dump(mode="json"),
-                "hard_caps": admission.hard_caps.model_dump(mode="json"),
-                "acquisition_policy_digest": admission.acquisition_policy_digest,
-                "selection_decision": admission.selection_decision.model_dump(mode="json"),
-                "resolved_provider_bindings": [
-                    item.model_dump(mode="json") for item in admission.resolved_provider_bindings
-                ],
-                "mandate_coordinate_digest": admission.mandate_coordinate_digest,
-                "calibration_coordinate_digest": admission.calibration_coordinate_digest,
-                "sensitivity_policy_digest": admission.sensitivity_policy_digest,
-                "lane": admission.lane,
-                "taint_labels": list(admission.taint_labels),
-                "epsilon_member": admission.epsilon_member,
-                "provider_output_bytes_cap": admission.provider_output_bytes_cap,
-            },
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV3):
-        pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
-        pins.sort(key=canonical_bytes)
-        return typed_digest(
-            Sha256Value,
-            PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN,
-            {
-                "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
-                "procedure_artifact_digest": admission.procedure_artifact_digest,
-                "invocation_input": admission.invocation_input,
-                "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
-                "validated_pins": pins,
-                "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
-                "pin_set_digest": admission.pin_set_digest,
-                "replay_input_vector": [
-                    item.model_dump(mode="json")
-                    for item in procedure_replay_input_vector(admission)
-                ],
-                "budget": admission.budget.model_dump(mode="json"),
-                "hard_caps": admission.hard_caps.model_dump(mode="json"),
-                "acquisition_policy_digest": admission.acquisition_policy_digest,
-                "selection_decision": admission.selection_decision.model_dump(mode="json"),
-                "resolved_provider_bindings": [
-                    item.model_dump(mode="json") for item in admission.resolved_provider_bindings
-                ],
-                "mandate_coordinate_digest": admission.mandate_coordinate_digest,
-                "calibration_coordinate_digest": admission.calibration_coordinate_digest,
-                "sensitivity_policy_digest": admission.sensitivity_policy_digest,
-                "lane": admission.lane,
-                "taint_labels": list(admission.taint_labels),
-                "epsilon_member": admission.epsilon_member,
-                "provider_output_bytes_cap": admission.provider_output_bytes_cap,
-            },
-        ).tagged
-    pins = [
-        {
-            "role": pin.role,
-            "target": pin.target.model_dump(mode="json"),
-            "artifact_digest": pin.artifact_digest,
-        }
-        for pin in admission.full_pins
-    ]
+    pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
     pins.sort(key=canonical_bytes)
-    admitted_inputs = [
-        {
-            "input_name": item.input_name,
-            "read_coordinate": item.read_coordinate.model_dump(mode="json"),
-            (
-                "claim_type_digest"
-                if isinstance(item, AcceptedClaimRunInputV1)
-                else "query_definition_digest"
-            ): accepted_read_definition_digest(item),
-            "parameters_digest": item.parameters_digest,
-            "result_digest": item.result_digest,
-            "effective_query_budgets": item.effective_query_budgets.model_dump(mode="json"),
-        }
-        for item in admission.accepted_state_inputs
-    ]
-    admitted_inputs.sort(key=lambda item: str(item["input_name"]).encode("utf-8"))
     return typed_digest(
         Sha256Value,
         PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN,
@@ -2081,54 +1484,160 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> 
             "procedure_artifact_digest": admission.procedure_artifact_digest,
             "invocation_input": admission.invocation_input,
             "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
-            "evaluation_time": format_datetime(admission.admitted_at),
+            "evaluation_time": format_datetime(admission.occurrence_evaluation_time),
             "validated_pins": pins,
-            "admitted_inputs": admitted_inputs,
+            "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
+            "pin_set_digest": admission.pin_set_digest,
+            "replay_input_vector": [
+                item.model_dump(mode="json") for item in procedure_replay_input_vector(admission)
+            ],
             "budget": admission.budget.model_dump(mode="json"),
             "hard_caps": admission.hard_caps.model_dump(mode="json"),
+            "resource_budget": None
+            if admission.resource_budget is None
+            else admission.resource_budget.model_dump(mode="json"),
+            "acquisition_plan_digest": admission.acquisition_plan_digest,
+            "exhaust_access_binding_digest": admission.exhaust_access_binding_digest,
+            "mandate_coordinate_digest": admission.mandate_coordinate_digest,
+            "calibration_coordinate_digest": admission.calibration_coordinate_digest,
+            "sensitivity_policy_digest": admission.sensitivity_policy_digest,
+            "lane": admission.lane,
+            "taint_labels": list(admission.taint_labels),
+            "epsilon_member": admission.epsilon_member,
+            "provider_output_bytes_cap": admission.provider_output_bytes_cap,
+            "investigation": None
+            if admission.investigation is None
+            else admission.investigation.model_dump(mode="json"),
+            "trigger": None
+            if admission.trigger_binding is None
+            else admission.trigger_binding.model_dump(mode="json"),
+            "parent_binding": None
+            if admission.parent_binding is None
+            else admission.parent_binding.model_dump(mode="json"),
         },
     ).tagged
 
 
-def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
-    if isinstance(admission, (ProcedureRunAdmissionV6, ProcedureRunAdmissionV7)):
-        return typed_digest(
-            ArtifactDigest,
-            admission.tag,
-            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV5):
-        return typed_digest(
-            ArtifactDigest,
-            PROCEDURE_ADMISSION_BINDING_V5_DOMAIN,
-            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV4):
-        return typed_digest(
-            ArtifactDigest,
-            PROCEDURE_ADMISSION_BINDING_V4_DOMAIN,
-            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV3):
-        return typed_digest(
-            ArtifactDigest,
-            PROCEDURE_ADMISSION_BINDING_V3_DOMAIN,
-            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
-        ).tagged
-    if isinstance(admission, ProcedureRunAdmissionV2):
-        return typed_digest(
-            ArtifactDigest,
-            PROCEDURE_ADMISSION_BINDING_V2_DOMAIN,
-            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
-        ).tagged
-    payload = admission.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("admission_binding_digest")
+def procedure_admission_digest(admission: ProcedureRunAdmission) -> str:
     return typed_digest(
         ArtifactDigest,
-        "playbill-procedure-run-admission-v1",
-        {"admission": payload},
+        PROCEDURE_RUN_ADMISSION_TAG,
+        {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
     ).tagged
+
+
+def seal_procedure_run_admission(
+    fields: Mapping[str, object],
+    *,
+    journal_partition_id: str | None = None,
+) -> ProcedureRunAdmission:
+    """Derive a run's complete identity from its bound fields: the one place it is done.
+
+    Every preparation path (a pure direct run, a direct Provider run, a Line
+    occurrence, a nested child, and any later investigation, trigger or runtime
+    policy binding) supplies the admission's semantic fields here; the replay
+    key, binding digest, run id and partition are always derived, never
+    supplied. A direct run's id is its replay identity; a Line run's id names
+    its occurrence, attempt and binding. A root Line run journals in its Line's
+    partition, every other run in its replay identity's direct partition (a
+    root direct run may name another partition explicitly).
+    """
+
+    provisional = ProcedureRunAdmission.model_construct(
+        **{
+            **cast(dict[str, Any], fields),
+            # Exactly the normalized values validation hashes again.
+            "invocation_input": normalize_canonical(fields.get("invocation_input")),
+            "admitted_at": ensure_utc(cast(datetime, fields["admitted_at"])),
+            "occurrence_evaluation_time": ensure_utc(
+                cast(datetime, fields["occurrence_evaluation_time"])
+            ),
+            "run_id": _ZERO_RUN_ID,
+            "semantic_replay_key_digest": _ZERO_DIGEST,
+            "admission_binding_digest": _ZERO_DIGEST,
+        }
+    )
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    digest = procedure_admission_digest(provisional)
+    if provisional.invocation_origin == "line":
+        if provisional.occurrence_id is None or provisional.line_identity is None:
+            raise ExecutionError("Line admission lacks its occurrence or Line identity")
+        run_id = procedure_line_run_id(
+            occurrence_id=provisional.occurrence_id,
+            attempt=provisional.attempt,
+            admission_binding_digest=digest,
+            occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+        )
+        partition = (
+            procedure_direct_partition(replay_key)
+            if provisional.parent_binding is not None
+            else procedure_line_partition(provisional.line_identity)
+        )
+    else:
+        run_id = procedure_semantic_run_id(replay_key)
+        partition = (
+            journal_partition_id
+            if journal_partition_id is not None and provisional.parent_binding is None
+            else procedure_direct_partition(replay_key)
+        )
+    return ProcedureRunAdmission.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "journal_partition_id": partition,
+            "admission_binding_digest": digest,
+        }
+    )
+
+
+def admission_fields(admission: ProcedureRunAdmission) -> dict[str, object]:
+    """An admission's semantic fields, to rebind and reseal."""
+
+    return {
+        name: getattr(admission, name)
+        for name in ProcedureRunAdmission.model_fields
+        if name not in {"tag", "run_id", "semantic_replay_key_digest", "admission_binding_digest"}
+    }
+
+
+def bind_prepared_investigation(
+    prepared: PreparedProcedureRun,
+    *,
+    investigation: InvestigationBinding | None,
+    trigger: LineTriggerBinding | None = None,
+) -> PreparedProcedureRun:
+    """Bind an investigation (and a Line trigger) into a prepared run's admission."""
+
+    if trigger is not None and not prepared.admission.plans_providers:
+        raise ExecutionError("Line trigger requires a Line acquisition admission")
+    admission = prepared.admission
+    # A direct run's partition is re-derived from its new replay identity.
+    sealed = seal_procedure_run_admission(
+        {**admission_fields(admission), "investigation": investigation, "trigger_binding": trigger}
+    )
+    return PreparedProcedureRun.model_validate(
+        {**prepared.model_dump(mode="python", exclude={"tag", "admission"}), "admission": sealed}
+    )
+
+
+def bind_line_admission_runtime_policy(
+    admission: ProcedureRunAdmission,
+    policy: ProcedureRuntimePolicy,
+) -> ProcedureRunAdmission:
+    """Derive the complete Line admission identity from its governed runtime cap."""
+
+    if admission.invocation_origin != "line":
+        raise ExecutionError("runtime policy rebinding is a Line admission step")
+    return seal_procedure_run_admission(
+        {
+            **admission_fields(admission),
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "resource_budget": resolve_procedure_resource_budget(
+                admission.budget, admission.hard_caps, policy
+            ),
+        }
+    )
 
 
 def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, ...]:
@@ -2221,15 +1730,14 @@ def bind_accepted_state_materials(
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
     invocation_input: object = None,
-) -> tuple[AcceptedStateRunMaterialV2, ...]:
+) -> tuple[AcceptedStateRunMaterial, ...]:
     """Read and retain every accepted-state tap this run will observe.
 
-    Both direct carriers -- the query-only V2 admission and the V5 acquisition
-    admission a Source run binds -- read the accepted-state plane the SAME way,
-    so this is the one place a state tap becomes admitted material.
+    Every run lane reads the accepted-state plane the SAME way, so this is the
+    one place a state tap becomes admitted material.
     """
 
-    materials: list[AcceptedStateRunMaterialV2] = []
+    materials: list[AcceptedStateRunMaterial] = []
     values: dict[str, CanonicalValue] = {}
     for node in accepted.procedure.definition.nodes:
         if isinstance(node, ConstantNode):
@@ -2290,7 +1798,7 @@ def bind_accepted_state_materials(
                 dict(common, query_definition_digest=query.artifact_digest)
             )
         )
-        materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
+        materials.append(AcceptedStateRunMaterial(input=run_input, value=value))
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
     return tuple(materials)
 
@@ -2299,7 +1807,6 @@ def prepare_direct_procedure_run(
     accepted: AcceptedProcedure,
     *,
     instance_id: str,
-    run_id: str | None,
     accepted_coordinate: AcceptedCoordinate,
     invocation_input: object,
     actor_context: GovernedActorContext,
@@ -2312,8 +1819,12 @@ def prepare_direct_procedure_run(
     admitted_at: datetime,
     attempt: int = 1,
     runtime_policy: ProcedureRuntimePolicy | None = None,
-) -> PreparedProcedureRunV2:
-    """Bind exact accepted state and all pins for an actor-authenticated direct run."""
+) -> PreparedProcedureRun:
+    """Bind exact accepted state and all pins for an actor's pure direct run.
+
+    A pure run plans no Provider occurrence, so it binds no acquisition plan,
+    Provider binding or deployment; its admission material manifest is empty.
+    """
 
     procedure = accepted.procedure
     from cruxible_core.procedures.reference_binding import authored_procedure
@@ -2321,113 +1832,65 @@ def prepare_direct_procedure_run(
     if procedure_artifact_digest(authored_procedure(accepted)).tagged != accepted.artifact_digest:
         raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
-    materials = list(
-        bind_accepted_state_materials(
-            accepted,
-            accepted_coordinate=accepted_coordinate,
-            state_reader=state_reader,
-            bodies=bodies,
-            invocation_input=invocation_input,
-        )
+    materials = bind_accepted_state_materials(
+        accepted,
+        accepted_coordinate=accepted_coordinate,
+        state_reader=state_reader,
+        bodies=bodies,
+        invocation_input=invocation_input,
+    )
+    node_pin_sets = _node_pin_sets(accepted)
+    admitted_at = ensure_utc(admitted_at)
+    admission = seal_procedure_run_admission(
+        {
+            "instance_id": instance_id,
+            "attempt": attempt,
+            "accepted_coordinate": accepted_coordinate,
+            "bound_coordinate": accepted_coordinate,
+            "head_at_admission": head_at_admission or accepted_coordinate,
+            "lane": lane,
+            "procedure_identity": procedure.identity,
+            "procedure_path": accepted.path,
+            "procedure_artifact_digest": accepted.artifact_digest,
+            "definition_digest": procedure.definition_digest,
+            "activation_policy": procedure.activation_policy,
+            "full_pins": procedure.pins,
+            "node_pin_sets": node_pin_sets,
+            "pin_set_digest": procedure_pin_set_digest(procedure.pins, node_pin_sets),
+            "invocation_input": invocation_input,
+            "accepted_state_inputs": tuple(item.input for item in materials),
+            "resource_budget": (
+                resolve_procedure_resource_budget(
+                    procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
+                )
+                if runtime_policy is not None
+                else None
+            ),
+            "budget": procedure.definition.budget,
+            "hard_caps": procedure.definition.hard_caps,
+            "actor_context": actor_context,
+            "invocation_origin": "actor",
+            "journal_stream": journal_stream,
+            "journal_partition_id": journal_partition_id,
+            "occurrence_evaluation_time": admitted_at,
+            "admitted_at": admitted_at,
+        },
+        journal_partition_id=journal_partition_id,
+    )
+    manifest, manifest_digest = empty_admission_material_manifest()
+    return PreparedProcedureRun(
+        admission=admission,
+        accepted_state_materials=materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=manifest_digest,
     )
 
-    node_pin_sets = _node_pin_sets(accepted)
-    full_pins = procedure.pins
-    pin_digest = procedure_pin_set_digest(full_pins, node_pin_sets)
-    placeholder_run_id = run_id or "RUN-" + "0" * 64
-    placeholder_partition = journal_partition_id or "direct:" + "0" * 64
-    provisional = ProcedureRunAdmissionV2.model_construct(
-        _fields_set=None,
-        instance_id=instance_id,
-        run_id=placeholder_run_id,
-        attempt=attempt,
-        accepted_coordinate=accepted_coordinate,
-        procedure_identity=procedure.identity,
-        procedure_path=accepted.path,
-        procedure_artifact_digest=accepted.artifact_digest,
-        definition_digest=procedure.definition_digest,
-        activation_policy=procedure.activation_policy,
-        full_pins=full_pins,
-        node_pin_sets=node_pin_sets,
-        pin_set_digest=pin_digest,
-        invocation_input=invocation_input,
-        accepted_state_inputs=tuple(item.input for item in materials),
-        resource_budget=(
-            resolve_procedure_resource_budget(
-                procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
-            )
-            if runtime_policy is not None
-            else None
-        ),
-        budget=procedure.definition.budget,
-        hard_caps=procedure.definition.hard_caps,
-        actor_context=actor_context,
-        invocation_origin="actor",
-        journal_stream=journal_stream,
-        journal_partition_id=placeholder_partition,
-        line_spec_digest=None,
-        occurrence_id=None,
-        deployment_snapshot_digest=None,
-        acquisition_policy_digest=None,
-        mandate_coordinate_digest=None,
-        calibration_coordinate_digest=None,
-        epsilon_member=False,
-        admitted_at=ensure_utc(admitted_at),
-        admission_binding_digest="sha256:" + "0" * 64,
-        bound_coordinate=accepted_coordinate,
-        head_at_admission=head_at_admission or accepted_coordinate,
-        lane=lane,
-        semantic_replay_key_digest="sha256:" + "0" * 64,
-    )
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    semantic_run_id = procedure_semantic_run_id(replay_key)
-    semantic_partition = procedure_direct_partition(replay_key)
-    provisional = provisional.model_copy(
-        update={
-            "run_id": semantic_run_id,
-            "journal_partition_id": journal_partition_id or semantic_partition,
-            "semantic_replay_key_digest": replay_key,
-        }
-    )
-    admission = ProcedureRunAdmissionV2(
-        instance_id=instance_id,
-        run_id=semantic_run_id,
-        attempt=attempt,
-        accepted_coordinate=accepted_coordinate,
-        procedure_identity=procedure.identity,
-        procedure_path=accepted.path,
-        procedure_artifact_digest=accepted.artifact_digest,
-        definition_digest=procedure.definition_digest,
-        activation_policy=procedure.activation_policy,
-        full_pins=full_pins,
-        node_pin_sets=node_pin_sets,
-        pin_set_digest=pin_digest,
-        invocation_input=invocation_input,
-        accepted_state_inputs=tuple(item.input for item in materials),
-        resource_budget=(
-            resolve_procedure_resource_budget(
-                procedure.definition.budget, procedure.definition.hard_caps, runtime_policy
-            )
-            if runtime_policy is not None
-            else None
-        ),
-        budget=procedure.definition.budget,
-        hard_caps=procedure.definition.hard_caps,
-        actor_context=actor_context,
-        invocation_origin="actor",
-        journal_stream=journal_stream,
-        journal_partition_id=journal_partition_id or semantic_partition,
-        admitted_at=ensure_utc(admitted_at),
-        bound_coordinate=accepted_coordinate,
-        head_at_admission=head_at_admission or accepted_coordinate,
-        lane=lane,
-        semantic_replay_key_digest=replay_key,
-        admission_binding_digest=procedure_admission_digest(provisional),
-    )
-    return PreparedProcedureRunV2(
-        admission=admission,
-        accepted_state_materials=tuple(materials),
-    )
+
+def empty_admission_material_manifest() -> tuple[ProcedureAdmissionMaterialManifest, str]:
+    """The manifest of a run with no landed-Capture or exhaust input, and its digest."""
+
+    manifest = ProcedureAdmissionMaterialManifest(members=())
+    return manifest, procedure_admission_material_digest(manifest)
 
 
 class _RunRefusal(Exception):
@@ -2645,7 +2108,7 @@ class _RunState:
         return frozenset() if found is None else found.item(index)
 
 
-def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
+def _effective_max_items(admission: ProcedureRunAdmission) -> int:
     return (
         admission.hard_caps.max_items
         if admission.budget.max_items is None
@@ -2744,7 +2207,7 @@ class ProcedureExecutor:
 
     def execute(
         self,
-        prepared: PreparedProcedureRunV1,
+        prepared: PreparedProcedureRun,
         accepted: AcceptedProcedure,
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
@@ -2806,9 +2269,8 @@ class ProcedureExecutor:
             if self.nested_runner is None:
                 raise ExecutionError("nested Procedure runner is unavailable")
             self.nested_runner.preflight(accepted, admission)
-        if isinstance(prepared, PreparedProcedureRunV5):
+        if prepared.acquisition_plan is not None:
             self._preflight_source_runtime(prepared, accepted)
-        if isinstance(prepared, PreparedProcedureRunV5):
             active_reservations = {
                 item.reservation_id for item in self.material_reservations.active()
             }
@@ -2850,61 +2312,7 @@ class ProcedureExecutor:
                 admission,
                 records,
                 "admission_bound",
-                (
-                    (
-                        ProcedureAdmissionBoundPayloadV9
-                        if isinstance(admission, ProcedureRunAdmissionV9)
-                        else ProcedureAdmissionBoundPayloadV8
-                        if isinstance(admission, ProcedureRunAdmissionV8)
-                        else ProcedureAdmissionBoundPayloadV7
-                        if isinstance(admission, ProcedureRunAdmissionV7)
-                        else ProcedureAdmissionBoundPayloadV5
-                    )
-                    .model_validate(
-                        {
-                            "admission": admission,
-                            "admission_material_manifest": prepared.admission_material_manifest,
-                            "admission_material_manifest_digest": (
-                                prepared.admission_material_manifest_digest
-                            ),
-                            "acquisition_plan": prepared.acquisition_plan,
-                            "acquisition_plan_digest": prepared.acquisition_plan_digest,
-                            "required_reservation_ids": prepared.required_reservation_ids,
-                        }
-                    )
-                    .model_dump(mode="json")
-                    if isinstance(admission, ProcedureRunAdmissionV5)
-                    and isinstance(prepared, PreparedProcedureRunV5)
-                    else ProcedureAdmissionBoundPayloadV4(
-                        admission=admission,
-                        admission_material_manifest=prepared.admission_material_manifest,
-                        admission_material_manifest_digest=(
-                            prepared.admission_material_manifest_digest
-                        ),
-                    ).model_dump(mode="json")
-                    if isinstance(admission, ProcedureRunAdmissionV4)
-                    and isinstance(prepared, PreparedProcedureRunV4)
-                    else ProcedureAdmissionBoundPayloadV3(
-                        admission=admission,
-                        admission_material_manifest=prepared.admission_material_manifest,
-                        admission_material_manifest_digest=(
-                            prepared.admission_material_manifest_digest
-                        ),
-                    ).model_dump(mode="json")
-                    if isinstance(admission, ProcedureRunAdmissionV3)
-                    and isinstance(prepared, PreparedProcedureRunV3)
-                    else (
-                        ProcedureAdmissionBoundPayloadV6
-                        if isinstance(admission, ProcedureRunAdmissionV6)
-                        else ProcedureAdmissionBoundPayloadV2
-                    )(
-                        admission=cast(ProcedureRunAdmissionV6, admission),
-                        accepted_state_materials=prepared.accepted_state_materials,
-                    ).model_dump(mode="json")
-                    if isinstance(admission, ProcedureRunAdmissionV2)
-                    and isinstance(prepared, PreparedProcedureRunV2)
-                    else admission.model_dump(mode="json")
-                ),
+                prepared.bound_payload().model_dump(mode="json"),
             )
 
         state = _RunState(
@@ -2981,16 +2389,12 @@ class ProcedureExecutor:
                 }
             )
         except _BudgetExceeded as exc:
-            if isinstance(admission, ProcedureRunAdmissionV2) and exc.budget_kind == "wall_clock":
+            if exc.budget_kind == "wall_clock":
                 status = "failed"
                 failure_code = "wall_clock_exhausted"
                 failure_message = "Procedure execution exceeded its operational budget."
             else:
-                status = (
-                    "refused"
-                    if isinstance(admission, ProcedureRunAdmissionV2)
-                    else "budget_exhausted"
-                )
+                status = "refused"
                 failure_message = "Procedure execution exhausted its declared budget."
                 refusal = ProcedureRunRefusalV1(
                     code="budget_exhausted",
@@ -3027,7 +2431,7 @@ class ProcedureExecutor:
                 "provider_completion_not_durable: Provider result was not committed"
             )
         semantic_result_digest = None
-        if isinstance(admission, ProcedureRunAdmissionV2) and status in {
+        if status in {
             "succeeded",
             "refused",
             "halted",
@@ -3057,7 +2461,7 @@ class ProcedureExecutor:
                     "terminal_capture": state.terminal_capture,
                 }
                 if isinstance(accepted.procedure.definition, ProcedureDefinition)
-                or nested_admission(admission) is not None
+                or admission.parent_binding is not None
                 else {}
             ),
             "output": output,
@@ -3084,16 +2488,8 @@ class ProcedureExecutor:
                     key=lambda item: item.occurrence_path.encode("utf-8"),
                 )
             ],
-            "budget": ProcedureRunBudgetV1(
-                declared=ProcedureRunBudgetDeclaredV1(
-                    budget=admission.budget,
-                    hard_caps=admission.hard_caps,
-                    result_bytes_cap=(
-                        admission.resource_budget.result_bytes_cap
-                        if admission.resource_budget is not None
-                        else 1_048_576
-                    ),
-                ),
+            "budget": ProcedureRunBudget(
+                declared=procedure_run_declared_budget(admission),
                 observed=ProcedureRunBudgetObserved(
                     max_items=ProcedureBudgetBoundaryObservation(
                         high_water=state.max_items_high_water,
@@ -3128,7 +2524,7 @@ class ProcedureExecutor:
 
     def _preflight_source_runtime(
         self,
-        prepared: PreparedProcedureRunV5,
+        prepared: PreparedProcedureRun,
         accepted: AcceptedProcedure,
     ) -> None:
         """Refuse an incomplete Source closure before the first attempt record."""
@@ -3139,6 +2535,10 @@ class ProcedureExecutor:
         if not sources:
             return
         admission = prepared.admission
+        plan = prepared.acquisition_plan
+        selection = admission.selection_decision
+        if plan is None or selection is None:
+            raise ExecutionError("source_acquisition_plan_mismatch: no admitted acquisition plan")
         if (
             self.acquisition_rules is None
             or self.acquisition_rules.digest != admission.acquisition_policy_digest
@@ -3149,7 +2549,7 @@ class ProcedureExecutor:
         for node in sources:
             matches = tuple(
                 occurrence
-                for occurrence in prepared.acquisition_plan.external_occurrences
+                for occurrence in plan.external_occurrences
                 if occurrence.occurrence_kind == "source"
                 and occurrence.node_id == node.node_id
                 and occurrence.repeat_node_id is None
@@ -3162,11 +2562,7 @@ class ProcedureExecutor:
                 contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
                 contract = self.capture_contracts.get(contract_pin.artifact_digest)
                 selected = next(
-                    (
-                        item
-                        for item in admission.selection_decision.decisions
-                        if item.input_name == node.as_
-                    ),
+                    (item for item in selection.decisions if item.input_name == node.as_),
                     None,
                 )
                 if (
@@ -3213,7 +2609,7 @@ class ProcedureExecutor:
                     "source_acquisition_plan_mismatch: Source closure does not reproduce"
                 )
 
-    def _seed_state(self, prepared: PreparedProcedureRunV1) -> _RunState:
+    def _seed_state(self, prepared: PreparedProcedureRun) -> _RunState:
         """Bind every admitted plane's material and its provenance before node one."""
 
         admission = prepared.admission
@@ -3222,36 +2618,31 @@ class ProcedureExecutor:
             input_payload=normalize_canonical(admission.invocation_input),
             parameters={},
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
-            acquisition_plan=(
-                prepared.acquisition_plan if isinstance(prepared, PreparedProcedureRunV5) else None
-            ),
+            acquisition_plan=prepared.acquisition_plan,
         )
         for accepted_state in prepared.accepted_state_materials:
-            if isinstance(accepted_state, AcceptedStateRunMaterialV2):
-                access = BodyAccessContext(
-                    principal_id="procedure-runtime",
-                    can_read_body=True,
+            access = BodyAccessContext(
+                principal_id="procedure-runtime",
+                can_read_body=True,
+            )
+            try:
+                retained = self.bodies.read(
+                    accepted_state.input.material_body_digest,
+                    access=access,
                 )
-                try:
-                    retained = self.bodies.read(
-                        accepted_state.input.material_body_digest,
-                        access=access,
-                    )
-                except Exception as exc:
-                    raise _OperationalFailure("cas_unavailable_at_replay") from exc
-                try:
-                    retained_value = normalize_canonical(json.loads(retained))
-                except Exception as exc:
-                    raise _OperationalFailure("replay_material_mismatch") from exc
-                if (
-                    canonical_bytes(retained_value) != retained
-                    or run_value_digest("state-result", retained_value)
-                    != accepted_state.input.result_digest
-                ):
-                    raise _OperationalFailure("replay_material_mismatch")
-                value = retained_value
-            else:
-                value = accepted_state.value
+            except Exception as exc:
+                raise _OperationalFailure("cas_unavailable_at_replay") from exc
+            try:
+                retained_value = normalize_canonical(json.loads(retained))
+            except Exception as exc:
+                raise _OperationalFailure("replay_material_mismatch") from exc
+            if (
+                canonical_bytes(retained_value) != retained
+                or run_value_digest("state-result", retained_value)
+                != accepted_state.input.result_digest
+            ):
+                raise _OperationalFailure("replay_material_mismatch")
+            value = retained_value
             digest = run_input_digest(accepted_state.input)
             name = accepted_state.input.input_name
             state.outputs[name] = normalize_canonical(value)
@@ -3321,9 +2712,9 @@ class ProcedureExecutor:
 
     def _verify_correspondence(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         accepted: AcceptedProcedure,
-        state_materials: tuple[AcceptedStateRunMaterialV1 | AcceptedStateRunMaterialV2, ...],
+        state_materials: tuple[AcceptedStateRunMaterial, ...],
     ) -> None:
         procedure = accepted.procedure
         if (
@@ -3333,7 +2724,7 @@ class ProcedureExecutor:
             or procedure.identity != admission.procedure_identity
             or procedure.activation_policy != admission.activation_policy
             or (
-                nested_admission(admission) is None
+                admission.parent_binding is None
                 and procedure.definition.hard_caps != admission.hard_caps
             )
         ):
@@ -3341,11 +2732,10 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Procedure admission and accepted artifact differ.",
             )
-        nested = nested_admission(admission)
-        if nested is not None:
+        if admission.parent_binding is not None:
             if self.parent_context is None:
                 raise ExecutionError("nested admission requires its executing parent")
-            self.parent_context.verify(nested, accepted)
+            self.parent_context.verify(admission, accepted)
             if self.effective_rung != self.parent_context.child_rung(accepted):
                 raise ExecutionError("nested invocation changed the parent effective rung")
         elif self.parent_context is not None:
@@ -3361,7 +2751,7 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
             )
-        if admission.invocation_origin == "actor" and nested is None:
+        if admission.invocation_origin == "actor" and admission.parent_binding is None:
             if procedure.definition.budget != admission.budget:
                 raise ExecutionError("Procedure admission and accepted artifact differ")
         else:
@@ -3437,7 +2827,7 @@ class ProcedureExecutor:
                     f"Procedure admission state_tap input {name!r} differs.",
                 )
 
-    def _verify_effective_rung(self, admission: ProcedureRunAdmissionV1) -> None:
+    def _verify_effective_rung(self, admission: ProcedureRunAdmission) -> None:
         """Refuse a five-term cap computed against any other admission binding.
 
         The rung is authority, so it is checked against the frozen tuple rather
@@ -3476,7 +2866,7 @@ class ProcedureExecutor:
 
     def _verify_input_planes(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         accepted: AcceptedProcedure,
     ) -> None:
         """Refuse every cross-plane relabel before the first node can observe a value."""
@@ -3537,8 +2927,8 @@ class ProcedureExecutor:
                     f"Procedure admission exhaust input {exhaust.input_name!r} differs.",
                 )
 
-    def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
-        if isinstance(admission, ProcedureRunAdmissionV2) and admission.lane == "replay":
+    def _require_current(self, admission: ProcedureRunAdmission) -> None:
+        if admission.lane == "replay":
             return
         current = self.activation_authority.current_procedure_digest(
             admission.procedure_identity,
@@ -3550,13 +2940,9 @@ class ProcedureExecutor:
                 "Procedure is not current at the admitted coordinate.",
             )
 
-    def _checkpoint_current(self, admission: ProcedureRunAdmissionV1, *, effect: bool) -> None:
-        parent_binding = procedure_parent_binding(admission)
-        if (
-            parent_binding is not None
-            and isinstance(admission, ProcedureRunAdmissionV2)
-            and admission.lane != "replay"
-        ):
+    def _checkpoint_current(self, admission: ProcedureRunAdmission, *, effect: bool) -> None:
+        parent_binding = admission.parent_binding
+        if parent_binding is not None and admission.lane != "replay":
             for pin, policy in zip(
                 parent_binding.ancestors,
                 parent_binding.activation_policies,
@@ -3579,7 +2965,7 @@ class ProcedureExecutor:
 
     def _check_budget(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         *,
         started_ns: int,
@@ -3621,7 +3007,7 @@ class ProcedureExecutor:
         self,
         accepted: AcceptedProcedure,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
@@ -3783,7 +3169,7 @@ class ProcedureExecutor:
         node: object,
         *,
         accepted: AcceptedProcedure,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
@@ -4015,7 +3401,7 @@ class ProcedureExecutor:
         self,
         node: SourceNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
@@ -4026,7 +3412,7 @@ class ProcedureExecutor:
                 state, node.as_, _node_policy_tokens(node, self.references) | state.control
             )
             return
-        if not isinstance(admission, ProcedureRunAdmissionV5):
+        if not admission.plans_providers:
             raise _RunRefusal(
                 "provider_acquisition_plan_required",
                 "Graph-v4 Source execution requires the landed B2 acquisition carrier.",
@@ -4168,11 +3554,7 @@ class ProcedureExecutor:
                 rule,
                 unavailable,
                 default_authorized=rule.input_name in self.default_authorizations,
-                evaluation_time=(
-                    admission.occurrence_evaluation_time
-                    if isinstance(admission, ProcedureRunAdmissionV3)
-                    else admission.admitted_at
-                ),
+                evaluation_time=(admission.occurrence_evaluation_time),
             )
             self._append_event(
                 admission,
@@ -4271,11 +3653,7 @@ class ProcedureExecutor:
                 rule,
                 oversized,
                 default_authorized=rule.input_name in self.default_authorizations,
-                evaluation_time=(
-                    admission.occurrence_evaluation_time
-                    if isinstance(admission, ProcedureRunAdmissionV3)
-                    else admission.admitted_at
-                ),
+                evaluation_time=(admission.occurrence_evaluation_time),
             )
             self._append_event(
                 admission,
@@ -4367,11 +3745,7 @@ class ProcedureExecutor:
             rule,
             result,
             default_authorized=rule.input_name in self.default_authorizations,
-            evaluation_time=(
-                admission.occurrence_evaluation_time
-                if isinstance(admission, ProcedureRunAdmissionV3)
-                else admission.admitted_at
-            ),
+            evaluation_time=(admission.occurrence_evaluation_time),
         )
         self._append_event(
             admission,
@@ -4440,7 +3814,7 @@ class ProcedureExecutor:
         self,
         node: SourceNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         rule: AcquisitionRule,
@@ -4471,11 +3845,7 @@ class ProcedureExecutor:
                 and rule.max_age is not None
                 and "cruxible.acquisition.stale" in decision.reason_codes
             ):
-                evaluation_time = (
-                    admission.occurrence_evaluation_time
-                    if isinstance(admission, ProcedureRunAdmissionV3)
-                    else admission.admitted_at
-                )
+                evaluation_time = admission.occurrence_evaluation_time
                 age = (evaluation_time - result.acquisition.envelope.observed_at).total_seconds()
                 delta = evaluation_time - result.acquisition.envelope.observed_at
                 details.update(
@@ -4595,14 +3965,14 @@ class ProcedureExecutor:
         node: InvokeNode,
         *,
         accepted: AcceptedProcedure,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
     ) -> None:
         from cruxible_core.procedures.nested import ParentInvocationContext
 
-        if self.nested_runner is None or not isinstance(admission, ProcedureRunAdmissionV2):
+        if self.nested_runner is None:
             raise ExecutionError("nested Procedure invocation requires an admitted runner")
         remaining_us = (
             admission.budget.wall_clock.microseconds
@@ -4682,7 +4052,7 @@ class ProcedureExecutor:
                 "replay_material_unavailable", details={"payload_digest": payload.digest}
             )
         admitted = parse_admission_payload(payload).admission
-        if procedure_parent_binding(admitted) != context.binding:
+        if admitted.parent_binding != context.binding:
             raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
             admitted.procedure_identity != node.procedure.target
@@ -4705,7 +4075,7 @@ class ProcedureExecutor:
             raise ExecutionError("nested execution has no durable completion")
         if final.get("status") != result.status or final.get("output") != result.output:
             raise ExecutionError("nested completion differs from returned result")
-        budget = ProcedureRunBudgetV1.model_validate(final["budget"]).observed
+        budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
         state.observe_items(
@@ -4771,7 +4141,7 @@ class ProcedureExecutor:
         self,
         node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
@@ -5046,7 +4416,7 @@ class ProcedureExecutor:
         self,
         request: TerminalEgressRequestV1,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1],
     ) -> TerminalEgressReceiptV1:
         """Hand the request to the sink; a preparer sink also receives the admission.
@@ -5100,7 +4470,7 @@ class ProcedureExecutor:
         self,
         node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         rung: EffectiveRungV1,
         children: tuple[TerminalChildReceiptV1, ...],
         values: tuple[CanonicalValue, ...],
@@ -5155,9 +4525,7 @@ class ProcedureExecutor:
         # Ruling C4: a direct run's admission is never a V5+ Line carrier (it
         # has no accepted Line), but it still builds a real v2 request under
         # its own ephemeral Line spec -- the only authority basis it has.
-        v2_capable = (
-            isinstance(admission, ProcedureRunAdmissionV5) or self.ephemeral_spec_digest is not None
-        )
+        v2_capable = admission.plans_providers or self.ephemeral_spec_digest is not None
         if v2_capable and isinstance(node, CaptureEgressNode):
             return (
                 build_terminal_egress_request_v2(
@@ -5205,7 +4573,7 @@ class ProcedureExecutor:
         self,
         node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         limit: int | None = None,
@@ -5358,7 +4726,7 @@ class ProcedureExecutor:
         value: CanonicalValue,
         *,
         direction: Literal["in", "out"],
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         node_id: str,
     ) -> CanonicalValue:
@@ -5434,7 +4802,7 @@ class ProcedureExecutor:
         effect_policy: ArtifactNameRef | None,
         payload: CanonicalValue,
         contract_out: ArtifactPin | None,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         occurrence: ProviderExternalOccurrencePlan | None = None,
@@ -5841,7 +5209,7 @@ class ProcedureExecutor:
         self,
         node: CallNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
@@ -5872,7 +5240,7 @@ class ProcedureExecutor:
         self,
         node: RepeatNode,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
@@ -5954,7 +5322,7 @@ class ProcedureExecutor:
         body: RepeatBodyNode,
         *,
         repeat_node_id: str,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         state: _RunState,
         local_outputs: dict[str, CanonicalValue],
         local_provenance: dict[str, AliasProvenanceV1],
@@ -6056,7 +5424,7 @@ class ProcedureExecutor:
 
     def _append_events(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         records: list[StoredProcedureJournalRecordV1],
         event_kind: JournalEventKindV1,
         payloads: list[object],
@@ -6129,7 +5497,7 @@ class ProcedureExecutor:
 
     def _append_event(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         records: list[StoredProcedureJournalRecordV1],
         event_kind: JournalEventKindV1,
         payload: object,
@@ -6147,7 +5515,7 @@ class ProcedureExecutor:
         with self.material_reservations.locked():
             self.material_reservations.reserve_locked(reservation)
             pending_to_release: list[PendingAdmissionMaterialReservationV1] = []
-            if isinstance(admission, ProcedureRunAdmissionV3) and event_kind == ("admission_bound"):
+            if event_kind == "admission_bound":
                 active = self.material_reservations.active_locked()
                 for member in (
                     payload.get("admission_material_manifest", {}).get("members", [])
@@ -6237,7 +5605,7 @@ class ProcedureExecutor:
 
     def _replay_completed(
         self,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         records: tuple[StoredProcedureJournalRecordV1, ...],
     ) -> ProcedureRunResultV1:
         run_records = [
@@ -6291,7 +5659,7 @@ class ProcedureExecutor:
 
     @staticmethod
     def _receipt(
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         records: list[StoredProcedureJournalRecordV1],
     ) -> ProcedureRunReceiptV1:
         if not records:  # pragma: no cover - attempt start always lands first
@@ -7498,26 +6866,22 @@ def _evaluate_predicate(
 
 
 __all__ = [
-    "AcceptedStateRunMaterialV1",
+    "AcceptedStateRunInput",
+    "AcceptedStateRunMaterial",
     "ContractValidatorProtocol",
     "ExhaustRunMaterialV1",
     "LandedCaptureRunMaterialV1",
-    "PreparedProcedureRunV1",
-    "PreparedProcedureRunV4",
-    "PreparedProcedureRunV5",
-    "PreparedProcedureRunV9",
-    "ProcedureAdmissionBoundPayloadV4",
-    "ProcedureAdmissionBoundPayloadV5",
-    "ProcedureAdmissionBoundPayloadV9",
+    "PROCEDURE_RUN_ADMISSION_TAG",
+    "PROCEDURE_RUN_RECEIPT_DOMAIN",
+    "PreparedProcedureRun",
     "ProcedureActivationAuthorityProtocol",
+    "ProcedureAdmissionBoundPayload",
     "ProcedureBoundaryRefused",
     "ProcedureClockProtocol",
     "ProcedureExecutor",
     "ProcedureNodePinSetV1",
-    "ProcedureRunAdmissionV1",
-    "ProcedureRunAdmissionV4",
-    "ProcedureRunAdmissionV5",
-    "ProcedureRunAdmissionV9",
+    "ProcedureParentBindingV1",
+    "ProcedureRunAdmission",
     "ProcedureRunReceiptV1",
     "ProcedureRunRefusalV1",
     "ProcedureRunResultV1",
@@ -7526,13 +6890,21 @@ __all__ = [
     "StateTapReaderProtocol",
     "SystemProcedureClock",
     "accepted_procedure_pin_set_digest",
+    "admission_fields",
     "bind_accepted_state_materials",
+    "bind_line_admission_runtime_policy",
+    "bind_prepared_investigation",
+    "empty_admission_material_manifest",
+    "parse_admission_payload",
     "procedure_direct_partition",
     "procedure_node_pin_sets",
     "procedure_semantic_run_id",
     "prepare_direct_procedure_run",
     "procedure_admission_digest",
     "procedure_pin_set_digest",
+    "procedure_run_declared_budget",
     "procedure_run_receipt_digest",
+    "procedure_semantic_replay_key_digest",
     "run_value_digest",
+    "seal_procedure_run_admission",
 ]

@@ -76,7 +76,7 @@ def _behind(instance: Any) -> bool:
 def _line_of(instance: Any, journal: Any, stream: Any, run_id: str) -> tuple[str, bool] | None:
     """The run's Line identity and whether a Trigger's occurrence admitted it, top-level only."""
 
-    from cruxible_core.procedures.execution import nested_admission, parse_admission_payload
+    from cruxible_core.procedures.execution import parse_admission_payload
 
     admissions = journal.select_records(
         stream, run_id=run_id, event_kind="admission_bound", limit=1
@@ -89,10 +89,10 @@ def _line_of(instance: Any, journal: Any, stream: Any, run_id: str) -> tuple[str
     if isinstance(payload, UnavailablePayload):
         return None
     admission = parse_admission_payload(payload).admission
-    line = getattr(admission, "line_identity", None)
-    if line is None or nested_admission(admission) is not None:
+    line = admission.line_identity
+    if line is None or admission.parent_binding is not None:
         return None
-    return line.qualified, getattr(admission, "trigger_binding", None) is not None
+    return line.qualified, admission.trigger_binding is not None
 
 
 def catch_up(instance: Any, *, steps: int = STEPS) -> None:

@@ -89,15 +89,13 @@ from cruxible_core.procedures.egress import (
     compute_effective_rung,
 )
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV9,
+    PreparedProcedureRun,
     ProcedureExecutor,
-    ProcedureRunAdmissionV9,
     _source_capture_association_fields,
-    procedure_admission_digest,
-    procedure_line_run_id,
+    admission_fields,
     procedure_node_pin_sets,
     procedure_pin_set_digest,
-    procedure_semantic_replay_key_digest,
+    seal_procedure_run_admission,
 )
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
@@ -337,7 +335,7 @@ def _source_fixture(
     terminal_contract: CaptureContract | None = None,
 ) -> tuple[
     AcceptedProcedure,
-    PreparedProcedureRunV9,
+    PreparedProcedureRun,
     object,
     AcquisitionDefault,
     CaptureContract,
@@ -489,11 +487,7 @@ def _source_fixture(
     node_pin_sets = procedure_node_pin_sets(accepted)
     plan_digest = procedure_acquisition_plan_digest(plan)
     old_admission = provider_prepared.admission
-    fields = {
-        name: getattr(old_admission, name)
-        for name in ProcedureRunAdmissionV9.model_fields
-        if name != "tag"
-    }
+    fields = admission_fields(old_admission)
     fields.update(
         {
             "procedure_artifact_digest": accepted.artifact_digest,
@@ -506,33 +500,14 @@ def _source_fixture(
             "selection_decision": decision,
             "selection_decision_digest": plan.selection_decision_digest,
             "acquisition_plan_digest": plan_digest,
-            "semantic_replay_key_digest": digest("placeholder", "semantic"),
-            "admission_binding_digest": digest("placeholder", "admission"),
-            "run_id": "RUN-" + "0" * 64,
         }
     )
     if capture_budget is not None:
         fields["budget"] = old_admission.budget.model_copy(
             update={"max_capture_bytes": capture_budget}
         )
-    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
-    provisional = provisional.model_copy(
-        update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
-    )
-    admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    prepared = PreparedProcedureRunV9.model_validate(
+    admission = seal_procedure_run_admission(fields)
+    prepared = PreparedProcedureRun.model_validate(
         {
             **provider_prepared.model_dump(mode="python"),
             "admission": admission,
@@ -580,28 +555,11 @@ def _payloads(prepared, fixture):  # type: ignore[no-untyped-def]
     ]
 
 
-def _next_attempt(prepared: PreparedProcedureRunV9) -> PreparedProcedureRunV9:
-    provisional = prepared.admission.model_copy(
-        update={
-            "attempt": prepared.admission.attempt + 1,
-            "admission_binding_digest": digest("placeholder", "next-admission"),
-            "run_id": "RUN-" + "0" * 64,
-        }
+def _next_attempt(prepared: PreparedProcedureRun) -> PreparedProcedureRun:
+    admission = seal_procedure_run_admission(
+        {**admission_fields(prepared.admission), "attempt": prepared.admission.attempt + 1}
     )
-    admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    return PreparedProcedureRunV9.model_validate(
+    return PreparedProcedureRun.model_validate(
         {**prepared.model_dump(mode="python"), "admission": admission}
     )
 
@@ -762,7 +720,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         from cruxible_core.storage.cas import ContentAddressedBodyStore
         from cruxible_core.exhaust import LocalJournalBackend
         from cruxible_core.procedures.execution import (
-            PreparedProcedureRunV9,
+            PreparedProcedureRun,
             ProcedureExecutor,
         )
         from cruxible_core.procedures.run_index import ProcedureRunIndex
@@ -770,7 +728,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
 
         root, accepted_path, prepared_path, marker_path = map(Path, sys.argv[1:])
         accepted = AcceptedProcedure.model_validate_json(accepted_path.read_text())
-        prepared = PreparedProcedureRunV9.model_validate_json(prepared_path.read_text())
+        prepared = PreparedProcedureRun.model_validate_json(prepared_path.read_text())
         from cruxible_client.contracts.providers import NamedProviderBuild, provider_digest
         from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
         from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
@@ -971,7 +929,7 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
         == second_prepared.admission.semantic_replay_key_digest
     )
 
-    def execute(prepared: PreparedProcedureRunV9, result_size: int):  # type: ignore[no-untyped-def]
+    def execute(prepared: PreparedProcedureRun, result_size: int):  # type: ignore[no-untyped-def]
         return ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,

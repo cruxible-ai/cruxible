@@ -30,14 +30,11 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.indexes.typed_state import OWNER_BY_IDENTITY_KIND
 from cruxible_core.procedures.egress import CaptureTerminalEgressSink
 from cruxible_core.procedures.execution import (
-    NestedProcedureRunAdmission,
     ProcedureBoundaryRefused,
     ProcedureClockProtocol,
-    ProcedureRunAdmissionV1,
+    ProcedureRunAdmission,
     ProcedureRunResultV1,
-    nested_admission,
     procedure_node_pin_sets,
-    procedure_parent_binding,
 )
 from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
 from cruxible_core.procedures.nested import (
@@ -60,17 +57,17 @@ from cruxible_core.storage.material_reservations import (
 
 
 def retained_delegation(
-    instance: PlaybillInstance, admission: NestedProcedureRunAdmission
+    instance: PlaybillInstance, admission: ProcedureRunAdmission
 ) -> ProcedureDelegation | UnavailablePayload:
     """Rebuild delegation from the recorded parent call, never a caller's ancestry claim."""
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV2, parse_admission_payload
+    from cruxible_core.procedures.execution import parse_admission_payload
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureRunRecoveryRequired,
         _records_for_run,
     )
     from cruxible_core.storage.cas import BodyAccessContext
 
-    binding = procedure_parent_binding(admission)
+    binding = admission.parent_binding
     if binding is None:
         raise ProcedureRunRecoveryRequired("Nested recovery requires a delegation binding")
     records = _records_for_run(instance, binding.parent_run_id)
@@ -99,10 +96,7 @@ def retained_delegation(
             "Nested recovery requires one retained parent invocation"
         )
     parent = admissions[0]
-    if (
-        not isinstance(parent, ProcedureRunAdmissionV2)
-        or parent.admission_binding_digest != binding.parent_admission_digest
-    ):
+    if parent.admission_binding_digest != binding.parent_admission_digest:
         raise ProcedureRunRecoveryRequired("Nested recovery names another parent admission")
     instance.resolve_accepted_coordinate(
         git_oid=parent.accepted_coordinate.git_oid,
@@ -111,7 +105,7 @@ def retained_delegation(
         compiler_digest=parent.accepted_coordinate.compiler_digest,
     )
 
-    def version(run: ProcedureRunAdmissionV1) -> AcceptedProcedure:
+    def version(run: ProcedureRunAdmission) -> AcceptedProcedure:
         found = instance.accepted_artifact_version(
             run.accepted_coordinate, run.procedure_artifact_digest, family="procedures/"
         )
@@ -146,9 +140,7 @@ def retained_delegation(
                 authored,
                 pins=run.full_pins,
                 lookup_exact=exact,
-                bindings=recorded_slot_bindings(
-                    getattr(run, "resolved_provider_bindings", ()), run.full_pins
-                ),
+                bindings=recorded_slot_bindings(run.resolved_provider_bindings, run.full_pins),
             )
             if (
                 replayed.procedure.pins != run.full_pins
@@ -189,9 +181,8 @@ def retained_delegation(
             f"{ProcedureRunRecoveryRequired.code}: recorded child authority does not reproduce "
             f"its parent delegation: {exc}"
         ) from exc
-    nested_parent = nested_admission(parent)
-    if nested_parent is not None:
-        retained = retained_delegation(instance, nested_parent)
+    if parent.parent_binding is not None:
+        retained = retained_delegation(instance, parent)
         if isinstance(retained, UnavailablePayload):
             return retained
     return delegation
@@ -238,13 +229,13 @@ class ServedNestedProcedureRunner:
             )
         return accepted
 
-    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmissionV1) -> None:
+    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmission) -> None:
         from cruxible_core.service.procedures.procedure_runs import (
             ProcedureRunStateV2,
             _plan_direct_external_run,
         )
 
-        parent_binding = procedure_parent_binding(admission)
+        parent_binding = admission.parent_binding
         ancestors = (
             () if parent_binding is None else tuple(pin.target for pin in parent_binding.ancestors)
         )
@@ -396,7 +387,7 @@ class ServedNestedProcedureRunner:
                 ),
                 # A child posts under the Line its root run ran as.
                 inbox=None
-                if (line := getattr(parent, "line_identity", None)) is None
+                if (line := parent.line_identity) is None
                 else InboxTerminalEgressSink(store=LineInboxStore(self.instance), line=line),
             )
         journal, root = _journal_for_write(self.instance)

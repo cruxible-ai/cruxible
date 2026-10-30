@@ -88,7 +88,7 @@ from cruxible_core.procedures.terminal_dependencies import (
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.sqlite import ProjectionHandle
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
     from cruxible_core.procedures.nested import ProcedureDelegation
 
 TerminalEgressKindV1 = Literal[
@@ -883,17 +883,17 @@ PROCEDURE_ADMISSION_REPAIR = HandEditRepair(
 
 def _validated_run_admission(
     request: TerminalEgressRequestV1,
-    admission: ProcedureRunAdmissionV1,
-) -> ProcedureRunAdmissionV1:
+    admission: ProcedureRunAdmission,
+) -> ProcedureRunAdmission:
     """Order two EVALUATION INSTANT values while binding admitted authority."""
 
     from cruxible_core.procedures.execution import (
-        ProcedureRunAdmissionV1,
+        ProcedureRunAdmission,
         procedure_admission_digest,
     )
 
     try:
-        if not isinstance(admission, ProcedureRunAdmissionV1):
+        if not isinstance(admission, ProcedureRunAdmission):
             raise TypeError("not a Procedure admission")
         validated = type(admission).model_validate(admission.model_dump(mode="python"))
     except (TypeError, ValueError) as exc:
@@ -932,7 +932,7 @@ def _validated_run_admission(
 def build_terminal_egress_request_v2(
     request: TerminalEgressRequestV1,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     procedure_mandate_digest: str | None,
     calibration_reading_digests: tuple[str, ...],
     target_paths: tuple[str, ...],
@@ -1390,7 +1390,7 @@ class TerminalEgressPreparerProtocol(Protocol):
         self,
         *,
         request: TerminalEgressRequestV1,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
     ) -> PreparedTerminalEgressV1: ...
@@ -1399,7 +1399,7 @@ class TerminalEgressPreparerProtocol(Protocol):
 def require_procedure_mandate(
     request: TerminalEgressRequestV2,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     accepted_mandates: Mapping[str, ProcedureMandateAny],
     delegation: ProcedureDelegation | None = None,
 ) -> ProcedureMandateAny | None:
@@ -1497,7 +1497,7 @@ def require_procedure_mandate(
 def require_procedure_mandate_at_head(
     request: TerminalEgressRequestV2,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     projection: ProjectionHandle,
     delegation: ProcedureDelegation | None = None,
 ) -> ProcedureMandateAny | None:

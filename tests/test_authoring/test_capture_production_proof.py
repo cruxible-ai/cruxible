@@ -297,7 +297,7 @@ def test_raw_proposal_citing_a_forgery_is_refused_by_the_claim_law(
 # dropped `run_capture_producers`'s `rule` override along with
 # InputAcquisitionRule/SourceAcquisitionPolicy; the only way to feed a custom
 # AcquisitionDefault into `_source_fixture`'s world now is to patch its
-# `PreparedProcedureRunV9.admission` after construction, but `admission`'s
+# `PreparedProcedureRun.admission` after construction, but `admission`'s
 # `procedure_artifact_digest` and `acquisition_policy_digest` are themselves
 # folded into a `semantic_replay_key_digest` (and that in turn into `run_id`
 # and the journal partition), each independently re-derived and checked by

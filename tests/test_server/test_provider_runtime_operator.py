@@ -85,11 +85,10 @@ from cruxible_client.contracts.shapes import (
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV9,
-    ProcedureRunAdmissionV9,
-    procedure_admission_digest,
-    procedure_line_run_id,
-    procedure_semantic_replay_key_digest,
+    PreparedProcedureRun,
+    ProcedureRunAdmission,
+    admission_fields,
+    seal_procedure_run_admission,
 )
 from cruxible_core.procedures.reference_binding import (
     authored_procedure,
@@ -291,7 +290,7 @@ def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: 
 
 
 def _complete_line_for_admission(
-    admission: ProcedureRunAdmissionV9,
+    admission: ProcedureRunAdmission,
     accepted_procedure,  # type: ignore[no-untyped-def]
     *,
     accepted_provider: AcceptedProvider,
@@ -337,45 +336,21 @@ def _complete_line_for_admission(
 
 
 def _rebind_prepared_line(
-    prepared: PreparedProcedureRunV9,
+    prepared: PreparedProcedureRun,
     accepted_line: AcceptedLineSpec,
-) -> PreparedProcedureRunV9:
+) -> PreparedProcedureRun:
     plan = prepared.acquisition_plan.model_copy(
         update={"line_spec_digest": accepted_line.artifact_digest}
     )
     plan_digest = procedure_acquisition_plan_digest(plan)
-    fields = {
-        name: getattr(prepared.admission, name)
-        for name in ProcedureRunAdmissionV9.model_fields
-        if name != "tag"
-    }
-    fields.update(
+    admission = seal_procedure_run_admission(
         {
+            **admission_fields(prepared.admission),
             "line_spec_digest": accepted_line.artifact_digest,
             "acquisition_plan_digest": plan_digest,
-            "semantic_replay_key_digest": _digest("line-replay-placeholder"),
-            "admission_binding_digest": _digest("line-admission-placeholder"),
-            "run_id": "RUN-" + "0" * 64,
         }
     )
-    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
-    provisional = provisional.model_copy(
-        update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
-    )
-    admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    return PreparedProcedureRunV9.model_validate(
+    return PreparedProcedureRun.model_validate(
         {
             **prepared.model_dump(mode="python"),
             "admission": admission,
@@ -577,34 +552,10 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     )
     plan = prepared.acquisition_plan.model_copy(update={"external_occurrences": (occurrence,)})
     plan_digest = procedure_acquisition_plan_digest(plan)
-    admission_fields = {
-        name: getattr(prepared.admission, name)
-        for name in ProcedureRunAdmissionV9.model_fields
-        if name != "tag"
-    }
-    admission_fields["acquisition_plan_digest"] = plan_digest
-    provisional_admission = ProcedureRunAdmissionV9.model_construct(**admission_fields)
-    provisional_admission = provisional_admission.model_copy(
-        update={
-            "semantic_replay_key_digest": procedure_semantic_replay_key_digest(
-                provisional_admission
-            )
-        }
+    admission = seal_procedure_run_admission(
+        {**admission_fields(prepared.admission), "acquisition_plan_digest": plan_digest}
     )
-    admission_digest = procedure_admission_digest(provisional_admission)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional_admission.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional_admission.occurrence_id or "",
-                attempt=provisional_admission.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional_admission.occurrence_evaluation_time,
-            ),
-        }
-    )
-    prepared = PreparedProcedureRunV9.model_validate(
+    prepared = PreparedProcedureRun.model_validate(
         {
             **prepared.model_dump(mode="python"),
             "admission": admission,
@@ -650,8 +601,8 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         admission=prepared.admission,
         accepted_line=accepted_line,
     )
-    assert isinstance(bound, ProcedureRunAdmissionV9)
-    prepared = PreparedProcedureRunV9.model_validate(
+    assert isinstance(bound, ProcedureRunAdmission)
+    prepared = PreparedProcedureRun.model_validate(
         {**prepared.model_dump(mode="python"), "admission": bound}
     )
 

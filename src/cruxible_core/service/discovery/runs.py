@@ -41,7 +41,11 @@ from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import JournalStreamIdentityV1
-from cruxible_core.procedures.execution import parse_admission_payload, procedure_line_partition
+from cruxible_core.procedures.execution import (
+    ProcedureRunAdmission,
+    parse_admission_payload,
+    procedure_line_partition,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
@@ -110,7 +114,7 @@ def run_identity(
     if isinstance(payload, UnavailablePayload):
         return None
     admission = parse_admission_payload(payload).admission
-    line = getattr(admission, "line_identity", None)
+    line = admission.line_identity
     return admission.procedure_identity.qualified, None if line is None else line.qualified
 
 
@@ -230,7 +234,7 @@ def _graph(
     return kinds, edges, first
 
 
-def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
+def _admission(instance: PlaybillInstance, run_id: str) -> ProcedureRunAdmission | None:
     """One journaled run's admission, or ``None`` when the journal holds no such run."""
 
     journal = procedure_run_journal(instance)
@@ -249,7 +253,9 @@ def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
     )
 
 
-def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> str | None:
+def _arming_run(
+    instance: PlaybillInstance, run_id: str, admission: ProcedureRunAdmission
+) -> str | None:
     """The run Line dispatch admitted for ``run_id``: itself, or a nested run's root.
 
     A nested run inherits its parent's Line and actor, but dispatch records
@@ -259,22 +265,14 @@ def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> s
     verify, so nothing is attributed to an arm it cannot be traced to.
     """
 
-    from cruxible_core.procedures.execution import (
-        ProcedureRunAdmissionV2,
-        procedure_parent_binding,
-    )
-
     current_id, current = run_id, admission
     seen = {run_id}
-    while (binding := procedure_parent_binding(current)) is not None:
+    while (binding := current.parent_binding) is not None:
         if binding.parent_run_id in seen:
             return None
         seen.add(binding.parent_run_id)
         parent = _admission(instance, binding.parent_run_id)
-        if (
-            not isinstance(parent, ProcedureRunAdmissionV2)
-            or parent.admission_binding_digest != binding.parent_admission_digest
-        ):
+        if parent is None or parent.admission_binding_digest != binding.parent_admission_digest:
             return None
         current_id, current = binding.parent_run_id, parent
     return current_id
@@ -283,7 +281,7 @@ def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> s
 def _run_trigger(
     instance: PlaybillInstance,
     run_id: str,
-    admission: object,
+    admission: ProcedureRunAdmission,
     viewer: OperationalViewer | None,
 ) -> GetRunTrigger | None:
     """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run.
@@ -293,11 +291,11 @@ def _run_trigger(
     one whose parent chain does not verify is withheld from all but an admin.
     """
 
-    candidate = getattr(admission, "line_identity", None)
-    if not isinstance(candidate, ArtifactIdentity):
+    candidate = admission.line_identity
+    if candidate is None:
         return None
     line = candidate.qualified
-    occurrence = getattr(admission, "occurrence_id", None)
+    occurrence = admission.occurrence_id
     arming = _arming_run(instance, run_id, admission)
     if arming is None:
         return GetRunTrigger(

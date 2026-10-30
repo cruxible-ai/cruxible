@@ -15,7 +15,6 @@ from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.input_planes import (
     AcceptedClaimRunInputV1,
-    AcceptedStateRunInputV1,
     AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
@@ -49,12 +48,16 @@ def _coordinate(seed: str) -> AcceptedCoordinate:
 
 def test_state_tap_accepts_only_the_bound_local_accepted_coordinate() -> None:
     local = _coordinate("local")
-    accepted_input = AcceptedStateRunInputV1(
+    accepted_input = AcceptedStateRunInputV2(
         input_name="claims",
         read_coordinate=local,
         query_definition_digest=_digest("query"),
         parameters_digest=_digest("parameters"),
         result_digest=_digest("result"),
+        effective_query_budgets=QueryBudgets(max_results=10, max_traversal_depth=1),
+        material_body_digest=typed_digest(
+            CasDigest, "playbill-input-test-v1", {"label": "local"}
+        ).tagged,
     )
     validate_run_input_vector((accepted_input,), expected_accepted=local)
 

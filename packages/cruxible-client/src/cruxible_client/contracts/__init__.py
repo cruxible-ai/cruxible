@@ -269,11 +269,6 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
     ProcedureRunReceipt,
-    ProcedureRunReceiptV2,
-    ProcedureRunReceiptV3,
-    ProcedureRunReceiptV4,
-    ProcedureRunReceiptV5,
-    ProcedureRunReceiptV7,
     ProcedureRunReceiptWithheld,
     ProcedureSourceObservation,
     ProcedureTerminal,
@@ -1583,16 +1578,7 @@ class ProcedureRunState(BaseModel):
     ) = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: (
-        ProcedureRunReceiptV2
-        | ProcedureRunReceiptV3
-        | ProcedureRunReceiptV4
-        | ProcedureRunReceiptV5
-        | ProcedureRunReceipt
-        | ProcedureRunReceiptV7
-        | ProcedureRunReceiptWithheld
-        | None
-    ) = None
+    receipt: ProcedureRunReceipt | ProcedureRunReceiptWithheld | None = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminal | None = None
     children: list[ProcedureChildInvocation] = Field(default_factory=list)

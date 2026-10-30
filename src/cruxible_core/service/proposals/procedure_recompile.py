@@ -19,8 +19,7 @@ from cruxible_core.procedures.egress import (
     require_procedure_mandate_at_head,
 )
 from cruxible_core.procedures.execution import (
-    ProcedureAdmissionBoundPayloadV5,
-    ProcedureRunAdmissionV5,
+    ProcedureRunAdmission,
     parse_admission_payload,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
@@ -39,7 +38,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 def _retained_run(
     instance: PlaybillInstance, origin: ProposalResult
-) -> tuple[ProcedureRunAdmissionV5, Mapping[str, object]]:
+) -> tuple[ProcedureRunAdmission, Mapping[str, object]]:
     """The run admission and prepared terminal payload a Procedure proposal came from.
 
     Located by operation/member, then by indexed run and event: bounded by this
@@ -70,7 +69,7 @@ def _retained_run(
     stream = _stream(instance)
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="proposal-recompile", can_read_body=True)
-    admission: ProcedureRunAdmissionV5 | None = None
+    admission: ProcedureRunAdmission | None = None
     prepared_payload: Mapping[str, object] | None = None
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="admission_bound"
@@ -78,7 +77,8 @@ def _retained_run(
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if not isinstance(payload, UnavailablePayload):
             parsed = parse_admission_payload(payload)
-            if isinstance(parsed, ProcedureAdmissionBoundPayloadV5):
+            # A Procedure proposal recompiles from a run that planned its occurrences.
+            if parsed.admission.plans_providers:
                 admission = parsed.admission
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="terminal_egress"
@@ -114,7 +114,7 @@ def recompile_origin(
         admission, _payload = _retained_run(instance, origin)
     except ProposalStale:
         return "procedure", None
-    line = getattr(admission, "line_identity", None)
+    line = admission.line_identity
     if admission.invocation_origin == "line" and line is not None:
         return "line", line.name
     return "procedure", admission.procedure_identity.name
@@ -161,13 +161,10 @@ def procedure_input(
     )
     coordinate = instance.accepted_coordinate()
     delegation = None
-    from cruxible_core.procedures.execution import nested_admission
-
-    nested = nested_admission(admission)
-    if nested is not None:
+    if admission.parent_binding is not None:
         from cruxible_core.service.procedures.nested_runs import retained_delegation
 
-        retained = retained_delegation(instance, nested)
+        retained = retained_delegation(instance, admission)
         if isinstance(retained, UnavailablePayload):
             raise ProposalStale(
                 source_id, reason="input_unavailable", detail="Procedure delegation is unavailable"
@@ -175,14 +172,14 @@ def procedure_input(
         delegation = retained
     name = (
         request.procedure_identity.name
-        if delegation is None or nested is None
-        else delegation.authority(nested).target.name
+        if delegation is None
+        else delegation.authority(admission).target.name
     )
     try:
         _accepted_procedure(instance, name=name, coordinate=coordinate)
         mandates = _accepted_line_mandates(
             instance,
-            getattr(admission, "line_identity", None),
+            admission.line_identity,
             admission.line_spec_digest,
             coordinate=coordinate,
             evaluation_time=request.evaluation_time,

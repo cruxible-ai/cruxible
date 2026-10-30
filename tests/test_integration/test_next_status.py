@@ -291,7 +291,7 @@ def test_an_instance_with_no_scheduled_action_names_a_trigger_to_author(tmp_path
     # Accepted state always runs the compiler this daemon installs.
     assert status.compiler.state == "current"
     assert status.compiler.detail["running_compiler_digest"] == CURRENT_COMPILER.rule_digest
-    assert status.compiler.detail["running_compiler_revision"] == "merkle-genesis-v1"
+    assert status.compiler.detail["running_compiler_revision"] == "admitted-run-v1"
     # With its seeded Triggers retired, the instance schedules no internal action.
     assert status.triggers.state == "unscheduled"
     assert status.triggers.repair is not None

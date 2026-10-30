@@ -42,7 +42,7 @@ from cruxible_core.proposals.proposals import (
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.sqlite import ProjectionHandle
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
     from cruxible_core.procedures.nested import ProcedureDelegation
 
 
@@ -140,7 +140,7 @@ class ProposalTerminalAdapter:
         self,
         *,
         request: TerminalEgressRequestV2,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateAny],
         item_paths: Mapping[str, str] | None = None,
@@ -168,7 +168,7 @@ class ProposalTerminalAdapter:
         self,
         *,
         request: TerminalEgressRequestV2,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         candidate_tree: Mapping[str, bytes],
         accepted_mandates: Mapping[str, ProcedureMandateAny],
         rationale: str | None = None,

@@ -37,7 +37,7 @@ from cruxible_core.procedures.egress import (
     verify_terminal_egress_receipt,
 )
 from cruxible_core.procedures.execution import (
-    ProcedureRunAdmissionV1,
+    ProcedureRunAdmission,
     prepare_direct_procedure_run,
 )
 from cruxible_core.procedures.reference_binding import authored_procedure
@@ -96,7 +96,7 @@ def _item(path: str, *, value: object = "value") -> TerminalEgressItemV1:
 def _base_request(
     kind: str,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     item: TerminalEgressItemV1,
     bound: ArtifactPin | None = None,
 ) -> TerminalEgressRequestV1:
@@ -129,7 +129,7 @@ def _admission(
     coordinate=None,
     actor=None,
     admitted_at: datetime = NOW,
-) -> ProcedureRunAdmissionV1:
+) -> ProcedureRunAdmission:
     root = tmp_path / "admission"
     root.mkdir()
     fixture = _fixture(root)
@@ -137,7 +137,6 @@ def _admission(
     return prepare_direct_procedure_run(
         accepted,
         instance_id="instance-a",
-        run_id=None,
         accepted_coordinate=coordinate or _coordinate(),
         invocation_input={"value": 7},
         actor_context=actor or _actor(),
@@ -150,7 +149,7 @@ def _admission(
 
 
 def _runtime_mandate(
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     *,
     namespace: tuple[str, ...],
     grants: str = "settle",
@@ -161,7 +160,7 @@ def _runtime_mandate(
     # has no line identity to pin against, so such callers get the base
     # mandate's own (unrelated) Line.
     base = _mandate(grants=grants)
-    line_identity = getattr(admission, "line_identity", None)
+    line_identity = admission.line_identity
     line_digest = admission.line_spec_digest
     update: dict[str, object] = {
         "resource_ceiling": admission.hard_caps,
@@ -182,7 +181,7 @@ def _line_run_admission(
     admitted_at: datetime = NOW,
     line_identity: ArtifactIdentity | None = None,
     line_spec_digest: str | None = None,
-) -> ProcedureRunAdmissionV1:
+) -> ProcedureRunAdmission:
     root = tmp_path / "admission"
     root.mkdir(exist_ok=True)
     fixture = _fixture(root)
@@ -201,7 +200,7 @@ def _line_run_admission(
 def _effectful_request(
     kind: str,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     item: TerminalEgressItemV1,
     target_paths: tuple[str, ...],
     mandate_digest: str,

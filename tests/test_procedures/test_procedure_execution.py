@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -28,7 +29,10 @@ from cruxible_client.contracts.captures import (
     CaptureRetentionErasurePolicy,
 )
 from cruxible_client.contracts.errors import ExecutionError
-from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionInputDecision
+from cruxible_client.contracts.procedures.acquisition_rules import (
+    ACQUISITION_RULES_DIGEST_DOMAIN,
+    AcquisitionInputDecision,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -71,12 +75,13 @@ from cruxible_client.contracts.procedures.models import (
     TransformNode,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureAcquisitionPlan,
     ProcedureAdmissionRefusal,
     ProcedureProviderBinding,
-    ProcedureRunReceiptV4,
-    ProcedureRunReceiptV5,
-    ProviderBucketClassificationPlan,
+    ProcedureRunReceipt,
+    procedure_acquisition_plan_digest,
 )
+from cruxible_client.contracts.procedures.windows import BoundObservationWindow
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
     ClaimQueryResult,
@@ -84,6 +89,11 @@ from cruxible_client.contracts.query.results import (
     QueryResultRow,
     QueryRowBinding,
     QueryTruncation,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReference,
+    InvestigationBinding,
+    ResolutionContractReference,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.exhaust import (
@@ -99,17 +109,15 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.procedures.execution import (
     ExhaustRunMaterialV1,
-    PreparedProcedureRunV3,
-    PreparedProcedureRunV4,
-    ProcedureAdmissionBoundPayloadV2,
-    ProcedureAdmissionBoundPayloadV3,
+    LandedCaptureRunMaterialV1,
+    PreparedProcedureRun,
+    ProcedureAdmissionBoundPayload,
     ProcedureAdmissionMaterialManifest,
     ProcedureAdmissionMaterialMember,
     ProcedureExecutor,
-    ProcedureProviderBindingV1,
-    ProcedureRunAdmissionV2,
-    ProcedureRunAdmissionV3,
-    ProcedureRunAdmissionV4,
+    ProcedureParentBindingV1,
+    ProcedureResourceBudgetV1,
+    ProcedureRunAdmission,
     ProcedureRunRefusalV1,
     ProcedureSelectionDecision,
     StateTapReadResultV1,
@@ -117,18 +125,22 @@ from cruxible_core.procedures.execution import (
     _check_return_budget,
     _extract_items,
     _RunRefusal,
+    admission_fields,
     capture_admission_material_member,
+    parse_admission_payload,
     prepare_direct_procedure_run,
     procedure_admission_digest,
     procedure_admission_material_digest,
+    procedure_direct_partition,
     procedure_line_journal_stream,
     procedure_line_partition,
-    procedure_line_run_id,
     procedure_replay_input_vector,
     procedure_selection_decision_digest,
     procedure_semantic_replay_key_digest,
     procedure_semantic_result_digest,
+    procedure_semantic_run_id,
     run_value_digest,
+    seal_procedure_run_admission,
     verify_line_admission_spec,
 )
 from cruxible_core.procedures.input_planes import (
@@ -932,7 +944,6 @@ def _prepare(accepted: AcceptedProcedure, fixture: _Fixture, reader: _StateReade
     return prepare_direct_procedure_run(
         accepted,
         instance_id="instance-a",
-        run_id=kwargs.get("run_id", "run-a"),
         accepted_coordinate=kwargs.get("accepted_coordinate", _coordinate()),
         invocation_input=kwargs.get("invocation_input", {"value": 7}),
         actor_context=kwargs.get("actor_context", _actor()),
@@ -943,6 +954,73 @@ def _prepare(accepted: AcceptedProcedure, fixture: _Fixture, reader: _StateReade
         admitted_at=NOW,
         runtime_policy=kwargs.get("runtime_policy"),
     )
+
+
+def test_a_pure_direct_run_binds_no_line_plan_invocation_or_occurrence(tmp_path) -> None:
+    """The one carrier, read for a pure run: nothing about Providers or a Line is invented."""
+
+    fixture = _fixture(tmp_path)
+    prepared = _prepare(_state_procedure(), fixture, _StateReader(), journal_partition_id=None)
+    admission = prepared.admission
+    assert admission.tag == "playbill-procedure-run-admission-v10"
+    assert admission.invocation_origin == "actor"
+    assert not admission.plans_providers
+    assert admission.parent_binding is None
+    assert (
+        admission.line_identity,
+        admission.occurrence_id,
+        admission.selection_decision,
+        admission.provider_output_bytes_cap,
+        admission.deployment_snapshot_digest,
+    ) == (None, None, None, None, None)
+    assert admission.resolved_provider_bindings == ()
+    assert admission.occurrence_evaluation_time == admission.admitted_at
+    assert prepared.acquisition_plan is None
+    assert prepared.admission_material_manifest.members == ()
+    # Its identity is derived, never supplied: the direct lane's run id and partition.
+    assert admission.run_id == procedure_semantic_run_id(admission.semantic_replay_key_digest)
+    assert admission.journal_partition_id == procedure_direct_partition(
+        admission.semantic_replay_key_digest
+    )
+    assert admission.admission_binding_digest == procedure_admission_digest(admission)
+    payload = prepared.bound_payload().model_dump(mode="json")
+    assert payload["tag"] == "playbill-procedure-admission-bound-payload-v10"
+    assert "acquisition_plan" not in payload or payload["acquisition_plan"] is None
+    with pytest.raises(ValueError, match="binds no Provider, selection, output cap or trigger"):
+        ProcedureRunAdmission.model_validate(
+            {**admission.model_dump(mode="python"), "provider_output_bytes_cap": 1024}
+        )
+    with pytest.raises(ValueError, match="direct admission cannot claim Line state"):
+        seal_procedure_run_admission(
+            {**admission_fields(admission), "occurrence_id": "OCC-invented"}
+        )
+
+
+def test_a_pure_investigation_reseals_identity_and_refuses_a_trigger(tmp_path) -> None:
+    """Binding an investigation is replay semantics: the run gets a new derived identity."""
+
+    fixture = _fixture(tmp_path)
+    prepared = _prepare(_state_procedure(), fixture, _StateReader(), journal_partition_id=None)
+    investigated = execution_module.bind_prepared_investigation(
+        prepared, investigation=_investigation()
+    )
+    before, after = prepared.admission, investigated.admission
+    assert after.investigation == _investigation()
+    assert after.semantic_replay_key_digest != before.semantic_replay_key_digest
+    assert after.run_id == procedure_semantic_run_id(after.semantic_replay_key_digest)
+    assert after.run_id != before.run_id
+    assert after.journal_partition_id == procedure_direct_partition(
+        after.semantic_replay_key_digest
+    )
+    # Rebinding the same investigation reproduces the same identity exactly.
+    again = execution_module.bind_prepared_investigation(prepared, investigation=_investigation())
+    assert again.admission == after
+    with pytest.raises(ExecutionError, match="Line trigger requires a Line acquisition admission"):
+        execution_module.bind_prepared_investigation(
+            prepared,
+            investigation=_investigation(),
+            trigger=cast(Any, object()),
+        )
 
 
 def test_independent_execution_commits_one_semantic_result_across_partitions(tmp_path) -> None:
@@ -1000,6 +1078,30 @@ def test_independent_execution_commits_one_semantic_result_across_partitions(tmp
     assert results[0][1] != results[1][1]
 
 
+def _investigation() -> InvestigationBinding:
+    """An exact investigation binding; only its identity enters replay semantics."""
+
+    coordinate = _coordinate()
+    return InvestigationBinding.model_construct(
+        contract=ResolutionContractReference.model_construct(
+            identity=ArtifactIdentity(kind="ResolutionContract", name="contract"),
+            artifact_digest=_digest("resolution-contract"),
+            coordinate=coordinate,
+        ),
+        hypothesis=ClaimVersionReference.model_construct(
+            identity=ArtifactIdentity(kind="Claim", name="hypothesis"),
+            artifact_digest=_digest("hypothesis"),
+            statement_digest=_digest("hypothesis-statement"),
+            coordinate=coordinate,
+        ),
+        window=BoundObservationWindow(starts_at=NOW, ends_at=NOW + timedelta(hours=1)),
+    )
+
+
+#: Every hand-built Line admission's acquisition plan, by plan digest.
+_LINE_PLANS: dict[str, ProcedureAcquisitionPlan] = {}
+
+
 def _line_admission(
     accepted: AcceptedProcedure,
     fixture: _Fixture,
@@ -1014,123 +1116,152 @@ def _line_admission(
     actor_context: GovernedActorContext | None = None,
     line_identity: ArtifactIdentity | None = None,
     line_spec_digest: str | None = None,
-) -> ProcedureRunAdmissionV3:
+    selection_decision: ProcedureSelectionDecision | None = None,
+) -> ProcedureRunAdmission:
+    """A Line occurrence's admission with a real, zero-occurrence acquisition plan.
+
+    Its plan (retrievable with ``_line_plan``) plans no Provider call, which is
+    exactly what a Line over a Provider-free Procedure binds.
+    """
+
     prepare_kwargs: dict[str, object] = {}
     if coordinate is not None:
         prepare_kwargs["accepted_coordinate"] = coordinate
     if actor_context is not None:
         prepare_kwargs["actor_context"] = actor_context
-    direct = _prepare(accepted, fixture, _StateReader(), **prepare_kwargs).admission
+    return _line_admission_from(
+        _prepare(accepted, fixture, _StateReader(), **prepare_kwargs).admission,
+        occurrence_id=occurrence_id,
+        occurrence_evaluation_time=occurrence_evaluation_time,
+        admitted_at=admitted_at,
+        attempt=attempt,
+        landed_capture_inputs=landed_capture_inputs,
+        exhaust_inputs=exhaust_inputs,
+        line_identity=line_identity,
+        line_spec_digest=line_spec_digest,
+        selection_decision=selection_decision,
+    )
+
+
+def _line_admission_from(
+    direct: ProcedureRunAdmission,
+    *,
+    occurrence_id: str = "OCC-0001",
+    occurrence_evaluation_time: datetime = NOW,
+    admitted_at: datetime = NOW,
+    attempt: int = 1,
+    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = (),
+    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = (),
+    line_identity: ArtifactIdentity | None = None,
+    line_spec_digest: str | None = None,
+    selection_decision: ProcedureSelectionDecision | None = None,
+    taint_labels: tuple[str, ...] = ("sensitive",),
+    epsilon_member: bool = True,
+) -> ProcedureRunAdmission:
+    """A direct admission's semantic fields, re-admitted as one Line occurrence."""
+
     policy_digest = _digest("acquisition-policy")
-    decision = ProcedureSelectionDecision(
+    decision = selection_decision or ProcedureSelectionDecision(
         policy_digest=policy_digest,
         verdict="selected",
         decisions=(),
     )
     line_identity = line_identity or ArtifactIdentity(kind="Line", name="daily-triage")
-    fields = {name: getattr(direct, name) for name in type(direct).model_fields if name != "tag"}
-    fields.update(
+    spec_digest = line_spec_digest or _digest("line-spec")
+    exhaust_binding = _digest("exhaust-binding") if exhaust_inputs else None
+    plan = ProcedureAcquisitionPlan(
+        accepted_coordinate=direct.accepted_coordinate,
+        line_identity=line_identity,
+        line_spec_digest=spec_digest,
+        occurrence_id=occurrence_id,
+        occurrence_evaluation_time=occurrence_evaluation_time,
+        acquisition_policy_format=ACQUISITION_RULES_DIGEST_DOMAIN,
+        acquisition_policy_digest=decision.policy_digest,
+        selection_receipt_digest=_digest("selection-receipt"),
+        selection_decision=decision,
+        selection_decision_digest=procedure_selection_decision_digest(decision),
+        has_exhaust_occurrences=exhaust_binding is not None,
+        exhaust_access_binding_digest=exhaust_binding,
+    )
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    _LINE_PLANS[plan_digest] = plan
+    return seal_procedure_run_admission(
         {
-            "run_id": "RUN-" + "0" * 64,
+            **admission_fields(direct),
             "attempt": attempt,
             "invocation_origin": "line",
             "journal_stream": procedure_line_journal_stream("instance-a"),
-            "journal_partition_id": procedure_line_partition(line_identity),
-            "line_spec_digest": line_spec_digest or _digest("line-spec"),
+            "line_identity": line_identity,
+            "line_spec_digest": spec_digest,
             "occurrence_id": occurrence_id,
+            "occurrence_evaluation_time": occurrence_evaluation_time,
             "deployment_snapshot_digest": _digest("deployment"),
-            "acquisition_policy_digest": policy_digest,
+            "acquisition_policy_digest": decision.policy_digest,
             "selection_receipt_digest": _digest("selection-receipt"),
             "sensitivity_policy_digest": _digest("sensitivity"),
             "mandate_coordinate_digest": _digest("mandate"),
             "calibration_coordinate_digest": _digest("calibration"),
-            "taint_labels": ("sensitive",),
-            "epsilon_member": True,
+            "taint_labels": taint_labels,
+            "epsilon_member": epsilon_member,
             "admitted_at": admitted_at,
-            "line_identity": line_identity,
-            "occurrence_evaluation_time": occurrence_evaluation_time,
             "resolved_provider_bindings": (),
             "selection_decision": decision,
             "selection_decision_digest": procedure_selection_decision_digest(decision),
             "provider_output_bytes_cap": 1_048_576,
+            "acquisition_plan_digest": plan_digest,
+            "exhaust_access_binding_digest": exhaust_binding,
             "landed_capture_inputs": landed_capture_inputs,
             "exhaust_inputs": exhaust_inputs,
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
-    )
-    provisional = ProcedureRunAdmissionV3.model_construct(**fields)
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    run_id = procedure_line_run_id(
-        occurrence_id=occurrence_id,
-        attempt=provisional.attempt,
-        admission_binding_digest=admission_digest,
-        occurrence_evaluation_time=occurrence_evaluation_time,
-    )
-    return ProcedureRunAdmissionV3.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "run_id": run_id,
-            "admission_binding_digest": admission_digest,
         }
     )
 
 
-def _line_admission_v4(
-    accepted: AcceptedProcedure,
-    fixture: _Fixture,
-) -> ProcedureRunAdmissionV4:
-    v3 = _line_admission(accepted, fixture)
-    plan = ProviderBucketClassificationPlan(
-        node_id="provider",
-        interface_artifact_digest=_digest("interface-artifact"),
-        interface_digest=_digest("interface"),
-        vocabulary_digest=_digest("vocabulary"),
-        classifier_digest=_digest("classifier"),
-        accepted_bucket_selectors=("size=*",),
+def _line_plan(admission: ProcedureRunAdmission) -> ProcedureAcquisitionPlan:
+    assert admission.acquisition_plan_digest is not None
+    return _LINE_PLANS[admission.acquisition_plan_digest]
+
+
+def _line_bound_prepared(fixture: _Fixture, direct: PreparedProcedureRun) -> PreparedProcedureRun:
+    """A direct prepared run re-admitted as an untainted Line occurrence, writer active."""
+
+    admission = _line_admission_from(direct.admission, taint_labels=(), epsilon_member=False)
+    fixture.journal.activate_writer(
+        admission.journal_stream,
+        admission.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(
+            admission.journal_stream, admission.journal_partition_id
+        ),
     )
-    binding = ProcedureProviderBinding(
-        node_id=plan.node_id,
-        provider_artifact_digest=_digest("provider"),
-        classification_plan=plan,
-        implementation_digest=_digest("implementation"),
-        effect_class="external_read",
-        secret_binding_identity_digests=(_digest("secret-identity"),),
-    )
-    fields = {
-        name: getattr(v3, name) for name in ProcedureRunAdmissionV3.model_fields if name != "tag"
-    }
-    fields.update(
-        {
-            "run_id": "RUN-" + "0" * 64,
-            "resolved_provider_bindings": (binding,),
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
-    )
-    provisional = ProcedureRunAdmissionV4.model_construct(**fields)
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    run_id = procedure_line_run_id(
-        occurrence_id=provisional.occurrence_id or "",
-        attempt=provisional.attempt,
-        admission_binding_digest=admission_digest,
-        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-    )
-    return ProcedureRunAdmissionV4.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "run_id": run_id,
-            "admission_binding_digest": admission_digest,
-        }
+    return _line_prepared(admission, direct)
+
+
+def _line_prepared(
+    admission: ProcedureRunAdmission,
+    direct: PreparedProcedureRun,
+    *,
+    manifest: ProcedureAdmissionMaterialManifest | None = None,
+    landed_capture_materials: tuple[LandedCaptureRunMaterialV1, ...] = (),
+    exhaust_materials: tuple[ExhaustRunMaterialV1, ...] = (),
+) -> PreparedProcedureRun:
+    """The prepared run of a hand-built Line admission over a direct run's state reads."""
+
+    manifest = manifest or ProcedureAdmissionMaterialManifest(members=())
+    plan = _line_plan(admission)
+    return PreparedProcedureRun(
+        admission=admission,
+        accepted_state_materials=direct.accepted_state_materials,
+        landed_capture_materials=landed_capture_materials,
+        exhaust_materials=exhaust_materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        acquisition_plan=plan,
+        acquisition_plan_digest=procedure_acquisition_plan_digest(plan),
     )
 
 
 def _accepted_line_for_admission(
-    admission: ProcedureRunAdmissionV3,
+    admission: ProcedureRunAdmission,
     accepted_procedure: AcceptedProcedure,
 ) -> AcceptedLineSpec:
     procedure_pin = ArtifactPin(
@@ -1138,6 +1269,7 @@ def _accepted_line_for_admission(
         target=accepted_procedure.procedure.identity,
         artifact_digest=accepted_procedure.artifact_digest,
     )
+    assert admission.line_identity is not None
     line = LineSpec(
         identity=admission.line_identity,
         occurrence_epoch=1,
@@ -1154,7 +1286,15 @@ def _accepted_line_for_admission(
     )
 
 
-def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) -> None:
+def test_line_run_id_names_its_occurrence_and_attempt(tmp_path) -> None:
+    """Attempts of one occurrence share replay identity; another occurrence does not.
+
+    The acquisition plan names the occurrence and its evaluation instant, so a
+    different occurrence is different replay semantics; a later attempt of the
+    same occurrence is the same semantics under a new run id. Both journal in
+    the Line's one partition.
+    """
+
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     first = _line_admission(accepted, fixture)
@@ -1166,16 +1306,20 @@ def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) ->
         admitted_at=NOW + timedelta(hours=2),
     )
     later_attempt = _line_admission(accepted, fixture, attempt=2)
+    later_admission = _line_admission(accepted, fixture, admitted_at=NOW + timedelta(hours=3))
 
-    assert first.semantic_replay_key_digest == second.semantic_replay_key_digest
-    assert first.admission_binding_digest == second.admission_binding_digest
+    assert first.semantic_replay_key_digest != second.semantic_replay_key_digest
     assert first.run_id != second.run_id
     assert first.semantic_replay_key_digest == later_attempt.semantic_replay_key_digest
     assert first.admission_binding_digest == later_attempt.admission_binding_digest
     assert first.run_id != later_attempt.run_id
+    # When the occurrence was admitted is not replay semantics.
+    assert first.semantic_replay_key_digest == later_admission.semantic_replay_key_digest
+    assert first.run_id == later_admission.run_id
     assert first.journal_partition_id == second.journal_partition_id
+    assert first.journal_partition_id == procedure_line_partition(first.line_identity)
     with pytest.raises(ValueError, match="run_id does not reproduce"):
-        ProcedureRunAdmissionV3.model_validate(
+        ProcedureRunAdmission.model_validate(
             {**first.model_dump(mode="python"), "run_id": second.run_id}
         )
 
@@ -1251,7 +1395,7 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
         accepted_line=accepted_line,
     )
 
-    assert isinstance(bound, ProcedureRunAdmissionV3)
+    assert isinstance(bound, ProcedureRunAdmission)
     assert bound.provider_output_bytes_cap == 64 * 1024 * 1024
     assert bound.semantic_replay_key_digest != procedure_semantic_replay_key_digest(admission)
     assert bound.semantic_replay_key_digest == procedure_semantic_replay_key_digest(bound)
@@ -1281,7 +1425,7 @@ def test_replay_carriers_have_one_client_contract_definition_source() -> None:
     for name in (
         "ProcedureAdmissionMaterialManifest",
         "ProcedureAdmissionMaterialMember",
-        "ProcedureProviderBindingV1",
+        "ProcedureProviderBinding",
         "ProcedureReplayInputProjection",
         "ProcedureSelectionDecision",
     ):
@@ -1293,24 +1437,11 @@ def test_equal_line_admission_digests_retrieve_two_exact_runs(tmp_path, monkeypa
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
     first = _line_admission(accepted, fixture)
-    second = _line_admission(
-        accepted,
-        fixture,
-        occurrence_id="OCC-0002",
-        occurrence_evaluation_time=NOW + timedelta(hours=1),
-        admitted_at=NOW + timedelta(hours=2),
-    )
+    # A second attempt of the same occurrence: the same binding, its own run.
+    second = _line_admission(accepted, fixture, attempt=2)
     assert first.admission_binding_digest == second.admission_binding_digest
-    manifest = ProcedureAdmissionMaterialManifest(members=())
-    prepared = tuple(
-        PreparedProcedureRunV3(
-            admission=admission,
-            accepted_state_materials=direct.accepted_state_materials,
-            admission_material_manifest=manifest,
-            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
-        )
-        for admission in (first, second)
-    )
+    assert first.run_id != second.run_id
+    prepared = tuple(_line_prepared(admission, direct) for admission in (first, second))
     fixture.journal.activate_writer(
         first.journal_stream,
         first.journal_partition_id,
@@ -1352,7 +1483,7 @@ def test_equal_line_admission_digests_retrieve_two_exact_runs(tmp_path, monkeypa
     assert fixture.run_index.get(second.run_id) is not None
 
 
-def test_line_v3_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_path) -> None:
+def test_line_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     admission = _line_admission(_state_procedure(), fixture)
     baseline = admission.semantic_replay_key_digest
@@ -1362,35 +1493,32 @@ def test_line_v3_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_pat
         {"deployment_snapshot_digest": _digest("other-deployment")},
         {"selection_receipt_digest": _digest("other-selection-receipt")},
         {"occurrence_id": "OCC-other"},
-        {"occurrence_evaluation_time": NOW + timedelta(days=1)},
         {"procedure_path": "procedures/provenance-only.json"},
     ):
         changed = admission.model_copy(update=update)
         assert procedure_semantic_replay_key_digest(changed) == baseline
 
-    alternate_decision = ProcedureSelectionDecision(
-        policy_digest=admission.selection_decision.policy_digest,
-        verdict="refused",
-        decisions=(
-            AcquisitionInputDecision(
-                input_name="source",
-                disposition="refused",
-                reason_codes=("unavailable",),
-            ),
-        ),
-    )
     for update in (
-        {"provider_output_bytes_cap": admission.provider_output_bytes_cap + 1},
+        {"provider_output_bytes_cap": cast(int, admission.provider_output_bytes_cap) + 1},
         {"lane": "replay"},
         {"epsilon_member": False},
-        {"selection_decision": alternate_decision},
+        {"occurrence_evaluation_time": NOW + timedelta(days=1)},
+        {"acquisition_plan_digest": _digest("other-plan")},
         {"mandate_coordinate_digest": _digest("other-mandate")},
     ):
         changed = admission.model_copy(update=update)
         assert procedure_semantic_replay_key_digest(changed) != baseline
 
 
-def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
+def test_line_replay_key_membership_is_closed(tmp_path) -> None:
+    """Exactly the one semantic projection's members decide replay identity.
+
+    The Line, occurrence, acquisition policy, selection decision and Provider
+    bindings enter through the acquisition plan's digest; changing one of them
+    alone (without the plan) is not a different replay. Provenance never
+    enters.
+    """
+
     fixture = _fixture(tmp_path)
     capture = LandedCaptureRunInputV1(
         input_name="capture",
@@ -1421,14 +1549,14 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         ),
         coherence_proof_digest=_digest("coherence"),
     )
-    binding = ProcedureProviderBindingV1(
+    binding = ProcedureProviderBinding(
         node_id="provider",
+        slot="fetch",
+        operation="read",
+        operation_signature_digest=_digest("signature"),
         provider_artifact_digest=_digest("provider"),
-        interface_artifact_digest=_digest("interface-artifact"),
-        interface_digest=_digest("interface"),
-        classifier_digest=_digest("classifier"),
-        accepted_bucket_selectors=("public",),
         implementation_digest=_digest("implementation"),
+        effect_class="external_read",
         secret_binding_identity_digests=(_digest("secret-identity"),),
     )
     admission = _line_admission(
@@ -1436,14 +1564,17 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         fixture,
         landed_capture_inputs=(capture,),
         exhaust_inputs=(exhaust,),
-    ).model_copy(
-        update={
-            "selection_decision": decision,
-            "selection_decision_digest": procedure_selection_decision_digest(decision),
-            "resolved_provider_bindings": (binding,),
-        }
+        selection_decision=decision,
+    )
+    parent = ProcedureParentBindingV1(
+        parent_run_id="RUN-" + "a" * 64,
+        parent_admission_digest=_digest("parent-admission"),
+        node_id="invoke",
+        ancestors=(_pin("procedure", "Procedure", "parent"),),
+        activation_policies=("drain",),
     )
     baseline = procedure_semantic_replay_key_digest(admission)
+    assert baseline == admission.semantic_replay_key_digest
     accepted_input = admission.accepted_state_inputs[0]
     pin = admission.full_pins[0]
     node_pins = admission.node_pin_sets[0]
@@ -1554,49 +1685,16 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
                 update={"max_items": admission.hard_caps.max_items + 1}
             )
         },
-        "acquisition policy": {"acquisition_policy_digest": _digest("other-policy")},
-        "selection decision": {
-            "selection_decision": decision.model_copy(update={"verdict": "refused"})
-        },
-        "Provider artifact": {
-            "resolved_provider_bindings": (
-                binding.model_copy(update={"provider_artifact_digest": _digest("other-provider")}),
+        "acquisition plan": {"acquisition_plan_digest": _digest("other-plan")},
+        "exhaust binding": {"exhaust_access_binding_digest": _digest("other-exhaust-binding")},
+        "evaluation instant": {"occurrence_evaluation_time": NOW + timedelta(hours=1)},
+        "resource budget": {
+            "resource_budget": ProcedureResourceBudgetV1(
+                result_bytes_cap=4096, repeat_attempts_cap=3
             )
         },
-        "interface artifact": {
-            "resolved_provider_bindings": (
-                binding.model_copy(
-                    update={"interface_artifact_digest": _digest("other-interface-artifact")}
-                ),
-            )
-        },
-        "interface": {
-            "resolved_provider_bindings": (
-                binding.model_copy(update={"interface_digest": _digest("other-interface")}),
-            )
-        },
-        "classifier": {
-            "resolved_provider_bindings": (
-                binding.model_copy(update={"classifier_digest": _digest("other-classifier")}),
-            )
-        },
-        "bucket selectors": {
-            "resolved_provider_bindings": (
-                binding.model_copy(update={"accepted_bucket_selectors": ("restricted",)}),
-            )
-        },
-        "implementation": {
-            "resolved_provider_bindings": (
-                binding.model_copy(update={"implementation_digest": _digest("other-impl")}),
-            )
-        },
-        "secret identity": {
-            "resolved_provider_bindings": (
-                binding.model_copy(
-                    update={"secret_binding_identity_digests": (_digest("other-secret"),)}
-                ),
-            )
-        },
+        "investigation": {"investigation": _investigation()},
+        "parent binding": {"parent_binding": parent},
         "mandate": {"mandate_coordinate_digest": _digest("other-mandate")},
         "calibration": {"calibration_coordinate_digest": _digest("other-calibration")},
         "sensitivity": {"sensitivity_policy_digest": _digest("other-sensitivity")},
@@ -1604,7 +1702,7 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         "taint": {"taint_labels": ("other-taint",)},
         "epsilon": {"epsilon_member": False},
         "Provider output cap": {
-            "provider_output_bytes_cap": admission.provider_output_bytes_cap + 1
+            "provider_output_bytes_cap": cast(int, admission.provider_output_bytes_cap) + 1
         },
     }
     for label, update in included.items():
@@ -1624,7 +1722,11 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         "Line identity": {"line_identity": ArtifactIdentity(kind="Line", name="other-line")},
         "LineSpec digest": {"line_spec_digest": _digest("other-line-spec")},
         "occurrence": {"occurrence_id": "OCC-other"},
-        "occurrence time": {"occurrence_evaluation_time": NOW + timedelta(hours=1)},
+        "acquisition policy": {"acquisition_policy_digest": _digest("other-policy")},
+        "selection decision": {
+            "selection_decision": decision.model_copy(update={"verdict": "refused"})
+        },
+        "Provider bindings": {"resolved_provider_bindings": (binding,)},
         "attempt": {"attempt": admission.attempt + 1},
         "actor": {
             "actor_context": admission.actor_context.model_copy(update={"operation_id": "other-op"})
@@ -1861,25 +1963,52 @@ def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_pa
         body_retention="optional",
     )
     manifest = ProcedureAdmissionMaterialManifest(members=(member,))
-    bound = ProcedureAdmissionBoundPayloadV3(
+    plan = _line_plan(admission)
+    bound = ProcedureAdmissionBoundPayload(
         admission=admission,
         admission_material_manifest=manifest,
         admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        acquisition_plan=plan,
+        acquisition_plan_digest=procedure_acquisition_plan_digest(plan),
     )
     assert bound.admission_material_manifest == manifest
+    assert parse_admission_payload(bound.model_dump(mode="json")) == bound
 
     wrong = ProcedureAdmissionMaterialManifest(
         members=(member.model_copy(update={"semantic_digest": _digest("substituted")}),)
     )
     with pytest.raises(ValueError, match="disagrees with its admitted input"):
-        ProcedureAdmissionBoundPayloadV3(
+        ProcedureAdmissionBoundPayload(
             admission=admission,
             admission_material_manifest=wrong,
             admission_material_manifest_digest=procedure_admission_material_digest(wrong),
+            acquisition_plan=plan,
+            acquisition_plan_digest=procedure_acquisition_plan_digest(plan),
+        )
+    with pytest.raises(ValueError, match="acquisition plan differs from admission"):
+        ProcedureAdmissionBoundPayload(
+            admission=admission,
+            admission_material_manifest=manifest,
+            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
         )
 
 
-def test_line_v3_admission_bound_persists_manifest_not_material_values(
+@pytest.mark.parametrize(
+    "tag",
+    (
+        "playbill-procedure-admission-bound-payload-v2",
+        "playbill-procedure-admission-bound-payload-v9",
+    ),
+)
+def test_a_removed_admission_envelope_is_refused_never_reinterpreted(tmp_path, tag) -> None:
+    fixture = _fixture(tmp_path)
+    payload = _prepare(_state_procedure(), fixture, _StateReader()).bound_payload()
+    retired = {**payload.model_dump(mode="json"), "tag": tag}
+    with pytest.raises(ExecutionError, match="admission payload version is unsupported"):
+        parse_admission_payload(retired)
+
+
+def test_line_admission_bound_persists_manifest_not_material_values(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -1914,12 +2043,11 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
         body_retention="optional",
     )
     manifest = ProcedureAdmissionMaterialManifest(members=(member,))
-    prepared = PreparedProcedureRunV3(
-        admission=admission,
-        accepted_state_materials=direct.accepted_state_materials,
+    prepared = _line_prepared(
+        admission,
+        direct,
+        manifest=manifest,
         exhaust_materials=(ExhaustRunMaterialV1(input=exhaust_input, value=exhaust_value),),
-        admission_material_manifest=manifest,
-        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
     )
     fixture.journal.activate_writer(
         fixture.stream,
@@ -1979,10 +2107,10 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
             access=BodyAccessContext(principal_id="test", can_read_body=True),
         )
     )
-    assert payload["tag"] == "playbill-procedure-admission-bound-payload-v3"
+    assert payload["tag"] == "playbill-procedure-admission-bound-payload-v10"
     assert "accepted_state_materials" not in payload
     assert payload["admission_material_manifest"]["members"] == [member.model_dump(mode="json")]
-    assert ProcedureRunAdmissionV3.model_validate(payload["admission"]) == admission
+    assert ProcedureRunAdmission.model_validate(payload["admission"]) == admission
     assert reservations.active() == ()
 
     records = fixture.journal.all_records(
@@ -2003,28 +2131,28 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
         _Instance(),
         run_id=admission.run_id,
     )
-    assert isinstance(state.receipt, ProcedureRunReceiptV4)
+    assert isinstance(state.receipt, ProcedureRunReceipt)
+    assert state.receipt.invocation_origin == "line"
     assert state.receipt.line_identity == admission.line_identity
+    assert state.receipt.acquisition_plan_digest == admission.acquisition_plan_digest
     assert state.receipt.admission_material_manifest.model_dump(mode="json") == manifest.model_dump(
         mode="json"
     )
 
 
-def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
+def test_a_zero_provider_line_run_journals_and_receipts_its_empty_plan(
     tmp_path,
     monkeypatch,
 ) -> None:
+    """A Line over a Provider-free Procedure binds a real plan that plans no call."""
+
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
-    admission = _line_admission_v4(accepted, fixture)
-    manifest = ProcedureAdmissionMaterialManifest(members=())
-    prepared = PreparedProcedureRunV4(
-        admission=admission,
-        accepted_state_materials=direct.accepted_state_materials,
-        admission_material_manifest=manifest,
-        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
-    )
+    admission = _line_admission(accepted, fixture)
+    prepared = _line_prepared(admission, direct)
+    assert prepared.acquisition_plan is not None
+    assert prepared.acquisition_plan.external_occurrences == ()
     fixture.journal.activate_writer(
         fixture.stream,
         admission.journal_partition_id,
@@ -2053,8 +2181,9 @@ def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
             access=BodyAccessContext(principal_id="test", can_read_body=True),
         )
     )
-    assert bound_payload["tag"] == "playbill-procedure-admission-bound-payload-v4"
-    assert ProcedureRunAdmissionV4.model_validate(bound_payload["admission"]) == admission
+    assert bound_payload["tag"] == "playbill-procedure-admission-bound-payload-v10"
+    assert ProcedureRunAdmission.model_validate(bound_payload["admission"]) == admission
+    assert bound_payload["acquisition_plan_digest"] == admission.acquisition_plan_digest
     monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
 
     class _Instance:
@@ -2065,93 +2194,46 @@ def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
         _Instance(),
         run_id=admission.run_id,
     )
-    assert isinstance(state.receipt, ProcedureRunReceiptV5)
-    assert state.receipt.resolved_provider_bindings == admission.resolved_provider_bindings
+    assert isinstance(state.receipt, ProcedureRunReceipt)
+    assert state.receipt.resolved_provider_bindings == ()
+    assert state.receipt.invocation_receipt_digests == ()
+    assert state.receipt.budget.observed.provider_calls == 0
+    assert state.receipt.budget.declared.provider_output_bytes_cap == 1_048_576
 
 
-def test_line_v4_replay_key_commits_every_provider_plan_dimension(tmp_path) -> None:
-    fixture = _fixture(tmp_path)
-    admission = _line_admission_v4(_state_procedure(), fixture)
-    baseline = admission.semantic_replay_key_digest
-    binding = admission.resolved_provider_bindings[0]
-    plan = binding.classification_plan
+def test_provider_bindings_are_exactly_the_acquisition_plans_own(tmp_path) -> None:
+    """Bindings enter replay identity through the plan; a stray binding is refused."""
 
-    changes = (
-        {"provider_artifact_digest": _digest("other-provider")},
-        {
-            "classification_plan": plan.model_copy(
-                update={"interface_artifact_digest": _digest("other-interface-artifact")}
-            )
-        },
-        {
-            "classification_plan": plan.model_copy(
-                update={"interface_digest": _digest("other-interface")}
-            )
-        },
-        {
-            "classification_plan": plan.model_copy(
-                update={"vocabulary_digest": _digest("other-vocabulary")}
-            )
-        },
-        {
-            "classification_plan": plan.model_copy(
-                update={"classifier_digest": _digest("other-classifier")}
-            )
-        },
-        {
-            "classification_plan": plan.model_copy(
-                update={"accepted_bucket_selectors": ("size=large",)}
-            )
-        },
-        {"implementation_digest": _digest("other-implementation")},
-        {"effect_class": "none"},
-    )
-    for change in changes:
-        changed = admission.model_copy(
-            update={"resolved_provider_bindings": (binding.model_copy(update=change),)}
-        )
-        assert procedure_semantic_replay_key_digest(changed) != baseline
-    assert "measured_bucket" not in str(admission.model_dump(mode="json"))
-
-
-def test_line_track_fold_reads_real_v2_and_v3_nested_admission_payloads(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
-    v3 = _line_admission(accepted, fixture)
-    accepted_line = _accepted_line_for_admission(v3, accepted)
-    v3 = v3.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
-    v2_fields = {
-        name: getattr(v3, name) for name in ProcedureRunAdmissionV2.model_fields if name != "tag"
-    }
-    v2_fields.update(
-        {
-            "run_id": "RUN-v2-line",
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
+    admission = _line_admission(accepted, fixture)
+    stray = ProcedureProviderBinding(
+        node_id="provider",
+        slot="fetch",
+        operation="read",
+        operation_signature_digest=_digest("signature"),
+        provider_artifact_digest=_digest("provider"),
+        implementation_digest=_digest("implementation"),
+        effect_class="external_read",
+        secret_binding_identity_digests=(),
     )
-    provisional_v2 = ProcedureRunAdmissionV2.model_construct(**v2_fields)
-    replay_key = procedure_semantic_replay_key_digest(provisional_v2)
-    provisional_v2 = provisional_v2.model_copy(update={"semantic_replay_key_digest": replay_key})
-    v2 = ProcedureRunAdmissionV2.model_validate(
-        {
-            **provisional_v2.model_dump(mode="python"),
-            "admission_binding_digest": procedure_admission_digest(provisional_v2),
-        }
+    with_stray = admission.model_copy(update={"resolved_provider_bindings": (stray,)})
+    assert procedure_semantic_replay_key_digest(with_stray) == (
+        admission.semantic_replay_key_digest
     )
-    manifest = ProcedureAdmissionMaterialManifest(members=())
-    payloads = (
-        ProcedureAdmissionBoundPayloadV2(
-            admission=v2,
-            accepted_state_materials=direct.accepted_state_materials,
-        ).model_dump(mode="json"),
-        ProcedureAdmissionBoundPayloadV3(
-            admission=v3,
-            admission_material_manifest=manifest,
-            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
-        ).model_dump(mode="json"),
-    )
+    with pytest.raises(ValueError, match="not the acquisition plan's own"):
+        _line_prepared(with_stray, direct)
+
+
+def test_line_track_fold_reads_the_current_admission_payload(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    line_admission = _line_admission(accepted, fixture)
+    accepted_line = _accepted_line_for_admission(line_admission, accepted)
+    v3 = _line_admission(accepted, fixture, line_spec_digest=accepted_line.artifact_digest)
+    payloads = (_line_prepared(v3, direct).bound_payload().model_dump(mode="json"),)
     reducer = LineTrackRecordReducer(
         accepted_line=accepted_line,
         accepted_procedure=accepted,
@@ -2227,7 +2309,8 @@ def test_each_semantic_run_input_discriminates_the_replay_key(
             )
         }
     elif changed_input == "evaluation_time":
-        update = {"admitted_at": first.admitted_at + timedelta(microseconds=1)}
+        later = first.admitted_at + timedelta(microseconds=1)
+        update = {"admitted_at": later, "occurrence_evaluation_time": later}
     elif changed_input == "bound_coordinate":
         update = {
             "bound_coordinate": first.bound_coordinate.model_copy(update={"git_oid": "b" * 40})

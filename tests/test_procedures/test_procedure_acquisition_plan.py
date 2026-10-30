@@ -26,12 +26,11 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV9,
-    ProcedureRunAdmissionV3,
-    ProcedureRunAdmissionV9,
-    procedure_admission_digest,
-    procedure_line_run_id,
+    PreparedProcedureRun,
+    ProcedureRunAdmission,
+    admission_fields,
     procedure_semantic_replay_key_digest,
+    seal_procedure_run_admission,
 )
 from cruxible_core.service.procedures.procedure_runs import (
     _plan_selection_decision,
@@ -40,7 +39,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from tests.test_procedures.test_procedure_execution import (
     _digest,
     _fixture,
-    _line_admission_v4,
+    _line_admission,
     _prepare,
     _state_procedure,
     _StateReader,
@@ -61,21 +60,22 @@ def _demo_operation(effect: str) -> ProviderOperation:
 
 def _plan_and_admission(
     tmp_path: Path,
-) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmissionV9]:
+) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmission]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
-    v4 = _line_admission_v4(accepted, fixture)
-    binding = v4.resolved_provider_bindings[0]
-    operation = _demo_operation(binding.effect_class)
+    base = _line_admission(accepted, fixture)
+    assert base.provider_output_bytes_cap is not None
+    assert base.selection_decision is not None and base.selection_decision_digest is not None
+    operation = _demo_operation("external_read")
     operation_signature_digest = provider_operations.operation_signature_digest(
         operation.signature()
     )
     local = VerifiedProviderBinding(
-        provider_artifact_digest=binding.provider_artifact_digest,
+        provider_artifact_digest=_digest("provider"),
         operation=operation.name,
         operation_signature_digest=operation_signature_digest,
-        implementation_digest=binding.implementation_digest,
+        implementation_digest=_digest("implementation"),
         deployment_digest=_digest("local-deployment"),
         materialization_digest=_digest("materialization"),
         environment_manifest_digest=_digest("environment-manifest"),
@@ -83,80 +83,70 @@ def _plan_and_admission(
         declared_endpoints=("https://example.test",),
     )
     remaining = min(
-        v4.budget.wall_clock.microseconds,
-        v4.hard_caps.max_wall_clock.microseconds,
+        base.budget.wall_clock.microseconds,
+        base.hard_caps.max_wall_clock.microseconds,
     )
     budget = ProviderBudgetTranslation(
         remaining_wall_clock_microseconds=remaining,
-        procedure_wall_clock_microseconds=v4.budget.wall_clock.microseconds,
-        hard_cap_wall_clock_microseconds=v4.hard_caps.max_wall_clock.microseconds,
+        procedure_wall_clock_microseconds=base.budget.wall_clock.microseconds,
+        hard_cap_wall_clock_microseconds=base.hard_caps.max_wall_clock.microseconds,
         runtime_wall_clock_seconds=remaining // 1_000_000,
         procedure_output_bytes_cap=None,
         hard_output_bytes_cap=None,
-        policy_output_bytes_cap=v4.provider_output_bytes_cap,
-        runtime_output_bytes_cap=v4.provider_output_bytes_cap,
-        max_provider_calls=min(v4.budget.max_provider_calls, v4.hard_caps.max_provider_calls),
-        max_items=v4.budget.max_items,
+        policy_output_bytes_cap=base.provider_output_bytes_cap,
+        runtime_output_bytes_cap=base.provider_output_bytes_cap,
+        max_provider_calls=min(base.budget.max_provider_calls, base.hard_caps.max_provider_calls),
+        max_items=base.budget.max_items,
         result_bytes_cap=1024,
     )
     occurrence = ProviderExternalOccurrencePlan(
         occurrence_path="provider",
         occurrence_kind="provider",
-        node_id=binding.node_id,
+        node_id="provider",
         slot="fetch",
-        provider_artifact_digest=binding.provider_artifact_digest,
+        provider_artifact_digest=_digest("provider"),
         operation=operation,
         operation_signature_digest=operation_signature_digest,
-        implementation_digest=binding.implementation_digest,
-        effect_class=binding.effect_class,
+        implementation_digest=_digest("implementation"),
+        effect_class="external_read",
         local_execution=local,
         secret_plan=ProviderSecretResolutionPlan(),
         budget_translation=budget,
     )
     plan = ProcedureAcquisitionPlan(
-        accepted_coordinate=v4.accepted_coordinate,
-        line_identity=v4.line_identity,
-        line_spec_digest=v4.line_spec_digest or "",
-        occurrence_id=v4.occurrence_id or "",
-        occurrence_evaluation_time=v4.occurrence_evaluation_time,
+        accepted_coordinate=base.accepted_coordinate,
+        line_identity=base.line_identity,
+        line_spec_digest=base.line_spec_digest or "",
+        occurrence_id=base.occurrence_id or "",
+        occurrence_evaluation_time=base.occurrence_evaluation_time,
         acquisition_policy_format="playbill-source-acquisition-policy-v1",
-        acquisition_policy_digest=v4.acquisition_policy_digest or "",
-        selection_receipt_digest=v4.selection_receipt_digest,
-        selection_decision=v4.selection_decision,
-        selection_decision_digest=v4.selection_decision_digest,
+        acquisition_policy_digest=base.acquisition_policy_digest or "",
+        selection_receipt_digest=base.selection_receipt_digest,
+        selection_decision=base.selection_decision,
+        selection_decision_digest=base.selection_decision_digest,
         external_occurrences=(occurrence,),
     )
-    fields = {
-        name: getattr(v4, name) for name in ProcedureRunAdmissionV3.model_fields if name != "tag"
-    }
-    fields.update(
+    admission = seal_procedure_run_admission(
         {
-            "run_id": "RUN-" + "0" * 64,
+            **admission_fields(base),
             "resolved_provider_bindings": procedure_provider_bindings(plan.external_occurrences),
             "acquisition_plan_digest": procedure_acquisition_plan_digest(plan),
-            "exhaust_access_binding_digest": None,
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
-    )
-    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    run_id = procedure_line_run_id(
-        occurrence_id=provisional.occurrence_id or "",
-        attempt=provisional.attempt,
-        admission_binding_digest=admission_digest,
-        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-    )
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "run_id": run_id,
-            "admission_binding_digest": admission_digest,
         }
     )
     return plan, admission
+
+
+def _with_plan(
+    admission: ProcedureRunAdmission, plan: ProcedureAcquisitionPlan
+) -> ProcedureRunAdmission:
+    """The admission resealed under another plan, its bindings unchanged."""
+
+    return seal_procedure_run_admission(
+        {
+            **admission_fields(admission),
+            "acquisition_plan_digest": procedure_acquisition_plan_digest(plan),
+        }
+    )
 
 
 def test_acquisition_semantic_key_commits_plan_digest_but_not_attempt(tmp_path: Path) -> None:
@@ -171,36 +161,18 @@ def test_acquisition_semantic_key_commits_plan_digest_but_not_attempt(tmp_path: 
 
 def test_exhaust_carrier_presence_law_fails_closed(tmp_path: Path) -> None:
     _plan, admission = _plan_and_admission(tmp_path)
-    provisional = admission.model_copy(
-        update={
-            "exhaust_access_binding_digest": _digest("unexpected-exhaust"),
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-            "run_id": "RUN-" + "0" * 64,
-        }
-    )
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    run_id = procedure_line_run_id(
-        occurrence_id=provisional.occurrence_id or "",
-        attempt=provisional.attempt,
-        admission_binding_digest=admission_digest,
-        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-    )
     with pytest.raises(ValidationError, match="exhaust_binding_carrier_required"):
-        ProcedureRunAdmissionV9.model_validate(
+        seal_procedure_run_admission(
             {
-                **provisional.model_dump(mode="python"),
-                "admission_binding_digest": admission_digest,
-                "run_id": run_id,
+                **admission_fields(admission),
+                "exhaust_access_binding_digest": _digest("unexpected-exhaust"),
             }
         )
 
 
 def test_exhaust_carrier_presence_law_has_a_typed_admission_emitter(tmp_path: Path) -> None:
     _plan, admission = _plan_and_admission(tmp_path)
-    invalid = ProcedureRunAdmissionV9.model_construct(
+    invalid = ProcedureRunAdmission.model_construct(
         **{
             **admission.model_dump(mode="python"),
             "exhaust_access_binding_digest": _digest("unexpected-exhaust"),
@@ -221,7 +193,7 @@ def test_prepared_run_requires_exact_plan_and_complete_provider_coverage(tmp_pat
     plan, admission = _plan_and_admission(tmp_path / "other")
     manifest = ProcedureAdmissionMaterialManifest(members=())
 
-    prepared = PreparedProcedureRunV9(
+    prepared = PreparedProcedureRun(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
         admission_material_manifest=manifest,
@@ -232,37 +204,13 @@ def test_prepared_run_requires_exact_plan_and_complete_provider_coverage(tmp_pat
     assert prepared.acquisition_plan_digest == admission.acquisition_plan_digest
 
     empty_plan = plan.model_copy(update={"external_occurrences": ()})
-    empty_plan_digest = procedure_acquisition_plan_digest(empty_plan)
-    provisional = admission.model_copy(
-        update={
-            "acquisition_plan_digest": empty_plan_digest,
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-            "run_id": "RUN-" + "0" * 64,
-        }
-    )
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    empty_plan_admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    with pytest.raises(ValidationError, match="does not cover admitted Provider bindings"):
-        PreparedProcedureRunV9.model_validate(
+    with pytest.raises(ValidationError, match="not the acquisition plan's own"):
+        PreparedProcedureRun.model_validate(
             {
                 **prepared.model_dump(mode="python"),
-                "admission": empty_plan_admission,
+                "admission": _with_plan(admission, empty_plan),
                 "acquisition_plan": empty_plan,
-                "acquisition_plan_digest": empty_plan_digest,
+                "acquisition_plan_digest": procedure_acquisition_plan_digest(empty_plan),
             }
         )
 
@@ -275,43 +223,19 @@ def test_prepared_run_requires_exact_plan_and_complete_provider_coverage(tmp_pat
             )
         }
     )
-    duplicate_plan_digest = procedure_acquisition_plan_digest(duplicate_plan)
-    provisional = admission.model_copy(
-        update={
-            "acquisition_plan_digest": duplicate_plan_digest,
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-            "run_id": "RUN-" + "0" * 64,
-        }
-    )
-    replay_key = procedure_semantic_replay_key_digest(provisional)
-    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-    admission_digest = procedure_admission_digest(provisional)
-    duplicate_admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    with pytest.raises(ValidationError, match="does not cover admitted Provider bindings"):
-        PreparedProcedureRunV9.model_validate(
+    with pytest.raises(ValidationError, match="not the acquisition plan's own"):
+        PreparedProcedureRun.model_validate(
             {
                 **prepared.model_dump(mode="python"),
-                "admission": duplicate_admission,
+                "admission": _with_plan(admission, duplicate_plan),
                 "acquisition_plan": duplicate_plan,
-                "acquisition_plan_digest": duplicate_plan_digest,
+                "acquisition_plan_digest": procedure_acquisition_plan_digest(duplicate_plan),
             }
         )
 
 
 def test_prepared_run_bindings_are_exactly_the_plans_own(tmp_path: Path) -> None:
-    """A V9 binding names interface, contract digest, Provider and implementation,
+    """A binding names its slot, operation, signature, Provider and implementation,
     all read off its planned occurrence, and no classification at all."""
 
     fixture = _fixture(tmp_path)
@@ -333,7 +257,7 @@ def test_prepared_run_bindings_are_exactly_the_plans_own(tmp_path: Path) -> None
     }
     other = binding.model_copy(update={"effect_class": "external_mutation"})
     with pytest.raises(ValidationError, match="not the acquisition plan's own"):
-        PreparedProcedureRunV9(
+        PreparedProcedureRun(
             admission=admission.model_copy(update={"resolved_provider_bindings": (other,)}),
             accepted_state_materials=direct.accepted_state_materials,
             admission_material_manifest=manifest,

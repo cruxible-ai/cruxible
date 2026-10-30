@@ -369,16 +369,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:db1e61201a7691c12fd5a1e269040455ba4505dd4341ada115a4f2a790c8e942"
+    expected = "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 37,
+            "semantic_revision": 38,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "merkle-genesis-v1",
+            "revision_name": "admitted-run-v1",
         },
     )
     assert computed == expected
@@ -423,12 +423,14 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "merkle-genesis-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "merkle-genesis-v1"
+    assert CURRENT_COMPILER_REVISION == "admitted-run-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "admitted-run-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
         "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924",
+        # Revision 37 (merkle-genesis-v1): the versioned admitted-run carriers.
+        "sha256:db1e61201a7691c12fd5a1e269040455ba4505dd4341ada115a4f2a790c8e942",
     ):
         earlier = CompilerCoordinate(rule_digest=earlier_digest)
         assert compiler_revision_label(earlier) is None

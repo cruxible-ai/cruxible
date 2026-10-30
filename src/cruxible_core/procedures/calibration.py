@@ -19,11 +19,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceipt,
-    ProcedureRunReceiptV2,
-    ProcedureRunReceiptV3,
-    ProcedureRunReceiptV4,
-    ProcedureRunReceiptV5,
-    ProcedureRunReceiptV7,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.settled_outcomes import (
@@ -192,14 +187,7 @@ def procedure_calibration_cohort_membership_witness_digest(
     ).tagged
 
 
-ProcedureCalibrationRunReceiptV1 = (
-    ProcedureRunReceiptV2
-    | ProcedureRunReceiptV3
-    | ProcedureRunReceiptV4
-    | ProcedureRunReceiptV5
-    | ProcedureRunReceipt
-    | ProcedureRunReceiptV7
-)
+ProcedureCalibrationRunReceiptV1 = ProcedureRunReceipt
 
 
 @dataclass(frozen=True)
@@ -212,17 +200,9 @@ class VerifiedProcedureCalibrationRunReceiptV1:
 
 
 def _public_run_receipt_digest(receipt: ProcedureCalibrationRunReceiptV1) -> str:
-    domains = {
-        "playbill-procedure-run-receipt-v2": "playbill-procedure-run-receipt-v2",
-        "playbill-procedure-run-receipt-v3": "playbill-procedure-run-receipt-v3",
-        "playbill-procedure-run-receipt-v4": "playbill-procedure-run-receipt-v4",
-        "playbill-procedure-run-receipt-v5": "playbill-procedure-run-receipt-v5",
-        "playbill-procedure-run-receipt-v6": "playbill-procedure-run-receipt-v6",
-        "playbill-procedure-run-receipt-v7": "playbill-procedure-run-receipt-v7",
-    }
     return typed_digest(
         Sha256Value,
-        domains[receipt.tag],
+        receipt.tag,
         {"receipt": receipt.model_dump(mode="json")},
     ).tagged
 
@@ -274,10 +254,10 @@ def build_procedure_calibration_membership_witness(
                     "calibration.cohort_witness_procedure_mismatch",
                     "run receipt names another Procedure artifact",
                 )
-            if not isinstance(evidence.receipt, ProcedureRunReceiptV4):
+            if evidence.receipt.invocation_origin != "line":
                 raise ProcedureCalibrationWitnessError(
                     "calibration.cohort_witness_implementation_mismatch",
-                    "run receipt predates implementation-bound Line receipts",
+                    "only a Line run's receipt witnesses an implementation cohort",
                 )
             if evidence.receipt.status != "succeeded":
                 raise ProcedureCalibrationWitnessError(

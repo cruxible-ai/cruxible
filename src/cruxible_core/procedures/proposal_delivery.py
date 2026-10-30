@@ -183,7 +183,7 @@ from cruxible_core.runtime.phase_timing import timed_operation
 if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
     from cruxible_core.query.backends import ClaimQueryFactsV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -1338,7 +1338,7 @@ def _intent(
 def select_procedure_mandate(
     request: TerminalEgressRequestV1,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     accepted_mandates: Mapping[str, ProcedureMandateAny],
     target_paths: tuple[str, ...],
     delegation: ProcedureDelegation | None = None,
@@ -1392,7 +1392,7 @@ def select_procedure_mandate(
 def select_settle_mandate(
     request: TerminalEgressRequestV1,
     *,
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     accepted_mandates: Mapping[str, ProcedureMandateAny],
     target_paths: tuple[str, ...],
     base_tree: Mapping[str, bytes],
@@ -1493,7 +1493,7 @@ class ProposalTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV1,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
@@ -1842,7 +1842,7 @@ class ProposalTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV2,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         evidence: Mapping[str, str],
         source_proposal_id: str,
     ) -> PreparedProposal:
@@ -1899,7 +1899,7 @@ class ProposalTerminalEgressSink:
         self,
         request: TerminalEgressRequestV1,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         lowered: LoweredAuthoring,
         journaled: PreparedTerminalEgressV1 | None,
         recompiles: str | None = None,
@@ -1919,7 +1919,7 @@ class ProposalTerminalEgressSink:
         from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
         from cruxible_core.service.proposals.proposals import proposal_still_open
 
-        identity = getattr(admission, "line_identity", None)
+        identity = admission.line_identity
         if admission.invocation_origin != "line" or identity is None:
             return None
         line_id = line_identity_digest(identity)
@@ -2050,7 +2050,7 @@ class ProposalTerminalEgressSink:
         self,
         *,
         request: TerminalEgressRequestV1,
-        admission: ProcedureRunAdmissionV1 | None = None,
+        admission: ProcedureRunAdmission | None = None,
     ) -> TerminalEgressReceiptV1:
         prepared_nothing = self._prepared.get((request.admission_binding_digest, request.node_id))
         if (
@@ -2324,7 +2324,7 @@ class ProposalTerminalEgressSink:
         self,
         request: TerminalEgressRequestV2,
         *,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         prepared: PreparedProposal,
         adapter: ProposalTerminalAdapter,
         existing: ProposalResult | None,

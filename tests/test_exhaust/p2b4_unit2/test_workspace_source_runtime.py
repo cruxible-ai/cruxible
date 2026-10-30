@@ -37,14 +37,13 @@ from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import journal_producer_receipt_resolver
 from cruxible_core.governance.seed_artifacts.workspace_file import workspace_file_operation
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV9,
+    PreparedProcedureRun,
     ProcedureExecutor,
-    ProcedureRunAdmissionV9,
-    procedure_admission_digest,
+    admission_fields,
     procedure_line_run_id,
     procedure_node_pin_sets,
     procedure_pin_set_digest,
-    procedure_semantic_replay_key_digest,
+    seal_procedure_run_admission,
 )
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -220,36 +219,18 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     )
     plan_digest = procedure_acquisition_plan_digest(plan)
     node_pin_sets = procedure_node_pin_sets(accepted)
-    provisional = prepared.admission.model_copy(
-        update={
+    admission = seal_procedure_run_admission(
+        {
+            **admission_fields(prepared.admission),
             "procedure_artifact_digest": accepted.artifact_digest,
             "definition_digest": accepted.procedure.definition_digest,
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
             "acquisition_plan_digest": plan_digest,
             "resolved_provider_bindings": procedure_provider_bindings(plan.external_occurrences),
-            "semantic_replay_key_digest": "sha256:" + "0" * 64,
-            "admission_binding_digest": "sha256:" + "0" * 64,
-            "run_id": "RUN-" + "0" * 64,
         }
     )
-    provisional = provisional.model_copy(
-        update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
-    )
-    admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
-        }
-    )
-    prepared = PreparedProcedureRunV9.model_validate(
+    prepared = PreparedProcedureRun.model_validate(
         {
             **prepared.model_dump(mode="python"),
             "admission": admission,
@@ -447,7 +428,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
     (root / "docs").mkdir()
     (root / "docs" / "note.txt").write_bytes(b"hello\n")
 
-    def execute(item: PreparedProcedureRunV9) -> None:
+    def execute(item: PreparedProcedureRun) -> None:
         result = ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,
@@ -470,13 +451,8 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
         admission_binding_digest=first.admission_binding_digest,
         occurrence_evaluation_time=first.occurrence_evaluation_time,
     )
-    second_admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **first.model_dump(mode="python"),
-            "attempt": 2,
-            "run_id": second_run_id,
-        }
-    )
+    second_admission = seal_procedure_run_admission({**admission_fields(first), "attempt": 2})
+    assert second_admission.run_id == second_run_id
     assert second_admission.semantic_replay_key_digest == first.semantic_replay_key_digest
     assert second_admission.admission_binding_digest == first.admission_binding_digest
     execute(prepared.model_copy(update={"admission": second_admission}))

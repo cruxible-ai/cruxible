@@ -18,12 +18,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressRequestV1,
     compute_effective_rung,
 )
-from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV1,
-    ProcedureExecutor,
-    ProcedureRunAdmissionV2,
-    procedure_admission_digest,
-)
+from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.procedures import named
@@ -35,6 +30,7 @@ from tests.test_procedures.test_procedure_execution import (
     _digest,
     _fixture,
     _hard_caps,
+    _line_bound_prepared,
     _pin,
     _prepare,
     _StateReader,
@@ -65,27 +61,6 @@ def _terminal_procedure():
         terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
-
-
-def _line_bound(prepared: PreparedProcedureRunV1) -> PreparedProcedureRunV1:
-    provisional = prepared.admission.model_copy(
-        update={
-            "invocation_origin": "line",
-            "line_spec_digest": _digest("line-spec"),
-            "occurrence_id": _digest("occurrence"),
-            "deployment_snapshot_digest": _digest("deployment"),
-            "acquisition_policy_digest": _digest("acquisition-policy"),
-            "sensitivity_policy_digest": _digest("sensitivity-policy"),
-            "mandate_coordinate_digest": _digest("mandate-coordinate"),
-            "calibration_coordinate_digest": _digest("calibration-coordinate"),
-            "admission_binding_digest": "sha256:" + "0" * 64,
-        }
-    )
-    bound = provisional.model_copy(
-        update={"admission_binding_digest": procedure_admission_digest(provisional)}
-    )
-    admission = ProcedureRunAdmissionV2.model_validate(bound.model_dump(mode="python"))
-    return prepared.model_copy(update={"admission": admission})
 
 
 class _InboxSink:
@@ -175,13 +150,13 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
     root.mkdir()
     fixture = _fixture(root)
     accepted = _terminal_procedure()
-    prepared = _line_bound(
+    prepared = _line_bound_prepared(
+        fixture,
         _prepare(
             accepted,
             fixture,
             _StateReader({"items": [{"id": "one"}, {"id": "two"}]}),
-            run_id="line-run",
-        )
+        ),
     )
     admission = prepared.admission
     rung = compute_effective_rung(
@@ -212,7 +187,7 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
     assert len(sink.requests) == 1 and len(sink.requests[0].items) == 2
     # The inbox door receives each item's own dependency manifest.
     assert set(sink.manifests[0]) == {item.item_key for item in sink.requests[0].items}  # type: ignore[call-overload]
-    records = fixture.journal.all_records(fixture.stream, "runs")
+    records = fixture.journal.all_records(fixture.stream, admission.journal_partition_id)
     kinds = [item.record.event_kind for item in records]
     assert kinds.index("item_dependencies") < kinds.index("terminal_egress")
     terminal = next(item for item in records if item.record.event_kind == "terminal_egress")
@@ -230,13 +205,13 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
     root.mkdir()
     fixture = _fixture(root)
     accepted = _terminal_procedure()
-    prepared = _line_bound(
+    prepared = _line_bound_prepared(
+        fixture,
         _prepare(
             accepted,
             fixture,
             _StateReader({"items": [{"id": "one"}]}),
-            run_id="line-proposal-refusal",
-        )
+        ),
     )
     admission = prepared.admission
     rung = compute_effective_rung(
@@ -265,7 +240,7 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
     assert result.status == "refused"
     assert result.refusal is not None
     assert result.refusal.code == "proposal_target_paths_mismatch"
-    records = fixture.journal.all_records(fixture.stream, "runs")
+    records = fixture.journal.all_records(fixture.stream, admission.journal_partition_id)
     monkeypatch.setattr(
         procedure_run_service,
         "_records_for_run",

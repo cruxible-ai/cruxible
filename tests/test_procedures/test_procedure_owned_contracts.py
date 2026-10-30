@@ -318,7 +318,6 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
     prepared = prepare_direct_procedure_run(
         accepted,
         instance_id=instance.descriptor.instance_id,
-        run_id="query-run",
         accepted_coordinate=coordinate,
         invocation_input={},
         actor_context=GovernedActorContext(

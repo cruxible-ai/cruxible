@@ -18,8 +18,7 @@ from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.procedures.egress import compute_effective_rung
 from cruxible_core.procedures.execution import (
     ProcedureExecutor,
-    ProcedureRunAdmissionV3,
-    ProcedureRunAdmissionV5,
+    ProcedureRunAdmission,
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from tests.test_procedures.test_procedure_execution import (
@@ -81,11 +80,10 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) ->
     guard goes missing, and it does not pass on a guard that is merely present.
     """
 
-    assert set(get_args(ProcedureRunAdmissionV3.model_fields["invocation_origin"].annotation)) == {
+    assert set(get_args(ProcedureRunAdmission.model_fields["invocation_origin"].annotation)) == {
         "actor",
         "line",
     }
-    assert issubclass(ProcedureRunAdmissionV5, ProcedureRunAdmissionV3)
 
     accepted = _state_procedure()
     root = tmp_path / "c2"

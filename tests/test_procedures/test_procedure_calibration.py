@@ -9,8 +9,8 @@ import pytest
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import CasError, ExecutionError
 from cruxible_client.contracts.procedures.results import (
-    ProcedureProviderBindingV1,
-    ProcedureRunReceiptV4,
+    ProcedureProviderBinding,
+    ProcedureRunReceipt,
 )
 from cruxible_core.procedures.calibration import (
     ProcedureCalibrationCohortMembershipWitnessV1,
@@ -165,24 +165,25 @@ def test_membership_witness_is_built_only_from_reproducing_run_receipts(tmp_path
     activations, _bodies, result, _query_receipt = _query(tmp_path)
     procedure_digest = activations[0].procedure_artifact_digest
     implementation_digest = _digest("provider-implementation-a")
-    binding = ProcedureProviderBindingV1(
+    binding = ProcedureProviderBinding(
         node_id="provider",
+        slot="fetch",
+        operation="read",
+        operation_signature_digest=_digest("signature"),
         provider_artifact_digest=_digest("provider"),
-        interface_artifact_digest=_digest("interface-artifact"),
-        interface_digest=_digest("interface"),
-        classifier_digest=_digest("classifier"),
-        accepted_bucket_selectors=("size=*",),
         implementation_digest=implementation_digest,
+        effect_class="external_read",
         secret_binding_identity_digests=(),
     )
-    receipt = ProcedureRunReceiptV4.model_construct(
-        tag="playbill-procedure-run-receipt-v4",
+    receipt = ProcedureRunReceipt.model_construct(
+        tag="playbill-procedure-run-receipt-v8",
         status="succeeded",
+        invocation_origin="line",
         resolved_provider_bindings=(binding,),
     )
     receipt_digest = typed_digest(
         Sha256Value,
-        "playbill-procedure-run-receipt-v4",
+        "playbill-procedure-run-receipt-v8",
         {"receipt": receipt.model_dump(mode="json")},
     ).tagged
     rewritten_rows = []

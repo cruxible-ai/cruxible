@@ -56,8 +56,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
     ProcedureNodeRefusal,
     ProcedureOperationalFailure,
-    ProcedureRunReceiptV2,
-    ProcedureRunReceiptV3,
+    ProcedureRunReceipt,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_client.contracts.repairs import HandEditRepair
@@ -803,7 +802,7 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert first.result is not None
     assert len(first.result["rows"]) == 2  # type: ignore[index]
     assert first.receipt_digest is not None
-    assert isinstance(first.receipt, ProcedureRunReceiptV3)
+    assert isinstance(first.receipt, ProcedureRunReceipt)
     assert first.receipt.status == "succeeded"
     assert first.receipt.terminal is None
     assert first.receipt.budget.declared.budget == procedure.definition.budget
@@ -1282,7 +1281,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
 
     assert first.status == "succeeded"
     assert first.result is not None and len(first.result["rows"]) == 2  # type: ignore[index]
-    assert isinstance(first.receipt, ProcedureRunReceiptV3)
+    assert isinstance(first.receipt, ProcedureRunReceipt)
     assert first.receipt.budget.observed.max_items.high_water == 0
     assert first.receipt.budget.observed.max_items.boundary is None
     assert first.model_dump_json() == second.model_dump_json()
@@ -1307,7 +1306,7 @@ def test_served_list_boundary_records_nonzero_v3_receipt_high_water(tmp_path: Pa
     )
 
     assert run.status == "succeeded", run
-    assert isinstance(run.receipt, ProcedureRunReceiptV3)
+    assert isinstance(run.receipt, ProcedureRunReceipt)
     assert run.receipt.budget.observed.max_items.high_water == 2
     assert run.receipt.budget.observed.max_items.boundary == ("contract-out:query-rows-list")
     assert run.receipt.budget.observed.max_items.field_path == "rows"
@@ -1337,7 +1336,11 @@ def test_served_list_boundary_refusal_remains_typed(tmp_path: Path) -> None:
     assert run.terminal.details.field_path == "rows"
 
 
-def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Path) -> None:
+def test_a_final_payload_without_its_budget_is_refused_not_reinterpreted(
+    tmp_path: Path,
+) -> None:
+    """The one receipt needs the run's budget; a removed final shape is refused."""
+
     instance, _owner, procedure = _world(tmp_path)
     run = service_run_playbill_procedure(
         instance,
@@ -1358,7 +1361,7 @@ def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Pa
         )
     )
     assert isinstance(old_payload, dict)
-    assert old_payload.pop("budget")["tag"] == "playbill-procedure-run-budget-v1"
+    assert old_payload.pop("budget")["tag"] == "playbill-procedure-run-budget-v3"
     ProcedureExhaustWriter(
         journal=journal,
         bodies=instance.body_store(),
@@ -1378,10 +1381,10 @@ def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Pa
         attempt=final_record.attempt,
     )
 
-    reconstructed = service_get_playbill_procedure_run(instance, run_id=run.run_id)
-    assert reconstructed.status == "succeeded"
-    assert isinstance(reconstructed.receipt, ProcedureRunReceiptV2)
-    assert not isinstance(reconstructed.receipt, ProcedureRunReceiptV3)
+    with pytest.raises(
+        procedure_run_service.ProcedureRunRecoveryRequired, match="lacks its budget"
+    ):
+        service_get_playbill_procedure_run(instance, run_id=run.run_id)
 
 
 def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None:
@@ -1485,7 +1488,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert refused.terminal.detail_code == "query.empty"
     assert refused.terminal.node_id == "gate"
     assert refused.terminal.journal_coordinate is not None
-    assert isinstance(refused.receipt, ProcedureRunReceiptV3)
+    assert isinstance(refused.receipt, ProcedureRunReceipt)
     assert refused.receipt.status == "node_refused"
     assert refused.receipt.terminal == refused.terminal
     assert refused.receipt.budget.observed.result_bytes.high_water == 0
@@ -1534,7 +1537,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert isinstance(halted.terminal, ProcedureHaltTerminal)
     assert halted.terminal.node_id == "stop"
     assert halted.terminal.reason == "No matching rows."
-    assert isinstance(halted.receipt, ProcedureRunReceiptV3)
+    assert isinstance(halted.receipt, ProcedureRunReceipt)
     assert halted.receipt.status == "halted"
     assert halted.receipt.terminal == halted.terminal
 
@@ -1624,6 +1627,8 @@ def test_a_replayed_occurrence_refuses_instead_of_running_twice(
                 occurrence_id=occurrence_id,
                 occurrence_evaluation_time=READ_TIME,
                 bound_coordinate=coordinate,
+                investigation=None,
+                trigger_binding=None,
             ),
         ),
     )

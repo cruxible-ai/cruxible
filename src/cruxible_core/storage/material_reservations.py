@@ -29,7 +29,7 @@ from cruxible_core.storage.cas import (
 )
 
 if TYPE_CHECKING:
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
 
 PENDING_RESERVATION_DOMAIN = "playbill-pending-admission-material-reservation-v1"
 RUN_RESERVATION_DOMAIN = "playbill-run-material-reservation-v1"
@@ -643,14 +643,9 @@ def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
             "run_recovery_required: admission payload is not an object"
         )
     try:
-        from cruxible_core.procedures.execution import (
-            ProcedureAdmissionBoundPayloadV3,
-            parse_admission_payload,
-        )
+        from cruxible_core.procedures.execution import parse_admission_payload
 
         bound = parse_admission_payload(payload)
-        if not isinstance(bound, ProcedureAdmissionBoundPayloadV3):
-            return ()
     except Exception as exc:
         raise ProcedureMaterialRecoveryRequired(
             "run_recovery_required: admission material manifest is corrupt"
@@ -682,7 +677,7 @@ class ReservedCaptureStore:
         *,
         bodies: ContentAddressedBodyStore,
         reservations: ProcedureMaterialReservationStore,
-        admission: ProcedureRunAdmissionV1,
+        admission: ProcedureRunAdmission,
         event_kind: JournalEventKindV1 = "produced_capture",
     ) -> None:
         self._bodies = bodies

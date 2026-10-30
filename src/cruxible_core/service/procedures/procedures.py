@@ -36,7 +36,7 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.procedures.execution import (
     ContractValidatorProtocol,
-    PreparedProcedureRunV1,
+    PreparedProcedureRun,
     ProcedureActivationAuthorityProtocol,
     ProcedureClockProtocol,
     ProcedureExecutor,
@@ -295,7 +295,7 @@ def state_tap_value(result: ClaimQueryResult) -> dict[str, object]:
 
 
 def service_execute_direct_procedure(
-    prepared: PreparedProcedureRunV1,
+    prepared: PreparedProcedureRun,
     accepted: AcceptedProcedure,
     *,
     journal: LocalJournalBackend,

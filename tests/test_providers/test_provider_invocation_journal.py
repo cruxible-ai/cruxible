@@ -31,7 +31,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionMaterialManifest,
     ProcedureInternalFailure,
     ProcedureInternalFailureCode,
-    ProcedureRunReceiptV7,
+    ProcedureRunReceipt,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_provider_bindings,
@@ -57,12 +57,10 @@ from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.indexes.resident import close_idle_connections
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV9,
+    PreparedProcedureRun,
     ProcedureExecutor,
-    ProcedureRunAdmissionV9,
-    procedure_admission_digest,
-    procedure_line_run_id,
-    procedure_semantic_replay_key_digest,
+    admission_fields,
+    seal_procedure_run_admission,
 )
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.providers.provider_local_runtime import (
@@ -300,8 +298,8 @@ def _prepared_acquisition_run(
     secret_plan: ProviderSecretResolutionPlan | None = None,
     provider: AcceptedProvider | None = None,
     local_binding: VerifiedProviderBinding | None = None,
-) -> tuple[PreparedProcedureRunV9, object]:
-    """One Line call run prepared under the current carrier (admission V9)."""
+) -> tuple[PreparedProcedureRun, object]:
+    """One Line call run prepared under the one admitted-run carrier."""
 
     fixture = _fixture(tmp_path)
     v3 = _line_admission(accepted, fixture)
@@ -376,37 +374,16 @@ def _prepared_acquisition_run(
         selection_decision_digest=v3.selection_decision_digest,
         external_occurrences=(occurrence,),
     )
-    fields = {name: getattr(v3, name) for name in type(v3).model_fields if name != "tag"}
-    fields.update(
+    admission = seal_procedure_run_admission(
         {
+            **admission_fields(v3),
             "resolved_provider_bindings": procedure_provider_bindings((occurrence,)),
             "acquisition_plan_digest": procedure_acquisition_plan_digest(plan),
-            "exhaust_access_binding_digest": None,
-            "semantic_replay_key_digest": _digest("placeholder-replay-v9"),
-            "admission_binding_digest": _digest("placeholder-admission-v9"),
-            "run_id": "RUN-" + "0" * 64,
-        }
-    )
-    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
-    provisional = provisional.model_copy(
-        update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
-    )
-    admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV9.model_validate(
-        {
-            **provisional.model_dump(mode="python"),
-            "admission_binding_digest": admission_digest,
-            "run_id": procedure_line_run_id(
-                occurrence_id=provisional.occurrence_id or "",
-                attempt=provisional.attempt,
-                admission_binding_digest=admission_digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
-            ),
         }
     )
     direct = _prepare(accepted, fixture, _StateReader())
     manifest = ProcedureAdmissionMaterialManifest(members=())
-    prepared = PreparedProcedureRunV9(
+    prepared = PreparedProcedureRun(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
         admission_material_manifest=manifest,
@@ -493,7 +470,8 @@ def test_provider_call_journals_completed_receipt_before_progress(
     state = procedure_run_service._state_from_records(  # noqa: SLF001
         _Instance(), run_id=prepared.admission.run_id
     )
-    assert isinstance(state.receipt, ProcedureRunReceiptV7)
+    assert isinstance(state.receipt, ProcedureRunReceipt)
+    assert state.receipt.invocation_origin == "line"
     (binding,) = state.receipt.resolved_provider_bindings
     assert binding.tag == "cruxible-procedure-provider-binding-v4"
     assert binding.operation == "compute"

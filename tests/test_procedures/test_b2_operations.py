@@ -428,13 +428,12 @@ def test_a_direct_run_reaches_its_terminal_under_an_ephemeral_line(tmp_path):
     from types import SimpleNamespace
 
     standalone = SimpleNamespace(
+        line_identity=None,
         line_spec_digest=None,
+        parent_binding=None,
         procedure_identity=result.procedure_identity,
         procedure_artifact_digest=result.procedure_artifact_digest,
     )
-    import cruxible_core.procedures.nested as nested
-
-    assert nested.nested_admission(standalone) is None  # type: ignore[arg-type]
     assert authority_line(standalone) == (None, None)  # type: ignore[arg-type]
 
 

@@ -94,7 +94,7 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
 )
-from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayloadV9
+from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayload
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -1238,7 +1238,7 @@ def _admission(instance: PlaybillInstance, state):  # type: ignore[no-untyped-de
                 bodies.read(stored.record.payload_digest, access=access)
             )
             assert isinstance(payload, dict)
-            return ProcedureAdmissionBoundPayloadV9.model_validate(payload).admission
+            return ProcedureAdmissionBoundPayload.model_validate(payload).admission
     raise AssertionError("no admission_bound record for this run")
 
 

@@ -119,8 +119,8 @@ def _settled_delivery(journal, stream, stored, bodies) -> SettledDelivery | None
     if isinstance(payload, UnavailablePayload):
         return None
     admission = parse_admission_payload(payload).admission
-    line_identity = getattr(admission, "line_identity", None)
-    line_spec_digest = getattr(admission, "line_spec_digest", None)
+    line_identity = admission.line_identity
+    line_spec_digest = admission.line_spec_digest
     if line_identity is None or line_spec_digest is None:
         return None
     return SettledDelivery(

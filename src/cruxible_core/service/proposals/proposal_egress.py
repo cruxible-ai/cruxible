@@ -50,9 +50,8 @@ from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetBoundaryObservation,
-    ProcedureRunBudgetDeclaredV1,
+    ProcedureRunBudget,
     ProcedureRunBudgetObserved,
-    ProcedureRunBudgetV1,
 )
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust import ProcedureExhaustWriter
@@ -69,11 +68,9 @@ from cruxible_core.procedures.egress import (
     verify_terminal_egress_receipt,
 )
 from cruxible_core.procedures.execution import (
-    ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS,
-    ProcedureAdmissionBoundPayloadV5,
-    ProcedureRunAdmissionV5,
-    nested_admission,
+    ProcedureRunAdmission,
     parse_admission_payload,
+    procedure_run_declared_budget,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
@@ -98,7 +95,7 @@ RecoveredProposalEgressDisposition = Literal["delivered", "refused"]
 class _RunFold:
     """One run's account of its own records, folded from a shared partition."""
 
-    admission: ProcedureRunAdmissionV5 | None = None
+    admission: ProcedureRunAdmission | None = None
     finalized: bool = False
     prepared: dict[str, dict[str, Any]] = field(default_factory=dict)
     resolved: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -150,10 +147,10 @@ def _fold_partition(
             continue
         kind = stored.record.event_kind
         if kind == "admission_bound" and isinstance(payload, dict):
-            if payload.get("tag") in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS:
-                bound_payload = parse_admission_payload(payload)
-                if isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
-                    fold.admission = bound_payload.admission
+            admitted = parse_admission_payload(payload).admission
+            # Terminal recovery covers runs that planned Provider occurrences.
+            if admitted.plans_providers:
+                fold.admission = admitted
         elif kind == "provider_invocation_completed" and isinstance(payload, dict):
             fold.provider_calls += 1
             digest = payload.get("receipt_digest")
@@ -275,7 +272,7 @@ def _append_recovery_records(
     bodies: Any,
     stream: JournalStreamIdentityV1,
     partition_id: str,
-    admission: ProcedureRunAdmissionV5,
+    admission: ProcedureRunAdmission,
     fold: _RunFold,
     node_id: str,
     disposition: RecoveredProposalEgressDisposition,
@@ -346,11 +343,8 @@ def _append_recovery_records(
                         key=lambda item: item["occurrence_path"].encode("utf-8"),
                     )
                 ],
-                "budget": ProcedureRunBudgetV1(
-                    declared=ProcedureRunBudgetDeclaredV1(
-                        budget=admission.budget,
-                        hard_caps=admission.hard_caps,
-                    ),
+                "budget": ProcedureRunBudget(
+                    declared=procedure_run_declared_budget(admission),
                     observed=ProcedureRunBudgetObserved(
                         max_items=ProcedureBudgetBoundaryObservation(high_water=0),
                         result_bytes=ProcedureBudgetBoundaryObservation(high_water=0),
@@ -372,7 +366,7 @@ def _append_recovery_records(
 def _resolve_prepared(
     instance: PlaybillInstance,
     *,
-    admission: ProcedureRunAdmissionV5,
+    admission: ProcedureRunAdmission,
     prepared_payload: Mapping[str, Any],
     recorded_at: datetime,
 ) -> tuple[RecoveredProposalEgressDisposition, dict[str, CanonicalValue]] | UnavailablePayload:
@@ -434,19 +428,18 @@ def _resolve_prepared(
         coordinate=coordinate,
     )
     delegation = None
-    nested = nested_admission(admission)
-    if nested is not None:
+    if admission.parent_binding is not None:
         from cruxible_core.service.procedures.nested_runs import retained_delegation
 
-        retained = retained_delegation(instance, nested)
+        retained = retained_delegation(instance, admission)
         if isinstance(retained, UnavailablePayload):
             return retained
         delegation = retained
-        root = delegation.authority(nested)
+        root = delegation.authority(admission)
         _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
     mandates = _accepted_line_mandates(
         instance,
-        getattr(admission, "line_identity", None),
+        admission.line_identity,
         admission.line_spec_digest,
         coordinate=coordinate,
         evaluation_time=request.evaluation_time,
@@ -496,7 +489,7 @@ def _resolve_prepared(
 def _resolve_unchanged(
     instance: PlaybillInstance,
     *,
-    admission: ProcedureRunAdmissionV5,
+    admission: ProcedureRunAdmission,
     prepared_payload: Mapping[str, Any],
     base_payload: dict[str, CanonicalValue],
     recorded_at: datetime,

@@ -434,7 +434,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         line_spec_path,
         render_line_spec,
     )
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV9
+    from cruxible_core.procedures.execution import ProcedureRunAdmission
     from cruxible_core.procedures.nested import authority_procedure
     from cruxible_core.service.procedures.nested_runs import retained_delegation
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
@@ -503,7 +503,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
             for kind, value in payloads(instance, link["receipt"]["run_id"])
             if kind == "admission_bound"
         )
-        admission = ProcedureRunAdmissionV9.model_validate(admitted)
+        admission = ProcedureRunAdmission.model_validate(admitted)
         assert admission.parent_binding is not None
         assert admission.invocation_origin == "line"
         assert admission.line_identity == line.identity
@@ -611,7 +611,7 @@ def test_source_combines_typed_field_read_and_existing_query(tmp_path):
 def test_crashed_child_recovers_delegation_from_a_landed_slotted_source(tmp_path):
     from datetime import timedelta
 
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV9, procedure_node_pin_sets
+    from cruxible_core.procedures.execution import ProcedureRunAdmission, procedure_node_pin_sets
     from cruxible_core.procedures.nested import authority_procedure
     from cruxible_core.runtime.instance import PlaybillInstance
     from cruxible_core.service.procedures.nested_runs import retained_delegation
@@ -683,12 +683,12 @@ def test_crashed_child_recovers_delegation_from_a_landed_slotted_source(tmp_path
     assert invoker.spawn_calls == 1, "The Line consumes the Capture without refetching"
     assert invoker.child_run_id is not None
     child_records = payloads(instance, invoker.child_run_id)
-    admission = ProcedureRunAdmissionV9.model_validate(
+    admission = ProcedureRunAdmission.model_validate(
         next(value["admission"] for kind, value in child_records if kind == "admission_bound")
     )
     assert admission.parent_binding is not None
     parent_records = payloads(instance, admission.parent_binding.parent_run_id)
-    parent = ProcedureRunAdmissionV9.model_validate(
+    parent = ProcedureRunAdmission.model_validate(
         next(value["admission"] for kind, value in parent_records if kind == "admission_bound")
     )
     assert parent.landed_capture_inputs[0].input_name == "captured"

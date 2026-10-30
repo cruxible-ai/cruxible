@@ -38,7 +38,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureHaltTerminal,
-    ProcedureRunReceiptV3,
+    ProcedureRunReceipt,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -1190,7 +1190,8 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     assert result.status == "halted"
     assert isinstance(result.terminal, ProcedureHaltTerminal)
     assert result.terminal.reason == reason
-    assert isinstance(result.receipt, ProcedureRunReceiptV3)
+    assert isinstance(result.receipt, ProcedureRunReceipt)
+    assert result.receipt.invocation_origin == "actor"
     assert result.receipt.terminal == result.terminal
 
 

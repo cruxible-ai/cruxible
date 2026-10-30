@@ -55,20 +55,6 @@ def _input_name(value: str) -> str:
     return value
 
 
-class AcceptedStateRunInputV1(_StrictInputModel):
-    tag: Literal["playbill-accepted-state-run-input-v1"] = "playbill-accepted-state-run-input-v1"
-    kind: Literal["accepted_state"] = "accepted_state"
-    input_name: str
-    read_coordinate: SemanticReadCoordinate
-    query_definition_digest: str
-    parameters_digest: str
-    result_digest: str
-
-    _query = field_validator("query_definition_digest")(_artifact_digest)
-    _payloads = field_validator("parameters_digest", "result_digest")(_sha256)
-    _name = field_validator("input_name")(_input_name)
-
-
 class AcceptedStateRunInputV2(_StrictInputModel):
     tag: Literal["playbill-accepted-state-run-input-v2"] = "playbill-accepted-state-run-input-v2"
     kind: Literal["accepted_state_v2"] = "accepted_state_v2"
@@ -104,7 +90,7 @@ class AcceptedClaimRunInputV1(_StrictInputModel):
 
 
 def accepted_read_definition_digest(
-    value: AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1,
+    value: AcceptedStateRunInputV2 | AcceptedClaimRunInputV1,
 ) -> str:
     return (
         value.claim_type_digest
@@ -141,11 +127,7 @@ class ExhaustRunInputV1(_StrictInputModel):
 
 
 ProcedureRunInputV1 = Annotated[
-    AcceptedStateRunInputV1
-    | AcceptedStateRunInputV2
-    | AcceptedClaimRunInputV1
-    | LandedCaptureRunInputV1
-    | ExhaustRunInputV1,
+    AcceptedStateRunInputV2 | AcceptedClaimRunInputV1 | LandedCaptureRunInputV1 | ExhaustRunInputV1,
     Field(discriminator="kind"),
 ]
 
@@ -158,7 +140,6 @@ _PLANE_FOR_NODE: dict[str, str] = {
 }
 
 _PLANE_DIGEST_DOMAINS: dict[str, str] = {
-    "accepted_state": "playbill-accepted-state-run-input-v1",
     "accepted_state_v2": "playbill-accepted-state-run-input-v2",
     "accepted_claim": "playbill-accepted-claim-run-input-v1",
     "landed_capture": "playbill-landed-capture-run-input-v1",
@@ -200,9 +181,7 @@ def validate_run_input_vector(
     if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
         raise ValueError("Procedure run inputs must be sorted and unique by input_name")
     for item in inputs:
-        if isinstance(
-            item, AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
-        ):
+        if isinstance(item, AcceptedStateRunInputV2 | AcceptedClaimRunInputV1):
             validate_local_read_coordinate(
                 item.read_coordinate,
                 expected_accepted=expected_accepted,
@@ -239,7 +218,6 @@ def validate_node_input_plane(
 
 
 __all__ = [
-    "AcceptedStateRunInputV1",
     "AcceptedStateRunInputV2",
     "ExhaustRunInputV1",
     "LandedCaptureRunInputV1",

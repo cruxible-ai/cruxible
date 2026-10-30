@@ -49,8 +49,7 @@ from cruxible_core.procedures.egress import (
     procedure_producer_receipt_digest,
 )
 from cruxible_core.procedures.execution import (
-    ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS,
-    ProcedureAdmissionBoundPayloadV5,
+    ProcedureAdmissionBoundPayload,
     parse_admission_payload,
     procedure_line_journal_stream,
 )
@@ -443,7 +442,7 @@ class JournalProducerReceiptResolver:
     def _index_records(self, records: Iterable[StoredProcedureJournalRecordV1]) -> None:
         """Re-check the receipt links within one partition's records, in order."""
 
-        admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayloadV5] = {}
+        admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayload] = {}
         derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequest | None] = {}
         source_reads: dict[tuple[str, str], SourceReadReceipt | None] = {}
         for stored in records:
@@ -476,12 +475,8 @@ class JournalProducerReceiptResolver:
                 self._produced(stored, payload)
                 continue
             if record.event_kind == "admission_bound" and isinstance(payload, dict):
-                if payload.get("tag") not in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS:
-                    continue
                 try:
                     bound_payload = parse_admission_payload(payload)
-                    if not isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
-                        raise ValueError("capture source requires an acquisition admission")
                     admission = bound_payload.admission
                     if (
                         record.run_id != admission.run_id
@@ -492,7 +487,7 @@ class JournalProducerReceiptResolver:
                         raise ValueError(
                             "Capture producer admission journal coordinates do not correspond"
                         )
-                except (KeyError, TypeError, ValidationError, ValueError) as exc:
+                except (KeyError, TypeError, ValidationError, ValueError, CruxibleError) as exc:
                     self._malformed(
                         record_digest=stored.record_digest,
                         event_kind=record.event_kind,
@@ -500,7 +495,11 @@ class JournalProducerReceiptResolver:
                         exc=exc,
                     )
                     continue
-                admissions[(admission.run_id, admission.admission_binding_digest)] = bound_payload
+                # Only a run that planned Provider occurrences produces Captures.
+                if bound_payload.acquisition_plan is not None:
+                    admissions[(admission.run_id, admission.admission_binding_digest)] = (
+                        bound_payload
+                    )
                 continue
             if record.event_kind == "source_request_derived":
                 try:
@@ -580,9 +579,12 @@ class JournalProducerReceiptResolver:
                     if admitted is None or binding_digest is None:
                         raise ValueError("Provider completion has no exact admission")
                     admission = admitted.admission
+                    plan = admitted.acquisition_plan
+                    if plan is None:
+                        raise ValueError("Provider completion has no admitted acquisition plan")
                     occurrences = tuple(
                         occurrence
-                        for occurrence in admitted.acquisition_plan.external_occurrences
+                        for occurrence in plan.external_occurrences
                         if occurrence.occurrence_path == provider_receipt.occurrence_path
                     )
                     if (

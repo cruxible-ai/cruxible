@@ -17,21 +17,12 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_core.procedures.egress import EffectiveRungV1
 from cruxible_core.procedures.execution import (
-    NestedProcedureRunAdmission,
-    PreparedProcedureRunV9,
+    PreparedProcedureRun,
     ProcedureParentBindingV1,
-    ProcedureRunAdmissionV1,
-    ProcedureRunAdmissionV2,
-    ProcedureRunAdmissionV7,
-    ProcedureRunAdmissionV9,
+    ProcedureRunAdmission,
     ProcedureRunResultV1,
-    nested_admission,
-    procedure_admission_digest,
-    procedure_direct_partition,
-    procedure_line_run_id,
-    procedure_parent_binding,
-    procedure_semantic_replay_key_digest,
-    procedure_semantic_run_id,
+    admission_fields,
+    seal_procedure_run_admission,
 )
 from cruxible_core.procedures.reference_binding import resolved_pin
 
@@ -84,7 +75,7 @@ def constrained_budget(
 class ParentInvocationContext:
     """Constructed by the executing parent, never deserialized from an SDK request."""
 
-    admission: ProcedureRunAdmissionV2
+    admission: ProcedureRunAdmission
     accepted: AcceptedProcedure
     node: InvokeNode
     remaining: ProcedureBudget
@@ -93,7 +84,7 @@ class ParentInvocationContext:
 
     @property
     def binding(self) -> ProcedureParentBindingV1:
-        grandparent = procedure_parent_binding(self.admission)
+        grandparent = self.admission.parent_binding
         return ProcedureParentBindingV1(
             parent_run_id=self.admission.run_id,
             parent_admission_digest=self.admission.admission_binding_digest,
@@ -134,67 +125,53 @@ class ParentInvocationContext:
             }
         )
 
-    def bind(self, prepared: PreparedProcedureRunV9) -> PreparedProcedureRunV9:
-        """Reuse the shared planner, then bind its child admission to this occurrence."""
+    def bind(self, prepared: PreparedProcedureRun) -> PreparedProcedureRun:
+        """Reuse the shared planner, then bind its child admission to this occurrence.
+
+        The child keeps its own plan, inputs and constrained budget, and takes
+        the root's actor, lane, authority coordinates, investigation and
+        trigger, plus the delegation binding naming this exact occurrence.
+        """
+
         parent = self.admission
-        fields = {
-            name: getattr(prepared.admission, name)
-            for name in type(prepared.admission).model_fields
-            if name != "tag"
-        }
-        fields.update(parent_binding=self.binding, investigation=None, trigger_binding=None)
-        if isinstance(parent, ProcedureRunAdmissionV7):
-            fields.update(
-                investigation=parent.investigation, trigger_binding=parent.trigger_binding
-            )
-        # Keep the root actor/lane and authority coordinates, but the child's own
-        # external plan and deployments. A separate partition keeps both receipts contiguous.
-        for name in (
-            "invocation_origin",
-            "actor_context",
-            "line_spec_digest",
-            "occurrence_id",
-            "sensitivity_policy_digest",
-            "mandate_coordinate_digest",
-            "calibration_coordinate_digest",
-            "taint_labels",
-            "epsilon_member",
-        ):
-            fields[name] = getattr(parent, name)
-        fields["line_identity"] = getattr(parent, "line_identity", None)
-        fields["attempt"] = parent.attempt
-        plan = prepared.acquisition_plan.model_copy(
+        plan = prepared.acquisition_plan
+        if plan is None:
+            raise ExecutionError("a nested child is planned by the shared external planner")
+        plan = plan.model_copy(
             update={
-                "line_identity": fields["line_identity"],
-                "line_spec_digest": fields["line_spec_digest"],
-                "occurrence_id": fields["occurrence_id"],
+                "line_identity": parent.line_identity,
+                "line_spec_digest": parent.line_spec_digest,
+                "occurrence_id": parent.occurrence_id,
             }
         )
         plan_digest = procedure_acquisition_plan_digest(plan)
-        fields["acquisition_plan_digest"] = plan_digest
-        provisional = ProcedureRunAdmissionV9.model_construct(**fields)
-        replay_key = procedure_semantic_replay_key_digest(provisional)
-        provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
-        digest = procedure_admission_digest(provisional)
-        run_id = (
-            procedure_semantic_run_id(replay_key)
-            if parent.invocation_origin == "actor"
-            else procedure_line_run_id(
-                occurrence_id=parent.occurrence_id or "",
-                attempt=parent.attempt,
-                admission_binding_digest=digest,
-                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+        inherited = {
+            name: getattr(parent, name)
+            for name in (
+                "invocation_origin",
+                "actor_context",
+                "line_identity",
+                "line_spec_digest",
+                "occurrence_id",
+                "sensitivity_policy_digest",
+                "mandate_coordinate_digest",
+                "calibration_coordinate_digest",
+                "taint_labels",
+                "epsilon_member",
+                "investigation",
+                "trigger_binding",
+                "attempt",
             )
-        )
-        admission = ProcedureRunAdmissionV9.model_validate(
+        }
+        admission = seal_procedure_run_admission(
             {
-                **provisional.model_dump(mode="python"),
-                "run_id": run_id,
-                "admission_binding_digest": digest,
-                "journal_partition_id": procedure_direct_partition(replay_key),
+                **admission_fields(prepared.admission),
+                **inherited,
+                "parent_binding": self.binding,
+                "acquisition_plan_digest": plan_digest,
             }
         )
-        return PreparedProcedureRunV9.model_validate(
+        return PreparedProcedureRun.model_validate(
             {
                 **prepared.model_dump(mode="python", exclude={"tag", "admission"}),
                 "admission": admission,
@@ -203,7 +180,7 @@ class ParentInvocationContext:
             }
         )
 
-    def verify(self, child: NestedProcedureRunAdmission, accepted: AcceptedProcedure) -> None:
+    def verify(self, child: ProcedureRunAdmission, accepted: AcceptedProcedure) -> None:
         definition = accepted.procedure.definition
         caps = constrained_caps(definition.hard_caps, self.admission.hard_caps)
         if (
@@ -234,7 +211,7 @@ class ParentInvocationContext:
         ):
             if getattr(child, name) != getattr(self.admission, name):
                 raise ExecutionError("nested invocation changed inherited authority")
-        if getattr(child, "line_identity", None) != getattr(self.admission, "line_identity", None):
+        if child.line_identity != self.admission.line_identity:
             raise ExecutionError("nested invocation changed its accepted Line")
 
 
@@ -250,20 +227,19 @@ class ProcedureDelegation:
     context: ParentInvocationContext
     child: AcceptedProcedure
 
-    def authority(self, admission: NestedProcedureRunAdmission) -> ArtifactPin:
+    def authority(self, admission: ProcedureRunAdmission) -> ArtifactPin:
         self.context.verify(admission, self.child)
         return self.context.binding.ancestors[0]
 
 
 def authority_procedure(
-    admission: ProcedureRunAdmissionV1,
+    admission: ProcedureRunAdmission,
     delegation: ProcedureDelegation | None = None,
 ) -> ArtifactPin:
-    nested = nested_admission(admission)
-    if nested is not None:
+    if admission.parent_binding is not None:
         if delegation is None:
             raise ExecutionError("nested terminal requires verified parent delegation")
-        return delegation.authority(nested)
+        return delegation.authority(admission)
     if delegation is not None:
         raise ExecutionError("standalone run cannot claim delegated authority")
     return ArtifactPin(
@@ -274,7 +250,7 @@ def authority_procedure(
 
 
 def authority_line(
-    admission: ProcedureRunAdmissionV1, delegation: ProcedureDelegation | None = None
+    admission: ProcedureRunAdmission, delegation: ProcedureDelegation | None = None
 ) -> tuple[ArtifactIdentity | None, str | None]:
     """The exact Line a run's terminal authority comes from (ruling C3).
 
@@ -283,11 +259,11 @@ def authority_line(
     """
 
     authority_procedure(admission, delegation)
-    return getattr(admission, "line_identity", None), admission.line_spec_digest
+    return admission.line_identity, admission.line_spec_digest
 
 
 class NestedProcedureRunner(Protocol):
-    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmissionV1) -> None:
+    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmission) -> None:
         """Verify all child capabilities before the parent's first effect."""
         ...
 
