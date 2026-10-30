@@ -417,9 +417,7 @@ def _item(index: int) -> dict[str, object]:
 def _settle(world: Any, first: int, count: int, batch: int) -> Counter[str]:
     instance, root, line = world
     proposals = [_item(index) for index in range(first, first + count)]
-    (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical.canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
-    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(canonical.canonical_bytes({"proposals": proposals}))
     with _counted() as counts, _journal_counted(), _objects_counted():
         state = settle_support.run_settle(
             instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
