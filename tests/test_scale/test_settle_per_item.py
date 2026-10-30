@@ -449,6 +449,7 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(module, "capture_contract", roomy)
 
 
+@pytest.mark.xfail(strict=True, reason="needs B3 content.json extraction; B3 merge gate")
 def test_a_settles_work_per_item_stays_at_its_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
