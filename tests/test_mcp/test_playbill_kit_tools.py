@@ -123,3 +123,5 @@ def test_kit_add_stages_a_pulled_kits_bundled_providers_when_it_commits(
     assert sorted(client.stored) == sorted(_provider_files().values())
     assert [request.bundle.manifest for request in client.sent] == [bundle.manifest] * 2
     assert all(not request.bundle.provider_files for request in client.sent)
+    assert [request.dry_run for request in client.sent] == [None, False]
+    assert all(request.source == "acme@" + image.digest for request in client.sent)

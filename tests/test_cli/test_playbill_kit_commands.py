@@ -261,7 +261,7 @@ def _provider_bundle() -> KitBundle:
         wheel=file("kit_call-0.2.0-py3-none-any.whl"),
         lock=file("kit-call-0.2.0.uv.lock"),
         dependencies=(file("cruxible_provider_runtime-0.2.0-py3-none-any.whl"),),
-        interfaces=("local.increment",),
+        operations=("local.increment",),
     )
     return KitBundle(
         manifest=base.manifest.model_copy(update={"providers": (provider,)}),
@@ -274,6 +274,9 @@ class _StagingClient:
     def __init__(self) -> None:
         self.stored: list[bytes] = []
         self.sent: list[Any] = []
+
+    def install_provider(self, *args: Any, **kwargs: Any) -> None:
+        pytest.fail("Adapter staging must not install or execute provider packages")
 
     def store_body(self, instance_id: str, content: bytes) -> CasObjectResult:
         self.stored.append(content)
@@ -329,6 +332,16 @@ def test_kit_build_bundles_a_provider_directory_as_staged_wheels_and_lock(
     assert result.exit_code == 0, result.output
     (request,) = client.sent
     (provider,) = request.providers
+    assert (request.kit_id, request.version, request.owns) == ("acme", "1.0.0", ("acme.",))
+    assert provider.delivery == "bundled"
+    assert (
+        provider.lock_digest
+        == "sha256:" + hashlib.sha256(files["kit-call-0.2.0.uv.lock"]).hexdigest()
+    )
+    assert (
+        provider.wheel.digest
+        == "sha256:" + hashlib.sha256(files["kit_call-0.2.0-py3-none-any.whl"]).hexdigest()
+    )
     assert provider.wheel.filename == "kit_call-0.2.0-py3-none-any.whl"
     assert [item.filename for item in provider.dependencies] == [
         "cruxible_provider_runtime-0.2.0-py3-none-any.whl"
@@ -372,10 +385,30 @@ def test_kit_add_stages_bundled_providers_only_when_it_commits(
     assert committed.exit_code == 0, committed.output
     assert sorted(client.stored) == sorted(_provider_files().values())
     assert all(not request.bundle.provider_files for request in client.sent)
+    assert [request.dry_run for request in client.sent] == [None, False]
+    assert [request.source for request in client.sent] == ["acme", "acme"]
     assert "acme 1.0.0: awaiting_providers" in committed.output
     assert "provider kit-call (kit-call 0.2.0): awaiting approval, proposal prop-1" in (
         committed.output
     )
+
+    from pydantic import ValidationError
+
+    invalid = _provider_bundle().model_dump(mode="json")
+    invalid["manifest"]["providers"][0]["interfaces"] = ["local.increment"]
+
+    def invalid_source(_reference):
+        return KitBundle.model_validate(invalid), "invalid"
+
+    client.stored.clear()
+    client.sent.clear()
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill.resolve_kit", invalid_source)
+    refused = CliRunner().invoke(cli, [*BASE, "add", "invalid", "--commit"])
+    assert refused.exit_code != 0 and "interfaces" in refused.output
+    assert client.stored == [] and client.sent == []
+    with pytest.raises(ValidationError) as typed:
+        KitBundle.model_validate(invalid)
+    assert typed.value.errors()[0]["loc"] == ("manifest", "providers", 0, "interfaces")
 
 
 def test_kit_status_lists_bundled_providers_and_their_install_state(
