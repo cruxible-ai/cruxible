@@ -185,13 +185,13 @@ def test_external_coordinates_refuse_secrets_and_unpinned_schemas() -> None:
         ExternalSourceReadRequestV1.model_validate(payload)
 
 
-@pytest.mark.parametrize("light", [False, True], ids=["v1-unmaterialized", "v2-retained"])
-def test_external_capture_supports_claim_only_through_exact_contract_mapping(
+@pytest.mark.parametrize("light", [False, True], ids=["v1-unmaterialized-refused", "v2-retained"])
+def test_external_capture_admission_refuses_retired_format_or_requires_exact_contract_mapping(
     tmp_path: Path,
     light: bool,
 ) -> None:
     # New citations must prove production; no legacy-admission monkeypatch.
-    # The unmaterialized legacy-success premise remains pending disposition.
+    # The current-only floor refuses new legacy artifacts, independently of replay.
     from cruxible_client.contracts.policies import (
         ClaimEvidenceAdmissionPolicy,
         ClaimEvidenceAdmissionPolicyV1,
@@ -411,10 +411,11 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     )
     from tests.support.operation_world import contract_files
 
+    accepted_tree = dict(instance.tree_at(base.git_oid))
     candidate_tree = core_assigned(
         instance,
         {
-            **instance.tree_at(base.git_oid),
+            **accepted_tree,
             **contract_files(),
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
             "claim-types/project.work_item/status.json": render_claim_type(claim_type),
@@ -432,6 +433,27 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
         candidate_tree=candidate_tree,
         timestamp=TIMESTAMP,
     )
+    if not light:
+        assert contract.artifact_format == "playbill-capture-contract-v1"
+        assert contract.identity.qualified == "CaptureContract:test.orders-v1"
+        assert envelope.commitment.materialization == "external"
+        assert acquired.canonical_material is None
+        assert not instance.body_store().verify(envelope.commitment.digest)
+        assert proposed.candidate is None
+        (format_refusal,) = [
+            diagnostic
+            for diagnostic in proposed.evaluation.diagnostics
+            if diagnostic.subject
+            == SemanticAddress.whole_artifact(capture_contract_path(contract.identity.name))
+        ]
+        assert format_refusal.code == "cruxible.proposal.member_format_invalid"
+        assert format_refusal.severity == "error"
+        assert format_refusal.message == (
+            "new CaptureContracts require cruxible-capture-contract-v3"
+        )
+        assert instance.accepted_coordinate() == base
+        assert dict(instance.tree_at(instance.accepted_coordinate().git_oid)) == accepted_tree
+        return
     assert not proposed.evaluation.diagnostics, proposed.evaluation.diagnostics
     assert isinstance(proposed.candidate, CandidateRecord)
     evidence = ClaimLawEvidenceV1.model_validate(
@@ -444,11 +466,6 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     assert evidence.initial_verdict == "supported"
     assert evidence.evidence_basis == ("direct",)
     assert claim.backing.source_mappings == ()
-    if not light:
-        assert envelope.commitment.materialization == "external"
-        assert acquired.canonical_material is None
-        assert not instance.body_store().verify(envelope.commitment.digest)
-        return
     assert envelope.commitment.materialization == "cas"
     assert json.loads(material["content"]["text"]) == value
     assert instance.body_store().verify(envelope.commitment.digest)
