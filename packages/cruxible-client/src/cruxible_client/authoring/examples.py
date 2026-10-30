@@ -89,7 +89,6 @@ def subject_kind_example() -> ChangeSetInput:
     """
 
     slug = ClaimType(
-        artifact_format="playbill-claim-type-v8",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.slug"),
         predicate="project.work_item.slug",
         allowed_subject_kinds=("project.work_item",),
@@ -157,7 +156,6 @@ def change_set_example() -> ChangeSetInput:
             ClaimTypeInput(
                 kind="claim_type",
                 claim_type=ClaimType(
-                    artifact_format="playbill-claim-type-v7",
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),
@@ -211,7 +209,6 @@ def claim_type_succession_example() -> ChangeSetInput:
             ClaimTypeSuccessionInput(
                 kind="claim_type_succession",
                 successor=ClaimType(
-                    artifact_format="playbill-claim-type-v7",
                     identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
                     predicate="project.work_item.owner",
                     allowed_subject_kinds=("project.work_item",),

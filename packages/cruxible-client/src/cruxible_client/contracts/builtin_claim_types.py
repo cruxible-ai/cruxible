@@ -63,7 +63,6 @@ def _self_evidence() -> ClaimEvidenceAdmissionPolicy:
 
 
 SEMANTIC_ALIAS_CLAIM_TYPE: Final = ClaimType(
-    artifact_format="playbill-claim-type-v8",
     identity=ArtifactIdentity(kind="ClaimType", name=SEMANTIC_ALIAS_PREDICATE),
     predicate=SEMANTIC_ALIAS_PREDICATE,
     allowed_subject_kinds=(SEMANTIC_SUBJECT_KIND,),
@@ -88,7 +87,6 @@ SEMANTIC_ALIAS_CLAIM_TYPE: Final = ClaimType(
 )
 
 SEMANTIC_DISTINCT_FROM_CLAIM_TYPE: Final = ClaimType(
-    artifact_format="playbill-claim-type-v7",
     identity=ArtifactIdentity(kind="ClaimType", name=SEMANTIC_DISTINCT_FROM_PREDICATE),
     predicate=SEMANTIC_DISTINCT_FROM_PREDICATE,
     allowed_subject_kinds=(SEMANTIC_SUBJECT_KIND,),

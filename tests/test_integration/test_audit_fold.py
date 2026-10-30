@@ -17,10 +17,10 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationStatementV1,
     VerifiedClaimAttestationV1,
 )
-from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
+from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence, ClaimVerdictResult
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimLawEvidenceV1,
+    ClaimLawEvidence,
     claim_artifact_digest,
     claim_statement_digest,
     render_claim,
@@ -777,13 +777,28 @@ def test_independent_verification_advances_recency_from_the_statement_baseline(
 
 
 def _law(row, *, attestations=()):  # type: ignore[no-untyped-def]
-    return ClaimLawEvidenceV1(
+    return ClaimLawEvidence(
         law_digest="sha256:" + "1" * 64,
         adjudication_rule_digest="sha256:" + "2" * 64,
         statement_digest=row.accepted.statement_digest,
         artifact_digest=row.accepted.artifact_digest,
         initial_verdict="supported",
         evidence_basis=("direct",),
+        verdict_result=ClaimVerdictResult(
+            claim_statement_digest=row.accepted.statement_digest,
+            adjudication_rule_digest="sha256:" + "2" * 64,
+            evaluation_time=NOW,
+            verdict="supported",
+            currency="current",
+            basis_kinds=(),
+            authority_basis=(),
+            provenance_grades=(),
+            epistemic_grades=(),
+            supporting_evidence_digests=(),
+            contradicting_evidence_digests=(),
+            unsure_evidence_digests=(),
+            control_components=(),
+        ),
         verified_attestations=attestations,
         verified_attestation_digests=tuple(item.attestation_digest for item in attestations),
     )

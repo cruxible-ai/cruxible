@@ -72,7 +72,6 @@ from cruxible_client.contracts.claim_attestations import (
     accepted_referent_coordinates_from_tree,
 )
 from cruxible_client.contracts.claim_types import (
-    CLAIM_TYPE_V9_FORMAT,
     AcceptedClaimType,
     ClaimInverseObjectKeyPart,
     ClaimType,
@@ -88,7 +87,7 @@ from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
     ClaimFormatError,
-    ClaimLawEvidenceAny,
+    ClaimLawEvidence,
     ExactContentClaimObject,
     LiteralClaimObject,
     NoneClaimObject,
@@ -146,7 +145,7 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionEvaluationAccount,
     ClaimAdmissionPolicy,
     ClaimCorroborationResult,
-    ClaimEvidenceAdmissionIdentityRule,
+    ClaimEvidenceAdmissionRule,
     evaluate_claim_admission_candidate,
 )
 from cruxible_client.contracts.principals import (
@@ -346,7 +345,7 @@ _CLAIM_TYPE_PATH_RE = re.compile(
     r"[a-z][a-z0-9_]{0,63}\.json$"
 )
 
-ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvidenceAny | None]
+ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvidence | None]
 
 AcceptedReferentsProvider = Callable[[AcceptedProjectionCoordinate], frozenset[AcceptedCoordinate]]
 AttestationPrincipalProvider = Callable[[AcceptedCoordinate, str], PrincipalRecord]
@@ -3019,7 +3018,7 @@ def _capture_contract_dependents(
     """Live definitions a CaptureContract change would silently strand.
 
     Read in the final candidate, so a dependent revised or retired in the same
-    ChangeSet no longer counts. An identity rule (ClaimType v6) follows every
+    ChangeSet no longer counts. An identity rule follows every
     compatible successor and is stranded only by retirement (`successor_digest`
     None). An exact-digest evidence rule is stranded unless every (role, evidence
     kind) it admits is admitted under the replacing version by exactly one rule
@@ -3035,61 +3034,44 @@ def _capture_contract_dependents(
             continue
         rules = claim_type.evidence_admission_policy.rules
 
-        def follows(rule: object) -> bool:
+        def follows(rule: ClaimEvidenceAdmissionRule) -> bool:
             """Whether this rule admits evidence under the replacing version."""
 
             if successor_digest is None:
                 return False
-            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
-                return any(item.target.qualified == identity for item in rule.capture_contracts)
-            return successor_digest in getattr(rule, "capture_contract_digests", ())
+            return any(item.target.qualified == identity for item in rule.capture_contracts)
 
         for rule in rules:
-            names_moving = (
-                any(item.target.qualified == identity for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
-                else previous_digest in rule.capture_contract_digests
-            )
+            names_moving = any(item.target.qualified == identity for item in rule.capture_contracts)
             if not names_moving:
                 continue
-            # Every (role, evidence kind) the rule admits must be admitted under the
-            # replacing version by exactly one rule with the same requirements;
+            # Every (role, logical source) the rule admits must be admitted under
+            # the replacing version by exactly one rule with the same requirements;
             # a stricter or ambiguous successor rule refuses what used to pass.
-            old_kinds = getattr(rule, "evidence_kinds", ())
-            if (
-                previous_contract is not None
-                and old_kinds
-                and not set(previous_contract.evidence_kinds).issubset(old_kinds)
-            ):
-                stranded.add(claim_type.identity.qualified)
             sources = next(
                 (
-                    getattr(item, "logical_sources", ())
-                    for item in getattr(rule, "capture_contracts", ())
+                    item.logical_sources
+                    for item in rule.capture_contracts
                     if item.target.qualified == identity
                 ),
                 (),
             )
             for role in rule.claim_roles:
-                # Check each admitted legacy kind or explicit source separately.
-                # Empty source sets mean all sources, including CAS (None).
-                values = old_kinds or sources or (None,)
-                for value in values:
+                # Check each explicit source separately. Empty source sets mean
+                # all sources, including CAS (None).
+                for value in sources or (None,):
                     covering = []
                     for other in rules:
                         if not follows(other) or role not in other.claim_roles:
                             continue
                         other_sources = next(
                             (
-                                getattr(item, "logical_sources", ())
-                                for item in getattr(other, "capture_contracts", ())
+                                item.logical_sources
+                                for item in other.capture_contracts
                                 if item.target.qualified == identity
                             ),
                             (),
                         )
-                        other_kinds = getattr(other, "evidence_kinds", ())
-                        if old_kinds and other_kinds and value not in other_kinds:
-                            continue
                         if other_sources and (not sources or value not in other_sources):
                             continue
                         covering.append(other)
@@ -3477,8 +3459,10 @@ def _erasure_records(
     return None
 
 
-def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) -> tuple[str, ...]:
-    """Retired contracts a live v6 ClaimType still names in the final candidate.
+def _claim_type_unresolved_contracts(
+    context: _MemberContext, claim_type: ClaimType
+) -> tuple[str, ...]:
+    """Retired contracts a live ClaimType still names in the final candidate.
 
     A rule may name a contract that is not accepted yet: a foreign source's
     contract is installed by the first Claim bound to it, and until then the
@@ -3487,27 +3471,11 @@ def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) ->
 
     retired: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
-        for item in getattr(rule, "capture_contracts", ()):
+        for item in rule.capture_contracts:
             accepted = context.resolved.capture_contracts.get(item.target.qualified)
             if accepted is not None and accepted.contract.lifecycle.state == "retired":
                 retired.add(item.target.qualified)
     return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
-
-
-def _validate_identity_evidence_policy_format(claim_type: ClaimType) -> None:
-    """The identity-policy write gate; proposal orchestration renders its typed refusal.
-
-    It judges only a ClaimType the write creates or changes. An accepted
-    ClaimType keeps the policy format it was accepted with until a governed
-    upgrade restates it, so neither a referrer recheck nor a replay asks.
-    """
-
-    if claim_type.evidence_admission_policy.tag == "playbill-claim-evidence-admission-policy-v3":
-        raise FormatError(
-            "a ClaimType written now states evidence policy v4; "
-            "`cruxible claim-type upgrade` restates accepted v3 policies as v4, "
-            "or author this one with a v4 policy"
-        )
 
 
 def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
@@ -3522,27 +3490,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             claim_type=previous,
             artifact_digest=claim_type_digest(previous).tagged,
         )
-    if (
-        context.historical_law_coordinate is None
-        and not context.rechecking
-        and not context.replaying_accepted
-    ):
-        _validate_identity_evidence_policy_format(claim_type)
-
-    if context.historical_law_coordinate is None:
-        if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
-            getattr(rule, "allowed_reducer_digests", ())
-            for rule in claim_type.evidence_admission_policy.rules
-        ):
-            return _MemberVerdict(
-                diagnostics=(
-                    _diagnostic(
-                        "cruxible.claim_type.producer_authorization_forbidden",
-                        "Producer authorization belongs to Procedure mandates, not ClaimTypes.",
-                        context.path,
-                    ),
-                )
-            )
     law = evaluate_claim_type_law(
         claim_type,
         path=context.path,
@@ -3554,13 +3501,8 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
-    if claim_type.artifact_format in {
-        "playbill-claim-type-v6",
-        "playbill-claim-type-v7",
-        "playbill-claim-type-v8",
-        CLAIM_TYPE_V9_FORMAT,
-    } and claim_type.lifecycle.state == ("live"):
-        unresolved = _claim_type_v6_unresolved(context, claim_type)
+    if claim_type.lifecycle.state == "live":
+        unresolved = _claim_type_unresolved_contracts(context, claim_type)
         if unresolved:
             return _MemberVerdict(
                 diagnostics=(

@@ -42,8 +42,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
@@ -73,9 +73,7 @@ def _subject() -> SubjectShell:
 def _claim_type(
     *, contract: CaptureContractAny = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
 ) -> ClaimType:
-    contract_digest = capture_contract_digest(contract).tagged
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -83,13 +81,12 @@ def _claim_type(
         literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="direct-self-asserted",
                     claim_roles=("normative", "observation"),
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("self_asserted",),
+                    capture_contracts=(contract.identity.name,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
@@ -101,6 +98,20 @@ def _claim_type(
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
+    )
+
+
+def vocabulary_claim_type() -> ClaimType:
+    """The status ClaimType with no evidence rules, for tests that need only its vocabulary.
+
+    ``_claim_type`` names the direct self-asserted contract by identity, and a
+    change set must hold every contract its ClaimTypes name; nothing installs
+    that dormant contract, so a test that lands the type without its evidence
+    states no rule at all.
+    """
+
+    return _claim_type().model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()}
     )
 
 

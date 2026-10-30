@@ -29,7 +29,7 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, 
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimBacking,
-    ClaimLawEvidenceV1,
+    ClaimLawEvidence,
     _capture_is_explicitly_eligible,
     _copy_capture_admitted_by_rule,
     build_claim_citation,
@@ -40,8 +40,8 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
@@ -60,6 +60,10 @@ from tests.test_ledger.test_activation import _sign
 CLAIM_ID = "CLM-0123456789abcdef0123456789abcdef"
 CAPTURE_DIGEST = "sha256:" + "ab" * 32
 SOURCE_DIGEST = "sha256:" + "cd" * 32
+
+
+#: The contract the domain ClaimType's own rule names in the coverage-verdict tests.
+DOMAIN_CONTRACT = foreign_source_capture_contract("repo.domain-notes")
 
 
 def _legacy_claim() -> ClaimArtifact:
@@ -203,8 +207,8 @@ def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> No
     instance.refresh()
 
 
-def _claim_evidence(candidate: CandidateRecord) -> ClaimLawEvidenceV1:
-    return ClaimLawEvidenceV1.model_validate(
+def _claim_evidence(candidate: CandidateRecord) -> ClaimLawEvidence:
+    return ClaimLawEvidence.model_validate(
         next(
             item.result["claim_evidence"]
             for item in candidate.law_evidence
@@ -235,13 +239,12 @@ def _page_source_contract() -> CaptureContract:
 def _type_admitting(contract: CaptureContract) -> ClaimType:
     return _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="page-copy",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=getattr(contract, "evidence_kinds", ("self_asserted",)),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -284,7 +287,7 @@ def test_a_claim_type_that_does_not_name_the_contract_still_reads_uncovered() ->
 
     contract = _page_source_contract()
     silent = _claim_type().model_copy(
-        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=())}
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy(rules=())}
     )
 
     assert not _copy_capture_admitted_by_rule(
@@ -371,17 +374,16 @@ def _page_capture(instance, base):
 def _type_naming(contract: CaptureContract) -> ClaimType:
     """The domain ClaimType, plus one rule naming `contract` for its own roles."""
 
-    base = _claim_type()
+    base = _claim_type(contract=DOMAIN_CONTRACT)
     return base.model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
                     *base.evidence_admission_policy.rules,
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="page-copy",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=getattr(contract, "evidence_kinds", ("self_asserted",)),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -467,6 +469,11 @@ def _verdict(
                 **instance.tree_at(base.git_oid),
                 subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
                 "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+                # The domain rule names its own contract by identity, and whoever
+                # carries a naming definition carries what it names.
+                capture_contract_path(DOMAIN_CONTRACT.identity.name): render_capture_contract(
+                    DOMAIN_CONTRACT
+                ),
                 capture_contract_path(contract.identity.name): render_capture_contract(contract),
                 claim_path(CLAIM_ID): render_claim(claim),
             },
@@ -540,7 +547,7 @@ def test_a_copy_of_a_page_covers_only_when_the_claim_type_names_its_contract(tmp
         base,
         capture=_page_capture(instance, base),
         contract=contract,
-        claim_type=_claim_type(),
+        claim_type=_claim_type(contract=DOMAIN_CONTRACT),
         name="page-copy-unnamed",
     )
 

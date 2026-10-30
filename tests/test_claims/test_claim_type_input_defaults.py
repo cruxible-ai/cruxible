@@ -22,6 +22,7 @@ from cruxible_client.contracts.authoring_profiles import _contract_ref as profil
 from cruxible_client.contracts.builtin_claim_types import SEMANTIC_ALIAS_CLAIM_TYPE
 from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CONTRACT_ID
 from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_FORMAT,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
@@ -192,18 +193,20 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
     assert "evidence_admission_policy" not in dumped
     assert "playbill." not in str(claim_type_input_template(expanded=True).model_dump())
     lowered = lower_claim_type_input(template, tree={})
-    assert lowered.artifact_format == "playbill-claim-type-v8"
-    v7 = KeyClaimTypeShape(
+    assert lowered.artifact_format == CLAIM_TYPE_FORMAT
+    assert lowered.canonical_form == ("nfc", "trim")
+    shape = KeyClaimTypeShape(
         predicate=template.predicate,
         live=True,
-        artifact_format="playbill-claim-type-v7",
-        object_kind="literal",
-        cardinality="one",
-        allowed_subject_kinds=("project.work_item",),
+        artifact_format=lowered.artifact_format,
+        object_kind=lowered.object_kind,
+        cardinality=lowered.cardinality,
+        allowed_subject_kinds=lowered.allowed_subject_kinds,
     )
-    problem = key_claim_type_problem("project.work_item", v7, template.predicate)
-    assert problem is not None
-    assert "canonical_form ([] for none)" in problem
+    assert key_claim_type_problem("project.work_item", shape, template.predicate) is None
+    elsewhere = shape.model_copy(update={"allowed_subject_kinds": ("project.other",)})
+    problem = key_claim_type_problem("project.work_item", elsewhere, template.predicate)
+    assert problem is not None and "must be about project.work_item only" in problem
 
 
 def test_lint_only_requests_a_description_for_own_words_on_a_fresh_instance(tmp_path: Path) -> None:
@@ -355,7 +358,7 @@ def test_only_predicate_and_cardinality_are_required() -> None:
     assert lowered.object_kind == "literal"
     assert lowered.literal_schema == {"type": "string"}
     assert lowered.canonical_form == ("nfc", "trim")
-    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert lowered.artifact_format == CLAIM_TYPE_FORMAT
     assert claim_type_digest(lowered) == claim_type_digest(
         _lower(
             {
@@ -400,7 +403,8 @@ def test_string_canonical_form_defaults_and_explicit_overrides(schema: dict[str,
     assert _lower(record).canonical_form == ("nfc", "trim")
     assert _lower({**record, "canonical_form": []}).canonical_form == ()
     assert _lower({**record, "canonical_form": ["casefold"]}).canonical_form == ("casefold",)
-    assert _lower({**record, "canonical_form": None}).artifact_format == "playbill-claim-type-v7"
+    # ``null`` states no transform, exactly as ``[]`` does.
+    assert _lower({**record, "canonical_form": None}).canonical_form == ()
     prior = _lower({**record, "canonical_form": ["casefold"]})
     tree = {claim_type_path(prior.predicate): render_claim_type(prior)}
     assert _lower(
@@ -412,14 +416,13 @@ def test_object_kind_inference_preserves_non_strings_and_explicit_kinds() -> Non
     minimal = {"predicate": "catalog.part.price", "cardinality": "one"}
     integer = _lower({**minimal, "literal_schema": {"type": "integer"}})
     assert integer.object_kind == "literal"
-    assert integer.canonical_form is None
-    assert integer.artifact_format == "playbill-claim-type-v7"
+    assert integer.canonical_form == ()
     subject = _lower({**minimal, "allowed_object_subject_kinds": ["catalog.vendor"]})
     assert subject.object_kind == "subject"
-    assert subject.literal_schema is None and subject.canonical_form is None
+    assert subject.literal_schema is None and subject.canonical_form == ()
     exact = _lower({**minimal, "object_kind": "exact_content"})
     assert exact.object_kind == "exact_content"
-    assert exact.literal_schema is None and exact.canonical_form is None
+    assert exact.literal_schema is None and exact.canonical_form == ()
     with pytest.raises(FormatError, match="not both"):
         _lower(
             {
@@ -441,7 +444,7 @@ def test_security_kit_full_claim_type_keeps_identical_bytes() -> None:
     record = ClaimTypeInputRecord.model_validate(
         artifact.model_dump(
             mode="json",
-            exclude={"artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"},
+            exclude={"artifact_format", "identity", "lifecycle"},
         )
     )
     assert render_claim_type(lower_claim_type_input(record, tree={})) == original

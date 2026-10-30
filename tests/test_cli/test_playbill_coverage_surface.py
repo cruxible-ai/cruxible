@@ -43,12 +43,11 @@ from cruxible_client.contracts.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
-    capture_contract_digest,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.cli.main import cli
 from cruxible_core.coverage.render import BATCH_SUMMARY_PREFIX
@@ -159,13 +158,12 @@ def _govern_a_foreign_span(
     contract = foreign_source_capture_contract(identity)
     claim_type = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="foreign-source",
                         claim_roles=("observation",),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

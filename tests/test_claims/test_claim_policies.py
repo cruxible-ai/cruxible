@@ -5,12 +5,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.policies import (
+    CaptureContractAdmission,
     ClaimAdmissionCandidateContext,
     ClaimAdmissionPolicy,
     ClaimCorroborationResult,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
     CorroborationRequirement,
     EvidenceAdmissionInput,
@@ -24,6 +26,8 @@ from cruxible_client.contracts.policies import (
 
 DIGEST_A = "sha256:" + "11" * 32
 DIGEST_B = "sha256:" + "22" * 32
+CONTRACT_A = "source.provider-a"
+FEED = "feed.orders"
 
 
 def _review_policy() -> ClaimAdmissionPolicy:
@@ -150,14 +154,13 @@ def test_retained_freeze_exception_must_name_an_existing_transition() -> None:
         ClaimAdmissionPolicy.model_validate(payload)
 
 
-def _evidence_policy() -> ClaimEvidenceAdmissionPolicyV1:
-    return ClaimEvidenceAdmissionPolicyV1(
+def _evidence_policy() -> ClaimEvidenceAdmissionPolicy:
+    return ClaimEvidenceAdmissionPolicy(
         rules=(
-            ClaimEvidenceAdmissionRuleV1(
+            ClaimEvidenceAdmissionRule(
                 rule_id="direct-provider-observation",
                 claim_roles=("observation",),
-                capture_contract_digests=(DIGEST_A,),
-                evidence_kinds=("source.observation",),
+                capture_contracts=({"contract": CONTRACT_A, "logical_sources": [FEED]},),
                 admission="direct",
                 subject_binding="contract_source_mapping",
                 attestation_requirement="verified_provider",
@@ -170,6 +173,8 @@ def _evidence(**updates: object) -> EvidenceAdmissionInput:
     values: dict[str, object] = {
         "claim_role": "observation",
         "capture_contract_digest": DIGEST_A,
+        "capture_contract_identity": f"CaptureContract:{CONTRACT_A}",
+        "logical_source": FEED,
         "evidence_kind": "source.observation",
         "attestation_grade": "verified_provider",
         "source_subject_bound": True,
@@ -185,7 +190,7 @@ def test_evidence_admission_is_conjunctive_and_never_grants_claim_authority() ->
 
     undeclared = evaluate_claim_evidence_admission(
         _evidence_policy(),
-        _evidence(evidence_kind="source.other"),
+        _evidence(logical_source="feed.other"),
     )
     assert undeclared.refusal_code == "cruxible.evidence.undeclared_contract_kind"
 
@@ -208,11 +213,17 @@ def test_evidence_admission_trace_chooses_the_closest_contract_rule_deterministi
         update={
             "rule_id": "alternate-role",
             "claim_roles": ("derivation",),
-            "evidence_kinds": ("source.other",),
+            "capture_contracts": (
+                CaptureContractAdmission(
+                    role="capture-contract",
+                    target=ArtifactIdentity(kind="CaptureContract", name=CONTRACT_A),
+                    logical_sources=("feed.other",),
+                ),
+            ),
             "attestation_requirement": "none",
         }
     )
-    policy = ClaimEvidenceAdmissionPolicyV1(
+    policy = ClaimEvidenceAdmissionPolicy(
         rules=tuple(sorted((alternative, direct), key=lambda item: item.rule_id.encode("utf-8")))
     )
 
@@ -230,24 +241,23 @@ def test_evidence_admission_trace_chooses_the_closest_contract_rule_deterministi
 
     no_contract = evaluate_claim_evidence_admission_trace(
         policy,
-        _evidence(capture_contract_digest=DIGEST_B),
+        _evidence(capture_contract_identity="CaptureContract:source.other"),
     )
     assert no_contract.closest_rule_id is None
 
 
-def test_evidence_policy_refuses_duplicate_rules_and_illegal_reducer_shapes() -> None:
+def test_evidence_policy_refuses_duplicate_rules_reducers_and_empty_contracts() -> None:
     direct = _evidence_policy().rules[0]
     with pytest.raises(ValidationError, match="sorted and unique"):
-        ClaimEvidenceAdmissionPolicyV1(rules=(direct, direct))
-    with pytest.raises(ValidationError, match="only derivational"):
-        ClaimEvidenceAdmissionRuleV1(
-            **direct.model_dump(exclude={"allowed_reducer_digests"}),
-            allowed_reducer_digests=(DIGEST_B,),
+        ClaimEvidenceAdmissionPolicy(rules=(direct, direct))
+    # The one rule never names producers: a reducer allowlist is a removed field.
+    with pytest.raises(ValidationError, match="allowed_reducer_digests"):
+        ClaimEvidenceAdmissionRule.model_validate(
+            {**direct.model_dump(mode="json"), "allowed_reducer_digests": [DIGEST_B]}
         )
-    with pytest.raises(ValidationError, match="requires at least one"):
-        ClaimEvidenceAdmissionRuleV1(
-            **direct.model_dump(exclude={"admission"}),
-            admission="derivational",
+    with pytest.raises(ValidationError, match="must not be empty"):
+        ClaimEvidenceAdmissionRule.model_validate(
+            {**direct.model_dump(mode="json"), "capture_contracts": []}
         )
 
 
@@ -314,19 +324,18 @@ def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
 
 def test_current_derivation_policy_requires_provenance_without_authorizing_producers():
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV2,
-        ClaimEvidenceAdmissionRuleV2,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
 
-    rule = ClaimEvidenceAdmissionRuleV2(
+    rule = ClaimEvidenceAdmissionRule(
         rule_id="derived-observation",
         claim_roles=("derivation",),
-        capture_contract_digests=(DIGEST_A,),
-        evidence_kinds=("source.observation",),
+        capture_contracts=({"contract": CONTRACT_A, "logical_sources": [FEED]},),
         admission="derivational",
         subject_binding="exact_claim_subject",
     )
-    policy = ClaimEvidenceAdmissionPolicyV2(rules=(rule,))
+    policy = ClaimEvidenceAdmissionPolicy(rules=(rule,))
     for reducer in (DIGEST_A, DIGEST_B):
         assert (
             evaluate_claim_evidence_admission(
@@ -349,7 +358,7 @@ def test_current_derivation_policy_requires_provenance_without_authorizing_produ
             "cruxible.evidence.derivation_incomplete"
         )
     with pytest.raises(ValidationError, match="Extra inputs"):
-        ClaimEvidenceAdmissionRuleV2.model_validate(
+        ClaimEvidenceAdmissionRule.model_validate(
             {
                 **rule.model_dump(),
                 "allowed_reducer_digests": [DIGEST_B],

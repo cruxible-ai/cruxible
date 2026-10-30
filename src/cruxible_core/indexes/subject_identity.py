@@ -709,7 +709,7 @@ def undeclared_kind_repair(kind: str) -> str:
     )
     minted = json.dumps({"kind": "subject_kind", "name": kind, "minted": True})
     return (
-        f"Author a SubjectKind for {kind} first: keyed by a key ClaimType (a ClaimType v8 about "
+        f"Author a SubjectKind for {kind} first: keyed by a key ClaimType (a ClaimType about "
         f"{kind} only, literal and one-valued, accepted in the same change or earlier), e.g. "
         f"{keyed}, or minted, {minted}. `cruxible authoring example subject-kind` prints one."
     )

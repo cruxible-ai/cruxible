@@ -18,7 +18,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
 from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_address,
@@ -1248,7 +1248,12 @@ def test_a_claim_statement_resolution_retains_the_observation_that_produced_it(
             account.observation_coordinate.model_dump(mode="json")
         ),
     )
-    assert claim_verdict_v1_compat(reproduced.verdict) == account.verdict_result
+    assert (
+        reproduced.verdict.model_copy(
+            update={"verdict": reported_claim_verdict(reproduced.verdict)}
+        )
+        == account.verdict_result
+    )
 
 
 def test_attestation_evidence_is_selected_at_the_observed_instant(tmp_path: Path) -> None:

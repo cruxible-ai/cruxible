@@ -44,7 +44,7 @@ from cruxible_client.contracts.claim_attestation_store import (
     claim_attestation_partition_digest,
 )
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1, claim_verdict_v1_compat
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult, reported_claim_verdict
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     claim_artifact_digest,
@@ -703,8 +703,8 @@ class ClaimVerdictObservationV1(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-measurement-claim-verdict-observation-v1"] = (
-        "playbill-measurement-claim-verdict-observation-v1"
+    tag: Literal["cruxible-measurement-claim-verdict-observation-v2"] = (
+        "cruxible-measurement-claim-verdict-observation-v2"
     )
     observation_coordinate: AcceptedCoordinate
     observation_time: datetime
@@ -712,7 +712,9 @@ class ClaimVerdictObservationV1(BaseModel):
     claim_artifact_path: str
     claim_artifact_digest: str
     claim_statement_digest: str
-    verdict_result: ClaimVerdictResultV1
+    #: The verdict in the query vocabulary (``stale_evidence`` reads ``stale``),
+    #: the one acceptable verdicts are stated in.
+    verdict_result: ClaimVerdictResult
 
 
 @dataclass(frozen=True)
@@ -741,7 +743,9 @@ def _evaluate_claim_statement(
         evaluation_time=observation_time,
         at=AcceptedCoordinate.from_internal(observation),
     )
-    verdict = claim_verdict_v1_compat(verdict_query.verdict)
+    verdict = verdict_query.verdict.model_copy(
+        update={"verdict": reported_claim_verdict(verdict_query.verdict)}
+    )
     account = ClaimVerdictObservationV1(
         observation_coordinate=AcceptedCoordinate.from_internal(observation),
         observation_time=observation_time,

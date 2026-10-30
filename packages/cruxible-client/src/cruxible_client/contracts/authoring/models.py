@@ -130,7 +130,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:c5a29e479196804e19ffeea3b7c531679f5b53575773b23e8cbb6bec7b8722dd"
+    "sha256:9816258c0dd8069f8ec29fd5de1b9bf946c2cba0e728a89f13275b5c29e5defe"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -389,7 +389,7 @@ class AuthoringExactContentObject(_StrictAuthoringModel):
 
 
 class AuthoringNoneClaimObject(_StrictAuthoringModel):
-    """A none as authored (an inverse Claim, ClaimType v9): the unit ``of`` names holds nothing.
+    """A none as authored (an inverse Claim): the unit ``of`` names holds nothing.
 
     ``of`` is absent for a whole one-valued slot, else the object (``object``
     inverse) or the key value (``object_key``). Lowering stores it as the

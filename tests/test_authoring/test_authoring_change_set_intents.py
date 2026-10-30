@@ -75,7 +75,7 @@ from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
 )
-from tests.test_claims.test_claims import _claim_type
+from tests.test_claims.test_claims import vocabulary_claim_type
 from tests.test_ledger.test_activation import _sign
 
 SUBJECT_KIND = "project.work_item"
@@ -123,7 +123,7 @@ def _shell(subject_id: str) -> SubjectShell:
 
 
 def _predicate_type(predicate: str) -> ClaimType:
-    values = _claim_type().model_dump(mode="python")
+    values = vocabulary_claim_type().model_dump(mode="python")
     values["identity"] = ArtifactIdentity(kind="ClaimType", name=predicate)
     values["predicate"] = predicate
     return ClaimType.model_validate(values)

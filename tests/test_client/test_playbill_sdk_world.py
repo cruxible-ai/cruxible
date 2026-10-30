@@ -60,7 +60,7 @@ LANDED_AT = "dev.batch.landed_at"
 
 def _claim_type(predicate: str, **overrides: object) -> ClaimTypeRead:
     envelope: dict[str, Any] = {
-        "artifact_format": "playbill-claim-type-v1",
+        "artifact_format": "cruxible-claim-type-v10",
         "identity": {"kind": "ClaimType", "name": predicate},
         "predicate": predicate,
         "allowed_subject_kinds": ("sec.vulnerability",),
@@ -1226,7 +1226,7 @@ def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
     assert "\u2014" not in plain.stub()
 
     client.severity_overrides = {
-        "artifact_format": "playbill-claim-type-v7",
+        "artifact_format": "cruxible-claim-type-v10",
         "description": "How bad the vulnerability is.\nRead it before patching.",
         "member_descriptions": [
             {"member": "high", "description": "Patch now."},

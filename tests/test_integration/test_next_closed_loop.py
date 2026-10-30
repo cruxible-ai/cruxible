@@ -16,7 +16,6 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
     DirectForeignSourceSelection,
-    capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
     parse_capture_envelope,
@@ -47,8 +46,8 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path
 from cruxible_client.contracts.semantic import ContentSpan
@@ -412,26 +411,22 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(root)
     source_id = "corpus.closed-loop"
     foreign_contract = foreign_source_capture_contract(source_id)
-    direct_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
-    foreign_digest = capture_contract_digest(foreign_contract).tagged
     base_type = _claim_type()
     claim_type = base_type.model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="direct-origin",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(direct_digest,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name,),
                         admission="origin_only",
                         subject_binding="exact_claim_subject",
                     ),
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="foreign-direct",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(foreign_digest,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(foreign_contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -573,7 +568,6 @@ def _freshness_world(root: Path, *, stale_after: int = 10_000_000):  # type: ign
     successor = ClaimType.model_validate(
         {
             **predecessor.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
                 stale_after=ClaimFreshnessDuration(microseconds=stale_after)
             ).model_dump(mode="json"),

@@ -13,7 +13,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot, canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claim_verdicts import (
-    ClaimAdjudicationRuleV1,
+    ClaimAdjudicationRule,
     claim_adjudication_rule,
 )
 from cruxible_client.contracts.claims import (
@@ -119,7 +119,7 @@ def subject(kind: str, identifier: str) -> AcceptedSubject:
     )
 
 
-def rule_for(predicate: str, *, object_kind: str = "literal") -> ClaimAdjudicationRuleV1:
+def rule_for(predicate: str, *, object_kind: str = "literal") -> ClaimAdjudicationRule:
     contract: ClaimType = claim_type(predicate, object_kind=object_kind)
     return claim_adjudication_rule(
         contract,

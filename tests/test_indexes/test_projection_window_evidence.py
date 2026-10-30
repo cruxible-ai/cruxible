@@ -442,6 +442,7 @@ def _candidate_tree(instance: Any, base: Any, contract: Any, claim_type: Any, cl
     from cruxible_client.contracts.claim_types import render_claim_type
     from cruxible_client.contracts.claims import render_claim
     from cruxible_client.contracts.subjects import render_subject, subject_path
+    from tests.test_claims.test_claim_citations import DOMAIN_CONTRACT
     from tests.test_claims.test_claims import _subject
 
     shell = _subject()
@@ -451,6 +452,10 @@ def _candidate_tree(instance: Any, base: Any, contract: Any, claim_type: Any, cl
             **instance.tree_at(base.git_oid),
             subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
             "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            # The type's rules name both contracts by identity; both are held.
+            capture_contract_path(DOMAIN_CONTRACT.identity.name): render_capture_contract(
+                DOMAIN_CONTRACT
+            ),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             claim_path(claim.identity.name): render_claim(claim),
         },

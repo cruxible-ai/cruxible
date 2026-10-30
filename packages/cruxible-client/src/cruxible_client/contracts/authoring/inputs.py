@@ -482,7 +482,7 @@ class SubjectKindInput(_StrictInputModel):
     """How core names Subjects of one kind: by key ClaimTypes, or by minted ids.
 
     Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
-    the key ClaimTypes (by predicate, in key order): each a ClaimType v8 about
+    the key ClaimTypes (by predicate, in key order): each a ClaimType about
     this kind only, literal and one-valued, accepted here or earlier; a Subject's
     id is then the readable rendering of its canonical key. The default
     ``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only

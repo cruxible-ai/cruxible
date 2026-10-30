@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     claim_artifact_digest,
@@ -84,7 +84,7 @@ CREATE INDEX contributions_by_dependent ON dependency_contributions(dependent,so
 #: The Layer 2 tables, in the order a dump lists them.
 TABLES = ("row_keys", "claim_rows", "row_reads", "dependency_contributions")
 
-_VERDICTS: TypeAdapter[ClaimVerdictResultAny] = TypeAdapter(ClaimVerdictResultAny)
+_VERDICTS: TypeAdapter[ClaimVerdictResult] = TypeAdapter(ClaimVerdictResult)
 _FACT_COLUMNS = (
     "claim_id",
     "path",
@@ -202,7 +202,7 @@ class RowContext:
     def fact(self, claim_id: str) -> dict[str, Any] | None:
         return self.facts((claim_id,))[claim_id]
 
-    def verdict(self, fact: Mapping[str, Any] | None) -> ClaimVerdictResultAny | None:
+    def verdict(self, fact: Mapping[str, Any] | None) -> ClaimVerdictResult | None:
         if fact is None or fact["verdict_json"] is None:
             return None
         return _VERDICTS.validate_python(

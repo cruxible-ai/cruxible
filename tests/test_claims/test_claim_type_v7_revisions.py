@@ -1,4 +1,4 @@
-"""Claim law v2 revision 8 / v3 revision 10 under ClaimType v7, on a governed instance.
+"""The Claim law under a ClaimType's revision-evidence rule, on a governed instance.
 
 - A carry (byte-identical backing) keeps all of its backing, whatever the rule.
 - Under ``replace`` a revision that changes its statement carries exactly the
@@ -83,8 +83,9 @@ WHEN = datetime(2026, 8, 22, tzinfo=timezone.utc)
 
 
 def v7_type(*, predecessor: ClaimType | None = None, **update: object) -> ClaimType:
+    """The identity-rule type stating ``self`` and ``replace`` (``_v6_type`` accumulates)."""
+
     fields: dict[str, object] = {
-        "artifact_format": "playbill-claim-type-v7",
         "evidence_requirement": "self",
         "revision_evidence": "replace",
         "lifecycle": ArtifactLifecycle(
@@ -428,7 +429,7 @@ def _rule_digest(claim_type: ClaimType) -> str:
     )
 
 
-def test_a_description_only_or_v6_to_v7_succession_reproduces_the_rule() -> None:
+def test_a_description_only_or_accumulate_to_replace_succession_reproduces_the_rule() -> None:
     v6 = _v6_type()
     upgraded = v7_type(predecessor=v6, revision_evidence="accumulate")
     described = v7_type(

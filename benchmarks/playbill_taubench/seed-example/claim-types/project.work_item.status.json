@@ -8,50 +8,72 @@
   "allowed_subject_kinds": [
     "project.work_item"
   ],
-  "artifact_format": "playbill-claim-type-v1",
+  "artifact_format": "cruxible-claim-type-v10",
+  "canonical_form": [],
   "cardinality": "one",
   "evidence_admission_policy": {
     "rules": [
       {
         "admission": "direct",
-        "allowed_reducer_digests": [],
         "attestation_requirement": "none",
-        "capture_contract_digests": [
-          "sha256:2faeab9f17b1b7d775457b5c07bd316f7b5e49b8d69a057c15b82ce6fe828f71"
+        "capture_contracts": [
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.coordinator-self-source-v1"
+            }
+          }
         ],
         "claim_roles": [
           "normative",
           "observation"
         ],
-        "evidence_kinds": [
-          "self_asserted"
-        ],
         "rule_id": "direct-self-asserted",
         "subject_binding": "exact_claim_subject",
-        "tag": "playbill-claim-evidence-admission-rule-v1"
+        "tag": "cruxible-claim-evidence-admission-rule-v4"
       },
       {
         "admission": "direct",
-        "allowed_reducer_digests": [],
         "attestation_requirement": "none",
-        "capture_contract_digests": [
-          "sha256:88b36b1bed115f2571dac226c906248e89c4a07c41f6323c876afbfb8e5c3b3c",
-          "sha256:9dba95cb7da3414373560147c9cd2d8ba2025f7d3f83d9a1368c5d9995235818",
-          "sha256:ef07f5f35f9a984dd57e6dbfbc9d136a630f3c3f6223cfd7104e99ebaf205fee"
+        "capture_contracts": [
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.corpus.handbook.md"
+            }
+          },
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.corpus.runbook.md"
+            }
+          },
+          {
+            "logical_sources": [],
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.foreign-source.notes.scratch.md"
+            }
+          }
         ],
         "claim_roles": [
           "observation"
         ],
-        "evidence_kinds": [
-          "self_asserted"
-        ],
         "rule_id": "foreign-working-sources",
         "subject_binding": "exact_claim_subject",
-        "tag": "playbill-claim-evidence-admission-rule-v1"
+        "tag": "cruxible-claim-evidence-admission-rule-v4"
       }
     ],
-    "tag": "playbill-claim-evidence-admission-policy-v1"
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
   },
+  "evidence_requirement": "self",
   "identity": {
     "kind": "ClaimType",
     "name": "project.work_item.status"
@@ -68,6 +90,7 @@
     ],
     "type": "string"
   },
+  "member_descriptions": [],
   "object_kind": "literal",
   "permitted_roles": [
     "normative",
@@ -86,5 +109,6 @@
     "required_basis_kinds": [],
     "selector": "only_contender",
     "tag": "playbill-claim-resolution-policy-v1"
-  }
+  },
+  "revision_evidence": "accumulate"
 }

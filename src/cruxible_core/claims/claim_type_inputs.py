@@ -29,17 +29,12 @@ from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
-    CaptureContractV1,
     capture_contract_digest,
-    capture_contract_path,
     foreign_source_capture_contract,
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    CLAIM_TYPE_V9_FORMAT,
-    V7_AND_LATER_FORMATS,
-    V8_AND_LATER_FORMATS,
     ClaimAttestationConsequencePolicy,
     ClaimFreshnessDuration,
     ClaimInverse,
@@ -50,8 +45,6 @@ from cruxible_client.contracts.claim_types import (
     canonical_description_text,
     claim_type_digest,
     claim_type_path,
-    effective_evidence_requirement,
-    effective_revision_evidence,
     parse_claim_type,
 )
 from cruxible_client.contracts.codes import CurrentCode
@@ -60,7 +53,6 @@ from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.subject_kinds import SubjectKind
@@ -90,7 +82,7 @@ class ClaimTypeInputValidationError(FormatError):
         super().__init__(f"{self.error_code}: {'; '.join(details)}")
 
 
-_V7_INPUT_FIELDS = (
+_MERGED_INPUT_FIELDS = (
     "description",
     "member_descriptions",
     "default_role",
@@ -167,7 +159,7 @@ class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
 
 
 class ClaimInverseInput(_StrictClaimTypeInputModel):
-    """How the type states that a unit holds nothing (ClaimType v9).
+    """How the type states that a unit holds nothing.
 
     ``key`` names the unit: ``{kind: slot}`` for a one-valued type,
     ``{kind: object}`` or ``{kind: object_key, predicate}`` (a key ClaimType of
@@ -230,10 +222,7 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     ``evidence_freshness``, ``attestation_consequence_policy``,
     ``unsure_hold_for``, ``description``, ``member_descriptions`` (``[]`` too),
     ``default_role``, ``canonical_form``, ``inverse``); the others always have a value, so
-    they are named or left out, never ``null``. Over a ClaimType before v7,
-    omitted descriptions start empty, the default role is none, and the
-    requirement and revision evidence are the predecessor's meaning: ``self``
-    and ``accumulate``. Durations (``evidence_freshness.stale_after``,
+    they are named or left out, never ``null``. Durations (``evidence_freshness.stale_after``,
     ``unsure_hold_for``) take ISO-8601 (``P30D``) or ``{microseconds: N}``.
     A rule names a contract by its public or stored name.
     """
@@ -273,29 +262,27 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     evidence_freshness: ClaimEvidenceFreshnessInput | None = None
     attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None
     unsure_hold_for: ClaimDurationInput | None = None
-    #: What the predicate means (ClaimType v7), NFC-normalized and trimmed.
+    #: What the predicate means, NFC-normalized and trimmed.
     #: Omitted: kept from the predecessor. ``null``: cleared.
     description: str | None = None
-    #: What each literal enum member means (ClaimType v7), in any order.
+    #: What each literal enum member means, in any order.
     #: Omitted: kept from the predecessor. ``null`` or ``[]``: cleared.
     member_descriptions: tuple[ClaimTypeMemberDescriptionInput, ...] | None = None
-    #: The role a write takes when it names none (ClaimType v7).
+    #: The role a write takes when it names none.
     #: Omitted: kept from the predecessor. ``null``: cleared.
     default_role: ClaimRole | None = None
-    #: Omitted: kept from the predecessor (``self`` before v7); a new ClaimType
-    #: takes ``self``. Never ``null``.
+    #: Omitted: kept from the predecessor; a new ClaimType takes ``self``.
+    #: Never ``null``.
     evidence_requirement: EvidenceRequirement | None = None
-    #: Omitted: kept from the predecessor (``accumulate`` before v7); a new
-    #: ClaimType takes ``replace``. Never ``null``.
+    #: Omitted: kept from the predecessor; a new ClaimType takes ``replace``.
+    #: Never ``null``.
     revision_evidence: RevisionEvidence | None = None
     #: The ordered transforms every literal value is stored and compared in
-    #: (ClaimType v8; ``contracts.canonical_forms``). Stating it lowers to v8,
-    #: which a SubjectKind key needs (``[]`` states no transform).
-    #: Omitted: kept from the predecessor (none before v8). ``null`` or ``[]``:
-    #: no transform.
+    #: (``contracts.canonical_forms``). Omitted: kept from the predecessor (none
+    #: for a new ClaimType). ``null`` or ``[]``: no transform.
     canonical_form: tuple[CanonicalTransform, ...] | None = None
-    #: How the type states absence (ClaimType v9): stating it lowers to v9.
-    #: Omitted: kept from the predecessor (none before v9). ``null``: cleared.
+    #: How the type states absence. Omitted: kept from the predecessor (none
+    #: for a new ClaimType). ``null``: cleared.
     inverse: ClaimInverseInput | None = None
     anticipated_source_ids: tuple[str, ...] = ()
 
@@ -424,8 +411,8 @@ def claim_type_input_defaults(
     (merge-patch); over none, it takes its default, and a field no default can
     fill refuses ``cruxible.claim_type.input_incomplete``. A minimal input and
     its spelled-out equivalent therefore lower to one ClaimType and one digest.
-    The ClaimType v7 and v8 fields are merged later, by lowering, exactly as
-    before; a new ClaimType states its evidence requirement and revision
+    The description, role, canonical-form and inverse fields are merged later,
+    by lowering; a new ClaimType states its evidence requirement and revision
     evidence here so the expanded form shows them.
     """
 
@@ -577,7 +564,7 @@ def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord
     """The ClaimType input the CLI template surface prints.
 
     The minimal form states only predicate and cardinality. Its string literal
-    takes ``[nfc, trim]`` and can key a SubjectKind (a key needs ClaimType v8).
+    takes ``[nfc, trim]`` and can key a SubjectKind.
     ``expanded`` states every default from the same function lowering applies.
     """
 
@@ -673,12 +660,6 @@ def _identity_evidence_policy(
             unique[key].model_dump(mode="json")
             for key in sorted(unique, key=lambda item: item.encode("utf-8"))
         ]
-        if raw.get("tag") in {
-            "playbill-claim-evidence-admission-policy-v1",
-            "playbill-claim-evidence-admission-policy-v2",
-            "playbill-claim-evidence-admission-policy-v3",
-        }:
-            rule.pop("evidence_kinds", None)
         rule.pop("tag", None)
         rules.append(rule)
     return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}
@@ -702,28 +683,25 @@ class ClaimTypeDefaultRoleNotPermitted(FormatError):
     error_code = "cruxible.claim_type.default_role_not_permitted"
 
 
-def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> dict[str, object]:
-    """The v7 fields a lowered ClaimType states: merge-patched onto its predecessor.
+def _description_fields(
+    value: ClaimTypeInputRecord, predecessor: ClaimType | None
+) -> dict[str, object]:
+    """The description, role and evidence fields a lowered ClaimType states.
 
-    A field the input leaves out keeps the predecessor's value, so an unrelated
-    edit never changes what the type means, what a Claim needs or what a
-    revision keeps. A predecessor before v7 has no descriptions and no default
-    role, and means ``self`` and ``accumulate``; a new ClaimType takes ``self``
-    and ``replace``. Inherited descriptions and default role are checked against
-    the edited structure and refused, never silently dropped, when stale.
+    Merge-patched onto its predecessor: a field the input leaves out keeps the
+    predecessor's value, so an unrelated edit never changes what the type
+    means, what a Claim needs or what a revision keeps. A new ClaimType takes
+    ``self`` and ``replace``. Inherited descriptions and default role are
+    checked against the edited structure and refused, never silently dropped,
+    when stale.
     """
 
-    v7 = (
-        predecessor
-        if predecessor is not None and predecessor.artifact_format in V7_AND_LATER_FORMATS
-        else None
-    )
     if value.states("description"):
         description = (
             None if value.description is None else canonical_description_text(value.description)
         )
     else:
-        description = None if v7 is None else v7.description
+        description = None if predecessor is None else predecessor.description
     if value.states("member_descriptions"):
         members: list[dict[str, object]] = [
             {"member": item.member, "description": canonical_description_text(item.description)}
@@ -731,7 +709,9 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
         ]
     else:
         members = (
-            [] if v7 is None else [item.model_dump(mode="json") for item in v7.member_descriptions]
+            []
+            if predecessor is None
+            else [item.model_dump(mode="json") for item in predecessor.member_descriptions]
         )
     members.sort(key=lambda item: canonical_bytes(item["member"]))
     enum = None if value.literal_schema is None else value.literal_schema.get("enum")
@@ -747,7 +727,7 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
     if value.states("default_role"):
         default_role = value.default_role
     else:
-        default_role = None if v7 is None else v7.default_role
+        default_role = None if predecessor is None else predecessor.default_role
     permitted = value.permitted_roles or ()
     if default_role is not None and (default_role == "derivation" or default_role not in permitted):
         raise ClaimTypeDefaultRoleNotPermitted(
@@ -760,51 +740,33 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
         "member_descriptions": members,
         "default_role": default_role,
         "evidence_requirement": value.evidence_requirement
-        or ("self" if predecessor is None else effective_evidence_requirement(predecessor)),
+        or ("self" if predecessor is None else predecessor.evidence_requirement),
         "revision_evidence": value.revision_evidence
-        or ("replace" if predecessor is None else effective_revision_evidence(predecessor)),
+        or ("replace" if predecessor is None else predecessor.revision_evidence),
     }
 
 
 def _canonical_form(
     value: ClaimTypeInputRecord, predecessor: ClaimType | None
-) -> tuple[CanonicalTransform, ...] | None:
-    """The canonical form a lowered ClaimType states, or ``None`` to stay v7.
+) -> tuple[CanonicalTransform, ...]:
+    """The canonical form a lowered ClaimType states.
 
-    Stating ``canonical_form`` lowers to v8. Left out, a v8 predecessor's form is
-    kept (merge-patch, like the v7 fields), so an unrelated edit never changes
-    what the predicate's values compare as; over anything else it stays v7. A v8
-    ClaimType never lowers back to v7: ``null`` over one states no transform.
+    Left out, the predecessor's form is kept (merge-patch), so an unrelated edit
+    never changes what the predicate's values compare as; ``null`` states no
+    transform.
     """
 
-    inherited = (
-        predecessor.canonical_form
-        if predecessor is not None and predecessor.artifact_format in V8_AND_LATER_FORMATS
-        else None
-    )
     if value.states("canonical_form"):
-        if value.canonical_form is None:
-            return None if inherited is None else ()
-        return value.canonical_form
-    return inherited
+        return value.canonical_form or ()
+    return () if predecessor is None else predecessor.canonical_form
 
 
-def _inverse(
-    value: ClaimTypeInputRecord, predecessor: ClaimType | None
-) -> tuple[bool, ClaimInverse | None]:
-    """Whether a lowered ClaimType is v9, and the inverse it declares.
+def _inverse(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> ClaimInverse | None:
+    """The inverse a lowered ClaimType declares: kept when left out, cleared by ``null``."""
 
-    Stating ``inverse`` lowers to v9. Left out, a v9 predecessor's inverse is
-    kept (merge-patch); ``null`` clears it, and a v9 ClaimType never lowers back
-    to v8, as a v8 one never lowers back to v7.
-    """
-
-    v9 = predecessor is not None and predecessor.artifact_format == CLAIM_TYPE_V9_FORMAT
     if value.states("inverse"):
-        if value.inverse is None:
-            return v9, None
-        return True, value.inverse.lowered()
-    return v9, None if predecessor is None or not v9 else predecessor.inverse
+        return None if value.inverse is None else value.inverse.lowered()
+    return None if predecessor is None else predecessor.inverse
 
 
 def lower_claim_type_input(
@@ -817,45 +779,18 @@ def lower_claim_type_input(
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
     _refuse_number_schema(value)
-    if (
-        predecessor is not None
-        and isinstance(predecessor.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3)
-        and not value.states("evidence_admission_policy")
-    ):
-        for rule in predecessor.evidence_admission_policy.rules:
-            for ref in rule.capture_contracts:
-                contract_path = capture_contract_path(ref.target.name)
-                content = tree.get(contract_path)
-                if content is None:
-                    continue
-                contract = parse_capture_contract(content, path=contract_path)
-                if isinstance(contract, CaptureContractV1) and not set(
-                    contract.evidence_kinds
-                ).issubset(rule.evidence_kinds):
-                    raise ClaimTypeInputReferenceError(
-                        f"rule {rule.rule_id!r} does not cover every legacy kind of "
-                        f"{ref.target.qualified}; state evidence_admission_policy explicitly"
-                    )
     value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
-    for field in _V7_INPUT_FIELDS:
+    for field in _MERGED_INPUT_FIELDS:
         payload.pop(field, None)
-    payload["artifact_format"] = "playbill-claim-type-v7"
-    canonical_form = _canonical_form(value, predecessor)
-    if canonical_form is not None:
-        payload["artifact_format"] = "playbill-claim-type-v8"
-        payload["canonical_form"] = list(canonical_form)
-    v9, inverse = _inverse(value, predecessor)
-    if v9:
-        # v9 is v8 plus an inverse: it states its canonical form too.
-        payload["artifact_format"] = CLAIM_TYPE_V9_FORMAT
-        payload["canonical_form"] = list(canonical_form or ())
-        if inverse is not None:
-            payload["inverse"] = inverse.model_dump(mode="json")
+    payload["canonical_form"] = list(_canonical_form(value, predecessor))
+    inverse = _inverse(value, predecessor)
+    if inverse is not None:
+        payload["inverse"] = inverse.model_dump(mode="json")
     # Every rule names its contracts by identity. A rule naming an exact digest
     # no accepted contract version carries has no identity to follow, so it is
-    # refused rather than authored as a v5 exact-digest rule.
+    # refused.
     policy = value.evidence_admission_policy or {}
     raw_rules = policy.get("rules", ())
     needs_digest_lookup = isinstance(raw_rules, list | tuple) and any(
@@ -867,7 +802,7 @@ def lower_claim_type_input(
             _contract_identities(tree, value.anticipated_source_ids) if needs_digest_lookup else {}
         ),
     )
-    payload.update(_v7_fields(value, predecessor))
+    payload.update(_description_fields(value, predecessor))
     try:
         payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicy.model_validate(
             identity_policy

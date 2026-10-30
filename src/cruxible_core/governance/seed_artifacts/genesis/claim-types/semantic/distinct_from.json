@@ -10,8 +10,8 @@
   "allowed_subject_kinds": [
     "semantic.subject"
   ],
-  "artifact_format": "playbill-claim-type-v7",
-  "attestation_consequence_policy": null,
+  "artifact_format": "cruxible-claim-type-v10",
+  "canonical_form": [],
   "cardinality": "many",
   "default_role": "normative",
   "description": "The object Subject is a different thing from this one, whatever names or keys they share: the duplicates audit never groups the pair.",
@@ -22,6 +22,7 @@
         "attestation_requirement": "none",
         "capture_contracts": [
           {
+            "logical_sources": [],
             "role": "capture-contract",
             "target": {
               "kind": "CaptureContract",
@@ -33,17 +34,13 @@
           "normative",
           "observation"
         ],
-        "evidence_kinds": [
-          "self_asserted"
-        ],
         "rule_id": "self",
         "subject_binding": "exact_claim_subject",
-        "tag": "playbill-claim-evidence-admission-rule-v3"
+        "tag": "cruxible-claim-evidence-admission-rule-v4"
       }
     ],
-    "tag": "playbill-claim-evidence-admission-policy-v3"
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
   },
-  "evidence_freshness": null,
   "evidence_requirement": "self",
   "identity": {
     "kind": "ClaimType",
@@ -53,7 +50,6 @@
     "predecessor_digest": null,
     "state": "live"
   },
-  "literal_schema": null,
   "member_descriptions": [],
   "object_kind": "subject",
   "permitted_roles": [
@@ -74,7 +70,5 @@
     "selector": "all",
     "tag": "playbill-claim-resolution-policy-v1"
   },
-  "revision_evidence": "replace",
-  "slot_policy": null,
-  "subject_scope": null
+  "revision_evidence": "replace"
 }

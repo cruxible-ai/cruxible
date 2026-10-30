@@ -125,10 +125,10 @@ class OrientPredicate(_StrictOrientModel):
     Claim's own origin supports it; ``captured``: a Capture under a declared
     contract is required). A full descriptor also carries each described enum
     member, the role a write defaults to, and ``revision_evidence``: what a
-    statement-changing revision keeps (``accumulate`` before v7).
+    statement-changing revision keeps.
     A full descriptor also names how the ClaimType settles rival Claims
-    (``contention``), its format version (``format``: 7 for
-    ``playbill-claim-type-v7``), its accepted ``revision`` and its ledger
+    (``contention``), its format version (``format``: 10 for
+    ``cruxible-claim-type-v10``), its accepted ``revision`` and its ledger
     ``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a
     descriptor counts the kind's ``live_claims`` of the predicate and
     ``subjects_with_value``: its live Subjects with at least one, both read

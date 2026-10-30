@@ -68,9 +68,6 @@
   "/api/v1/{instance_id}/claim-types/proposals": {
     "POST": "ClaimTypeInputProposalResult"
   },
-  "/api/v1/{instance_id}/claim-types/upgrade": {
-    "POST": "ClaimTypeUpgradeResult"
-  },
   "/api/v1/{instance_id}/claims/backings": {
     "POST": "ClaimBackingsResult"
   },

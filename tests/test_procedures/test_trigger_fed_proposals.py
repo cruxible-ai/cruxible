@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.procedure_mandates import (
@@ -85,7 +84,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
             "trigger_event": selector,
         }
     )
-    claim_type = _claim_type(capture_contract_digest(contract).tagged)
+    claim_type = _claim_type(contract.identity.name)
     mandate = fixtures._line_mandate(line, proposer).model_copy(
         update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="proposer-mandate")}
     )

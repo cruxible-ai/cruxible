@@ -39,7 +39,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -779,7 +779,7 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
     )
     actor = AuthenticatedActor(actor_id="owner")
     successor = _enum_successor(instance, enum=["ready"]).model_copy(
-        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1()}
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()}
     )
 
     operator = service_migrate_claim_type(

@@ -110,7 +110,7 @@ def test_claim_type_reads_carry_contention_format_revision_and_path(
     for predicate, selector in ((title, "only_contender"), (governs, "all")):
         expected = {
             "contention": {"selector": selector, "on_conflict": "unresolved"},
-            "format": 1,
+            "format": 10,
             "revision": 1,
             "path": claim_type_path(predicate),
         }
@@ -170,7 +170,7 @@ def test_contention_counts_admission_requirements() -> None:
         "corroboration": 1,
         "freeze": 1,
     }
-    assert claim_type_format_version(claim_type) == 1
+    assert claim_type_format_version(claim_type) == 10
 
 
 # -- K6: typed Mandate scope on the mandate reads -------------------------------------

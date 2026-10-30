@@ -25,7 +25,7 @@ from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDepend
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.transport.http import CruxibleClient
@@ -73,7 +73,6 @@ def _add_parity_subject(draft: ChangeSetDraft) -> None:
 
 def _claim_type() -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=("project.work_item",),
@@ -81,7 +80,7 @@ def _claim_type() -> ClaimType:
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",

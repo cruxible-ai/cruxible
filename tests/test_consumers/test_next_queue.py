@@ -1275,7 +1275,6 @@ def _stale_evidence_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     claim_type = ClaimType.model_validate(
         {
             **_claim_type().model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": {"stale_after": {"microseconds": 1_000_000}},
         }
     )

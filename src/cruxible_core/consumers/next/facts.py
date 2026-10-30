@@ -57,8 +57,7 @@ from pydantic import TypeAdapter
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResult,
-    ClaimVerdictResultAny,
-    claim_verdict_v1_compat,
+    reported_claim_verdict,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -268,7 +267,7 @@ _FACT_COLUMNS = (
     "pin_targets",
 )
 _CLAIM_PATH = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
-_VERDICTS: TypeAdapter[ClaimVerdictResultAny] = TypeAdapter(ClaimVerdictResultAny)
+_VERDICTS: TypeAdapter[ClaimVerdictResult] = TypeAdapter(ClaimVerdictResult)
 _FIRES_PAGE = 1024
 
 
@@ -451,7 +450,7 @@ class _Facts:
     #: Citations this Claim effectively cites whose Capture envelope could not
     #: be read: (citation_id, capture_digest). Named in a row, never raised.
     unavailable_citations: tuple[tuple[str, str], ...]
-    verdict: ClaimVerdictResultAny | None
+    verdict: ClaimVerdictResult | None
 
     @property
     def claim_id(self) -> str:
@@ -463,10 +462,10 @@ def _read_key(read: tuple[str, ...]) -> str:
     return f"{kind}:{'|'.join(values)}"
 
 
-def _max_support_expiry(verdict: ClaimVerdictResultAny, at: datetime) -> int | None:
+def _max_support_expiry(verdict: ClaimVerdictResult, at: datetime) -> int | None:
     """The latest current support expiry: an expiring row is due once it is within the lead."""
 
-    if not isinstance(verdict, ClaimVerdictResult) or verdict.verdict not in {
+    if verdict.verdict not in {
         "supported",
         "contradicted",
         "unresolved",
@@ -563,7 +562,7 @@ def _claim_facts(
     errors: list[tuple[str, str]] = []
     raised: list[BaseException] = []
     boundaries: set[datetime] = set()
-    verdict: ClaimVerdictResultAny | None = None
+    verdict: ClaimVerdictResult | None = None
     type_digest: str | None = None
     recording = context.record()
     try:
@@ -592,7 +591,7 @@ def _claim_facts(
     )
     visible: int | None = None
     if verdict is not None:
-        reported = claim_verdict_v1_compat(verdict).verdict
+        reported = reported_claim_verdict(verdict)
         visible = int(
             context.tree.get(subject_path) is not None
             and reported in PROJECTION_VISIBILITY_POLICY.visible_verdicts
@@ -772,7 +771,7 @@ def _resolve_slot(
     instance: Any,
     context: ClaimVerdictReadContext,
     members: Sequence[ClaimArtifact],
-    verdicts: Mapping[str, ClaimVerdictResultAny | None],
+    verdicts: Mapping[str, ClaimVerdictResult | None],
     type_digests: Mapping[str, str | None],
     *,
     at: datetime,
@@ -1329,7 +1328,7 @@ def _resolve_slots(
         ]
         if unread:
             stored.update(load(unread))
-        verdicts: dict[str, ClaimVerdictResultAny | None] = {}
+        verdicts: dict[str, ClaimVerdictResult | None] = {}
         type_digests: dict[str, str | None] = {}
         for claim in members:
             identity = claim.identity.qualified

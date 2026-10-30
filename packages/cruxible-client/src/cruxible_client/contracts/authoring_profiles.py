@@ -324,7 +324,6 @@ def expand_claim_type_profile(request: ClaimTypeProfileInput) -> ClaimTypeExpans
     )
     structure = request.structure
     claim_type = ClaimType(
-        artifact_format="playbill-claim-type-v7",
         identity=ArtifactIdentity(kind="ClaimType", name=structure.predicate),
         predicate=structure.predicate,
         allowed_subject_kinds=structure.allowed_subject_kinds,

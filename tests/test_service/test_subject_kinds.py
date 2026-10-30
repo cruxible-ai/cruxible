@@ -186,7 +186,6 @@ def test_a_minted_kind_needs_no_key_and_an_undeclared_kind_says_so(
     ("claim_type", "message"),
     [
         (None, "not a live accepted ClaimType"),
-        (slug_claim_type(canonical_form=None), "must be a ClaimType v8"),
         (slug_claim_type(cardinality="many"), "must be one-valued"),
         (slug_claim_type(subject_kinds=(KIND, "dev.other")), f"must be about {KIND} only"),
     ],
@@ -234,7 +233,7 @@ def _shape(**changes: Any) -> KeyClaimTypeShape:
     values: dict[str, Any] = {
         "predicate": SLUG,
         "live": True,
-        "artifact_format": "playbill-claim-type-v8",
+        "artifact_format": "cruxible-claim-type-v10",
         "object_kind": "literal",
         "cardinality": "one",
         "allowed_subject_kinds": (KIND,),

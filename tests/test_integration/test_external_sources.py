@@ -18,7 +18,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimBacking,
-    ClaimLawEvidenceV1,
+    ClaimLawEvidence,
     build_claim_citation,
     claim_path,
     render_claim,
@@ -194,9 +194,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
     # The current-only floor refuses new legacy artifacts, independently of replay.
     from cruxible_client.contracts.policies import (
         ClaimEvidenceAdmissionPolicy,
-        ClaimEvidenceAdmissionPolicyV1,
         ClaimEvidenceAdmissionRule,
-        ClaimEvidenceAdmissionRuleV1,
     )
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
@@ -315,7 +313,6 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
     contract_digest = capture_contract_digest(contract).tagged
     claim_type = _claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_requirement": "captured",
             "revision_evidence": "replace",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
@@ -339,13 +336,12 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
     if not light:
         claim_type = _claim_type().model_copy(
             update={
-                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                     rules=(
-                        ClaimEvidenceAdmissionRuleV1(
+                        ClaimEvidenceAdmissionRule(
                             rule_id="external-order-record",
                             claim_roles=("observation",),
-                            capture_contract_digests=(contract_digest,),
-                            evidence_kinds=("database_record",),
+                            capture_contracts=(contract.identity.name,),
                             admission="direct",
                             subject_binding="contract_source_mapping",
                         ),
@@ -456,7 +452,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
         return
     assert not proposed.evaluation.diagnostics, proposed.evaluation.diagnostics
     assert isinstance(proposed.candidate, CandidateRecord)
-    evidence = ClaimLawEvidenceV1.model_validate(
+    evidence = ClaimLawEvidence.model_validate(
         next(
             item.result["claim_evidence"]
             for item in proposed.candidate.law_evidence

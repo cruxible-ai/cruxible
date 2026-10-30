@@ -24,7 +24,7 @@ from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
 from tests.core_support._knowledge_loop_support import TIMESTAMP
-from tests.test_claims.test_claims import _claim_type
+from tests.test_claims.test_claims import vocabulary_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
 
@@ -52,7 +52,7 @@ def test_claim_type_block_sync_checks_current_artifact_without_rendering(
 ) -> None:
     instance, owner = _instance_with_query(tmp_path)
     predicate = "sec.vuln.severity"
-    claim_type = _claim_type().model_copy(
+    claim_type = vocabulary_claim_type().model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
             "predicate": predicate,

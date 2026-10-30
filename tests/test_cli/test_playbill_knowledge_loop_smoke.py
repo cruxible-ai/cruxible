@@ -31,14 +31,13 @@ from cruxible_client.contracts.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
-    capture_contract_digest,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.floor import FLOOR_LOCAL_PATHS, FLOOR_MANIFEST_PATH
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.cli.commands.playbill import _local_git_workspace_root
@@ -512,13 +511,12 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     source_contract = foreign_source_capture_contract(CLAIM_SOURCE_ID)
     claim_type = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-self-source",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(capture_contract_digest(source_contract).tagged,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(source_contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

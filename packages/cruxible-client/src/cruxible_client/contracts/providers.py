@@ -805,7 +805,7 @@ class ProviderBuild(Provider):
 
 
 class NamedProviderBuild(ProviderBuild):
-    """A provider build as revision 36 accepts it: named references and typed operations."""
+    """A provider build as this release accepts it: named references and typed operations."""
 
     artifact_format: Literal["cruxible-provider-v6"] = "cruxible-provider-v6"  # type: ignore[assignment]
     capture_contracts: tuple[ArtifactNameRef, ...] = ()

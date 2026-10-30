@@ -20,15 +20,14 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
-    capture_contract_digest,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_mandates import (
@@ -73,9 +72,8 @@ PREDICATE = "security.advisory.severity"
 NOW = fixtures.NOW
 
 
-def _claim_type(contract_digest: str, *, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
+def _claim_type(contract: str, *, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=(SUBJECT_KIND,),
@@ -83,13 +81,12 @@ def _claim_type(contract_digest: str, *, roles: tuple[str, ...] = ("observation"
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="workspace-record",
                     claim_roles=roles,
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("database_record",),
+                    capture_contracts=(contract,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
@@ -201,7 +198,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
     )
     contract = capture_contract()
-    accepted_claim_type = claim_type or _claim_type(capture_contract_digest(contract).tagged)
+    accepted_claim_type = claim_type or _claim_type(contract.identity.name)
     members = core_assigned(
         instance,
         {
@@ -465,7 +462,10 @@ def test_a_claim_type_that_does_not_admit_the_capture_refuses_through_shared_low
 
     instance, _owner, root, line, _procedure = proposal_world(
         tmp_path,
-        claim_type=_claim_type("sha256:" + "e" * 64),
+        # No rule names any contract: the capture is admitted by nothing.
+        claim_type=_claim_type(capture_contract().identity.name).model_copy(
+            update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy()}
+        ),
     )
 
     state = run_line(instance, root, line)
@@ -1623,7 +1623,7 @@ _DATED = "2026-09-01T00:00:00Z"
 
 
 def _many_valued_claim_type() -> ClaimType:
-    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+    claim_type = _claim_type(capture_contract().identity.name)
     return claim_type.model_copy(
         update={
             "cardinality": "many",
@@ -2327,7 +2327,7 @@ def _journaled_receipt(instance: PlaybillInstance, run_id: str | None) -> dict[s
 
 
 def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
-    """The world's ClaimType as v8, declaring ``form``."""
+    """The world's ClaimType, declaring ``form``."""
 
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
@@ -2338,7 +2338,6 @@ def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
 
     return ClaimType.model_validate(
         {
-            "artifact_format": "playbill-claim-type-v8",
             "identity": ArtifactIdentity(kind="ClaimType", name=PREDICATE),
             "predicate": PREDICATE,
             "allowed_subject_kinds": (SUBJECT_KIND,),

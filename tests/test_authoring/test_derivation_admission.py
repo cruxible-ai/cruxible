@@ -15,7 +15,6 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    capture_contract_digest,
 )
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import (
@@ -26,8 +25,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ProposalAdmissionError
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
@@ -74,18 +73,16 @@ def derivation_world(tmp_path):
     profile = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
     definition = _claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v5",
             "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.ready"),
             "predicate": "project.work_item.ready",
             "literal_schema": {"type": "boolean"},
             "permitted_roles": ("derivation",),
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV2(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="derived",
                         claim_roles=("derivation",),
-                        capture_contract_digests=(capture_contract_digest(profile).tagged,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(profile.identity.name,),
                         admission="derivational",
                         subject_binding="exact_claim_subject",
                     ),

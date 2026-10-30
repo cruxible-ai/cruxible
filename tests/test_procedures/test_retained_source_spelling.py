@@ -38,7 +38,7 @@ def _accept_source_with_historical_spelling(tmp_path: Path) -> tuple[PlaybillIns
         _field_request,
         _source_payload,
     )
-    from tests.test_claims.test_claims import _claim_type
+    from tests.test_claims.test_claims import vocabulary_claim_type as _claim_type
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, owner = initialize_local(tmp_path)

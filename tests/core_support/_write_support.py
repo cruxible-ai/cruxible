@@ -30,7 +30,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     builtin_contract_for_write,
-    capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
     render_capture_contract,
@@ -38,8 +37,8 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -61,14 +60,11 @@ SELF_SOURCE = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRAC
 OWNER = AuthenticatedActor(actor_id="owner")
 
 
-def _rule(
-    rule_id: str, roles: tuple[str, ...], contract_digest: str
-) -> ClaimEvidenceAdmissionRuleV1:
-    return ClaimEvidenceAdmissionRuleV1(
+def _rule(rule_id: str, roles: tuple[str, ...], contract: str) -> ClaimEvidenceAdmissionRule:
+    return ClaimEvidenceAdmissionRule(
         rule_id=rule_id,
         claim_roles=roles,  # type: ignore[arg-type]
-        capture_contract_digests=(contract_digest,),
-        evidence_kinds=("self_asserted",),
+        capture_contracts=(contract,),
         admission="direct",
         subject_binding="exact_claim_subject",
     )
@@ -87,7 +83,6 @@ def _claim_type(
     predicate = f"{KIND}.{field}"
     contract = REPORTS if captured_only else SELF_SOURCE
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(KIND,),
@@ -96,8 +91,8 @@ def _claim_type(
         allowed_object_subject_kinds=object_kinds,
         cardinality=cardinality,  # type: ignore[arg-type]
         permitted_roles=roles,  # type: ignore[arg-type]
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
-            rules=(_rule("source", roles, capture_contract_digest(contract).tagged),)
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(_rule("source", roles, contract.identity.name),)
         ),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(

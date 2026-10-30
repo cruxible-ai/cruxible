@@ -150,7 +150,6 @@ def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
     path = claim_type_path("project.work_item.status")
     tree = instance.tree_at(base.git_oid)
     payload = parse_claim_type(tree[path], path=path).model_dump(mode="json")
-    payload["artifact_format"] = "playbill-claim-type-v3"
     payload["evidence_freshness"] = {
         "tag": "playbill-claim-evidence-freshness-v1",
         "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},

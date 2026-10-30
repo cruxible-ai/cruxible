@@ -196,7 +196,6 @@ def http(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient
         ("/api/v1/inst_x/set", {"subject": 1, "field": [], "value": {}}),
         ("/api/v1/inst_x/retire", {"target": "", "because": ""}),
         ("/api/v1/inst_x/kits/remove", {"kit_id": "Not A Kit"}),
-        ("/api/v1/inst_x/claim-types/upgrade", {"dry_run": "maybe"}),
         ("/api/v1/inst_x/curation/suppress", {"item_id": "not-a-digest"}),
         ("/api/v1/inst_x/runtime/credentials", {"permission_mode": "root"}),
     ],

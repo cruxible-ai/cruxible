@@ -7,8 +7,13 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_FORMAT,
+    claim_type_digest,
+    claim_type_path,
+)
 from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claim_types import (
     service_get_playbill_claim_type,
@@ -40,7 +45,7 @@ def test_accepted_claim_type_reads_back_at_its_accepted_coordinate(tmp_path: Pat
     source_type = parse_claim_type(instance.blob_at(accepted.git_oid, path), path=path)
     assert work_item_query(claim_type=source_type).referenced_predicates == (PREDICATE,)
     assert view.artifact_digest == claim_type_digest(source_type).tagged
-    assert view.envelope["artifact_format"] == "playbill-claim-type-v1"
+    assert view.envelope["artifact_format"] == CLAIM_TYPE_FORMAT
 
 
 def test_absent_predicate_is_refused_rather_than_returned_empty(tmp_path: Path) -> None:
@@ -56,6 +61,9 @@ def test_new_claim_type_preserves_but_does_not_enforce_authority_bytes(tmp_path:
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.owner_note"),
             "predicate": "project.work_item.owner_note",
+            # A rule names its contracts by identity, and a change set carries
+            # what it names; a fresh instance holds no capture contract to name.
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
         }
     )
 

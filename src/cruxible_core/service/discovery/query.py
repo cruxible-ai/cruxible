@@ -25,7 +25,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
-    ClaimLawEvidenceAny,
+    ClaimLawEvidence,
     claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
@@ -143,7 +143,7 @@ def _fact_row(
     tree: Mapping[str, bytes],
     coordinate: AcceptedProjectionCoordinate,
     readers: Mapping[str, ExternalSourceReaderProtocol],
-    evidence: ClaimLawEvidenceAny,
+    evidence: ClaimLawEvidence,
     history: ClaimReadHistoryIndex,
     claim: ClaimArtifact,
     claim_types: dict[str, ClaimType],
@@ -515,7 +515,7 @@ class _AcceptedQueryFactsRead:
             self._history = _claim_read_history_index(self._instance, coordinate=self._coordinate)
         history = self._history
 
-        def evidence_for(path: str) -> ClaimLawEvidenceAny:
+        def evidence_for(path: str) -> ClaimLawEvidence:
             evidence = history.law_evidence.get(path)
             if evidence is None:
                 raise ProposalIntegrityError(

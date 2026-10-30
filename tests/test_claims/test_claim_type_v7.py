@@ -1,7 +1,6 @@
-"""ClaimType v7: descriptions, a default role, an evidence requirement, revision evidence.
+"""A ClaimType's meaning: descriptions, a default role, an evidence requirement, revision evidence.
 
-Every earlier format keeps its exact bytes, digest and ``model_dump``: the new
-fields exist on the shared model but are null for them and never written.
+There is one ClaimType format; an earlier format is refused, never reinterpreted.
 """
 
 from __future__ import annotations
@@ -12,10 +11,13 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
-from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.captures import CanonicalDuration, foreign_source_capture_contract
 from cruxible_client.contracts.claim_types import (
-    V7_FIELDS,
+    CLAIM_TYPE_FORMAT,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
+    ClaimTypeFormatError,
     ClaimTypeMemberDescription,
     claim_type_digest,
     claim_type_path,
@@ -27,71 +29,57 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import (
     ClaimAdjudicationRule,
-    ClaimAdjudicationRuleV1,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
-)
-from tests.test_claims._claim_type_format_fixtures import fingerprints, historical_claim_types
 from tests.test_claims.test_claim_verdicts import (
     STATEMENT_DIGEST,
     _attestation,
     _attestation_capture,
     _capture,
 )
+from tests.test_claims.test_claims import _claim_type
 
-# Computed by the code before ClaimType v7 (playbill 15a55995a) from the same
-# fixtures: (sha256(render), digest, sha256(canonical model_dump)).
-PRE_V7_FINGERPRINTS = {
-    "v1": (
-        "0ff26ca481a9af51feef769957c1eeb2853a06e9cef2f03b54f8101f83c9bf66",
-        "sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f",
-        "052122fe93d7f1f388c8edd8e3689114451db2a89a995c14272d6e98c4bdb14b",
-    ),
-    "v3": (
-        "f4df696d87cfa0d1fb9cb5c38624522c05e319c04c2ab046727b3784bdf217e6",
-        "sha256:43e53fa5546ea4941a0ac6fc03dba6add467354aa9b39b3328b6b1e189158274",
-        "69aa1a6f2e5f394658e263ab29fa25a8b3ef268141db019e48580c4d2d9e522b",
-    ),
-    "v4": (
-        "19f0c1610ed5e692f80c57e66e1042798ecc8fb6e7651cf0e4388278e54f7b93",
-        "sha256:202fbc7eefb4e11af6b210575cd652cd923ec4781a8d7d0dd99d48994e0c5d41",
-        "0bacd878ef8aa78bef5bc8d1c15238637b63e2507d357db3d1b2863b92a5fbba",
-    ),
-    "v5": (
-        "610408c23708a0527f743b6a911d097a3834ef8b3b169f2045738a2f983d7f82",
-        "sha256:9b02a2095e2d3b39d216f407aa9cd8581a76fa4c00220e458e11788e7a6efe13",
-        "dc7370c0ba44db49fcfd2e3e287f3188998b77cb242cacd042d062ea445e2197",
-    ),
-    "v5-hold": (
-        "909dcbfa907009b4895731ea509c516329ff3002f8310637991c4711d8116a46",
-        "sha256:a66652e784dde01e779318a41c0dc1ae08827ca3aa7dfdc0c0ff51959bd36ab6",
-        "eb2798f0afd8627f6318d09917ade4ea6e66e3fb2886bd044007ea2dd52f1019",
-    ),
-    "v6": (
-        "4502b5cd5c6244c3d58302f0360c3240f619cf8663780fec58d67856ce6d7a62",
-        "sha256:5dfa6a753d447aae842d7614f04d1e9e077979bc924552809fc2593a691608af",
-        "c6de22dca67681bef0dc5bb8f8c023d91137bc79e9709018570ff98ae38fcf48",
-    ),
-}
 PATH = claim_type_path("project.work_item.status")
 
 
-def v7(**update: object) -> ClaimType:
-    """The v6 fixture moved to v7 with today's meaning, then ``update`` applied."""
+#: What a ClaimType says about its meaning, beside its structure and policies.
+MEANING_FIELDS = (
+    "description",
+    "member_descriptions",
+    "default_role",
+    "evidence_requirement",
+    "revision_evidence",
+)
+_SOURCE = foreign_source_capture_contract("repo.work-items")
+_FRESHNESS = ClaimEvidenceFreshness(stale_after=ClaimFreshnessDuration(microseconds=86_400_000_000))
 
-    base = historical_claim_types()["v6"].model_dump(mode="python")
+
+def v7(**update: object) -> ClaimType:
+    """A ClaimType naming a foreign source by identity, stating ``self`` and ``replace``."""
+
+    base = _claim_type().model_dump(mode="python")
     base.update(
-        artifact_format="playbill-claim-type-v7",
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    rule_id="source",
+                    claim_roles=("normative", "observation"),
+                    capture_contracts=(
+                        ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=_SOURCE.identity),
+                    ),
+                    admission="direct",
+                    subject_binding="exact_claim_subject",
+                ),
+            )
+        ),
+        evidence_freshness=_FRESHNESS,
         evidence_requirement="self",
         revision_evidence="replace",
     )
@@ -99,29 +87,42 @@ def v7(**update: object) -> ClaimType:
     return ClaimType.model_validate(base)
 
 
-# --- Byte identity -------------------------------------------------------------
+# --- One format --------------------------------------------------------------------
 
 
-def test_every_historical_format_keeps_its_bytes_digest_and_model_dump() -> None:
-    assert fingerprints() == PRE_V7_FINGERPRINTS
-    for name, claim_type in historical_claim_types().items():
-        dumped = claim_type.model_dump(mode="json")
-        assert not set(V7_FIELDS) & set(dumped), name
-        assert parse_claim_type(render_claim_type(claim_type), path=PATH) == claim_type
-        assert effective_revision_evidence(claim_type) == "accumulate"
-        assert effective_evidence_requirement(claim_type) == "self"
+@pytest.mark.parametrize(
+    "removed",
+    [
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v3",
+        "playbill-claim-type-v4",
+        "playbill-claim-type-v5",
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
+        "cruxible-claim-type-v9",
+    ],
+)
+def test_a_removed_claim_type_format_is_refused_not_reinterpreted(removed: str) -> None:
+    rendered = render_claim_type(v7()).replace(
+        CLAIM_TYPE_FORMAT.encode("ascii"), removed.encode("ascii")
+    )
+    with pytest.raises(ClaimTypeFormatError, match="unsupported ClaimType artifact format"):
+        parse_claim_type(rendered, path=PATH)
 
 
-def test_v7_always_writes_all_five_fields_and_round_trips() -> None:
+def test_a_claim_type_omits_absent_meaning_and_states_the_rest() -> None:
     claim_type = v7()
     dumped = claim_type.model_dump(mode="json")
-    assert {field: dumped[field] for field in V7_FIELDS} == {
-        "description": None,
+    assert dumped["artifact_format"] == CLAIM_TYPE_FORMAT
+    assert not {"description", "default_role"} & set(dumped)
+    assert {field: dumped[field] for field in MEANING_FIELDS if field in dumped} == {
         "member_descriptions": [],
-        "default_role": None,
         "evidence_requirement": "self",
         "revision_evidence": "replace",
     }
+    assert effective_evidence_requirement(claim_type) == "self"
+    assert effective_revision_evidence(claim_type) == "replace"
     rendered = render_claim_type(claim_type)
     assert parse_claim_type(rendered, path=PATH) == claim_type
     # The description is part of what the ClaimType is.
@@ -129,23 +130,10 @@ def test_v7_always_writes_all_five_fields_and_round_trips() -> None:
     assert claim_type_digest(described) != claim_type_digest(claim_type)
 
 
-def test_earlier_formats_refuse_the_v7_fields() -> None:
-    v6 = historical_claim_types()["v6"].model_dump(mode="python")
-    for field, value in (
-        ("description", "x"),
-        ("default_role", "observation"),
-        ("evidence_requirement", "self"),
-        ("revision_evidence", "replace"),
-        ("member_descriptions", ({"member": "done", "description": "x"},)),
-    ):
-        with pytest.raises(ValidationError, match="only ClaimType v7"):
-            ClaimType.model_validate({**v6, field: value})
-
-
-def test_v7_states_its_evidence_semantics_explicitly() -> None:
-    with pytest.raises(ValidationError, match="explicitly"):
+def test_a_claim_type_states_its_evidence_semantics_never_null() -> None:
+    with pytest.raises(ValidationError, match="evidence_requirement"):
         v7(evidence_requirement=None)
-    with pytest.raises(ValidationError, match="explicitly"):
+    with pytest.raises(ValidationError, match="revision_evidence"):
         v7(revision_evidence=None)
 
 
@@ -160,7 +148,7 @@ def test_default_role_must_be_permitted_and_never_derivation() -> None:
         v7(permitted_roles=("derivation", "observation"), default_role="derivation")
 
 
-def test_the_v7_law_refuses_an_unpermitted_default_role() -> None:
+def test_the_claim_type_law_refuses_an_unpermitted_default_role() -> None:
     forged = v7().model_copy(update={"default_role": "environment_binding"})
     result = evaluate_claim_type_law(forged, path=PATH, predecessor=None)
     assert [item.code for item in result.diagnostics] == [
@@ -232,7 +220,6 @@ def _self_only_rules() -> ClaimEvidenceAdmissionPolicy:
                         ),
                     ),
                 ),
-                evidence_kinds=("self_asserted",),
                 admission="direct",
                 subject_binding="exact_claim_subject",
             ),
@@ -262,19 +249,21 @@ def test_only_none_compiles_the_origin_supporting_rule() -> None:
             claim_type, claim_type_digest=claim_type_digest(claim_type).tagged
         )
 
-    for claim_type in (
-        *historical_claim_types().values(),
-        v7(),
-        v7(evidence_requirement="captured"),
-    ):
-        assert isinstance(rule(claim_type), ClaimAdjudicationRuleV1)
+    for claim_type in (v7(), v7(evidence_requirement="captured")):
+        compiled = rule(claim_type)
+        assert isinstance(compiled, ClaimAdjudicationRule)
+        assert not compiled.origin_supports and not compiled.origin_replay_exempt
     origin = rule(v7(evidence_requirement="none"))
     assert isinstance(origin, ClaimAdjudicationRule) and origin.origin_supports
-    # The v1 rule's digest domain is unchanged; v2 has its own.
-    v1_rule = rule(historical_claim_types()["v6"])
-    assert isinstance(v1_rule, ClaimAdjudicationRuleV1)
-    as_v2 = ClaimAdjudicationRule(**v1_rule.model_dump(exclude={"tag"}))
-    assert claim_adjudication_rule_digest(as_v2) != claim_adjudication_rule_digest(v1_rule)
+    # Whether the origin supports is part of the rule's digest.
+    plain = rule(v7())
+    assert isinstance(plain, ClaimAdjudicationRule)
+    supporting = plain.model_copy(update={"origin_supports": True})
+    assert claim_adjudication_rule_digest(supporting) != claim_adjudication_rule_digest(plain)
+    with pytest.raises(ValidationError, match="exempt it from replay"):
+        ClaimAdjudicationRule.model_validate(
+            {**plain.model_dump(mode="json"), "origin_replay_exempt": True}
+        )
 
 
 def _origin_rule(**update: object) -> ClaimAdjudicationRule:
@@ -343,7 +332,7 @@ def _input(**update: object) -> object:
     from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
     from tests.core_support._claim_type_support import defaulted_claim_type_input_example
 
-    # A complete v7 record (every structural field stated, no v7/v8 field).
+    # A complete record (every structural field stated, no meaning field).
     return ClaimTypeInputRecord.model_validate(
         {
             **defaulted_claim_type_input_example().model_dump(mode="json"),
@@ -358,40 +347,26 @@ def _lower(value: object, tree: dict[str, bytes]) -> ClaimType:
     return lower_claim_type_input(value, tree=tree)  # type: ignore[arg-type]
 
 
-def _as_v6(claim_type: ClaimType) -> ClaimType:
-    payload = claim_type.model_dump(mode="python")
-    payload.update(
-        artifact_format="playbill-claim-type-v6",
-        description=None,
-        member_descriptions=(),
-        default_role=None,
-        evidence_requirement=None,
-        revision_evidence=None,
-        canonical_form=None,
-    )
-    return ClaimType.model_validate(payload)
-
-
-def test_a_new_claim_type_can_explicitly_keep_v7_replace_and_self() -> None:
+def test_a_new_claim_type_takes_replace_and_self() -> None:
     lowered = _lower(_input(canonical_form=None), {})
-    assert lowered.artifact_format == "playbill-claim-type-v7"
+    assert lowered.artifact_format == CLAIM_TYPE_FORMAT
     assert (lowered.evidence_requirement, lowered.revision_evidence) == ("self", "replace")
-    # The template's own bytes do not name any v7 field.
+    # The template's own bytes do not name any meaning field.
     from cruxible_core.claims.claim_type_inputs import claim_type_input_template
 
-    assert not set(V7_FIELDS) & set(claim_type_input_template().model_dump(mode="json"))
+    assert not set(MEANING_FIELDS) & set(claim_type_input_template().model_dump(mode="json"))
 
 
-def test_an_edit_of_a_pre_v7_claim_type_keeps_accumulate_and_self_unless_named() -> None:
-    predecessor = _as_v6(_lower(_input(), {}))
+def test_an_edit_keeps_the_predecessors_accumulate_and_self_unless_named() -> None:
+    predecessor = _lower(_input(revision_evidence="accumulate"), {})
     tree = {PATH: render_claim_type(predecessor)}
     edited = _lower(_input(permitted_roles=["normative"]), tree)
-    assert edited.artifact_format == "playbill-claim-type-v7"
+    assert edited.artifact_format == CLAIM_TYPE_FORMAT
     assert (edited.evidence_requirement, edited.revision_evidence) == ("self", "accumulate")
     assert edited.lifecycle.predecessor_digest == claim_type_digest(predecessor).tagged
     chosen = _lower(_input(revision_evidence="replace", evidence_requirement="captured"), tree)
     assert (chosen.evidence_requirement, chosen.revision_evidence) == ("captured", "replace")
-    # A v7 predecessor's own choice is what an unrelated edit keeps.
+    # The predecessor's own choice is what an unrelated edit keeps.
     tree = {PATH: render_claim_type(chosen)}
     again = _lower(_input(description="Status."), tree)
     assert (again.evidence_requirement, again.revision_evidence) == ("captured", "replace")
@@ -418,8 +393,8 @@ def test_authored_descriptions_are_normalized_and_members_sorted() -> None:
     assert lowered.default_role == "observation"
 
 
-def test_lowering_never_falls_back_to_v5() -> None:
-    """Every input lowers to v7 with identity rules; an unaccepted exact digest refuses."""
+def test_lowering_never_authors_an_exact_digest_rule() -> None:
+    """Every input lowers to identity rules; an unaccepted exact digest refuses."""
 
     from cruxible_core.claims.claim_type_inputs import ClaimTypeInputReferenceError
 
@@ -436,7 +411,7 @@ def test_lowering_never_falls_back_to_v5() -> None:
         ]
     }
     # An exact version no accepted contract carries has no identity to follow:
-    # it is refused, never authored as a v5 exact-digest rule.
+    # it is refused, never authored as an exact-digest rule.
     with pytest.raises(
         ClaimTypeInputReferenceError, match="name the contract in capture_contracts"
     ):
@@ -465,7 +440,7 @@ def _described_v7() -> ClaimType:
     )
 
 
-def test_an_edit_that_omits_the_v7_fields_keeps_every_one_of_them() -> None:
+def test_an_edit_that_omits_the_meaning_fields_keeps_every_one_of_them() -> None:
     predecessor = _described_v7()
     tree = {PATH: render_claim_type(predecessor)}
     # An unrelated edit: an extra permitted role, nothing about meaning.
@@ -476,12 +451,12 @@ def test_an_edit_that_omits_the_v7_fields_keeps_every_one_of_them() -> None:
         ),
         tree,
     )
-    for field in V7_FIELDS:
+    for field in MEANING_FIELDS:
         assert getattr(edited, field) == getattr(predecessor, field), field
     assert edited.permitted_roles == ("environment_binding", "normative", "observation")
 
 
-def test_an_explicit_null_clears_a_v7_field_and_survives_the_wire() -> None:
+def test_an_explicit_null_clears_a_meaning_field_and_survives_the_wire() -> None:
     from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 
     tree = {PATH: render_claim_type(_described_v7())}
@@ -511,8 +486,8 @@ def test_an_explicit_null_clears_a_v7_field_and_survives_the_wire() -> None:
     )
     assert emptied.member_descriptions == ()
     assert emptied.description == "Where the work stands."
-    # An input that states nothing v7 dumps exactly as before.
-    assert not set(V7_FIELDS) & set(_input().model_dump(mode="json"))  # type: ignore[attr-defined]
+    # An input that states no meaning field dumps none of them.
+    assert not set(MEANING_FIELDS) & set(_input().model_dump(mode="json"))  # type: ignore[attr-defined]
     with pytest.raises(ValidationError, match="cannot be null"):
         _input(revision_evidence=None)
 
@@ -556,8 +531,8 @@ def test_an_inherited_default_role_the_edit_no_longer_permits_is_refused() -> No
     )
 
 
-def test_over_a_pre_v7_predecessor_descriptions_start_empty() -> None:
-    predecessor = _as_v6(_lower(_input(), {}))
+def test_over_an_undescribed_predecessor_descriptions_stay_empty() -> None:
+    predecessor = _lower(_input(revision_evidence="accumulate"), {})
     edited = _lower(_input(), {PATH: render_claim_type(predecessor)})
     assert (edited.description, edited.member_descriptions, edited.default_role) == (
         None,

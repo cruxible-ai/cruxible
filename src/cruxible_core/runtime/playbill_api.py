@@ -42,10 +42,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchRequest,
     ClaimReadBatchResult,
 )
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
@@ -209,7 +205,6 @@ from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
 )
-from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
 from cruxible_core.service.claims.claim_types import (
     service_propose_playbill_builtin_claim_type,
     service_propose_playbill_claim_type_input,
@@ -939,22 +934,6 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
-            ),
-        )
-
-
-def playbill_claim_type_upgrade(
-    instance_id: str, request: ClaimTypeUpgradeRequest
-) -> ClaimTypeUpgradeResult:
-    check_permission("cruxible_claim_type_upgrade", instance_id=instance_id)
-    with change_entry(request.dry_run, "derived"):
-        return _proposal_validation_boundary(
-            "claim type upgrade",
-            lambda: service_upgrade_claim_types(
-                get_playbill_manager().get(instance_id),
-                request=request,
-                actor_id=_actor_id(instance_id),
-                timestamp=canonical_candidate_timestamp(utc_now()),
             ),
         )
 

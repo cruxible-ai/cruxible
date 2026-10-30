@@ -17,10 +17,10 @@ from cruxible_client.contracts.policies import (
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy as ClaimEvidenceAdmissionPolicy,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+    ClaimEvidenceAdmissionRule as ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
@@ -44,7 +44,6 @@ CITATION = "sha256:" + "e" * 64
 def _captured_type(*, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
     predicate = "project.work_item.measured"
     return ClaimType(
-        artifact_format="playbill-claim-type-v7",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),
@@ -68,7 +67,6 @@ def _captured_type(*, roles: tuple[str, ...] = ("observation",)) -> ClaimType:
                             ),
                         ),
                     ),
-                    evidence_kinds=("self_asserted",),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),

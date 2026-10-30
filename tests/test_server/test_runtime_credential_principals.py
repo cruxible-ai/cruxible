@@ -520,8 +520,6 @@ _UNGUARDED_WRITES = (
     ("/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
     ("/ledger/mirror/clear", {}),
     ("/ledger/publish", {"timeout": 0}),
-    ("/claim-types/upgrade", {}),
-    ("/claim-types/upgrade", {"dry_run": True}),
 )
 
 

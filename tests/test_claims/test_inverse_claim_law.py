@@ -100,7 +100,6 @@ def _rule(rule_id: str) -> ClaimEvidenceAdmissionRule:
 
 def _claim_type(*, inverse_rules: tuple[str, ...] | None = ("scan",)) -> ClaimType:
     return ClaimType(
-        artifact_format="cruxible-claim-type-v9",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=("project.work_item",),

@@ -10,6 +10,7 @@ from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
 )
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
 
 
@@ -79,7 +80,10 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
     assert all(item.subject is None for item in invalid.diagnostics)
 
 
-def test_claim_type_artifact_format_activates_only_with_pc_a2_policy_wire() -> None:
-    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1")
+def test_the_one_claim_type_format_activates_the_one_claim_type_law() -> None:
+    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v10")
     assert law.artifact_kind == "claim-type"
-    assert law.coordinate.identifier == "playbill.claim-type.v1"
+    assert law.coordinate.identifier == "cruxible.claim-type.v10"
+    for removed in ("playbill-claim-type-v1", "playbill-claim-type-v8", "cruxible-claim-type-v9"):
+        with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+            ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)

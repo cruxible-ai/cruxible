@@ -117,7 +117,6 @@ from cruxible_client.contracts.get_reads import (
     RevisionChange,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -1403,13 +1402,7 @@ def _claim_type_card(
         GetEvidenceRule(
             rule_id=rule.rule_id,
             roles=rule.claim_roles,
-            contracts=(
-                tuple(item.target.qualified for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
-                else tuple(
-                    names.name(digest, qualified=True) for digest in rule.capture_contract_digests
-                )
-            ),
+            contracts=tuple(item.target.qualified for item in rule.capture_contracts),
             admission=rule.admission,
         )
         for rule in claim_type.evidence_admission_policy.rules

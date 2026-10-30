@@ -93,7 +93,6 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequest,
 )
-from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import QueryClaim
 from cruxible_client.contracts.compiler_upgrade_landing import (
@@ -4108,85 +4107,6 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
             click.echo(
                 f"  {warning.field_path}: {warning.code}" + _claim_type_lint_meaning(warning.code)
             )
-
-
-@claim_type_group.command("upgrade")
-@click.option(
-    "--claim-type",
-    "claim_types",
-    multiple=True,
-    help=(
-        "Predicate to upgrade; repeat for more. Default: every live ClaimType before v7 "
-        "and, on compiler revision 36, every one with a v3 evidence policy."
-    ),
-)
-@click.option(
-    "--revision-evidence",
-    type=click.Choice(["replace", "accumulate"]),
-    default="replace",
-    show_default=True,
-    help=(
-        "What a revision that changes its statement keeps: only the evidence it cites "
-        "(replace) or everything its predecessors cited too (accumulate, the meaning "
-        "before v7)."
-    ),
-)
-@change_control_options
-@json_option
-@handle_errors
-def upgrade_claim_types(
-    claim_types: tuple[str, ...],
-    revision_evidence: str,
-    dry_run: bool | None,
-    at: str | None,
-    output_json: bool,
-) -> None:
-    """Propose moving live ClaimTypes to v7, one reviewed change set.
-
-    v7 states what a ClaimType's Claims need (evidence_requirement, kept at
-    self) and what a statement-changing revision keeps (revision_evidence).
-    On compiler revision 36 the same change set restates each v3 evidence
-    policy as v4, admitting exactly the same evidence. Every Claim is carried
-    with its backing intact. It previews by default; commit the preview with
-    ``--commit --at OID``, then approve as usual.
-    """
-
-    request = ClaimTypeUpgradeRequest.model_validate(
-        {
-            "claim_types": claim_types,
-            "revision_evidence": revision_evidence,
-            "dry_run": dry_run,
-            "at": at,
-        }
-    )
-    result = _server_call(
-        lambda client, instance_id: client.upgrade_claim_types(instance_id, request),
-        command_name="cruxible claim-type upgrade",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    click.echo(f"ClaimType upgrade: {result.status}")
-    for item in result.upgraded:
-        click.echo(
-            f"  upgraded {item.claim_type} ({item.from_format}): revision evidence "
-            f"{item.revision_evidence_before} -> {item.revision_evidence_after}"
-        )
-        for version in item.widened_versions:
-            click.echo(f"    now also admits {version}")
-    for restated in result.restated:
-        click.echo(f"  restated {restated.claim_type}: evidence policy v3 -> v4 (same admission)")
-    for name in result.unchanged:
-        click.echo(f"  already current {name}")
-    for refusal in result.refused:
-        click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
-    if result.carried_claims:
-        click.echo(f"Claims carried: {result.carried_claims}")
-    if result.detail:
-        click.echo(result.detail)
-    if result.proposal_id:
-        click.echo(f"Next: cruxible proposal approve {result.proposal_id}")
-    echo_preview_next(result.status, result.coordinate)
 
 
 @playbill_group.group("claim")
@@ -8411,7 +8331,7 @@ _NEXT_STATUS_ATTENTION = {
     "ledger_mirror": {"behind", "never_published"},
     "provider_lane": {"unavailable"},
     "procedure_catalog": {"missing"},
-    "compiler": {"upgrade_available", "claim_type_upgrade_available"},
+    "compiler": {"upgrade_available"},
     "line_dispatch": {"due"},
     "consumers": {"lagging"},
     "triggers": {"unscheduled"},

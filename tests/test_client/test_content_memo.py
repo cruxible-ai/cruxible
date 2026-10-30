@@ -12,7 +12,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts import claim_types
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     ClaimTypeFormatError,
     claim_type_digest,
     claim_type_path,
@@ -59,7 +61,7 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
 
     monkeypatch.setattr(claim_types, "_parse_claim_type", counted)
     claim_types._CLAIM_TYPE_PARSES.clear()
-    value = _claim_type("sha256:" + "1" * 64)
+    value = _claim_type("memo.contract-1")
     path = claim_type_path(value.predicate)
     content = render_claim_type(value)
     first = parse_claim_type(content, path=path)
@@ -84,17 +86,24 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
     assert claim_type_digest(again) == claim_type_digest(value)
 
 
+def _fresh_digest(value: ClaimType) -> ArtifactDigest:
+    """The ClaimType digest computed from its content, bypassing any memo."""
+
+    return typed_digest(ArtifactDigest, "playbill-envelope-v1", value.model_dump(mode="json"))
+
+
 def test_a_sealed_digest_is_computed_once_and_equals_the_fresh_one(monkeypatch):
     calls = []
-    real = claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS["playbill-claim-type-v1"]
+    real = _fresh_digest
+    hashed = claim_types.typed_digest
 
-    def counted(value):  # type: ignore[no-untyped-def]
-        calls.append(value)
-        return real(value)
+    def counted(kind, domain, payload):  # type: ignore[no-untyped-def]
+        calls.append(payload)
+        return hashed(kind, domain, payload)
 
-    monkeypatch.setitem(claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS, "playbill-claim-type-v1", counted)
+    monkeypatch.setattr(claim_types, "typed_digest", counted)
     claim_types._CLAIM_TYPE_PARSES.clear()
-    value = _claim_type("sha256:" + "2" * 64)
+    value = _claim_type("memo.contract-2")
     path = claim_type_path(value.predicate)
     sealed = parse_claim_type(render_claim_type(value), path=path)
     digests = {claim_type_digest(sealed) for _ in range(5)}
@@ -106,16 +115,14 @@ def test_a_sealed_digest_is_computed_once_and_equals_the_fresh_one(monkeypatch):
 
 def test_copies_of_a_sealed_artifact_are_never_served_its_digest():
     claim_types._CLAIM_TYPE_PARSES.clear()
-    value = _claim_type("sha256:" + "3" * 64)
+    value = _claim_type("memo.contract-3")
     sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
     digest = claim_type_digest(sealed)
     # model_copy with an update: a new, unsealed object digests its own content.
     changed = sealed.model_copy(update={"literal_schema": {"type": "integer"}})
     assert not is_sealed(changed)
     assert claim_type_digest(changed) != digest
-    assert claim_type_digest(changed) == claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS[
-        changed.artifact_format
-    ](changed)
+    assert claim_type_digest(changed) == _fresh_digest(changed)
     # A deep copy or an unpickled copy is plain and mutable again, never sealed;
     # changing it changes its digest and never the sealed original's.
     for duplicate in (copy.deepcopy(sealed), pickle.loads(pickle.dumps(sealed))):
@@ -124,7 +131,7 @@ def test_copies_of_a_sealed_artifact_are_never_served_its_digest():
         duplicate.literal_schema["type"] = "integer"  # type: ignore[index]
         assert claim_type_digest(duplicate) == claim_type_digest(changed) != digest
     assert claim_type_digest(sealed) == digest
-    assert claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS[sealed.artifact_format](sealed) == digest
+    assert _fresh_digest(sealed) == digest
     # A shallow copy of a sealed container is the caller's own plain container.
     assert type(copy.copy(sealed.literal_schema)) is dict
     assert type(dict(sealed.literal_schema)) is dict  # type: ignore[arg-type]
@@ -217,13 +224,13 @@ def test_digests_follow_the_current_content_of_shallowly_frozen_models():
     object has its digest remembered.
     """
 
-    value = _claim_type("sha256:" + "1" * 64)
+    value = _claim_type("memo.contract-1")
     before = claim_type_digest(value)
     assert value.literal_schema is not None
     value.literal_schema["type"] = "integer"
     after = claim_type_digest(value)
     assert after != before
-    assert after == claim_types.CLAIM_TYPE_DIGEST_FUNCTIONS[value.artifact_format](value)
+    assert after == _fresh_digest(value)
     shell = parse_subject(render_subject(_shell("a")), path=subject_path("memo.kind", "a"))
     assert subject_digest(shell) == subject_digest(_shell("a"))
 
@@ -426,7 +433,7 @@ def test_claim_type_derived_rules_and_digests_are_taken_once_per_sealed_claim_ty
     from cruxible_client.contracts import claim_verdicts
 
     claim_types._CLAIM_TYPE_PARSES.clear()
-    value = _claim_type("sha256:" + "4" * 64)
+    value = _claim_type("memo.contract-4")
     sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
     digest = claim_type_digest(sealed).tagged
     hashed: list[str] = []
@@ -447,7 +454,7 @@ def test_claim_type_derived_rules_and_digests_are_taken_once_per_sealed_claim_ty
     other = claim_verdicts.claim_adjudication_rule(
         sealed, claim_type_digest=digest, origin_supports=True
     )
-    assert other is not rules[0] and other.tag == "playbill-claim-adjudication-rule-v2"
+    assert other is not rules[0] and other.origin_supports and not rules[0].origin_supports
     fresh = claim_verdicts.claim_adjudication_rule(value, claim_type_digest=digest)
     assert fresh == rules[0] and fresh is not rules[0]
 

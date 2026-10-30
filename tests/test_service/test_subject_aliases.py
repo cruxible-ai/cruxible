@@ -18,7 +18,6 @@ from cruxible_client.contracts.builtin_claim_types import (
 )
 from cruxible_client.contracts.claim_types import (
     claim_type_path,
-    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.compact_query import QueryRequest
@@ -73,35 +72,13 @@ def values(instance: PlaybillInstance, subject: str, predicate: str) -> list[str
 
 def test_a_new_instance_seeds_the_builtin_claim_types(instance: PlaybillInstance) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
-
-    # The genesis seed bytes stay frozen; new builtin proposals use v4 policies.
-    def frozen_policy(claim_type):
-        policy = claim_type.evidence_admission_policy.model_dump(mode="json")
-        policy["tag"] = "playbill-claim-evidence-admission-policy-v3"
-        for rule in policy["rules"]:
-            rule["tag"] = "playbill-claim-evidence-admission-rule-v3"
-            rule["evidence_kinds"] = ["self_asserted"]
-            for ref in rule["capture_contracts"]:
-                ref.pop("logical_sources", None)
-        return claim_type.model_copy(
-            update={
-                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3.model_validate(policy)
-            }
-        )
-
+    # The genesis seeds are the builtin ClaimTypes' exact bytes.
     current = builtin_claim_type_files()
-    frozen = {
-        path: render_claim_type(frozen_policy(parse_claim_type(content, path=path)))
-        for path, content in current.items()
-    }
-    assert frozen == {
+    assert current == {
         path: tree[path]
         for path in ("claim-types/semantic/alias.json", "claim-types/semantic/distinct_from.json")
     }
-    assert tree[claim_type_path("semantic.alias")] == render_claim_type(
-        frozen_policy(SEMANTIC_ALIAS_CLAIM_TYPE)
-    )
+    assert tree[claim_type_path("semantic.alias")] == render_claim_type(SEMANTIC_ALIAS_CLAIM_TYPE)
 
 
 def test_an_alias_is_stored_canonical_and_resolves_a_write_subject(

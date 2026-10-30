@@ -8,8 +8,7 @@
   "allowed_subject_kinds": [
     "security.release"
   ],
-  "artifact_format": "playbill-claim-type-v8",
-  "attestation_consequence_policy": null,
+  "artifact_format": "cruxible-claim-type-v10",
   "canonical_form": [
     "trim"
   ],
@@ -20,7 +19,6 @@
     "rules": [],
     "tag": "cruxible-claim-evidence-admission-policy-v4"
   },
-  "evidence_freshness": null,
   "evidence_requirement": "none",
   "identity": {
     "kind": "ClaimType",
@@ -53,7 +51,5 @@
     "selector": "only_contender",
     "tag": "playbill-claim-resolution-policy-v1"
   },
-  "revision_evidence": "replace",
-  "slot_policy": null,
-  "subject_scope": null
+  "revision_evidence": "replace"
 }

@@ -69,10 +69,7 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "claim-types/": (
         ("pins", *_PIN),
-        # Historical exact-digest evidence rules; v6 rules name contracts by
-        # identity and need no re-pinning.
-        ("evidence_admission_policy", "rules", "*", "capture_contract_digests", "*"),
-        ("evidence_admission_policy", "rules", "*", "allowed_reducer_digests", "*"),
+        # Evidence rules name contracts by identity and need no re-pinning.
         ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
     ),
     # A Query names the ClaimTypes it reads by predicate and holds no digest.

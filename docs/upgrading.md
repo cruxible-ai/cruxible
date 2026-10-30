@@ -213,11 +213,10 @@ another genesis and is refused, never converted: the daemon answers
 `reseed_required` (`compiler_lineage_not_writable`). Move it aside and re-import
 its content into a fresh instance.
 
-The compiler writes only v4 identity evidence policies. A ClaimType that still
-states a v3 policy (the unedited genesis seeds) keeps working as it is, but
-waits for `cruxible claim-type upgrade` to restate its policy as v4 before it
-can be edited; the restatement is one reviewed change set that admits exactly
-the same evidence and carries every Claim with its backing intact.
+A ClaimType has one format (`cruxible-claim-type-v10`) with one evidence
+policy (`cruxible-claim-evidence-admission-policy-v4`), and a Claim one artifact
+(`playbill-claim-v4`). Accepted state under an earlier format is refused with the
+reseed answer above, never restated.
 
 ## Compiler facet states
 
@@ -225,7 +224,6 @@ the same evidence and carries every Claim with its backing intact.
 |---|---|---|
 | `current` | The accepted head uses the compiler the daemon runs. | Nothing. |
 | `upgrade_available` | The daemon runs a newer compiler with an explicit upgrade path from the accepted one. | Back up, then run the repair, `cruxible compiler upgrade`. |
-| `claim_type_upgrade_available` | The accepted head uses the running compiler, and live ClaimTypes you authored still state a v3 evidence policy. They keep working; an edit of one is refused until it is restated as v4. The detail lists them (`claim_types`, up to 20, and `count`). | Run the repair, `cruxible claim-type upgrade`: preview, then commit and approve the one change set that restates them. |
 | `no_upgrade_path` | The accepted compiler has no path to the running one, for example when the daemon is older than the state it serves. | Install a release whose daemon supports the accepted compiler. Nothing is proposed. |
 
 Downgrades and unsupported transitions are refused.

@@ -29,7 +29,7 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell
@@ -67,7 +67,6 @@ def _workspace(root: Path) -> Path:
 
 def _severity_type() -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=SEVERITY),
         predicate=SEVERITY,
         allowed_subject_kinds=(VULNERABILITY_KIND,),
@@ -75,7 +74,7 @@ def _severity_type() -> ClaimType:
         literal_schema={"type": "string", "enum": ["high", "low"]},
         cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -87,7 +86,6 @@ def _severity_type() -> ClaimType:
 
 def _affects_type() -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=AFFECTS),
         predicate=AFFECTS,
         allowed_subject_kinds=(VULNERABILITY_KIND,),
@@ -95,7 +93,7 @@ def _affects_type() -> ClaimType:
         allowed_object_subject_kinds=(PACKAGE_KIND,),
         cardinality="many",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="many",

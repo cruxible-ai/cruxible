@@ -133,7 +133,6 @@ _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfile(
     profile_id="orient", permitted_access_classes=("instance", "public")
 )
-_UPGRADE_MARKERS = ("claim_type_upgrade", "claim-type upgrade", "upgrade_claim_types")
 
 
 def _request_invalid(message: str) -> ReadRefusalError:
@@ -177,7 +176,6 @@ class _State:
     claim_types: tuple[ClaimType, ...]
     subjects_by_kind: dict[str, int]
     evidence: dict[str, tuple[str, ...]]
-    digest_named: int
     procedures: tuple[OrientProcedure, ...]
     documents: tuple[OrientDocument, ...]
     queries: tuple[OrientQuery, ...]
@@ -232,7 +230,6 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         claim_types: list[ClaimType] = []
         evidence: dict[str, tuple[str, ...]] = {}
         placements: dict[str, tuple[str, int]] = {}
-        digest_named = 0
         for identity, path, revision in connection.execute(
             "SELECT identity, path, revision FROM claim_types WHERE lifecycle='live' "
             "ORDER BY identity"
@@ -243,7 +240,6 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             claim_types.append(claim_type)
             placements[claim_type.predicate] = (str(path), int(revision))
             evidence[claim_type.predicate] = names.admitted(claim_type)
-            digest_named += names.names_by_digest(claim_type)
         # The per-kind counters Subject writes maintain (vocabulary-sized), never a recount.
         subjects_by_kind = {
             str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
@@ -283,7 +279,6 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         subjects_by_kind=subjects_by_kind,
         evidence=evidence,
         placements=placements,
-        digest_named=digest_named,
         procedures=procedures,
         documents=documents,
         queries=tuple(sorted(queries, key=lambda item: item.name)),
@@ -437,7 +432,7 @@ def _hoist_evidence(
 
 @dataclass(frozen=True)
 class _Call:
-    verb: Literal["orient", "query", "get", "next", "claim_type_upgrade"]
+    verb: Literal["orient", "query", "get", "next"]
     args: tuple[tuple[str, object], ...] = ()
 
 
@@ -483,8 +478,6 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
         tool = f"cruxible_{call.verb}"
         return f"{tool}({', '.join(f'{key}={_py(value)}' for key, value in call.args)})"
     if surface == "sdk":
-        if call.verb == "claim_type_upgrade":
-            return "cx.upgrade_claim_types()"
         if call.verb == "next":
             return "cx.next(expiring_within=Duration.days(count=7))"
         if call.verb == "get":
@@ -495,8 +488,6 @@ def render_orient_call(call: _Call, surface: OrientSurface) -> str:
             + ")"
         )
     # cli
-    if call.verb == "claim_type_upgrade":
-        return "cruxible claim-type upgrade"
     if call.verb == "next":
         return "cruxible next"
     if call.verb == "get":
@@ -534,23 +525,6 @@ def _enum_filter(kind: OrientKind) -> dict[str, object] | None:
 # -- attention ----------------------------------------------------------------
 
 
-def _upgrade_hint(items: Sequence[PlaybillNextItemV1]) -> PlaybillNextItemV1 | None:
-    for item in items:
-        repair = item.repair
-        text = " ".join(
-            str(part)
-            for part in (
-                item.reason,
-                None if repair is None else repair.command,
-                None if repair is None else repair.required_change,
-            )
-            if part is not None
-        )
-        if any(marker in text for marker in _UPGRADE_MARKERS):
-            return item
-    return None
-
-
 _FULL_DIGEST = re.compile(r"sha256:([0-9a-f]{12})[0-9a-f]{52}")
 
 
@@ -574,7 +548,7 @@ def _attention(
     heads: ReadHeads | None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
-) -> tuple[OrientAttention, bool]:
+) -> OrientAttention:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
     if terminal is not None:
@@ -583,7 +557,6 @@ def _attention(
             "reads serve, every write is refused"
         )
     items: tuple[PlaybillNextItemV1, ...] = ()
-    reused: PlaybillNextItemV1 | None = None
     total = setup = 0
     try:
         queue = summarize_playbill_next(
@@ -598,24 +571,12 @@ def _attention(
             ),
             caller_principal_id=None if caller is None else caller.actor_id,
             caller_rung=caller_rung,
-            match=lambda item: _upgrade_hint((item,)) is not None,
             heads=heads,
         )
         items, total, setup = queue.items, queue.total_items, queue.setup_items
-        reused = queue.matching_item
     except CruxibleError as exc:
         code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
         notes.append(f"the next queue could not be read: {code or type(exc).__name__}")
-    upgrade = False
-    if reused is not None:
-        notes.append(_line(reused))
-        upgrade = True
-    elif state.digest_named:
-        noun = "ClaimType still names" if state.digest_named == 1 else "ClaimTypes still name"
-        notes.append(
-            f"{state.digest_named} {noun} CaptureContracts by digest; run claim-type upgrade"
-        )
-        upgrade = True
     enablements = _enablements(instance, evaluation_time=evaluation_time)
     if provider_lane is not None and provider_lane.state == "unavailable":
         notes.append(
@@ -632,16 +593,13 @@ def _attention(
             "own work and worker findings do not advance until a daemon runs it"
         )
     open_proposals = open_proposal_count(instance)
-    return (
-        OrientAttention(
-            next_items=total,
-            open_proposals=open_proposals,
-            top=tuple(_line(item) for item in items[:ORIENT_ATTENTION_TOP]),
-            setup_items=setup,
-            notes=tuple(notes),
-            enablements=enablements,
-        ),
-        upgrade,
+    return OrientAttention(
+        next_items=total,
+        open_proposals=open_proposals,
+        top=tuple(_line(item) for item in items[:ORIENT_ATTENTION_TOP]),
+        setup_items=setup,
+        notes=tuple(notes),
+        enablements=enablements,
     )
 
 
@@ -1092,7 +1050,7 @@ def service_playbill_orient(
         heads: ReadHeads | None = read_heads(instance, coordinate=coordinate)
     except CruxibleError:
         heads = None
-    attention, upgrade = _attention(
+    attention = _attention(
         instance,
         coordinate=coordinate,
         evaluation_time=moment,
@@ -1113,8 +1071,6 @@ def service_playbill_orient(
             calls.append(_Call("query", (("kind", focus.kind), ("select", select), ("limit", 10))))
     if attention.next_items or attention.setup_items:
         calls.append(_Call("next"))
-    if upgrade:
-        calls.append(_Call("claim_type_upgrade"))
     if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
     if state.operations:

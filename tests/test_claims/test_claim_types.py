@@ -1,4 +1,4 @@
-"""PC-A2 final ClaimType v1 canonical model tests."""
+"""The one ClaimType canonical model: wire, digest, law and authoring profiles."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthoringProfileError,
-    ClaimTypeExpansionEvidence,
     ClaimTypeProfileInput,
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
@@ -39,8 +38,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
@@ -52,7 +50,6 @@ from tests.core_support._support import initialize_local
 
 def literal_claim_type() -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -64,7 +61,7 @@ def literal_claim_type() -> ClaimType:
         },
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -74,7 +71,7 @@ def literal_claim_type() -> ClaimType:
     )
 
 
-def test_claim_type_parse_render_digest_and_path_match_frozen_golden() -> None:
+def test_claim_type_parse_render_digest_and_path_match_the_golden() -> None:
     fixture_path = Path(__file__).parents[1] / "goldens" / "playbill" / "claim-type-v1.json"
     fixture = json.loads(fixture_path.read_bytes())
     claim_type = ClaimType.model_validate(fixture["claim_type"])
@@ -97,7 +94,7 @@ def test_claim_type_combines_structure_and_all_three_policy_surfaces() -> None:
     claim_type = literal_claim_type()
     assert claim_type.structure.predicate == claim_type.predicate
     assert claim_type.evidence_admission_policy.tag == (
-        "playbill-claim-evidence-admission-policy-v1"
+        "cruxible-claim-evidence-admission-policy-v4"
     )
     assert claim_type.admission_policy.tag == "playbill-claim-admission-policy-v1"
     assert claim_type.resolution_policy.tag == "playbill-claim-resolution-policy-v1"
@@ -188,12 +185,11 @@ def test_claim_type_succession_has_no_artifact_role_plane() -> None:
     assert narrowed_result.approval_scope == ()
 
 
-def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
+def test_a_freshness_horizon_is_an_optional_positive_digested_member() -> None:
     original = literal_claim_type()
     successor = ClaimType.model_validate(
         {
             **original.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
                 stale_after=ClaimFreshnessDuration(microseconds=30_000_000)
             ).model_dump(mode="json"),
@@ -210,12 +206,11 @@ def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
     assert render_claim_type(original) == render_claim_type(literal_claim_type())
 
 
-def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
+def test_the_one_format_pins_its_exact_wire_and_digest() -> None:
     original = literal_claim_type()
     successor = ClaimType.model_validate(
         {
             **original.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
                 stale_after=ClaimFreshnessDuration(microseconds=30_000_000)
             ).model_dump(mode="json"),
@@ -223,26 +218,28 @@ def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "5dfd48c9aed4cb8dc95971b52067c4b40056e8549423ac1c3dba04320eedb2e6"
+        "cf45f79ce1ddeef16e306ca297bc38013e5067f63a2eedbeffdd11f29eca1eb2"
     )
     assert claim_type_digest(original).tagged == (
-        "sha256:da68b96ac81805e16b6cefbc94d76060812d36b6eb3a7e8f9b5041006b0434bc"
+        "sha256:33c401b98bed146f8d18823f69b8ecfe2e0e285e7102567a0ba52c2fb1d577d1"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "a4e4d16a57b60bfc1bab350b74f7b1454efeaaad2f6ffde4d54272a51394fffa"
+        "68ea69e300ab62296f12db7edb60e267ebb3baa1826a153fb42316eaea7d5da5"
     )
     assert claim_type_digest(successor).tagged == (
-        "sha256:0e74460ec5e594c5831f3954ec3ec35b7325b7fd1afc6a808640d1efceffb60f"
+        "sha256:4de8f499f30a000d7316ad96cdc52eb4830aa1fd5b186253d6ba2576a1224e7e"
     )
-    assert b'"subject_scope": null' in render_claim_type(successor)
-    assert b'"slot_policy": null' in render_claim_type(successor)
-    assert b'"subject_scope"' not in render_claim_type(original)
-    assert b'"slot_policy"' not in render_claim_type(original)
-    assert b'"attestation_consequence_policy"' not in render_claim_type(original)
-    assert b'"attestation_consequence_policy"' not in render_claim_type(successor)
+    # Absent optional members are omitted, never written as null placeholders.
+    for rendered in (render_claim_type(original), render_claim_type(successor)):
+        assert b'"subject_scope"' not in rendered
+        assert b'"slot_policy"' not in rendered
+        assert b'"attestation_consequence_policy"' not in rendered
+        assert b"null" not in rendered.replace(b'"predecessor_digest": null', b"")
+    assert b'"evidence_freshness"' not in render_claim_type(original)
+    assert b'"evidence_freshness"' in render_claim_type(successor)
 
 
-def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> None:
+def test_a_claim_type_commits_a_canonical_attestation_consequence_policy() -> None:
     original = literal_claim_type()
     policy = ClaimAttestationConsequencePolicy(
         rules=(
@@ -256,7 +253,6 @@ def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> N
     successor = ClaimType.model_validate(
         {
             **original.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v4",
             "attestation_consequence_policy": policy.model_dump(mode="json"),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(original).tagged
@@ -271,7 +267,7 @@ def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> N
     assert claim_type_digest(successor).tagged != claim_type_digest(original).tagged
 
 
-def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_nonnegative() -> None:
+def test_attestation_consequence_rules_are_nonempty_sorted_unique_and_nonnegative() -> None:
     rule = ClaimAttestationConsequenceRule(
         rule_id="z-rule",
         stance="contradict",
@@ -328,9 +324,8 @@ def test_claim_type_rejects_the_removed_v2_envelope() -> None:
         )
 
 
-def test_claim_type_v3_refuses_missing_or_zero_freshness_horizon() -> None:
+def test_a_claim_type_refuses_a_zero_freshness_horizon() -> None:
     payload = literal_claim_type().model_dump(mode="json")
-    payload["artifact_format"] = "playbill-claim-type-v3"
     payload["evidence_freshness"] = {
         "tag": "playbill-claim-evidence-freshness-v1",
         "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
@@ -340,10 +335,9 @@ def test_claim_type_v3_refuses_missing_or_zero_freshness_horizon() -> None:
         parse_claim_type(malformed, path=claim_type_path(literal_claim_type().predicate))
 
 
-def test_claim_type_v3_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: Path) -> None:
+def test_a_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     payload = literal_claim_type().model_dump(mode="json")
-    payload["artifact_format"] = "playbill-claim-type-v3"
     payload["evidence_freshness"] = {
         "tag": "playbill-claim-evidence-freshness-v1",
         "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
@@ -372,7 +366,6 @@ def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -
 
     direct = literal_claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
             "evidence_requirement": "self",
             "revision_evidence": "replace",
@@ -493,7 +486,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         },
     )
     expanded = expand_claim_type_profile(request)
-    assert expanded.claim_type.artifact_format == "playbill-claim-type-v7"
+    assert expanded.claim_type.artifact_format == "cruxible-claim-type-v10"
     rule = expanded.claim_type.evidence_admission_policy.rules[0]
     assert "allowed_reducer_digests" not in rule.model_dump()
     assert [item.target.qualified for item in rule.capture_contracts] == [
@@ -508,38 +501,6 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
             )
         )
 
-    historical = expanded.claim_type.model_copy(
-        update={
-            "artifact_format": "playbill-claim-type-v1",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
-                rules=(
-                    ClaimEvidenceAdmissionRuleV1(
-                        **rule.model_dump(exclude={"tag", "capture_contracts"}),
-                        capture_contract_digests=("sha256:" + "aa" * 32,),
-                        evidence_kinds=("source.observation",),
-                        allowed_reducer_digests=("sha256:" + "bb" * 32,),
-                    ),
-                )
-            ),
-            "evidence_requirement": None,
-            "revision_evidence": None,
-        }
-    )
-    # These coordinates were produced by the pre-change profile expander.
-    evidence = ClaimTypeExpansionEvidence(
-        profile_id="replay-verifiable-derivation-v1",
-        profile_digest="sha256:7e99d7021ea8d8ad3f202ae83770b68b513e20bcfc79d1010466b222ebffa021",
-        authoring_source_digest=request.authoring_source_digest,
-        compiler_digest=request.compiler_digest,
-        overrides={},
-        overrides_digest="sha256:c0310a1fde63b3acf5f7d03335a04f08bc9765815a303b069cd10a2f51e3f625",
-        expanded_output_digest="sha256:990b88fdfd2617632b6e502ef19090b8a5db1b0750bf4adb825fab7f5cd13c6f",
-        expanded_artifact_digest="sha256:926f4cfa919aaca96f72ed1dde5aa06b09da1954013d3ffe338d94eefb8b616e",
-    )
-    verify_claim_type_expansion_evidence(
-        evidence, claim_type=historical, compiler_digest=request.compiler_digest
-    )
-
 
 def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
     tmp_path: Path,
@@ -549,7 +510,6 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
 
     direct = literal_claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
             "evidence_requirement": "self",
             "revision_evidence": "replace",
@@ -597,14 +557,13 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
 
 def test_current_claim_type_has_no_producer_dependencies():
     from cruxible_client.contracts.artifacts import ArtifactPin
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
     definition = literal_claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v5",
             "literal_schema": {"type": "string"},
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
         }
     )
     definition = ClaimType.model_validate(definition.model_dump())
@@ -620,31 +579,34 @@ def test_current_claim_type_has_no_producer_dependencies():
     assert parsed.envelopes[0].artifact_digest == claim_type_digest(definition).tagged
 
 
-def test_current_admission_refuses_producer_allowlist_in_historical_format(tmp_path):
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
-    )
+def test_current_admission_refuses_a_producer_allowlist_as_a_removed_rule(tmp_path):
+    """Producer authorization belongs to Procedure mandates: no evidence rule names reducers.
+
+    The exact-digest rule that carried an allowlist is a removed format, so a
+    candidate stating one is refused as malformed, never read as authority.
+    """
 
     instance, _owner = initialize_local(tmp_path)
-    definition = literal_claim_type().model_copy(
-        update={
-            "permitted_roles": ("derivation",),
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
-                rules=(
-                    ClaimEvidenceAdmissionRuleV1(
-                        rule_id="old-reducer",
-                        claim_roles=("derivation",),
-                        capture_contract_digests=("sha256:" + "aa" * 32,),
-                        evidence_kinds=("source.observation",),
-                        admission="derivational",
-                        subject_binding="exact_claim_subject",
-                        allowed_reducer_digests=("sha256:" + "bb" * 32,),
-                    ),
-                )
-            ),
-        }
-    )
+    definition = literal_claim_type().model_copy(update={"permitted_roles": ("derivation",)})
+    payload = definition.model_dump(mode="json")
+    payload["evidence_admission_policy"] = {
+        "tag": "playbill-claim-evidence-admission-policy-v1",
+        "rules": [
+            {
+                "tag": "playbill-claim-evidence-admission-rule-v1",
+                "rule_id": "old-reducer",
+                "claim_roles": ["derivation"],
+                "capture_contract_digests": ["sha256:" + "aa" * 32],
+                "evidence_kinds": ["derived"],
+                "admission": "derivational",
+                "subject_binding": "exact_claim_subject",
+                "allowed_reducer_digests": ["sha256:" + "bb" * 32],
+            }
+        ],
+    }
+    path = claim_type_path(definition.predicate)
+    with pytest.raises(ClaimTypeFormatError, match="failed strict validation"):
+        parse_claim_type(canonical_bytes(payload) + b"\n", path=path)
     base = instance.accepted_coordinate()
     proposal = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -653,12 +615,11 @@ def test_current_admission_refuses_producer_allowlist_in_historical_format(tmp_p
         ),
         candidate_tree={
             **instance.tree_at(base.git_oid),
-            claim_type_path(definition.predicate): render_claim_type(definition),
+            path: canonical_bytes(payload) + b"\n",
         },
         timestamp="2026-08-16T17:00:00.000000Z",
     )
     assert proposal.candidate is None
-    assert any(
-        d.code == "cruxible.claim_type.producer_authorization_forbidden"
-        for d in proposal.evaluation.diagnostics
-    )
+    assert [d.code for d in proposal.evaluation.diagnostics] == [
+        "cruxible.claim_type.format_invalid"
+    ]

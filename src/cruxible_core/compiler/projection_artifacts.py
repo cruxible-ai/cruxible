@@ -452,7 +452,7 @@ def parse_projection_tree(
         capture_contract_digest,
         parse_capture_contract,
     )
-    from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+    from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
     from cruxible_client.contracts.claims import (
         ClaimFormatError,
         parse_claim_law_evidence,
@@ -1885,10 +1885,6 @@ def parse_projection_tree(
                         )
                     )
                     semantic_facts.extend(explanation_facts)
-                    if law_evidence.verdict_result is None:
-                        raise ProjectionFormatError(
-                            f"accepted PC-C Claim has no verdict result: {path}"
-                        )
                     semantic_facts.extend(
                         (
                             ProjectionFact(
@@ -1896,9 +1892,12 @@ def parse_projection_tree(
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="accepted_evaluation",
-                                value=claim_verdict_v1_compat(
-                                    law_evidence.verdict_result
-                                ).model_dump(mode="json"),
+                                # In the query vocabulary, which reads
+                                # ``stale_evidence`` as ``stale``.
+                                value={
+                                    **law_evidence.verdict_result.model_dump(mode="json"),
+                                    "verdict": reported_claim_verdict(law_evidence.verdict_result),
+                                },
                             ),
                             ProjectionFact(
                                 schema_id="cruxible.claim.evidence_basis",

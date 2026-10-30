@@ -1,10 +1,11 @@
-"""ClaimType v6 names CaptureContracts by identity, so contracts can be improved.
+"""A ClaimType names CaptureContracts by identity, so contracts can be improved.
 
 A compatible contract successor goes through as a change set of one artifact:
 identity rules follow it, the Claims that cite the old version keep it as
 provenance, and new evidence is captured under the new version. A breaking
-change is a new identity; retiring a named contract, or moving one that exact
-digests still name, is refused and names what it would strand.
+change is a new identity; retiring a named contract, or moving one whose
+evidence two rules would then both admit, is refused and names what it would
+strand. Exact-digest evidence rules are a removed format.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import itertools
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -41,21 +43,17 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     CaptureContractV1 as CaptureContract,
 )
-from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
-    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV2,
     ClaimEvidenceAdmissionRule,
-    ClaimEvidenceAdmissionRuleV2,
     EvidenceAdmissionInput,
     evaluate_claim_evidence_admission,
 )
@@ -72,7 +70,6 @@ from cruxible_core.service.authoring.documents import (
     service_inspect_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
@@ -113,21 +110,11 @@ def _identity_rule(*identities: ArtifactIdentity) -> ClaimEvidenceAdmissionRule:
     )
 
 
-def _digest_rule(*digests: str, rule_id: str = "source") -> ClaimEvidenceAdmissionRuleV2:
-    return ClaimEvidenceAdmissionRuleV2(
-        rule_id=rule_id,
-        claim_roles=("normative", "observation"),
-        capture_contract_digests=tuple(sorted(digests)),
-        evidence_kinds=("self_asserted",),
-        admission="direct",
-        subject_binding="exact_claim_subject",
-    )
-
-
 def _v6_type() -> ClaimType:
+    """The work-item status type whose one rule names the source contract by identity."""
+
     return _claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v6",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(_identity_rule(IDENTITY),)
             ),
@@ -135,19 +122,16 @@ def _v6_type() -> ClaimType:
     )
 
 
-def _v5_type(*rules: ClaimEvidenceAdmissionRuleV2) -> ClaimType:
+def _rules_type(*rules: ClaimEvidenceAdmissionRule) -> ClaimType:
     return _claim_type().model_copy(
-        update={
-            "artifact_format": "playbill-claim-type-v5",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(rules=rules),
-        }
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy(rules=rules)}
     )
 
 
 # --- The client contracts ---------------------------------------------------
 
 
-def test_an_identity_rule_admits_every_version_and_an_exact_rule_one() -> None:
+def test_an_identity_rule_admits_every_version_and_no_rule_names_a_digest() -> None:
     evidence = EvidenceAdmissionInput(
         claim_role="observation",
         capture_contract_digest=_digest(_successor(ORIGINAL)),
@@ -156,10 +140,18 @@ def test_an_identity_rule_admits_every_version_and_an_exact_rule_one() -> None:
         source_subject_bound=True,
     )
     identity_policy = ClaimEvidenceAdmissionPolicy(rules=(_identity_rule(IDENTITY),))
-    exact_policy = ClaimEvidenceAdmissionPolicyV2(rules=(_digest_rule(_digest(ORIGINAL)),))
 
     assert evaluate_claim_evidence_admission(identity_policy, evidence).verdict == "eligible"
-    assert evaluate_claim_evidence_admission(exact_policy, evidence).verdict == "refused"
+    original = evidence.model_copy(update={"capture_contract_digest": _digest(ORIGINAL)})
+    assert evaluate_claim_evidence_admission(identity_policy, original).verdict == "eligible"
+    # The exact-digest rule is a removed format: its spelling is refused.
+    with pytest.raises(ValidationError, match="capture_contract_digests"):
+        ClaimEvidenceAdmissionRule.model_validate(
+            {
+                **_identity_rule(IDENTITY).model_dump(mode="json"),
+                "capture_contract_digests": [_digest(ORIGINAL)],
+            }
+        )
     other = evidence.model_copy(update={"capture_contract_identity": "CaptureContract:other"})
     assert evaluate_claim_evidence_admission(identity_policy, other).verdict == "refused"
 
@@ -216,18 +208,16 @@ def test_the_law_refuses_breaking_successors_and_revival_but_not_retirement() ->
     assert law(revived, retired_version) == "cruxible.capture_contract.revival_refused"
 
 
-def test_a_v6_claim_type_names_contracts_only_through_its_rules() -> None:
+def test_a_claim_type_names_contracts_only_through_its_rules() -> None:
     v6 = _v6_type()
-    assert v6.evidence_admission_policy.rules[0].names_capture_contract(
-        digest="sha256:" + "0" * 64, identity=IDENTITY.qualified
-    )
+    assert v6.evidence_admission_policy.rules[0].names_capture_contract(identity=IDENTITY.qualified)
     pin = ArtifactPin(role="capture-contract", target=IDENTITY, artifact_digest=_digest(ORIGINAL))
     with pytest.raises(ValueError, match="never by an exact pin"):
         ClaimType.model_validate({**v6.model_dump(), "pins": (pin,)})
-    with pytest.raises(ValueError, match="evidence policy v3"):
-        ClaimType.model_validate(
-            {**v6.model_dump(), "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2()}
-        )
+    removed = v6.model_dump(mode="json")
+    removed["evidence_admission_policy"]["tag"] = "playbill-claim-evidence-admission-policy-v3"
+    with pytest.raises(ValueError, match="evidence_admission_policy"):
+        ClaimType.model_validate(removed)
 
 
 def test_moving_a_claims_references_never_rewrites_its_contract_provenance() -> None:
@@ -429,95 +419,26 @@ def test_retiring_a_contract_an_identity_rule_names_is_refused(world: _World) ->
     )
 
 
-def test_an_exact_digest_rule_makes_a_successor_loud_until_it_moves_too(world: _World) -> None:
-    exact = _v5_type(_digest_rule(_digest(ORIGINAL)))
-    world.seed(exact)
+def test_rules_that_would_both_admit_a_successor_make_it_loud_until_they_move(
+    world: _World,
+) -> None:
+    twin = _identity_rule(IDENTITY).model_copy(update={"rule_id": "twin"})
+    ambiguous = _rules_type(_identity_rule(IDENTITY), twin)
+    world.seed(ambiguous)
     improved = _successor(ORIGINAL)
     tree = world.tree()
     tree[CONTRACT_PATH] = render_capture_contract(improved)
     assert "cruxible.capture_contract.dependents_not_settled" in world.refusals(
-        tree, name="strand-exact-rule"
+        tree, name="strand-ambiguous-rules"
     )
 
-    moved = exact.model_copy(
+    moved = _v6_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(
-                rules=(_digest_rule(_digest(improved)),)
-            ),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(exact).tagged),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(ambiguous).tagged),
         }
     )
     tree[claim_type_path(PREDICATE)] = render_claim_type(moved)
-    world.accept(tree, name="move-exact-rule")
-
-
-def test_the_upgrade_converts_exact_rules_and_carries_the_claims(world: _World) -> None:
-    world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
-    claim_id = world.observe(b"status: ready")
-
-    result = service_upgrade_claim_types(
-        world.instance,
-        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
-        actor_id="owner",
-        timestamp=world.timestamp(),
-    )
-
-    assert result.status == "proposed", result
-    assert [item.claim_type for item in result.upgraded] == [f"ClaimType:{PREDICATE}"]
-    assert result.upgraded[0].widened_versions == ()
-    assert result.carried_claims == 1
-    assert result.proposal_id is not None
-    type_path = claim_type_path(PREDICATE)
-    # Proposing lands nothing; the ordinary approval and activation do.
-    assert parse_claim_type(world.tree()[type_path], path=type_path).artifact_format == (
-        "playbill-claim-type-v5"
-    )
-    world.activate_proposal(result.proposal_id)
-
-    upgraded = parse_claim_type(world.tree()[type_path], path=type_path)
-    assert upgraded.artifact_format == "playbill-claim-type-v7"
-    assert upgraded.evidence_admission_policy.rules[0].names_capture_contract(
-        digest=_digest(ORIGINAL), identity=IDENTITY.qualified
-    )
-    carried = parse_claim(world.tree()[claim_path(claim_id)], path=claim_path(claim_id))
-    assert carried.statement.claim_type_digest == claim_type_digest(upgraded).tagged
-    assert world.contract_pins(claim_id) == [_digest(ORIGINAL)]
-    # After the upgrade a compatible contract successor needs nothing else.
-    tree = world.tree()
-    tree[CONTRACT_PATH] = render_capture_contract(_successor(ORIGINAL))
-    world.accept(tree, name="improve-after-upgrade")
-
-
-def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
-    world: _World,
-) -> None:
-    improved = _successor(ORIGINAL)
-    world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
-    tree = world.tree()
-    tree[CONTRACT_PATH] = render_capture_contract(improved)
-    before = parse_claim_type(tree[claim_type_path(PREDICATE)], path=claim_type_path(PREDICATE))
-    split = _v5_type(
-        _digest_rule(_digest(improved), rule_id="new"),
-        _digest_rule(_digest(ORIGINAL), rule_id="old"),
-    ).model_copy(
-        update={"lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(before).tagged)}
-    )
-    tree[claim_type_path(PREDICATE)] = render_claim_type(split)
-    world.accept(tree, name="split-rules")
-
-    result = service_upgrade_claim_types(
-        world.instance,
-        # Named, so the seeded builtins' policy restatement stays out of it.
-        request=ClaimTypeUpgradeRequest(
-            claim_types=(PREDICATE,), dry_run=False, revision_evidence="accumulate"
-        ),
-        actor_id="owner",
-        timestamp=world.timestamp(),
-    )
-
-    assert result.status == "unchanged"
-    assert [item.claim_type for item in result.refused] == [f"ClaimType:{PREDICATE}"]
-    assert "both match the same evidence" in result.refused[0].reason
+    world.accept(tree, name="move-ambiguous-rules")
 
 
 def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_too(
@@ -639,7 +560,9 @@ def test_a_provenance_pin_must_name_the_identity_its_version_belongs_to(world: _
     )
 
 
-def _dependents(*claim_types: ClaimType, windows: tuple[object, ...] = ()) -> tuple[str, ...]:
+def _dependents(
+    *claim_types: ClaimType, windows: tuple[object, ...] = (), retiring: bool = False
+) -> tuple[str, ...]:
     from types import SimpleNamespace
 
     from cruxible_core.proposals.proposals import _capture_contract_dependents
@@ -656,20 +579,23 @@ def _dependents(*claim_types: ClaimType, windows: tuple[object, ...] = ()) -> tu
         context,  # type: ignore[arg-type]
         identity=IDENTITY.qualified,
         previous_digest=_digest(ORIGINAL),
-        successor_digest=_digest(_successor(ORIGINAL)),
+        successor_digest=None if retiring else _digest(_successor(ORIGINAL)),
     )
 
 
-def test_a_rule_for_other_roles_does_not_cover_a_stranded_exact_rule() -> None:
-    observation = _digest_rule(_digest(ORIGINAL), rule_id="observed").model_copy(
-        update={"claim_roles": ("observation",)}
+def test_identity_rules_follow_a_successor_and_only_retirement_strands_them() -> None:
+    observation = _identity_rule(IDENTITY).model_copy(
+        update={"rule_id": "observed", "claim_roles": ("observation",)}
     )
-    normative = _digest_rule(_digest(_successor(ORIGINAL)), rule_id="stated").model_copy(
-        update={"claim_roles": ("normative",)}
+    normative = _identity_rule(IDENTITY).model_copy(
+        update={"rule_id": "stated", "claim_roles": ("normative",)}
     )
-    assert _dependents(_v5_type(observation, normative)) == (f"ClaimType:{PREDICATE}",)
-    covering = normative.model_copy(update={"claim_roles": ("normative", "observation")})
-    assert _dependents(_v5_type(observation, covering)) == ()
+    assert _dependents(_rules_type(observation, normative)) == ()
+    assert _dependents(_rules_type(observation, normative), retiring=True) == (
+        f"ClaimType:{PREDICATE}",
+    )
+    elsewhere = foreign_source_capture_contract("repo.other").identity
+    assert _dependents(_rules_type(_identity_rule(elsewhere)), retiring=True) == ()
 
 
 def test_only_live_resolution_contracts_hold_a_contract_in_place() -> None:
@@ -695,119 +621,13 @@ def test_only_live_resolution_contracts_hold_a_contract_in_place() -> None:
     assert _dependents(windows=(window("live"), window("retired"))) == ("ResolutionContract:live",)
 
 
-def test_the_upgrade_refuses_versions_that_would_newly_match_two_rules() -> None:
-    from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Refused
-
-    other = foreign_source_capture_contract("repo.other")
-    improved = _successor(ORIGINAL)
-    by_digest = {
-        _digest(item): AcceptedCaptureContract(
-            path=capture_contract_path(item.identity.name),
-            contract=item,
-            artifact_digest=_digest(item),
-        )
-        for item in (ORIGINAL, improved, other)
-    }
-
-    class Lineages:
-        def version(self, digest: str) -> AcceptedCaptureContract:
-            return by_digest[digest]
-
-        def lineage(self, identity: str) -> tuple[AcceptedCaptureContract, ...]:
-            return tuple(
-                item for item in by_digest.values() if item.contract.identity.qualified == identity
-            )
-
-    # Both rules already share the other contract, but C1 and C2 each matched one.
-    first = _digest_rule(_digest(other), _digest(ORIGINAL), rule_id="a")
-    second = _digest_rule(_digest(other), _digest(improved), rule_id="b")
-    with pytest.raises(_Refused, match="both match the same evidence"):
-        _convert(_v5_type(first, second), Lineages())  # type: ignore[arg-type]
-
-
-def test_a_stricter_or_ambiguous_successor_rule_does_not_cover_an_exact_rule() -> None:
-    previous = _digest_rule(_digest(ORIGINAL), rule_id="old")
-    successor = _digest_rule(_digest(_successor(ORIGINAL)), rule_id="new")
-    assert _dependents(_v5_type(successor, previous)) == ()
-
-    stricter = successor.model_copy(update={"attestation_requirement": "verified_principal"})
-    assert _dependents(_v5_type(stricter, previous)) == (f"ClaimType:{PREDICATE}",)
-
-    twin = successor.model_copy(update={"rule_id": "newer"})
-    assert _dependents(_v5_type(successor, twin, previous)) == (f"ClaimType:{PREDICATE}",)
-
-
-def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read(
-    world: _World,
-) -> None:
-    from datetime import datetime, timezone
-
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
-    )
-    from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
-
-    rule = ClaimEvidenceAdmissionRuleV1(
-        rule_id="source",
-        claim_roles=("normative", "observation"),
-        capture_contract_digests=(_digest(ORIGINAL),),
-        evidence_kinds=("self_asserted",),
-        admission="direct",
-        subject_binding="exact_claim_subject",
-    )
-    original = _claim_type().model_copy(
-        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=(rule,))}
-    )
-    assert original.artifact_format == "playbill-claim-type-v1"
-    world.seed(original)
-    claim_id = world.observe(b"status: ready")
-
-    result = service_upgrade_claim_types(
-        world.instance,
-        request=ClaimTypeUpgradeRequest(dry_run=False, revision_evidence="accumulate"),
-        actor_id="owner",
-        timestamp=world.timestamp(),
-    )
-    assert result.status == "proposed", result
-    assert result.proposal_id is not None
-    world.activate_proposal(result.proposal_id)
-
-    type_path = claim_type_path(PREDICATE)
-    assert parse_claim_type(world.tree()[type_path], path=type_path).artifact_format == (
-        "playbill-claim-type-v7"
-    )
-    service_evaluate_playbill_claim_verdict(
-        world.instance,
-        claim_identity=f"Claim:{claim_id}",
-        evaluation_time=datetime(2026, 8, 22, tzinfo=timezone.utc),
-    )
-
-
-def test_the_upgrade_leaves_producer_reducer_allowlists_for_a_decision() -> None:
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
-    )
-    from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Refused
-
-    rule = ClaimEvidenceAdmissionRuleV1(
-        rule_id="derived",
-        claim_roles=("derivation",),
-        capture_contract_digests=(_digest(ORIGINAL),),
-        evidence_kinds=("self_asserted",),
-        admission="derivational",
-        subject_binding="exact_claim_subject",
-        allowed_reducer_digests=("sha256:" + "5" * 64,),
-    )
-    derived = _claim_type().model_copy(
-        update={
-            "permitted_roles": ("derivation",),
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=(rule,)),
-        }
-    )
-    with pytest.raises(_Refused, match="producer reducers"):
-        _convert(derived, None)  # type: ignore[arg-type]
+def test_two_rules_admitting_one_role_strand_a_successor_as_ambiguous() -> None:
+    assert _dependents(_v6_type()) == ()
+    twin = _identity_rule(IDENTITY).model_copy(update={"rule_id": "twin"})
+    assert _dependents(_rules_type(_identity_rule(IDENTITY), twin)) == (f"ClaimType:{PREDICATE}",)
+    split = twin.model_copy(update={"claim_roles": ("observation",)})
+    narrowed = _identity_rule(IDENTITY).model_copy(update={"claim_roles": ("normative",)})
+    assert _dependents(_rules_type(narrowed, split)) == ()
 
 
 def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
@@ -929,55 +749,3 @@ def test_a_release_diff_starting_at_the_contract_sees_no_cycle() -> None:
         order = [path for path, _pinned in _dependency_order(states, payloads, within={start})]  # type: ignore[arg-type]
         assert set(order) == set(tree)
         assert order.index(claim_type_path(identity_type.predicate)) < order.index(CONTRACT_PATH)
-
-
-def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
-    world: _World,
-) -> None:
-    """R12, the folded dist-evidence-upgrade-preview case: dry run, explicit submit, pinned."""
-
-    from cruxible_core.errors import ChangeRefusedError
-    from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
-    from tests.support.store_snapshot import assert_writes_nothing
-
-    world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
-    world.observe(b"status: ready")
-    tree_before = world.tree()
-
-    preview = assert_writes_nothing(
-        [world.instance.root.parent],
-        lambda: service_upgrade_claim_types(
-            world.instance,
-            request=ClaimTypeUpgradeRequest(revision_evidence="accumulate"),
-            actor_id="owner",
-            timestamp=world.timestamp(),
-        ),
-    )
-
-    assert preview.status == "would_propose", preview
-    assert preview.proposal_id is None
-    assert preview.carried_claims == 1
-    assert preview.coordinate is not None
-    assert world.tree() == tree_before
-    assert not service_list_playbill_proposals(world.instance, status="open").entries
-    committed = service_upgrade_claim_types(
-        world.instance,
-        request=ClaimTypeUpgradeRequest(
-            dry_run=False, revision_evidence="accumulate", at=preview.coordinate.git_oid
-        ),
-        actor_id="owner",
-        timestamp=world.timestamp(),
-    )
-    assert committed.status == "proposed" and committed.proposal_id is not None
-    world.activate_proposal(committed.proposal_id)
-
-    with pytest.raises(ChangeRefusedError) as moved:
-        service_upgrade_claim_types(
-            world.instance,
-            request=ClaimTypeUpgradeRequest(
-                dry_run=False, revision_evidence="accumulate", at=preview.coordinate.git_oid
-            ),
-            actor_id="owner",
-            timestamp=world.timestamp(),
-        )
-    assert moved.value.error_code == "cruxible.preview.state_moved"

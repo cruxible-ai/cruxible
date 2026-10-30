@@ -33,7 +33,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
-    ClaimVerdictResultAny,
+    ClaimVerdictResult,
     EvidenceCurrency,
     EvidenceRelativeClaimVerdictV1,
     evaluate_claim_verdict,
@@ -1157,7 +1157,7 @@ def _provenance_concentration(
     kind: CurationPatternKind = "playbill.curation.provenance_concentration.v1"
     coverage = _Coverage(kind)
     provider_map = {item.identity.qualified: item for item in providers}
-    supported: dict[str, list[tuple[ClaimFactRowV1, ClaimVerdictResultAny]]] = defaultdict(list)
+    supported: dict[str, list[tuple[ClaimFactRowV1, ClaimVerdictResult]]] = defaultdict(list)
     for row in rows:
         coverage.evaluated += 1
         claim = row.accepted.claim

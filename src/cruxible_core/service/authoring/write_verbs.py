@@ -87,7 +87,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    CLAIM_TYPE_V9_FORMAT,
     ClaimInverseObjectKey,
     ClaimInverseObjectKeyPart,
     ClaimType,
@@ -1419,7 +1418,7 @@ class _Planner:
         form = effective_canonical_form(info.claim_type)
         if form:
             # Stored in the declared canonical form, and checked in it: an enum
-            # member is matched after canonicalization (ClaimType v8).
+            # member is matched after canonicalization.
             try:
                 value = canonicalize_literal(value, form)
             except CanonicalFormDidNotConverge as exc:
@@ -1561,14 +1560,14 @@ class _Planner:
         path = f"changes[{index}].value"
         claim_type = info.claim_type
         inverse = claim_type.inverse
-        if claim_type.artifact_format != CLAIM_TYPE_V9_FORMAT or inverse is None:
+        if inverse is None:
             raise _refuse(
                 "cruxible.write.inverse_undeclared",
                 f"{field_name} ({claim_type.predicate}) declares no inverse, so a write cannot "
                 "state that it holds none",
                 change=index,
                 repair=(
-                    f"Declare `inverse` on ClaimType {claim_type.predicate} (ClaimType v9: its "
+                    f"Declare `inverse` on ClaimType {claim_type.predicate} (its "
                     "key and evidence_rules) through claim-type propose; or retire the values "
                     "that no longer hold"
                 ),

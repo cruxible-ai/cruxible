@@ -17,7 +17,7 @@ from cruxible_client.contracts.candidates import CandidateRecord, candidate_dige
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
@@ -39,7 +39,6 @@ CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
 
 def claim_type() -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -47,7 +46,7 @@ def claim_type() -> ClaimType:
         literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
         cardinality="one",
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",

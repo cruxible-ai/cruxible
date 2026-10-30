@@ -44,9 +44,7 @@ from cruxible_client.contracts.kits import (
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRule,
-    ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -206,7 +204,6 @@ def _kit_preview(world, request):
 def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
     kind = predicate.rpartition(".")[0]
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(kind,),
@@ -214,7 +211,7 @@ def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
         literal_schema=schema,
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
@@ -541,7 +538,6 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     publisher, consumer = worlds
     replacing = _claim_type(SEATS, {"type": "integer"}).model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
             "evidence_requirement": "self",
             "revision_evidence": "replace",
@@ -589,43 +585,6 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     assert canonical_bytes(carried.backing.model_dump(mode="json")) == canonical_bytes(
         before.backing.model_dump(mode="json")
     )
-
-
-def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
-    worlds: tuple[_World, _World], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
-    from cruxible_core.mcp import handlers
-    from tests.support.mcp_daemon import bind_mcp_daemon
-
-    publisher, _consumer = worlds
-    mcp_client = CruxibleClient(base_url="http://cruxible")
-    mcp_client._client = publisher.http  # type: ignore[assignment]
-    bind_mcp_daemon(monkeypatch, mcp_client)
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
-    before = publisher.tree()
-
-    dry = publisher.pb.upgrade_claim_types(SEATS)
-    assert dry.status == "would_propose", dry
-    assert [(item.claim_type, item.revision_evidence_after) for item in dry.upgraded] == [
-        (f"ClaimType:{SEATS}", "replace")
-    ]
-    assert publisher.tree() == before
-
-    served = handlers.handle_playbill_claim_type_upgrade(
-        publisher.instance_id,
-        ClaimTypeUpgradeRequest(
-            claim_types=(SEATS,), revision_evidence="accumulate", dry_run=False
-        ),
-    )
-    assert served.status == "proposed" and served.proposal_id is not None, served
-    publisher.approve(served.proposal_id)
-    upgraded = publisher.claim_type(SEATS)
-    assert (upgraded.artifact_format, upgraded.revision_evidence) == (
-        "playbill-claim-type-v7",
-        "accumulate",
-    )
-    assert publisher.pb.upgrade_claim_types(SEATS).status == "unchanged"
 
 
 def test_a_local_edit_takes_the_release_by_default_and_says_it_overwrites_your_edit(
@@ -920,7 +879,6 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
 def _identity_rule_type(predicate: str, contract: CaptureContract) -> ClaimType:
     return _claim_type(predicate, {"type": "string"}).model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v6",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
                     ClaimEvidenceAdmissionRule(
@@ -1229,13 +1187,12 @@ def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -
 def _pinning_type(predicate: str, contract: CaptureContract) -> ClaimType:
     return _claim_type(predicate, {"type": "string"}).model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="orders",
                         claim_roles=("observation",),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=("database_record",),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -1286,7 +1243,9 @@ def test_release_lineage_moves_owned_pins_and_leaves_literal_values_alone(
         release.contents()["claim-types/acme.orders/status.json"],
         path="claim-types/acme.orders/status.json",
     )
-    assert status.evidence_admission_policy.rules[0].capture_contract_digests == (released,)
+    # The rule names the contract by identity, so the release moves no digest in it.
+    (rule,) = status.evidence_admission_policy.rules
+    assert [item.target for item in rule.capture_contracts] == [revised.identity]
     zlimit = parse_claim_type(
         release.contents()["claim-types/acme.orders/zlimit.json"],
         path="claim-types/acme.orders/zlimit.json",
@@ -1375,9 +1334,9 @@ def test_a_carried_definition_matches_by_content_and_pins_move_to_the_consumers_
     assert (CONTRACT_PATH, "unchanged") in {(item.path, item.action) for item in added.plan}
     status = consumer.claim_type("beta.orders.status")
     held = parse_capture_contract(consumer_contract, path=CONTRACT_PATH)
-    assert status.evidence_admission_policy.rules[0].capture_contract_digests == (
-        capture_contract_digest(held).tagged,
-    )
+    # The rule names the contract by identity, which the consumer's own version holds.
+    (rule,) = status.evidence_admission_policy.rules
+    assert [item.target for item in rule.capture_contracts] == [held.identity]
 
 
 def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(
@@ -1527,77 +1486,6 @@ def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[
 # REFERENCE_FIELDS prefixes (SourceAcquisitionPolicy and ProviderInterface
 # are removed nouns, cut clean per ruling C13; acquisition is now inline
 # data on a Procedure/Line, never a separately pinned artifact).
-
-
-def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_claims_follow(
-    worlds: tuple[_World, _World],
-) -> None:
-    publisher, consumer = worlds
-    contract = _contract("acme.orders-v1")
-    _author_contract(publisher, contract)
-    consumer.add(publisher.build("1.0.0"))
-    held = parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH)
-    held_digest = capture_contract_digest(held).tagged
-    local = _claim_type("local.order.source", {"type": "string", "const": held_digest})
-    local = local.model_copy(
-        update={
-            "pins": (
-                ArtifactPin(
-                    role="capture-contract",
-                    target=ArtifactIdentity(kind="CaptureContract", name="acme.orders-v1"),
-                    artifact_digest=held_digest,
-                ),
-            )
-        }
-    )
-    consumer.author(local)
-    draft = consumer.pb.changes(rationale="Record where one order came from.")
-    created = _create_by_slug(consumer, draft, "local.order", "one")
-    draft.claim(
-        subject=created,
-        predicate="local.order.source",
-        value=held_digest,
-        role="observation",
-        rationale="The order names its contract.",
-        supported_by=None,
-        copied_from=None,
-        self_source=f"source: {held_digest}\n",
-        qualifier=None,
-        effective_period=None,
-        revises=None,
-        dispositions={},
-        subject_definition=None,
-        claim_type_definition=None,
-    )
-    intent = draft.prepare()
-    assert not intent.refused, intent.diagnostics
-    submitted = intent.submit(accept="never")
-    assert submitted._candidate_status is not None
-    assert submitted._candidate_status.proposal_id is not None
-    consumer.approve(submitted._candidate_status.proposal_id)
-    (claim_path,) = _claim_paths(consumer, "local.order.source")
-    claim_id = parse_claim(consumer.tree()[claim_path], path=claim_path).identity
-
-    _author_contract(
-        publisher,
-        _contract(
-            "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(contract).tagged
-        ),
-    )
-    result = consumer.add(publisher.build("1.1.0"))
-    assert result.status == "accepted", result
-
-    successor = consumer.claim_type("local.order.source")
-    new_contract = parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH)
-    assert successor.pins[0].artifact_digest == capture_contract_digest(new_contract).tagged
-    # The constant is a value that happened to equal the old digest; it stays.
-    assert successor.literal_schema == {"type": "string", "const": held_digest}
-    # The Claim is carried to the successor type, its value untouched.
-    carried = parse_claim(consumer.tree()[claim_path], path=claim_path)
-    assert carried.identity == claim_id
-    assert carried.lifecycle.state == "live"
-    assert carried.statement.claim_type_digest == claim_type_digest(successor).tagged
-    assert carried.statement.object.value == held_digest
 
 
 def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(

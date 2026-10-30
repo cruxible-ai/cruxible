@@ -70,7 +70,6 @@ def _v9(
     predicate = f"{KIND}.{field}"
     roles = ("observation",)
     return ClaimType(
-        artifact_format="cruxible-claim-type-v9",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(KIND,),

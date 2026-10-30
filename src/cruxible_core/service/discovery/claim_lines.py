@@ -56,7 +56,7 @@ def claim_line(claim: ClaimArtifact, *, accepted_predicates: Collection[str]) ->
     elif isinstance(obj, ExactContentClaimObject):
         value = obj.content_digest
     elif isinstance(obj, NoneClaimObject):
-        # An inverse (ClaimType v9) shows its object as stored, never as a value.
+        # An inverse shows its object as stored, never as a value.
         value = obj.model_dump(mode="json")
     else:
         value = obj.value

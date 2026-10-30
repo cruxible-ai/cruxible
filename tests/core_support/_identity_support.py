@@ -56,15 +56,12 @@ def identity_claim_type(
     predicate: str | None = None,
     subject_kinds: tuple[str, ...] = (KIND,),
 ) -> ClaimType:
-    """A ClaimType v8 (v7 when ``canonical_form`` is None) admitting self evidence."""
+    """A ClaimType admitting self evidence (no canonical form when ``canonical_form`` is None)."""
 
     name = predicate or f"{KIND}.{field}"
     roles = ("observation",)
     return ClaimType.model_validate(
         {
-            "artifact_format": (
-                "playbill-claim-type-v7" if canonical_form is None else "playbill-claim-type-v8"
-            ),
             "identity": ArtifactIdentity(kind="ClaimType", name=name),
             "predicate": name,
             "allowed_subject_kinds": subject_kinds,
@@ -97,7 +94,7 @@ def identity_claim_type(
             ),
             "evidence_requirement": "self",
             "revision_evidence": "replace",
-            "canonical_form": canonical_form,
+            "canonical_form": () if canonical_form is None else canonical_form,
         }
     )
 

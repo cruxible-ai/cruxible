@@ -609,7 +609,6 @@ def _move_to_v7(
     """Accept a ClaimType v7 successor of one write-vocabulary field."""
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.captures import capture_contract_digest
     from cruxible_client.contracts.claim_types import (
         ClaimType,
         claim_type_digest,
@@ -627,13 +626,12 @@ def _move_to_v7(
     (rule,) = base.evidence_admission_policy.rules
     contract = (
         REPORTS
-        if rule.capture_contract_digests == (capture_contract_digest(REPORTS).tagged,)  # type: ignore[union-attr]
+        if rule.names_capture_contract(identity=REPORTS.identity.qualified)
         else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     )
     successor = ClaimType.model_validate(
         {
             **base.model_dump(mode="python"),
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
                     ClaimEvidenceAdmissionRule(
@@ -887,7 +885,6 @@ def _seed_record_source(instance: PlaybillInstance, *, contract: Any = None) -> 
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
             "predicate": predicate,
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_requirement": "captured",
             "revision_evidence": "replace",
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(

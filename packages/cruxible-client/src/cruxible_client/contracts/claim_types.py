@@ -1,4 +1,4 @@
-"""Final policy-bearing ClaimType v1 artifact and acceptance law."""
+"""The one policy-bearing ClaimType artifact and its acceptance law."""
 
 from __future__ import annotations
 
@@ -6,20 +6,16 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Annotated, Any, Callable, Final, Literal, TypeAlias, cast
+from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    GetJsonSchemaHandler,
     ValidationError,
     field_validator,
-    model_serializer,
     model_validator,
 )
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import CoreSchema
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -45,9 +41,6 @@ from cruxible_client.contracts.governance import PermissionTier, governance_iden
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionPolicyV3,
     ClaimResolutionPolicy,
 )
 
@@ -59,7 +52,7 @@ class ClaimTypeFormatError(FormatError):
 
 
 class ClaimTypeFreshnessHorizonInvalid(ClaimTypeFormatError):
-    """A ClaimType v3 evidence-freshness horizon is malformed or non-positive."""
+    """A ClaimType evidence-freshness horizon is malformed or non-positive."""
 
 
 class _StrictClaimTypeModel(BaseModel):
@@ -152,7 +145,7 @@ ClaimInverseKey: TypeAlias = Annotated[
 
 
 class ClaimInverse(_StrictClaimTypeModel):
-    """How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.
+    """How a ClaimType states absence: the unit an inverse Claim covers and its evidence.
 
     An inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds
     no value. Only a Capture one of ``evidence_rules`` admits can establish it,
@@ -192,63 +185,17 @@ class ClaimInverse(_StrictClaimTypeModel):
         return _canonical_text(value, label="inverse description", maximum=_DESCRIPTION_MAX)
 
 
-CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v7"
-#: The ClaimType format that can declare an inverse (``ClaimInverse``).
-CLAIM_TYPE_V9_FORMAT: Final = "cruxible-claim-type-v9"
-_CURRENT_POLICY_FORMATS: Final = frozenset(
-    {
-        "playbill-claim-type-v5",
-        "playbill-claim-type-v6",
-        "playbill-claim-type-v7",
-        "playbill-claim-type-v8",
-        CLAIM_TYPE_V9_FORMAT,
-    }
-)
-_IDENTITY_RULE_FORMATS: Final = frozenset(
-    {
-        "playbill-claim-type-v6",
-        "playbill-claim-type-v7",
-        "playbill-claim-type-v8",
-        CLAIM_TYPE_V9_FORMAT,
-    }
-)
-#: The formats that carry the v7 fields: v7, v8 (v7 plus a canonical form) and v9
-#: (v8 plus an inverse).
-V7_AND_LATER_FORMATS: Final = frozenset(
-    {"playbill-claim-type-v7", "playbill-claim-type-v8", CLAIM_TYPE_V9_FORMAT}
-)
-#: The formats that carry a canonical form: v8, and v9.
-V8_AND_LATER_FORMATS: Final = frozenset({"playbill-claim-type-v8", CLAIM_TYPE_V9_FORMAT})
-CLAIM_TYPE_FORMATS: Final = (
-    "playbill-claim-type-v1",
-    "playbill-claim-type-v3",
-    "playbill-claim-type-v4",
-    "playbill-claim-type-v5",
-    "playbill-claim-type-v6",
-    "playbill-claim-type-v7",
-    "playbill-claim-type-v8",
-    CLAIM_TYPE_V9_FORMAT,
-)
+#: The one ClaimType artifact format: every field any earlier format carried,
+#: stated explicitly. Earlier formats are refused, never reinterpreted.
+CLAIM_TYPE_FORMAT: Final = "cruxible-claim-type-v10"
 
 #: What a Claim of this type must be backed by. ``none``: the Claim's own origin
-#: supports it; ``self``: the evidence rules decide (the meaning every ClaimType
-#: before v7 has); ``captured``: at least one Capture under a declared contract.
+#: supports it; ``self``: the evidence rules decide; ``captured``: at least one
+#: Capture under a declared contract.
 EvidenceRequirement = Literal["none", "self", "captured"]
 #: What a revision that changes its statement keeps. ``replace``: exactly the
-#: evidence it cites; ``accumulate``: everything its predecessors cited too (the
-#: meaning every ClaimType before v7 has).
+#: evidence it cites; ``accumulate``: everything its predecessors cited too.
 RevisionEvidence = Literal["replace", "accumulate"]
-V7_FIELDS: Final = (
-    "description",
-    "member_descriptions",
-    "default_role",
-    "evidence_requirement",
-    "revision_evidence",
-)
-#: ClaimType v8 adds the canonical form its literal values are stored and compared in.
-V8_FIELDS: Final = ("canonical_form",)
-#: ClaimType v9 adds the inverse: how a Claim of the type states absence.
-V9_FIELDS: Final = ("inverse",)
 _DESCRIPTION_MAX: Final = 1024
 _MEMBER_DESCRIPTION_MAX: Final = 256
 
@@ -266,7 +213,7 @@ def _canonical_text(value: str, *, label: str, maximum: int) -> str:
 
 
 def canonical_description_text(value: str) -> str:
-    """Normalize authored text to the one spelling a ClaimType v7 accepts."""
+    """Normalize authored text to the one spelling a ClaimType description accepts."""
 
     return unicodedata.normalize("NFC", value).strip()
 
@@ -287,115 +234,57 @@ def _member_key(member: object) -> bytes:
     return canonical_bytes(member)
 
 
-def claim_type_version_label(artifact_format: str) -> str:
-    """``playbill-claim-type-v7`` is ``v7``; ``cruxible-claim-type-v9`` is ``v9``."""
-
-    return "v" + artifact_format.rpartition("-v")[2]
-
-
 class ClaimType(_StrictClaimTypeModel):
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, schema: CoreSchema, handler: GetJsonSchemaHandler
-    ) -> JsonSchemaValue:
-        # The versioned serializer omits fields; it does not turn a ClaimType
-        # into an arbitrary dictionary. Keep the declared grammar in OpenAPI.
-        def declared(node: CoreSchema) -> CoreSchema:
-            result = dict(node)
-            if result.get("type") == "model":
-                result.pop("serialization", None)
-            elif isinstance(result.get("schema"), dict):
-                result["schema"] = declared(result["schema"])
-            return cast(CoreSchema, result)
+    """The one ClaimType: what a predicate means, admits and settles.
 
-        return handler(declared(schema))
+    Optional members are omitted from the wire when absent, so absence and a
+    stated value never share a spelling.
+    """
 
-    artifact_format: Literal[
-        "playbill-claim-type-v1",
-        "playbill-claim-type-v3",
-        "playbill-claim-type-v4",
-        "playbill-claim-type-v5",
-        "playbill-claim-type-v6",
-        "playbill-claim-type-v7",
-        "playbill-claim-type-v8",
-        "cruxible-claim-type-v9",
-    ] = "playbill-claim-type-v7"
+    artifact_format: Literal["cruxible-claim-type-v10"] = CLAIM_TYPE_FORMAT
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
     object_kind: Literal["literal", "subject", "exact_content"]
-    literal_schema: dict[str, object] | None = None
+    literal_schema: dict[str, object] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     allowed_object_subject_kinds: tuple[str, ...] = ()
     cardinality: Literal["one", "many"]
     permitted_roles: tuple[
         Literal["normative", "observation", "environment_binding", "derivation"], ...
     ]
     referent_sensitivity: Literal["identity", "shell"] = "identity"
-    evidence_admission_policy: (
-        ClaimEvidenceAdmissionPolicyV1
-        | ClaimEvidenceAdmissionPolicyV2
-        | ClaimEvidenceAdmissionPolicyV3
-        | ClaimEvidenceAdmissionPolicy
-    )
+    evidence_admission_policy: ClaimEvidenceAdmissionPolicy
     admission_policy: ClaimAdmissionPolicy
     resolution_policy: ClaimResolutionPolicy
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-    # Existing v3 envelopes committed these null placeholders. They remain
-    # null-only compatibility bytes, never supported authoring capabilities.
-    subject_scope: None = None
-    slot_policy: None = None
-    evidence_freshness: ClaimEvidenceFreshness | None = None
-    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None
+    evidence_freshness: ClaimEvidenceFreshness | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     #: How long an ``unsure`` examined attestation holds a standing ``next`` row
     #: (stale or uncovered evidence) when it names no ``valid_until``. Absent,
     #: the engine default applies.
-    unsure_hold_for: ClaimFreshnessDuration | None = None
-    # ClaimType v7. Every earlier format holds these at null or empty and never
-    # writes them, so its bytes and digests are exactly what they were.
+    unsure_hold_for: ClaimFreshnessDuration | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     #: What the predicate means, for the people and agents who read and write it.
-    description: str | None = None
+    description: str | None = Field(default=None, exclude_if=lambda value: value is None)
     #: What each literal enum member means, sorted by the member's canonical bytes.
     member_descriptions: tuple[ClaimTypeMemberDescription, ...] = ()
     #: The role a write takes when it names none. Never ``derivation``.
-    default_role: ClaimRole | None = None
-    #: Read through ``effective_evidence_requirement``; null before v7.
-    evidence_requirement: EvidenceRequirement | None = None
-    #: Read through ``effective_revision_evidence``; null before v7.
-    revision_evidence: RevisionEvidence | None = None
-    # ClaimType v8. Every earlier format holds it at null and never writes it.
+    default_role: ClaimRole | None = Field(default=None, exclude_if=lambda value: value is None)
+    evidence_requirement: EvidenceRequirement = "self"
+    revision_evidence: RevisionEvidence = "accumulate"
     #: The ordered transforms (``contracts.canonical_forms``) every literal value
     #: of this predicate is stored and compared in. ``()`` states no transform.
-    canonical_form: tuple[CanonicalTransform, ...] | None = None
-    # ClaimType v9. Every earlier format holds it at null and never writes it; a
-    # v9 type without one omits it, as ``unsure_hold_for`` is omitted.
+    canonical_form: tuple[CanonicalTransform, ...] = ()
     #: How a Claim of this type states that a unit holds nothing (an inverse).
-    inverse: ClaimInverse | None = None
-
-    @model_serializer(mode="wrap")
-    def _versioned_wire(self, handler: Any) -> dict[str, object]:
-        payload = cast(dict[str, object], handler(self))
-        if self.artifact_format not in V7_AND_LATER_FORMATS:
-            for field in V7_FIELDS:
-                payload.pop(field, None)
-        if self.artifact_format not in V8_AND_LATER_FORMATS:
-            for field in V8_FIELDS:
-                payload.pop(field, None)
-        if self.artifact_format != CLAIM_TYPE_V9_FORMAT or self.inverse is None:
-            for field in V9_FIELDS:
-                payload.pop(field, None)
-        if self.unsure_hold_for is None:
-            payload.pop("unsure_hold_for", None)
-        if self.artifact_format in {
-            "playbill-claim-type-v1",
-            "playbill-claim-type-v3",
-        }:
-            payload.pop("attestation_consequence_policy", None)
-        if self.artifact_format == "playbill-claim-type-v1":
-            payload.pop("subject_scope", None)
-            payload.pop("slot_policy", None)
-            payload.pop("evidence_freshness", None)
-        return payload
+    inverse: ClaimInverse | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("predicate")
     @classmethod
@@ -439,17 +328,11 @@ class ClaimType(_StrictClaimTypeModel):
     @field_validator("canonical_form")
     @classmethod
     def _canonical_form(
-        cls, value: tuple[CanonicalTransform, ...] | None
-    ) -> tuple[CanonicalTransform, ...] | None:
-        if value is None:
-            return None
+        cls, value: tuple[CanonicalTransform, ...]
+    ) -> tuple[CanonicalTransform, ...]:
         return validate_canonical_form(value)
 
-    def _validate_v9_fields(self) -> None:
-        if self.artifact_format != CLAIM_TYPE_V9_FORMAT:
-            if self.inverse is not None:
-                raise ValueError("only ClaimType v9 can declare an inverse")
-            return
+    def _validate_inverse(self) -> None:
         if self.inverse is None:
             return
         key = self.inverse.key
@@ -463,16 +346,7 @@ class ClaimType(_StrictClaimTypeModel):
         if isinstance(key, ClaimInverseObjectKeyPart) and self.object_kind != "subject":
             raise ValueError("an inverse keyed by object_key needs a Subject-valued ClaimType")
 
-    def _validate_v8_fields(self) -> None:
-        if self.artifact_format not in V8_AND_LATER_FORMATS:
-            if self.canonical_form is not None:
-                raise ValueError("only ClaimType v8 and later can carry a canonical_form")
-            return
-        if self.canonical_form is None:
-            raise ValueError(
-                f"ClaimType {claim_type_version_label(self.artifact_format)} states its "
-                "canonical_form explicitly ([] for none)"
-            )
+    def _validate_canonical_form(self) -> None:
         if self.canonical_form and self.object_kind != "literal":
             raise ValueError("a canonical_form applies only to literal ClaimTypes")
         members = None if self.literal_schema is None else self.literal_schema.get("enum")
@@ -484,24 +358,7 @@ class ClaimType(_StrictClaimTypeModel):
                         "no stored value could ever equal it"
                     )
 
-    def _validate_v7_fields(self) -> None:
-        if self.artifact_format not in V7_AND_LATER_FORMATS:
-            if (
-                self.description is not None
-                or self.member_descriptions
-                or self.default_role is not None
-                or self.evidence_requirement is not None
-                or self.revision_evidence is not None
-            ):
-                raise ValueError(
-                    "only ClaimType v7 can carry descriptions, a default role, an evidence "
-                    "requirement or a revision-evidence rule"
-                )
-            return
-        if self.evidence_requirement is None or self.revision_evidence is None:
-            raise ValueError(
-                "ClaimType v7 states its evidence_requirement and revision_evidence explicitly"
-            )
+    def _validate_descriptions(self) -> None:
         if self.default_role is not None:
             if self.default_role == "derivation":
                 raise ValueError(
@@ -525,57 +382,20 @@ class ClaimType(_StrictClaimTypeModel):
         expected = ArtifactIdentity(kind="ClaimType", name=self.predicate)
         if self.identity != expected:
             raise ValueError("ClaimType identity must equal ClaimType:<predicate>")
-        # Reuse the deliberately policy-free PC-A1 validator so the final wire
+        if self.unsure_hold_for is not None and self.unsure_hold_for.microseconds <= 0:
+            raise ValueError("ClaimType unsure_hold_for must be positive")
+        self._validate_descriptions()
+        self._validate_canonical_form()
+        self._validate_inverse()
+        if any(pin.target.kind == "Procedure" for pin in self.pins):
+            raise ValueError("ClaimTypes cannot depend on producing Procedures")
+        if any(pin.target.kind == "CaptureContract" for pin in self.pins):
+            raise ValueError(
+                "A ClaimType names CaptureContracts by identity in its evidence rules, never "
+                "by an exact pin"
+            )
+        # Reuse the deliberately policy-free structural validator so the wire
         # cannot drift from the reviewed structural surface.
-        if self.artifact_format == "playbill-claim-type-v1":
-            if self.evidence_freshness is not None:
-                raise ValueError("ClaimType v1 cannot carry v3 evidence freshness")
-            if self.attestation_consequence_policy is not None:
-                raise ValueError("ClaimType v1 cannot carry v4 attestation consequences")
-        elif self.artifact_format == "playbill-claim-type-v3":
-            if self.evidence_freshness is None:
-                raise ValueError("ClaimType v3 requires evidence freshness")
-            if self.attestation_consequence_policy is not None:
-                raise ValueError("ClaimType v3 cannot carry v4 attestation consequences")
-        elif (
-            self.artifact_format == "playbill-claim-type-v4"
-            and self.attestation_consequence_policy is None
-        ):
-            raise ValueError("ClaimType v4 requires an attestation consequence policy")
-        if self.unsure_hold_for is not None:
-            if self.artifact_format not in _CURRENT_POLICY_FORMATS:
-                raise ValueError("only ClaimType v5 and later can declare unsure_hold_for")
-            if self.unsure_hold_for.microseconds <= 0:
-                raise ValueError("ClaimType unsure_hold_for must be positive")
-        self._validate_v7_fields()
-        self._validate_v8_fields()
-        self._validate_v9_fields()
-        if self.artifact_format in _IDENTITY_RULE_FORMATS:
-            version = claim_type_version_label(self.artifact_format)
-            if not isinstance(
-                self.evidence_admission_policy,
-                (ClaimEvidenceAdmissionPolicy, ClaimEvidenceAdmissionPolicyV3),
-            ):
-                raise ValueError(
-                    f"ClaimType {version} requires evidence policy v3 naming CaptureContracts "
-                    "by identity"
-                )
-            if any(pin.target.kind == "Procedure" for pin in self.pins):
-                raise ValueError("ClaimTypes cannot depend on producing Procedures")
-            if any(pin.target.kind == "CaptureContract" for pin in self.pins):
-                raise ValueError(
-                    f"ClaimType {version} names CaptureContracts by identity in its evidence "
-                    "rules, never by an exact pin"
-                )
-        elif self.artifact_format == "playbill-claim-type-v5":
-            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV2):
-                raise ValueError(
-                    "ClaimType v5 requires evidence policy v2 without producer authorization"
-                )
-            if any(pin.target.kind == "Procedure" for pin in self.pins):
-                raise ValueError("ClaimTypes cannot depend on producing Procedures")
-        elif not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV1):
-            raise ValueError("Historical ClaimTypes require their original evidence policy")
         ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=self.allowed_subject_kinds,
@@ -625,17 +445,7 @@ def validate_claim_type_path(
 
 
 def render_claim_type(claim_type: ClaimType) -> bytes:
-    payload = claim_type.model_dump(mode="json")
-    if claim_type.artifact_format in {
-        "playbill-claim-type-v1",
-        "playbill-claim-type-v3",
-    }:
-        payload.pop("attestation_consequence_policy", None)
-    if claim_type.artifact_format == "playbill-claim-type-v1":
-        payload.pop("subject_scope", None)
-        payload.pop("slot_policy", None)
-        payload.pop("evidence_freshness", None)
-    return pretty_canonical_bytes(payload)
+    return pretty_canonical_bytes(claim_type.model_dump(mode="json"))
 
 
 _CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=1024, max_bytes=16 * 1024 * 1024)
@@ -661,113 +471,32 @@ def _parse_claim_type(
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimTypeFormatError("ClaimType is not strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("artifact_format") not in CLAIM_TYPE_FORMATS:
-        declared = payload.get("artifact_format") if isinstance(payload, dict) else None
+    declared = payload.get("artifact_format") if isinstance(payload, dict) else None
+    if declared != CLAIM_TYPE_FORMAT:
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
     try:
         claim_type = ClaimType.model_validate(payload)
     except ValidationError as exc:
-        if payload.get("artifact_format") == "playbill-claim-type-v3" and any(
-            tuple(error["loc"])[0:1] == ("evidence_freshness",) for error in exc.errors()
-        ):
+        if any(tuple(error["loc"])[0:1] == ("evidence_freshness",) for error in exc.errors()):
             raise ClaimTypeFreshnessHorizonInvalid(
-                "ClaimType v3 evidence freshness horizon is malformed or non-positive"
+                "ClaimType evidence freshness horizon is malformed or non-positive"
             ) from exc
-        raise ClaimTypeFormatError("ClaimType failed strict versioned validation") from exc
+        raise ClaimTypeFormatError("ClaimType failed strict validation") from exc
     validate_claim_type_path(claim_type, path)
     if render_claim_type(claim_type) != content:
         raise ClaimTypeFormatError("ClaimType is not in canonical wire form")
     return claim_type
 
 
-def _claim_type_digest_v1(claim_type: ClaimType) -> ArtifactDigest:
-    payload = claim_type.model_dump(mode="json")
-    payload.pop("subject_scope", None)
-    payload.pop("slot_policy", None)
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        payload,
-    )
-
-
-def _claim_type_digest_v3(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v4(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v5(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v6(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v7(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v8(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-def _claim_type_digest_v9(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
-CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
-    "playbill-claim-type-v1": _claim_type_digest_v1,
-    "playbill-claim-type-v3": _claim_type_digest_v3,
-    "playbill-claim-type-v4": _claim_type_digest_v4,
-    "playbill-claim-type-v5": _claim_type_digest_v5,
-    "playbill-claim-type-v6": _claim_type_digest_v6,
-    "playbill-claim-type-v7": _claim_type_digest_v7,
-    "playbill-claim-type-v8": _claim_type_digest_v8,
-    CLAIM_TYPE_V9_FORMAT: _claim_type_digest_v9,
-}
-
-
 @sealed_memo
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
-    return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
+    return typed_digest(ArtifactDigest, "playbill-envelope-v1", claim_type.model_dump(mode="json"))
 
 
 def effective_revision_evidence(claim_type: ClaimType) -> RevisionEvidence:
-    """What a statement-changing revision keeps; every format before v7 accumulates."""
+    """What a statement-changing revision keeps."""
 
-    return claim_type.revision_evidence or "accumulate"
+    return claim_type.revision_evidence
 
 
 def effective_inverse_stale_after(claim_type: ClaimType) -> ClaimFreshnessDuration | None:
@@ -782,15 +511,15 @@ def effective_inverse_stale_after(claim_type: ClaimType) -> ClaimFreshnessDurati
 
 
 def effective_canonical_form(claim_type: ClaimType) -> tuple[CanonicalTransform, ...]:
-    """The transforms a literal of this type is stored and compared in; none before v8."""
+    """The transforms a literal of this type is stored and compared in."""
 
-    return claim_type.canonical_form or ()
+    return claim_type.canonical_form
 
 
 def effective_evidence_requirement(claim_type: ClaimType) -> EvidenceRequirement:
-    """What backs a Claim of this type; every format before v7 means ``self``."""
+    """What backs a Claim of this type."""
 
-    return claim_type.evidence_requirement or "self"
+    return claim_type.evidence_requirement
 
 
 class ClaimTypeContention(_StrictClaimTypeModel):
@@ -823,7 +552,7 @@ def claim_type_contention(claim_type: ClaimType) -> ClaimTypeContention:
 
 
 def claim_type_format_version(claim_type: ClaimType) -> int:
-    """The ClaimType format's version number: ``playbill-claim-type-v7`` is 7."""
+    """The ClaimType format's version number: ``cruxible-claim-type-v10`` is 10."""
 
     return int(claim_type.artifact_format.rpartition("-v")[2])
 
@@ -833,7 +562,7 @@ def claim_type_accepts_subject(claim_type: ClaimType, subject_kind: str) -> bool
 
 
 def claim_type_projection_structure(claim_type: ClaimType) -> dict[str, object]:
-    """Project the policy-free finite-subject structure shared by v1 and v3."""
+    """Project the policy-free finite-subject structure."""
 
     return claim_type.structure.model_dump(mode="json")
 
@@ -881,8 +610,8 @@ def _diagnostic(code: str, message: str, *, path: str) -> CompilerDiagnostic:
     )
 
 
-def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic | None:
-    """The ClaimType v7 law: a declared requirement must be satisfiable by its rules."""
+def _requirement_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic | None:
+    """A declared default role must be permitted and a requirement satisfiable by its rules."""
 
     from cruxible_client.contracts.captures import (
         COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -903,7 +632,7 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
         declared = any(
             item.target.name not in own
             for rule in claim_type.evidence_admission_policy.rules
-            for item in getattr(rule, "capture_contracts", ())
+            for item in rule.capture_contracts
         )
         if not declared:
             return _diagnostic(
@@ -924,13 +653,13 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
     return None
 
 
-def _v9_law_refusal(
+def _inverse_law_refusal(
     claim_type: ClaimType,
     *,
     path: str,
     subject_kind_keys: Mapping[str, tuple[str, ...] | None] | None,
 ) -> CompilerDiagnostic | None:
-    """The ClaimType v9 law: the v8 rules, plus an inverse that can be stated and judged.
+    """An inverse must be statable and judgeable.
 
     An inverse needs a unit a Claim can name (never exact content), evidence
     rules the type declares, and, keyed by ``object_key``, a predicate that is a
@@ -1006,7 +735,7 @@ def evaluate_claim_type_law(
 ) -> ClaimTypeLawResult:
     """Evaluate exact path, lifecycle, and digest-pinned dependencies.
 
-    ``subject_kind_keys`` (the v9 law) is each object SubjectKind's declared key
+    ``subject_kind_keys`` is each object SubjectKind's declared key
     ClaimTypes in candidate state, read only for an inverse keyed by object_key.
     """
 
@@ -1017,14 +746,11 @@ def evaluate_claim_type_law(
             verdict="refused",
             diagnostics=(_diagnostic("cruxible.claim_type.path_mismatch", str(exc), path=path),),
         )
-    if claim_type.artifact_format in V7_AND_LATER_FORMATS:
-        refusal = _v7_law_refusal(claim_type, path=path)
-        if refusal is not None:
-            return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
-    if claim_type.artifact_format == CLAIM_TYPE_V9_FORMAT:
-        refusal = _v9_law_refusal(claim_type, path=path, subject_kind_keys=subject_kind_keys)
-        if refusal is not None:
-            return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
+    refusal = _requirement_law_refusal(claim_type, path=path) or _inverse_law_refusal(
+        claim_type, path=path, subject_kind_keys=subject_kind_keys
+    )
+    if refusal is not None:
+        return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
     if accepted_artifacts is not None:
         for pin in claim_type.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
@@ -1108,9 +834,7 @@ def evaluate_claim_type_law(
 
 __all__ = [
     "AcceptedClaimType",
-    "CLAIM_TYPE_DIGEST_FUNCTIONS",
-    "CLAIM_TYPE_FORMATS",
-    "CLAIM_TYPE_V9_FORMAT",
+    "CLAIM_TYPE_FORMAT",
     "ClaimInverse",
     "ClaimInverseKey",
     "ClaimInverseObjectKey",
@@ -1123,15 +847,9 @@ __all__ = [
     "ClaimTypeMemberDescription",
     "EvidenceRequirement",
     "RevisionEvidence",
-    "V7_AND_LATER_FORMATS",
-    "V7_FIELDS",
-    "V8_AND_LATER_FORMATS",
-    "V8_FIELDS",
-    "V9_FIELDS",
     "canonical_description_text",
     "claim_type_contention",
     "claim_type_format_version",
-    "claim_type_version_label",
     "effective_canonical_form",
     "effective_inverse_stale_after",
     "effective_evidence_requirement",

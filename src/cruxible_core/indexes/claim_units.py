@@ -1,6 +1,6 @@
 """The unit index and the polarity law: a unit holds values or one none, never both.
 
-A ClaimType v9 that declares an inverse partitions each of its slots
+A ClaimType that declares an inverse partitions each of its slots
 ``(subject, predicate, qualifier)`` into units: the whole slot (key ``slot``),
 one object (key ``object``) or one key value of the object Subject (key
 ``object_key``). ``claim_units`` holds one row per live Claim of such a type:

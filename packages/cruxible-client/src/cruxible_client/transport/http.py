@@ -29,10 +29,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchRequest,
     ClaimReadBatchResult,
 )
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
@@ -771,15 +767,6 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/kits", json=request.model_dump(mode="json")
         )
         return self._parse_model(response, KitChangeResult)
-
-    def upgrade_claim_types(
-        self, instance_id: str, request: ClaimTypeUpgradeRequest
-    ) -> ClaimTypeUpgradeResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/claim-types/upgrade",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, ClaimTypeUpgradeResult)
 
     def remove_kit(self, instance_id: str, request: KitRemoveRequest) -> KitChangeResult:
         response = self._client.post(

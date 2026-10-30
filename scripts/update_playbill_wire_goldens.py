@@ -24,7 +24,6 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    capture_contract_digest,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
@@ -334,14 +333,21 @@ def _update_seed_bundle() -> None:
         raise TypeError("seed ClaimType has no evidence admission rules")
     for rule in evidence_policy["rules"]:
         if rule["rule_id"] == "direct-self-asserted":
-            rule["capture_contract_digests"] = [
-                capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
-            ]
+            names = [COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name]
         elif rule["rule_id"] == "foreign-working-sources":
-            rule["capture_contract_digests"] = sorted(
-                capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
-                for source_id in source_ids
+            names = sorted(
+                foreign_source_capture_contract(source_id).identity.name for source_id in source_ids
             )
+        else:
+            continue
+        rule["capture_contracts"] = [
+            {
+                "logical_sources": [],
+                "role": "capture-contract",
+                "target": {"kind": "CaptureContract", "name": name},
+            }
+            for name in names
+        ]
     claim_type = ClaimType.model_validate(type_payload)
     _write(type_path, claim_type.model_dump(mode="json"))
 

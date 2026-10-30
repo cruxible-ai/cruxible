@@ -98,4 +98,16 @@ def claim_type_input_from_artifact(claim_type, *, source_ids=()):
             rule["capture_contracts"] = [
                 identities[digest] for digest in rule.pop("capture_contract_digests")
             ]
+        # A rule naming the read-only direct-value profile names the coordinator's
+        # retained-body profile instead, as a fresh own-words fixture does.
+        rule["capture_contracts"] = [
+            (
+                {**item, "target": COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.model_dump()}
+                if isinstance(item, dict)
+                and item.get("target", {}).get("name")
+                == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name
+                else item
+            )
+            for item in rule.get("capture_contracts", [])
+        ]
     return ClaimTypeInputRecord.model_validate(value).model_dump(mode="json")

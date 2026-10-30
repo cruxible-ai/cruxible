@@ -424,27 +424,6 @@ Builds a ClaimTypeDraft with explicit object, cardinality, role, evidence, admis
 | `evidence_freshness` | Required | Optional freshness duration. None leaves it unspecified. |
 | `attestation_consequence_policy` | `None` | Optional policy for consequences of accepted signed attestations. |
 
-<a id="api-cruxible-upgrade-claim-types"></a>
-
-### `Cruxible.upgrade_claim_types`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-upgrade_claim_types(
-    *claim_types: str | ClaimTypeRef,
-    revision_evidence: Literal['replace', 'accumulate'] = 'replace',
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> ClaimTypeUpgradeResult
-```
-
-Proposes moving live ClaimTypes to v7 as one reviewed change set; naming none
-moves every live one before v7. Every dependent Claim is carried with its
-backing intact, so it previews by default and proposes nothing: commit the
-preview with `dry_run=False, at=result.coordinate.git_oid`, then review and
-approve the proposal as usual. The CLI form is `cruxible claim-type upgrade`.
-
 <a id="api-cruxible-claim"></a>
 
 ### `Cruxible.claim`
@@ -6904,21 +6883,6 @@ Compile and submit in one request; the daemon preflights once, on submit.
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/submit'`.
 
-<a id="api-cruxibleclient-upgrade-claim-types"></a>
-
-### `CruxibleClient.upgrade_claim_types`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-upgrade_claim_types(
-    instance_id: str,
-    request: ClaimTypeUpgradeRequest,
-) -> ClaimTypeUpgradeResult
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/claim-types/upgrade'`.
-
 ## Errors and unsupported surfaces
 
 | Family | Handling |
@@ -7948,13 +7912,11 @@ definitions singular.
 
 **`contracts.claim_type_structure`** — [ClaimTypeStructure](src/cruxible_client/contracts/claim_type_structure.py), [ClaimTypeStructuralCheck](src/cruxible_client/contracts/claim_type_structure.py).
 
-**`contracts.claim_type_upgrade`** — [ClaimTypeUpgradeRequest](src/cruxible_client/contracts/claim_type_upgrade.py), [ClaimTypeUpgrade](src/cruxible_client/contracts/claim_type_upgrade.py), [ClaimTypeUpgradeRefusal](src/cruxible_client/contracts/claim_type_upgrade.py), [ClaimTypeUpgradeResult](src/cruxible_client/contracts/claim_type_upgrade.py).
-
 **`contracts.claim_types`** — [ClaimTypeFormatError](src/cruxible_client/contracts/claim_types.py), [ClaimTypeFreshnessHorizonInvalid](src/cruxible_client/contracts/claim_types.py), [ClaimFreshnessDuration](src/cruxible_client/contracts/claim_types.py), [ClaimEvidenceFreshness](src/cruxible_client/contracts/claim_types.py), [ClaimAttestationConsequenceRule](src/cruxible_client/contracts/claim_types.py), [ClaimAttestationConsequencePolicy](src/cruxible_client/contracts/claim_types.py), [ClaimTypeMemberDescription](src/cruxible_client/contracts/claim_types.py), [ClaimType](src/cruxible_client/contracts/claim_types.py), [AcceptedClaimType](src/cruxible_client/contracts/claim_types.py), [ClaimTypeLawResult](src/cruxible_client/contracts/claim_types.py).
 
-**`contracts.claim_verdicts`** — [ClaimAdjudicationRuleV1](src/cruxible_client/contracts/claim_verdicts.py), [ClaimAdjudicationRule](src/cruxible_client/contracts/claim_verdicts.py), [CaptureVerdictEvidence](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceControlComponent](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResultV1](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceFreshnessExpiration](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResult](src/cruxible_client/contracts/claim_verdicts.py).
+**`contracts.claim_verdicts`** — [ClaimAdjudicationRule](src/cruxible_client/contracts/claim_verdicts.py), [CaptureVerdictEvidence](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceControlComponent](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceFreshnessExpiration](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResult](src/cruxible_client/contracts/claim_verdicts.py).
 
-**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCard](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimBackingV1](src/cruxible_client/contracts/claims.py), [ClaimCitation](src/cruxible_client/contracts/claims.py), [LegacyCitationReference](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimArtifactV2](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttribution](src/cruxible_client/contracts/claims.py), [ClaimRetireDependent](src/cruxible_client/contracts/claims.py), [ClaimArtifact](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV1](src/cruxible_client/contracts/claims.py), [ClaimLawEvidence](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindEvaluation](src/cruxible_client/contracts/claims.py).
+**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCard](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimCitation](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttribution](src/cruxible_client/contracts/claims.py), [ClaimRetireDependent](src/cruxible_client/contracts/claims.py), [ClaimArtifact](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidence](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindEvaluation](src/cruxible_client/contracts/claims.py).
 
 **`contracts.compact_query`** — [QueryFilterEq](src/cruxible_client/contracts/compact_query.py), [QueryFilterNe](src/cruxible_client/contracts/compact_query.py), [QueryFilterLt](src/cruxible_client/contracts/compact_query.py), [QueryFilterLte](src/cruxible_client/contracts/compact_query.py), [QueryFilterGt](src/cruxible_client/contracts/compact_query.py), [QueryFilterGte](src/cruxible_client/contracts/compact_query.py), [QueryFilterIn](src/cruxible_client/contracts/compact_query.py), [QueryFilterExists](src/cruxible_client/contracts/compact_query.py), [QueryFilterContains](src/cruxible_client/contracts/compact_query.py), [QueryFollow](src/cruxible_client/contracts/compact_query.py), [QueryRequest](src/cruxible_client/contracts/compact_query.py), [QueryClaim](src/cruxible_client/contracts/compact_query.py), [QueryClaimValue](src/cruxible_client/contracts/compact_query.py), [QueryColumn](src/cruxible_client/contracts/compact_query.py), [QueryReplay](src/cruxible_client/contracts/compact_query.py), [QueryReceipt](src/cruxible_client/contracts/compact_query.py), [QueryResultRecord](src/cruxible_client/contracts/compact_query.py).
 
@@ -7971,8 +7933,6 @@ definitions singular.
 **`contracts.documents`** — [DocumentLink](src/cruxible_client/contracts/documents.py), [DocumentPin](src/cruxible_client/contracts/documents.py), [DocumentAuthority](src/cruxible_client/contracts/documents.py), [DocumentLifecycle](src/cruxible_client/contracts/documents.py), [DocumentShell](src/cruxible_client/contracts/documents.py), [DocumentArtifactAdapter](src/cruxible_client/contracts/documents.py), [BodyVerifierProtocol](src/cruxible_client/contracts/documents.py), [AcceptedDocument](src/cruxible_client/contracts/documents.py), [DocumentLawResult](src/cruxible_client/contracts/documents.py).
 
 **`contracts.errors`** — [CruxibleError](src/cruxible_client/contracts/errors.py), [CanonicalEncodingError](src/cruxible_client/contracts/errors.py), [MerkleIntegrityError](src/cruxible_client/contracts/errors.py), [FormatError](src/cruxible_client/contracts/errors.py), [SinceRequestInvalid](src/cruxible_client/contracts/errors.py), [ClaimAttestationRequestInvalid](src/cruxible_client/contracts/errors.py), [InstanceIncompatiblePrereleaseContent](src/cruxible_client/contracts/errors.py), [ReseedRequired](src/cruxible_client/contracts/errors.py), [InstanceDecommissioned](src/cruxible_client/contracts/errors.py), [SemanticDeltaLimitError](src/cruxible_client/contracts/errors.py), [BootstrapError](src/cruxible_client/contracts/errors.py), [ObjectFormatConflict](src/cruxible_client/contracts/errors.py), [GitError](src/cruxible_client/contracts/errors.py), [SigningKeyError](src/cruxible_client/contracts/errors.py), [CasError](src/cruxible_client/contracts/errors.py), [JournalError](src/cruxible_client/contracts/errors.py), [JournalConflictError](src/cruxible_client/contracts/errors.py), [JournalIntegrityError](src/cruxible_client/contracts/errors.py), [ExecutionError](src/cruxible_client/contracts/errors.py), [DocumentFormatError](src/cruxible_client/contracts/errors.py), [DocumentNotFoundError](src/cruxible_client/contracts/errors.py), [SubjectFormatError](src/cruxible_client/contracts/errors.py), [SubjectNotFoundError](src/cruxible_client/contracts/errors.py), [ClaimNotFoundError](src/cruxible_client/contracts/errors.py), [ProposalAdmissionError](src/cruxible_client/contracts/errors.py), [ProposalWithdrawnError](src/cruxible_client/contracts/errors.py), [ProposalRejectedError](src/cruxible_client/contracts/errors.py), [ProposalNotFoundError](src/cruxible_client/contracts/errors.py), [ProposalSelectorAmbiguousError](src/cruxible_client/contracts/errors.py), [ProposalContentUnavailable](src/cruxible_client/contracts/errors.py), [ProposalReadmitAlreadyAccepted](src/cruxible_client/contracts/errors.py), [ProposalReadmitNotStale](src/cruxible_client/contracts/errors.py), [ProposalStale](src/cruxible_client/contracts/errors.py), [ProposalReadmitRequiresResubmission](src/cruxible_client/contracts/errors.py), [ProposalActivationRequestInvalid](src/cruxible_client/contracts/errors.py), [ProposalIntegrityError](src/cruxible_client/contracts/errors.py), [ProposalEvaluationIntegrityError](src/cruxible_client/contracts/errors.py), [ApprovalIntegrityError](src/cruxible_client/contracts/errors.py), [PrincipalIntegrityError](src/cruxible_client/contracts/errors.py), [SettlementIntegrityError](src/cruxible_client/contracts/errors.py), [SettlementEvidenceUnproven](src/cruxible_client/contracts/errors.py), [ReplayCheckpointError](src/cruxible_client/contracts/errors.py), [ReadRefusalError](src/cruxible_client/contracts/errors.py), [WriteRefusalError](src/cruxible_client/contracts/errors.py), [ProjectionError](src/cruxible_client/contracts/errors.py), [ProjectionCoordinateError](src/cruxible_client/contracts/errors.py), [ProjectionFormatError](src/cruxible_client/contracts/errors.py), [ProjectionPublicationError](src/cruxible_client/contracts/errors.py), [ProjectionIntegrityError](src/cruxible_client/contracts/errors.py).
-
-**`contracts.evidence_rule_upgrade`** — [EvidenceRuleConversion](src/cruxible_client/contracts/evidence_rule_upgrade.py).
 
 **`contracts.floor`** — [FloorEntry](src/cruxible_client/contracts/floor.py), [FloorManifest](src/cruxible_client/contracts/floor.py), [FloorHead](src/cruxible_client/contracts/floor.py), [FloorDeltaFile](src/cruxible_client/contracts/floor.py), [FloorDelta](src/cruxible_client/contracts/floor.py), [FloorApplyResult](src/cruxible_client/contracts/floor.py).
 
@@ -8000,7 +7960,7 @@ definitions singular.
 
 **`contracts.persistent`** — [PersistentMap](src/cruxible_client/contracts/persistent.py), [MapMutation](src/cruxible_client/contracts/persistent.py).
 
-**`contracts.policies`** — [CorroborationRequirement](src/cruxible_client/contracts/policies.py), [FreezeRequirement](src/cruxible_client/contracts/policies.py), [ClaimAdmissionPolicy](src/cruxible_client/contracts/policies.py), [ClaimResolutionPolicy](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionRuleV1](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionRuleV2](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionRule](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionPolicyV1](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionPolicyV2](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionPolicy](src/cruxible_client/contracts/policies.py), [ClaimCorroborationResult](src/cruxible_client/contracts/policies.py), [ClaimAdmissionEvaluationAccount](src/cruxible_client/contracts/policies.py), [ClaimAdmissionCandidateContext](src/cruxible_client/contracts/policies.py), [ClaimAdmissionCandidateResult](src/cruxible_client/contracts/policies.py), [EvidenceAdmissionInput](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionResult](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionTrace](src/cruxible_client/contracts/policies.py), [ResolutionContender](src/cruxible_client/contracts/policies.py), [ClaimResolutionResult](src/cruxible_client/contracts/policies.py).
+**`contracts.policies`** — [CorroborationRequirement](src/cruxible_client/contracts/policies.py), [FreezeRequirement](src/cruxible_client/contracts/policies.py), [ClaimAdmissionPolicy](src/cruxible_client/contracts/policies.py), [ClaimResolutionPolicy](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionRule](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionPolicy](src/cruxible_client/contracts/policies.py), [ClaimCorroborationResult](src/cruxible_client/contracts/policies.py), [ClaimAdmissionEvaluationAccount](src/cruxible_client/contracts/policies.py), [ClaimAdmissionCandidateContext](src/cruxible_client/contracts/policies.py), [ClaimAdmissionCandidateResult](src/cruxible_client/contracts/policies.py), [EvidenceAdmissionInput](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionResult](src/cruxible_client/contracts/policies.py), [ClaimEvidenceAdmissionTrace](src/cruxible_client/contracts/policies.py), [ResolutionContender](src/cruxible_client/contracts/policies.py), [ClaimResolutionResult](src/cruxible_client/contracts/policies.py).
 
 **`contracts.policy_rows`** — [PolicyInForce](src/cruxible_client/contracts/policy_rows.py).
 

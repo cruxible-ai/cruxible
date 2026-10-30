@@ -272,7 +272,7 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
     from cruxible_core.indexes.typed_state import OWNER_BY_KIND
     from tests.core_support._support import initialize_local
-    from tests.test_claims.test_claims import _claim_type
+    from tests.test_claims.test_claims import vocabulary_claim_type as _claim_type
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, owner = initialize_local(tmp_path)
@@ -382,7 +382,7 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
     from tests.test_authoring.test_authoring_procedures import _change_set_query
-    from tests.test_claims.test_claims import _claim_type
+    from tests.test_claims.test_claims import vocabulary_claim_type as _claim_type
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, owner = initialize_local(tmp_path)

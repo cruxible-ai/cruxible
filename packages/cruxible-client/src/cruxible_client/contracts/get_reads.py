@@ -252,7 +252,7 @@ class GetSubjectClaim(_StrictGetModel):
     # An exact-content row's digests, aligned with ``claim`` the same way.
     content_digest: str | tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
     flags: tuple[ReadFlag, ...] = ()
-    # The field's live nones (ClaimType v9 inverses): never values. A field
+    # The field's live nones (inverses): never values. A field
     # with no value and no current none is unknown.
     nones: tuple[GetNone, ...] = Field(default=(), exclude_if=lambda value: not value)
 
@@ -329,8 +329,8 @@ class GetClaimTypeCard(_StrictGetModel):
     roles: tuple[ClaimRole, ...]
     # The role a write takes when it names none.
     default_role: ClaimRole | None = Field(default=None, exclude_if=_omit_none)
-    # What backs a Claim (``self`` before v7) and what a statement-changing
-    # revision keeps (``accumulate`` before v7).
+    # What backs a Claim and what a statement-changing
+    # revision keeps.
     evidence_requirement: EvidenceRequirement
     revision_evidence: RevisionEvidence
     # Accepted evidence, as CaptureContract names; never a digest where the
@@ -340,7 +340,7 @@ class GetClaimTypeCard(_StrictGetModel):
     # How rival Claims of one slot settle: the resolution selector, what a
     # conflict resolves to, and the admission policy's requirement counts.
     contention: ClaimTypeContention
-    # The format version (7 for ``playbill-claim-type-v7``), the accepted
+    # The format version (10 for ``cruxible-claim-type-v10``), the accepted
     # revision and the ledger path (which a kit's drifted paths name).
     format: int = Field(ge=1)
     revision: int = Field(ge=1)

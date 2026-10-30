@@ -34,12 +34,12 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.claims.claims import (
-    PlaybillClaimExplanationV3,
+    PlaybillClaimExplanation,
     service_explain_playbill_claim,
 )
 from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 from cruxible_core.service.evidence.evidence import (
-    PlaybillClaimVerdictQueryV2,
+    PlaybillClaimVerdictQuery,
     service_evaluate_playbill_claim_verdict,
 )
 from tests.core_support._claim_authoring_support import (
@@ -107,7 +107,6 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     successor = ClaimType.model_validate(
         {
             **predecessor.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
                 stale_after=ClaimFreshnessDuration(microseconds=10_000_000)
             ).model_dump(mode="json"),
@@ -163,10 +162,10 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
         evaluation_time=at_expiry,
     )
 
-    assert isinstance(current, PlaybillClaimVerdictQueryV2)
+    assert isinstance(current, PlaybillClaimVerdictQuery)
     assert isinstance(current.verdict, ClaimVerdictResult)
     assert current.verdict.verdict == "supported"
-    assert isinstance(expired, PlaybillClaimVerdictQueryV2)
+    assert isinstance(expired, PlaybillClaimVerdictQuery)
     assert expired.verdict.verdict == "stale_evidence"
     assert expired == service_evaluate_playbill_claim_verdict(
         instance,
@@ -179,7 +178,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
         identity=f"Claim:{claim_id}",
         evaluation_time=at_expiry,
     )
-    assert isinstance(explanation, PlaybillClaimExplanationV3)
+    assert isinstance(explanation, PlaybillClaimExplanation)
     assert isinstance(explanation.law_evidence, ClaimLawEvidence)
     assert explanation.freshness[0].state == "expired"
     assert explanation.freshness[0].recapture_operation.operation == "cruxible.authoring.bind"

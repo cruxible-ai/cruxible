@@ -1,8 +1,8 @@
 """The ClaimType laws run no vocabulary reuse law.
 
 Maintainer ruling ``dev.decision/reuse-removal-laws-0929``: the ClaimType law
-revisions accept adjacent vocabulary without any ``semantic.*`` Claim and record
-no reuse evidence. The earlier revisions that ran it are not installed.
+accepts adjacent vocabulary without any ``semantic.*`` Claim and records no
+reuse evidence. The earlier revisions that ran it are not installed.
 """
 
 from __future__ import annotations
@@ -12,28 +12,24 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
-    capture_contract_digest,
+    capture_contract_path,
     foreign_source_capture_contract,
+    render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    V7_FIELDS,
     ClaimType,
-    claim_type_digest,
     claim_type_path,
-    parse_claim_type,
     render_claim_type,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
     ACCEPTANCE_LAWS,
-    CLAIM_TYPE_LAW_V5_REVISION_5,
-    CLAIM_TYPE_V5_ACCEPTANCE_LAW,
+    CLAIM_TYPE_ACCEPTANCE_LAW,
+    CLAIM_TYPE_LAW,
     AcceptanceLawRegistry,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
 from cruxible_core.proposals.proposals import (
     evaluate_proposal_tree,
 )
@@ -44,7 +40,6 @@ from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-09-29T12:00:00.000000Z"
-TAG = "playbill-claim-type-v5"
 
 
 def _claim_type(
@@ -59,53 +54,7 @@ def _claim_type(
     if object_subject_kind is not None:
         payload.pop("literal_schema", None)
         payload.update(object_kind="subject", allowed_object_subject_kinds=[object_subject_kind])
-    return _historical_v5(ClaimTypeInputRecord.model_validate(payload), tree)
-
-
-def _historical_v5(value: ClaimTypeInputRecord, tree: dict[str, bytes]) -> ClaimType:
-    """The v5 ClaimType the reuse law judged, built as the historical fixture it is.
-
-    Current authoring writes only v7; these laws govern v5 history, so the
-    fixture states the v5 artifact the pre-v7 lowering produced for this input:
-    each rule names its anticipated foreign-source contract by exact digest.
-    """
-
-    digests = {
-        foreign_source_capture_contract(source_id).identity.qualified: capture_contract_digest(
-            foreign_source_capture_contract(source_id)
-        ).tagged
-        for source_id in value.anticipated_source_ids
-    }
-    payload = value.model_dump(mode="json", exclude={"anticipated_source_ids"})
-    for field in V7_FIELDS:
-        payload.pop(field, None)
-    rules = []
-    for rule in payload["evidence_admission_policy"]["rules"]:
-        rule = dict(rule)
-        rule["capture_contract_digests"] = sorted(
-            digests[item] for item in rule.pop("capture_contracts")
-        )
-        rule["evidence_kinds"] = ["self_asserted"]
-        rules.append(rule)
-    path = claim_type_path(value.predicate)
-    predecessor = None if path not in tree else parse_claim_type(tree[path], path=path)
-    lowered = ClaimType.model_validate(
-        {
-            **payload,
-            "artifact_format": TAG,
-            "identity": {"kind": "ClaimType", "name": value.predicate},
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2.model_validate(
-                {"rules": rules}
-            ).model_dump(mode="json"),
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=(
-                    None if predecessor is None else claim_type_digest(predecessor).tagged
-                )
-            ).model_dump(mode="json"),
-        }
-    )
-    assert lowered.artifact_format == TAG
-    return lowered
+    return lower_claim_type_input(ClaimTypeInputRecord.model_validate(payload), tree=tree)
 
 
 def _with(instance: PlaybillInstance, *types: tuple[str, str, str | None]) -> dict[str, bytes]:
@@ -113,6 +62,11 @@ def _with(instance: PlaybillInstance, *types: tuple[str, str, str | None]) -> di
     for predicate, subject_kind, object_kind in types:
         claim_type = _claim_type(tree, predicate, subject_kind, object_subject_kind=object_kind)
         tree[claim_type_path(predicate)] = render_claim_type(claim_type)
+        # Its rules name the foreign-source contracts by identity; the first
+        # binding installs them, so the fixture lands them alongside.
+        for source_id in defaulted_claim_type_input_example().anticipated_source_ids:
+            contract = foreign_source_capture_contract(source_id)
+            tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     return tree
 
 
@@ -160,7 +114,7 @@ def test_adjacent_vocabulary_is_accepted_without_semantic_claims(tmp_path: Path)
         claim_type_path("dev.roadmap_item.belongs_to_track"),
     }
     for law_digest, result in evidence.values():
-        assert law_digest == CLAIM_TYPE_LAW_V5_REVISION_5.digest
+        assert law_digest == CLAIM_TYPE_LAW.digest
         assert "reuse" not in result
     _replay_from_genesis(instance)
 
@@ -200,13 +154,13 @@ def test_a_registry_without_the_current_law_refuses_its_generations(tmp_path: Pa
         tuple(
             law
             for law in ACCEPTANCE_LAWS._by_coordinate.values()
-            if law is not CLAIM_TYPE_V5_ACCEPTANCE_LAW
+            if law is not CLAIM_TYPE_ACCEPTANCE_LAW
         )
     )
     with pytest.raises(ProposalIntegrityError, match="cannot be reproduced at its recorded"):
         previous.require_historical(
-            identifier=CLAIM_TYPE_LAW_V5_REVISION_5.identifier,
-            digest=CLAIM_TYPE_LAW_V5_REVISION_5.digest,
+            identifier=CLAIM_TYPE_LAW.identifier,
+            digest=CLAIM_TYPE_LAW.digest,
         )
     with pytest.raises(ProposalIntegrityError, match="cannot be reproduced at its recorded"):
         evaluate_proposal_tree(

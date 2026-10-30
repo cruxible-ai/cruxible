@@ -323,18 +323,14 @@ def test_a_contested_slot_shows_every_live_value(tmp_path: Path) -> None:
 
 def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
-    from cruxible_client.contracts.claim_types import ClaimType
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.service.discovery.contract_names import CaptureContractNames
     from tests.test_claims.test_claims import _claim_type
 
-    legacy = _claim_type()
-    digest = legacy.evidence_admission_policy.rules[0].capture_contract_digests[0]
+    digest = "sha256:" + "cd" * 32
     names = CaptureContractNames.__new__(CaptureContractNames)
     names._versions = {}
     names._names = {}
@@ -348,14 +344,13 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             else None
         )
     )
-    assert names.admitted(legacy) == ("direct",)
-    assert names.admitted(legacy, qualified=True) == ("CaptureContract:direct",)
+    assert names.name(digest) == "direct"
+    assert names.name(digest, qualified=True) == "CaptureContract:direct"
     assert names.name("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
 
     identity_rule = ClaimEvidenceAdmissionRule(
         rule_id="by-identity",
         claim_roles=("observation",),
-        evidence_kinds=("self_asserted",),
         admission="direct",
         subject_binding="exact_claim_subject",
         capture_contracts=(
@@ -365,17 +360,11 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             ),
         ),
     )
-    current = ClaimType.model_validate(
-        {
-            **legacy.model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v6",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
-                rules=(identity_rule,)
-            ).model_dump(mode="json"),
-        }
+    current = _claim_type().model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicy(rules=(identity_rule,))}
     )
     assert names.admitted(current) == ("fixture.reports",)
-    assert names.names_by_digest(legacy) and not names.names_by_digest(current)
+    assert names.admitted(current, qualified=True) == ("CaptureContract:fixture.reports",)
 
 
 def test_a_filter_naming_a_missing_subject_refuses(instance: Any) -> None:

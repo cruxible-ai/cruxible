@@ -75,8 +75,8 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -240,10 +240,8 @@ def _subject(index: int) -> SubjectShell:
 
 
 def _claim_type(index: int) -> ClaimType:
-    contract_digest = capture_contract_digest(SELF_SOURCE).tagged
     predicate = _predicate(index)
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=(SUBJECT_KIND,),
@@ -251,13 +249,12 @@ def _claim_type(index: int) -> ClaimType:
         literal_schema={"enum": list(CLAIM_VALUES), "type": "string"},
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="direct-self-asserted",
                     claim_roles=("normative", "observation"),
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("self_asserted",),
+                    capture_contracts=(SELF_SOURCE.identity.name,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),

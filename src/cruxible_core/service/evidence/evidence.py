@@ -36,9 +36,8 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
-    ClaimAdjudicationRuleAny,
+    ClaimAdjudicationRule,
     ClaimVerdictResult,
-    ClaimVerdictResultV1,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -47,7 +46,7 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
-    ClaimLawEvidenceAny,
+    ClaimLawEvidence,
     NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -62,7 +61,6 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
 )
 from cruxible_client.contracts.laws import CLAIM_LAW
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
@@ -115,23 +113,8 @@ class ClaimReadSourceProtocol(Protocol):
     def body_store(self) -> BodyProjectionProtocol: ...
 
 
-class PlaybillClaimVerdictQueryV1(_StrictEvidenceServiceModel):
-    tag: Literal["playbill-claim-verdict-query-v1"] = "playbill-claim-verdict-query-v1"
-    coordinate: AcceptedCoordinate
-    claim_identity: str
-    evaluation_time: datetime
-    verdict: ClaimVerdictResultV1
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _evaluation_time(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("Claim verdict evaluation time must be timezone-aware")
-        return value
-
-
-class PlaybillClaimVerdictQueryV2(_StrictEvidenceServiceModel):
-    tag: Literal["playbill-claim-verdict-query-v2"] = "playbill-claim-verdict-query-v2"
+class PlaybillClaimVerdictQuery(_StrictEvidenceServiceModel):
+    tag: Literal["cruxible-claim-verdict-query-v3"] = "cruxible-claim-verdict-query-v3"
     coordinate: AcceptedCoordinate
     claim_identity: str
     evaluation_time: datetime
@@ -143,9 +126,6 @@ class PlaybillClaimVerdictQueryV2(_StrictEvidenceServiceModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Claim verdict evaluation time must be timezone-aware")
         return value
-
-
-PlaybillClaimVerdictQueryAny = PlaybillClaimVerdictQueryV1 | PlaybillClaimVerdictQueryV2
 
 
 def _resolve_coordinate(
@@ -850,7 +830,7 @@ def _replay_available(
 class ClaimReadHistoryIndex:
     instance: ClaimReadSourceProtocol
     generation_oids: tuple[str, ...]
-    law_evidence: Mapping[str, ClaimLawEvidenceAny]
+    law_evidence: Mapping[str, ClaimLawEvidence]
     _claim_types: Mapping[tuple[str, str], ClaimType] | None = None
     _contract_identity: Callable[[str], str | None] | None = None
     _contract_identities: dict[str, str] | None = None
@@ -890,7 +870,7 @@ class ClaimReadHistoryIndex:
         return self._claim_types
 
 
-class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
+class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidence]):
     def __init__(
         self,
         instance: PlaybillInstance,
@@ -901,7 +881,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         self.at = AcceptedCoordinate.from_internal(coordinate)
         self._records = records if records is not None else instance.retained_record_reader()
         # Prefetched answers: parsed evidence, or None for a path with no law record.
-        self._prefetched: dict[str, ClaimLawEvidenceAny | None] = {}
+        self._prefetched: dict[str, ClaimLawEvidence | None] = {}
 
     def prefetch(self, paths: tuple[str, ...]) -> None:
         wanted = tuple(dict.fromkeys(p for p in paths if p not in self._prefetched))
@@ -911,7 +891,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
             for path in wanted:
                 self._prefetched[path] = self._read(history, path)
 
-    def _read(self, history: HistoryReader, path: str) -> ClaimLawEvidenceAny | None:
+    def _read(self, history: HistoryReader, path: str) -> ClaimLawEvidence | None:
         locations = history.claim_law_locations(path=path, latest=True)
         if not locations:
             return None
@@ -922,7 +902,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         key = (path, locations[0].sequence)
         cached = memo.get(key)
         if cached is not None:
-            return cast(ClaimLawEvidenceAny | None, pickle.loads(cached))
+            return cast(ClaimLawEvidence | None, pickle.loads(cached))
         found = self._read_record(history, path, locations[0])
         frozen = pickle.dumps(found, protocol=pickle.HIGHEST_PROTOCOL)
         memo.put(key, frozen, weight=len(frozen))
@@ -930,7 +910,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
 
     def _read_record(
         self, history: HistoryReader, path: str, location: Any
-    ) -> ClaimLawEvidenceAny | None:
+    ) -> ClaimLawEvidence | None:
         history.read_member(location, self._records)
         # The one member's evaluation, read in place: never a copy of the record.
         law = self._records.law_evidence(history.generation(location.sequence), path)
@@ -939,7 +919,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
             raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
         return parse_claim_law_evidence(raw)
 
-    def __getitem__(self, path: str) -> ClaimLawEvidenceAny:
+    def __getitem__(self, path: str) -> ClaimLawEvidence:
         if path in self._prefetched:
             found = self._prefetched[path]
         else:
@@ -1022,7 +1002,7 @@ def _build_claim_read_history_index(
     history = instance.accepted_history()
     found_coordinate = False
     generation_oids: list[str] = []
-    law_evidence: dict[str, ClaimLawEvidenceAny] = {}
+    law_evidence: dict[str, ClaimLawEvidence] = {}
     for generation in history:
         generation_oids.append(generation.oid)
         record = generation.record
@@ -1049,7 +1029,7 @@ def _reproduced_claim_adjudication_rule(
     evidence_digest: str,
     history: ClaimReadHistoryIndex,
     law_digest: str | None = None,
-) -> ClaimAdjudicationRuleAny:
+) -> ClaimAdjudicationRule:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
     Queue-only policy changes cannot invalidate an otherwise identical
@@ -1061,9 +1041,9 @@ def _reproduced_claim_adjudication_rule(
     Evidence recorded under the Claim law (``law_digest``) may carry the
     origin-supports rule of a ClaimType whose own rule does not: a key Claim
     covered by its Subject's creation. That rule reproduces from the same
-    ClaimType chain; no other law's evidence can select it. It may also carry
-    rule v3 (origin-only entries need no current replay) wherever v2 would be;
-    it reproduces as v3. Each candidate is tried and the recorded digest
+    ClaimType chain; no other law's evidence can select it. It may also exempt
+    origin-only entries from current replay wherever the origin supports; it
+    reproduces with that exemption. Each candidate is tried and the recorded digest
     decides, so a retired Claim (whose evidence never took either) still
     reproduces only its own rule.
     """
@@ -1076,7 +1056,7 @@ def _reproduced_claim_adjudication_rule(
     # tries it.
     inverse_options = (False, True) if claim_type.inverse is not None else (False,)
 
-    def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRuleAny | None:
+    def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRule | None:
         """The current rule this ClaimType version's recorded rule stands for, if any."""
 
         for inverse in inverse_options:
@@ -1129,11 +1109,9 @@ def _reproduced_claim_adjudication_rule(
             "artifact_format",
             "authority",
             "lifecycle",
-            "subject_scope",
-            "slot_policy",
             "attestation_consequence_policy",
-            # ClaimType v7: what a predicate means, the role a write defaults to
-            # and what a revision keeps are not part of how a verdict is reached.
+            # What a predicate means, the role a write defaults to and what a
+            # revision keeps are not part of how a verdict is reached.
             "description",
             "member_descriptions",
             "default_role",
@@ -1141,36 +1119,23 @@ def _reproduced_claim_adjudication_rule(
             "evidence_requirement",
         ):
             payload.pop(field, None)
-        # Only `none` changes a verdict (the origin supports); `self` is every
-        # earlier ClaimType's meaning and `captured` is enforced at acceptance.
+        # Only `none` changes a verdict (the origin supports); `captured` is
+        # enforced at acceptance.
         payload["origin_supports"] = effective_evidence_requirement(item) == "none"
-        # The v1 wire omitted the later null placeholder. Parsing preserves its
-        # meaning, so normalize the historical spelling before comparison.
+        # An absent horizon is omitted from the wire; compare it as null.
         payload["evidence_freshness"] = (
             None
             if item.evidence_freshness is None
             else item.evidence_freshness.model_dump(mode="json")
         )
-        # Moving evidence rules from exact contract digests (v5) to contract
-        # identities (v6) keeps their meaning: both spell the contracts a rule
-        # admits by the identities those versions belong to.
         payload["evidence_admission_policy"] = [
             {
                 **{
                     key: value
                     for key, value in rule.model_dump(mode="json").items()
-                    if key not in {"tag", "capture_contract_digests", "capture_contracts"}
-                    # A v1 rule's empty reducer allowlist authorizes nothing.
-                    and not (key == "allowed_reducer_digests" and not value)
+                    if key not in {"tag", "capture_contracts"}
                 },
-                "contracts": sorted(
-                    {item.target.qualified for item in rule.capture_contracts}
-                    if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
-                    else {
-                        history.capture_contract_identity(digest) or digest
-                        for digest in rule.capture_contract_digests
-                    }
-                ),
+                "contracts": sorted({item.target.qualified for item in rule.capture_contracts}),
             }
             for rule in item.evidence_admission_policy.rules
         ]
@@ -1212,7 +1177,7 @@ def _reproduced_claim_adjudication_rule(
 def _record_verdict_time_boundaries(
     boundaries: MutableSet[datetime],
     *,
-    rule: ClaimAdjudicationRuleAny,
+    rule: ClaimAdjudicationRule,
     claim: ClaimArtifact,
     captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
@@ -1263,7 +1228,7 @@ def service_evaluate_playbill_claim_verdict(
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
-) -> PlaybillClaimVerdictQueryAny:
+) -> PlaybillClaimVerdictQuery:
     """Recompute currency/verdict from accepted evidence at one explicit time.
 
     ``time_boundaries``, when supplied, collects the instants this verdict's
@@ -1387,14 +1352,7 @@ def service_evaluate_playbill_claim_verdict(
         resolved_authority_basis=(),
         reobservations=reobservations,
     )
-    if isinstance(verdict, ClaimVerdictResult):
-        return PlaybillClaimVerdictQueryV2(
-            coordinate=AcceptedCoordinate.from_internal(coordinate),
-            claim_identity=accepted.claim.identity.qualified,
-            evaluation_time=evaluation_time,
-            verdict=verdict,
-        )
-    return PlaybillClaimVerdictQueryV1(
+    return PlaybillClaimVerdictQuery(
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         claim_identity=accepted.claim.identity.qualified,
         evaluation_time=evaluation_time,
@@ -1403,9 +1361,9 @@ def service_evaluate_playbill_claim_verdict(
 
 
 __all__ = [
-    "PlaybillClaimVerdictQueryV1",
-    "PlaybillClaimVerdictQueryV2",
-    "PlaybillClaimVerdictQueryAny",
+    "PlaybillClaimVerdictQuery",
+    "PlaybillClaimVerdictQuery",
+    "PlaybillClaimVerdictQuery",
     "accepted_claim_providers",
     "accepted_claim_attestations",
     "service_evaluate_playbill_claim_verdict",

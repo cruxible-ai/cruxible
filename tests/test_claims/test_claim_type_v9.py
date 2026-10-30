@@ -1,8 +1,4 @@
-"""ClaimType v9: an inverse, how a Claim of the type states that a unit holds nothing.
-
-Every earlier format keeps its exact bytes, digest and ``model_dump``: the new
-field exists on the shared model, is null for them and is never written.
-"""
+"""A ClaimType's inverse: how a Claim of the type states that a unit holds nothing."""
 
 from __future__ import annotations
 
@@ -12,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.claim_types import (
-    V9_FIELDS,
+    CLAIM_TYPE_FORMAT,
     ClaimFreshnessDuration,
     ClaimInverse,
     ClaimInverseObjectKey,
@@ -27,8 +23,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from tests.test_claims._claim_type_format_fixtures import historical_claim_types
-from tests.test_claims.test_claim_type_v7 import PRE_V7_FINGERPRINTS, v7
+from tests.test_claims.test_claim_type_v7 import v7
 from tests.test_claims.test_claim_type_v8 import v8
 
 PATH = claim_type_path("project.work_item.status")
@@ -43,13 +38,13 @@ def slot_inverse(**update: object) -> ClaimInverse:
 
 def v9(inverse: ClaimInverse | None = None, **update: object) -> ClaimType:
     base = v8(()).model_dump(mode="python")
-    base.update(artifact_format="cruxible-claim-type-v9", inverse=inverse or slot_inverse())
+    base.update(inverse=inverse or slot_inverse())
     base.update(update)
     return ClaimType.model_validate(base)
 
 
 def many_subject(inverse: ClaimInverse, **update: object) -> ClaimType:
-    """A many-valued, Subject-valued v9 type: ``project.work_item.blocks``."""
+    """A many-valued, Subject-valued type with an inverse: ``project.work_item.blocks``."""
 
     resolution = v7().resolution_policy.model_copy(
         update={"cardinality": "many", "selector": "all"}
@@ -71,24 +66,21 @@ def many_subject(inverse: ClaimInverse, **update: object) -> ClaimType:
 # --- the format ----------------------------------------------------------------
 
 
-def test_every_earlier_format_keeps_its_bytes_digest_and_model_dump() -> None:
-    from tests.test_claims._claim_type_format_fixtures import fingerprints
-
-    assert fingerprints() == PRE_V7_FINGERPRINTS
-    for claim_type in (*historical_claim_types().values(), v7(), v8()):
-        assert not set(V9_FIELDS) & set(claim_type.model_dump(mode="json"))
+def test_a_claim_type_without_an_inverse_never_ages_one() -> None:
+    for claim_type in (v7(), v8()):
+        assert "inverse" not in claim_type.model_dump(mode="json")
         assert effective_inverse_stale_after(claim_type) is None
 
 
-def test_v9_writes_its_inverse_round_trips_and_digests_apart_from_v8() -> None:
+def test_an_inverse_is_written_round_trips_and_is_digested() -> None:
     claim_type = v9(slot_inverse(stale_after={"microseconds": 3_600_000_000}))
     dumped = claim_type.model_dump(mode="json")
-    assert dumped["artifact_format"] == "cruxible-claim-type-v9"
+    assert dumped["artifact_format"] == CLAIM_TYPE_FORMAT
     assert dumped["inverse"]["tag"] == "cruxible-claim-inverse-v1"
     assert dumped["inverse"]["key"] == {"kind": "slot"}
     assert parse_claim_type(render_claim_type(claim_type), path=PATH) == claim_type
     assert claim_type_digest(claim_type) != claim_type_digest(v8(()))
-    assert claim_type_format_version(claim_type) == 9
+    assert claim_type_format_version(claim_type) == 10
     assert effective_inverse_stale_after(claim_type) == ClaimFreshnessDuration(
         microseconds=3_600_000_000
     )
@@ -96,17 +88,17 @@ def test_v9_writes_its_inverse_round_trips_and_digests_apart_from_v8() -> None:
     assert effective_inverse_stale_after(v9()) == DAY
 
 
-def test_a_v9_type_without_an_inverse_omits_it() -> None:
+def test_a_type_without_an_inverse_omits_it() -> None:
     claim_type = v9(inverse=None)
     plain = ClaimType.model_validate({**claim_type.model_dump(mode="python"), "inverse": None})
     assert "inverse" not in plain.model_dump(mode="json")
     assert parse_claim_type(render_claim_type(plain), path=PATH) == plain
 
 
-def test_only_v9_declares_an_inverse_and_v9_states_its_canonical_form() -> None:
-    with pytest.raises(ValidationError, match="only ClaimType v9 can declare an inverse"):
-        v8(inverse=slot_inverse())
-    with pytest.raises(ValidationError, match="states its canonical_form explicitly"):
+def test_any_type_may_declare_an_inverse_and_still_states_its_canonical_form() -> None:
+    formed = v8(inverse=slot_inverse())
+    assert formed.inverse == slot_inverse() and formed.canonical_form == ("trim", "casefold")
+    with pytest.raises(ValidationError, match="canonical_form"):
         v9(canonical_form=None)
 
 
@@ -146,13 +138,13 @@ def test_inverse_rules_are_sorted_unique_and_nonempty() -> None:
 # --- the law -------------------------------------------------------------------
 
 
-def test_the_law_accepts_v9_and_installs_its_own_coordinate() -> None:
-    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, CLAIM_TYPE_LAW_V9_REVISION_1
+def test_the_one_claim_type_law_accepts_an_inverse() -> None:
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, CLAIM_TYPE_LAW
 
     accepted = evaluate_claim_type_law(v9(), path=PATH, predecessor=None)
     assert accepted.verdict == "accepted", accepted
-    installed = ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v9")
-    assert installed.coordinate == CLAIM_TYPE_LAW_V9_REVISION_1
+    installed = ACCEPTANCE_LAWS.resolve_member(artifact_tag=CLAIM_TYPE_FORMAT)
+    assert installed.coordinate == CLAIM_TYPE_LAW
 
 
 def test_the_law_refuses_rules_the_type_does_not_declare() -> None:
@@ -205,7 +197,7 @@ def test_an_object_key_must_be_a_key_of_every_object_kind() -> None:
 # --- lowering authored input -----------------------------------------------------
 
 
-def test_stating_an_inverse_lowers_to_v9_and_an_edit_keeps_it_unless_named() -> None:
+def test_lowering_states_an_inverse_and_an_edit_keeps_it_unless_named() -> None:
     from tests.test_claims.test_claim_type_v7 import _input, _lower
 
     rule = "source-repo.replace-me"
@@ -213,7 +205,7 @@ def test_stating_an_inverse_lowers_to_v9_and_an_edit_keeps_it_unless_named() -> 
         _input(inverse={"key": {"kind": "slot"}, "evidence_rules": [rule], "stale_after": "P7D"}),
         {},
     )
-    assert stated.artifact_format == "cruxible-claim-type-v9"
+    assert stated.artifact_format == CLAIM_TYPE_FORMAT
     assert stated.canonical_form == ("nfc", "trim")
     assert stated.inverse == ClaimInverse(
         key=ClaimInverseSlotKey(kind="slot"),
@@ -222,23 +214,21 @@ def test_stating_an_inverse_lowers_to_v9_and_an_edit_keeps_it_unless_named() -> 
     )
     tree = {claim_type_path(stated.predicate): render_claim_type(stated)}
     kept = _lower(_input(description="Where it stands."), tree)
-    assert (kept.artifact_format, kept.inverse) == ("cruxible-claim-type-v9", stated.inverse)
+    assert kept.inverse == stated.inverse
     assert kept.canonical_form == stated.canonical_form
     cleared = _lower(_input(inverse=None), tree)
-    assert (cleared.artifact_format, cleared.inverse) == ("cruxible-claim-type-v9", None)
+    assert cleared.inverse is None
+    assert "inverse" not in cleared.model_dump(mode="json")
     assert cleared.lifecycle.predecessor_digest == claim_type_digest(stated).tagged
-    # Over a v8 type, leaving the field out stays v8 and keeps the form.
+    # Over a type without an inverse, leaving the field out declares none.
     formed = _lower(_input(canonical_form=["trim"]), {})
     over = _lower(_input(), {claim_type_path(formed.predicate): render_claim_type(formed)})
-    assert (over.artifact_format, over.canonical_form) == ("playbill-claim-type-v8", ("trim",))
+    assert over.inverse is None
     lifted = _lower(
         _input(inverse={"key": {"kind": "slot"}, "evidence_rules": [rule]}),
         {claim_type_path(formed.predicate): render_claim_type(formed)},
     )
-    assert (lifted.artifact_format, lifted.canonical_form) == (
-        "cruxible-claim-type-v9",
-        ("trim",),
-    )
+    assert lifted.inverse is not None and lifted.canonical_form == ("trim",)
 
 
 def test_lint_warns_when_an_enum_member_already_states_the_negative(tmp_path: Path) -> None:
@@ -311,7 +301,6 @@ def test_a_subject_kind_cannot_drop_a_key_an_inverse_names(tmp_path: Path) -> No
         subject_kinds=("dev.item",),
     ).model_dump(mode="python")
     decided_by.update(
-        artifact_format="cruxible-claim-type-v9",
         inverse={
             "key": {"kind": "object_key", "predicate": "dev.decision.slug"},
             "evidence_rules": ["self"],

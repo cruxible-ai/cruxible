@@ -16,14 +16,7 @@ from cruxible_client.contracts.governance import AcceptanceLawCoordinate
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 APPROVAL_POLICY_LAW_IDENTIFIER = "playbill.approval-policy.v1"
 PROCEDURE_RUNTIME_POLICY_LAW_IDENTIFIER = "playbill.procedure-runtime-policy.v1"
-CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
-CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
-CLAIM_TYPE_LAW_V4_IDENTIFIER = "playbill.claim-type.v4"
-CLAIM_TYPE_LAW_V5_IDENTIFIER = "playbill.claim-type.v5"
-CLAIM_TYPE_LAW_V6_IDENTIFIER = "playbill.claim-type.v6"
-CLAIM_TYPE_LAW_V7_IDENTIFIER = "playbill.claim-type.v7"
-CLAIM_TYPE_LAW_V8_IDENTIFIER = "playbill.claim-type.v8"
-CLAIM_TYPE_LAW_V9_IDENTIFIER = "cruxible.claim-type.v9"
+CLAIM_TYPE_LAW_IDENTIFIER = "cruxible.claim-type.v10"
 CLAIM_LAW_IDENTIFIER = "playbill.claim.v4"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
@@ -95,25 +88,6 @@ def _subject_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 SUBJECT_LAW = _subject_law_coordinate()
-
-
-def _claim_type_law_coordinate(semantic_revision: int) -> AcceptanceLawCoordinate:
-    return AcceptanceLawCoordinate(
-        identifier=CLAIM_TYPE_LAW_IDENTIFIER,
-        digest=typed_digest(
-            AcceptanceLawDigest,
-            "playbill-law-v1",
-            {
-                "identifier": CLAIM_TYPE_LAW_IDENTIFIER,
-                "artifact_tag": "playbill-claim-type-v1",
-                "semantic_revision": semantic_revision,
-            },
-        ).tagged,
-    )
-
-
-CLAIM_TYPE_LAW_REVISION_5 = _claim_type_law_coordinate(5)
-CLAIM_TYPE_LAW = CLAIM_TYPE_LAW_REVISION_5
 
 
 def _capture_contract_law_coordinate(semantic_revision: int) -> AcceptanceLawCoordinate:
@@ -189,49 +163,14 @@ CLAIM_LAW = _artifact_law_coordinate(
     "playbill-claim-v4",
     semantic_revision=1,
 )
-CLAIM_TYPE_LAW_V3_REVISION_5 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V3_IDENTIFIER,
-    "playbill-claim-type-v3",
-    semantic_revision=5,
-)
-CLAIM_TYPE_LAW_V3 = CLAIM_TYPE_LAW_V3_REVISION_5
-CLAIM_TYPE_LAW_V4_REVISION_5 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V4_IDENTIFIER,
-    "playbill-claim-type-v4",
-    semantic_revision=5,
-)
-CLAIM_TYPE_LAW_V4 = CLAIM_TYPE_LAW_V4_REVISION_5
-CLAIM_TYPE_LAW_V5_REVISION_5 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V5_IDENTIFIER,
-    "playbill-claim-type-v5",
-    semantic_revision=5,
-)
-CLAIM_TYPE_LAW_V6_REVISION_2 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V6_IDENTIFIER,
-    "playbill-claim-type-v6",
-    semantic_revision=2,
-)
-# ClaimType v7: descriptions, a default role, an evidence requirement and a
-# revision-evidence rule.
-CLAIM_TYPE_LAW_V7_REVISION_1 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V7_IDENTIFIER,
-    "playbill-claim-type-v7",
-    semantic_revision=1,
-)
-# ClaimType v8: v7 plus the canonical form its literal values are stored and
-# compared in. The v7 law applies unchanged.
-CLAIM_TYPE_LAW_V8_REVISION_1 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V8_IDENTIFIER,
-    "playbill-claim-type-v8",
-    semantic_revision=1,
-)
-# ClaimType v9: v8 plus an inverse (how a Claim states that a unit holds
-# nothing). The v8 law applies, and an
-# inverse must name a unit (never exact content), evidence rules the type
-# declares and, keyed by object_key, a key of every object SubjectKind.
-CLAIM_TYPE_LAW_V9_REVISION_1 = _artifact_law_coordinate(
-    CLAIM_TYPE_LAW_V9_IDENTIFIER,
-    "cruxible-claim-type-v9",
+# The one ClaimType law: a default role must be permitted and never derivation,
+# a declared evidence requirement must be satisfiable by the type's rules, and
+# an inverse must name a unit (never exact content), evidence rules the type
+# declares that admit evidence and, keyed by object_key, a key of every object
+# SubjectKind; succession names the exact live predecessor and changes it.
+CLAIM_TYPE_LAW = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_IDENTIFIER,
+    "cruxible-claim-type-v10",
     semantic_revision=1,
 )
 PROVIDER_LAW = _artifact_law_coordinate(
@@ -332,44 +271,9 @@ SUBJECT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-subject-v1",
 )
 CLAIM_TYPE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_REVISION_5,
+    coordinate=CLAIM_TYPE_LAW,
     artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v1",
-)
-CLAIM_TYPE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V3_REVISION_5,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v3",
-)
-CLAIM_TYPE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V4_REVISION_5,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v4",
-)
-CLAIM_TYPE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V5_REVISION_5,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v5",
-)
-CLAIM_TYPE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V6_REVISION_2,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v6",
-)
-CLAIM_TYPE_V7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V7_REVISION_1,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v7",
-)
-CLAIM_TYPE_V8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V8_REVISION_1,
-    artifact_kind="claim-type",
-    artifact_tag="playbill-claim-type-v8",
-)
-CLAIM_TYPE_V9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V9_REVISION_1,
-    artifact_kind="claim-type",
-    artifact_tag="cruxible-claim-type-v9",
+    artifact_tag="cruxible-claim-type-v10",
 )
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_4,
@@ -453,7 +357,7 @@ LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-line-v6",
 )
 # A SubjectKind declares how Subjects of one kind are identified: by key
-# ClaimTypes (live, v8, literal, one-valued, about that kind only) or by minted
+# ClaimTypes (live, literal, one-valued, about that kind only) or by minted
 # ids. A retired SubjectKind is never revived.
 SUBJECT_KIND_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -544,13 +448,6 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V3_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V4_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V5_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V6_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V7_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V8_ACCEPTANCE_LAW,
-        CLAIM_TYPE_V9_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,

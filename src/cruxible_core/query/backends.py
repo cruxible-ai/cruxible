@@ -43,9 +43,9 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_verdicts import (
     CaptureReobservationEvidence,
     CaptureVerdictEvidence,
-    ClaimAdjudicationRuleAny,
-    claim_verdict_v1_compat,
+    ClaimAdjudicationRule,
     evaluate_claim_verdict,
+    reported_claim_verdict,
 )
 from cruxible_client.contracts.claims import AcceptedClaim, SubjectClaimObject
 from cruxible_client.contracts.providers import ProviderV1
@@ -73,7 +73,7 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
 
     tag: Literal["playbill-query-claim-fact-v1"] = "playbill-query-claim-fact-v1"
     accepted: AcceptedClaim
-    rule: ClaimAdjudicationRuleAny
+    rule: ClaimAdjudicationRule
     captures: tuple[CaptureVerdictEvidence, ...] = ()
     attestations: tuple[ClaimAttestationEvidence, ...] = ()
     referent_current: bool = True
@@ -227,7 +227,7 @@ def claim_row_outcome(
     # vocabulary and the visible row already reports that form, so testing the
     # raw verdict while recording the mapped one could name an exclusion reason
     # that is itself listed in visible_verdicts.
-    reported = claim_verdict_v1_compat(verdict).verdict
+    reported = reported_claim_verdict(verdict)
     if reported not in policy.visible_verdicts:
         return ClaimRowOutcomeV1(visible=None, hidden_verdict=reported)
     if verdict.currency not in policy.visible_currency:

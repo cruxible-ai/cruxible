@@ -494,7 +494,6 @@ def test_freshness_calibration_uses_changed_commitment_intervals_without_recomme
     base_type = claim_type(PREDICATE, subject_kinds=("project.work_item",))
     current_type = base_type.model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v3",
             "evidence_freshness": ClaimEvidenceFreshness(
                 stale_after=ClaimFreshnessDuration(microseconds=100)
             ),

@@ -138,8 +138,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # `authoring rebase` and `claim recover-attestation` left.
     # Multi-build adds provider move and provider retire; measurement review adds procedure dispose.
     # First-run adds rebind; Capture erasure adds capture erase.
-    assert len(leaf_claims) == 112, (
-        f"expected 112 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 111, (
+        f"expected 111 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

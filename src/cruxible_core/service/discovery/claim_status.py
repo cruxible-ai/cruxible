@@ -19,7 +19,7 @@ from typing import Literal
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     SubjectClaimObject,
@@ -58,7 +58,7 @@ ClaimStatus = Literal["accepted", "conflicted", "ineligible", "overturned", "ret
 # repairs. Reuse never validates every consulted body against its file.
 _RESOLUTION_MEMO: (
     "OrderedDict[tuple[str, str, str, str], "
-    "tuple[dict[str, ClaimStatus], dict[str, ClaimVerdictResultAny], "
+    "tuple[dict[str, ClaimStatus], dict[str, ClaimVerdictResult], "
     "tuple[datetime | None, datetime | None]]]"
 ) = OrderedDict()
 
@@ -78,7 +78,7 @@ class _RememberedSlot:
     observed: dict[tuple[str, ...], object]
     interval: tuple[datetime | None, datetime | None]
     statuses: dict[str, ClaimStatus]
-    verdicts: dict[str, ClaimVerdictResultAny]
+    verdicts: dict[str, ClaimVerdictResult]
 
 
 def reset_claim_resolution_memo(*, slots: bool = True) -> None:
@@ -144,7 +144,7 @@ def claim_resolution_statuses(
     claims: tuple[ClaimArtifact, ...],
     at: AcceptedCoordinate,
     evaluation_time: datetime,
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
     time_boundaries: set[datetime] | None = None,
 ) -> dict[str, ClaimStatus]:
@@ -198,7 +198,7 @@ def claim_resolution_statuses(
     # verdicts it was given and remembers nothing.
     remember = input_fingerprint is not None and not verdicts_by_identity
     boundaries: set[datetime] = set()
-    verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
+    verdicts: MutableMapping[str, ClaimVerdictResult] = (
         {} if verdicts_by_identity is None else verdicts_by_identity
     )
     live_groups: dict[bytes, list[ClaimArtifact]] = defaultdict(list)

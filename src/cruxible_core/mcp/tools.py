@@ -26,10 +26,6 @@ from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequ
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResult
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.compact_query import (
     QueryClaimStatus,
     QueryFilter,
@@ -384,17 +380,6 @@ def register_tools(
             allow_downgrade=allow_downgrade,
             dry_run=dry_run,
             at=at,
-        )
-
-    @_tool
-    def cruxible_claim_type_upgrade(
-        instance_id: InstanceId = None,
-        *,
-        request: ClaimTypeUpgradeRequest,
-    ) -> ClaimTypeUpgradeResult:
-        """Propose moving live ClaimTypes to v7 (dry_run evaluates and proposes nothing)."""
-        return handlers.handle_playbill_claim_type_upgrade(
-            require_instance_id(instance_id), request
         )
 
     @_tool

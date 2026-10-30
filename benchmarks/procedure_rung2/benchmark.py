@@ -235,18 +235,17 @@ SUBJECT_ID = "osv-2026-0001"
 PREDICATE = "security.advisory.severity"
 
 
-def _claim_type(capture_contract_digest_value: str):  # type: ignore[no-untyped-def]
+def _claim_type(contract_name: str):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.claim_types import ClaimType
     from cruxible_client.contracts.policies import (
         ClaimAdmissionPolicy,
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
         ClaimResolutionPolicy,
     )
 
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=(SUBJECT_KIND,),
@@ -254,13 +253,12 @@ def _claim_type(capture_contract_digest_value: str):  # type: ignore[no-untyped-
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="workspace-record",
                     claim_roles=("observation",),
-                    capture_contract_digests=(capture_contract_digest_value,),
-                    evidence_kinds=("database_record",),
+                    capture_contracts=(contract_name,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
@@ -307,7 +305,6 @@ def _build_world(root: Path, *, population: int, history: int, items: int):  # t
     from tests.test_procedures import test_procedure_source_runs as fixtures
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_client.contracts.captures import capture_contract_digest
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
@@ -354,7 +351,7 @@ def _build_world(root: Path, *, population: int, history: int, items: int):  # t
     )
     mandate = fixtures._line_mandate(terminal_procedure)
     contract = capture_contract()
-    claim_type = _claim_type(capture_contract_digest(contract).tagged)
+    claim_type = _claim_type(contract.identity.name)
     shell = SubjectShell(
         identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/{SUBJECT_ID}"),
         subject_kind=SUBJECT_KIND,
@@ -406,15 +403,14 @@ def _seed_population(instance, owner, population: int) -> None:  # type: ignore[
 
     from cruxible_client.contracts.captures import (
         DirectForeignSourceSelection,
-        capture_contract_digest,
         capture_contract_path,
         foreign_source_capture_contract,
         render_capture_contract,
     )
     from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV1,
-        ClaimEvidenceAdmissionRuleV1,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_client.contracts.semantic import ContentSpan
     from cruxible_client.contracts.subjects import render_subject, subject_path
@@ -423,13 +419,12 @@ def _seed_population(instance, owner, population: int) -> None:  # type: ignore[
     contract = foreign_source_capture_contract(source_id)
     claim_type = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-source",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

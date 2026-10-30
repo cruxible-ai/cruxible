@@ -74,7 +74,7 @@ from tests.core_support._knowledge_loop_support import (
     subject_address,
 )
 from tests.core_support._subject_kind_support import fixture_claim_paths
-from tests.test_claims.test_claims import _claim_type as _work_item_claim_type
+from tests.test_claims.test_claims import vocabulary_claim_type as _work_item_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
 

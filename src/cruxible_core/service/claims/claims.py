@@ -24,15 +24,12 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResult,
-    ClaimVerdictResultAny,
-    ClaimVerdictResultV1,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimCitation,
     ClaimFormatError,
-    ClaimLawEvidenceAny,
-    ClaimLawEvidenceV1,
+    ClaimLawEvidence,
     ClaimStatementCard,
     ClaimUnsupportedFormatError,
     capture_citation_eligible,
@@ -191,32 +188,7 @@ class PlaybillClaimGroupResolution:
     selected_claim_identities: tuple[str, ...]
     contender_claim_identities: tuple[str, ...]
     claims: tuple[ClaimArtifact, ...]
-    verdicts: tuple[ClaimVerdictResultAny, ...]
-
-
-class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
-    tag: Literal["playbill-claim-explanation-v2"] = "playbill-claim-explanation-v2"
-    coordinate: AcceptedCoordinate
-    evaluation_time: datetime
-    claim: PlaybillClaimView
-    law_evidence: ClaimLawEvidenceV1
-    verdict: ClaimVerdictResultV1
-    exact_attestations: tuple[ClaimAttestationEvidence, ...]
-    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: tuple[SourceHandle, ...]
-    coverage: CoverageDescriptor
-    admission_evaluation_time: datetime
-    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
-    # Every attestation of this exact version, accepted or door-recorded, and
-    # whether it counts. Absent when there is none, so the bytes do not change.
-    attestation_accounts: tuple[ClaimAttestationAccountV1, ...] = Field(
-        default=(), exclude_if=lambda value: not value
-    )
-    # Review context, not work: what this Claim shares with retired Claims.
-    # Absent when it shares nothing, so the explanation's bytes do not change.
-    retirement_context: ClaimRetirementContextV1 | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
+    verdicts: tuple[ClaimVerdictResult, ...]
 
 
 class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
@@ -245,12 +217,18 @@ class ClaimEvidenceFreshnessLineV1(_StrictClaimServiceModel):
     recapture_operation: EvidenceRecaptureOperationV1
 
 
-class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
-    tag: Literal["playbill-claim-explanation-v3"] = "playbill-claim-explanation-v3"
+class PlaybillClaimExplanation(_StrictClaimServiceModel):
+    """Why one accepted Claim holds, horizon-free or horizon-bearing alike.
+
+    ``freshness`` lists each admitted Capture's expiration when the ClaimType
+    ages evidence, and is empty when it does not.
+    """
+
+    tag: Literal["cruxible-claim-explanation-v4"] = "cruxible-claim-explanation-v4"
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
     claim: PlaybillClaimView
-    law_evidence: ClaimLawEvidenceAny
+    law_evidence: ClaimLawEvidence
     verdict: ClaimVerdictResult
     exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
@@ -258,10 +236,14 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     coverage: CoverageDescriptor
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
-    freshness: tuple[ClaimEvidenceFreshnessLineV1, ...]
+    freshness: tuple[ClaimEvidenceFreshnessLineV1, ...] = ()
+    # Every attestation of this exact version, accepted or door-recorded, and
+    # whether it counts. Absent when there is none.
     attestation_accounts: tuple[ClaimAttestationAccountV1, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    # Review context, not work: what this Claim shares with retired Claims.
+    # Absent when it shares nothing.
     retirement_context: ClaimRetirementContextV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -455,7 +437,7 @@ def materialize_playbill_claim_view(
     public: PlaybillClaimView,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    law: ClaimLawEvidenceAny | None,
+    law: ClaimLawEvidence | None,
     admission_tree: dict[str, bytes] | None = None,
     bodies: ContentAddressedBodyStore | None = None,
 ) -> ClaimViewRecord:
@@ -516,7 +498,7 @@ def _claim_law_evidence(
     *,
     path: str,
     at: AcceptedProjectionCoordinate,
-) -> ClaimLawEvidenceAny:
+) -> ClaimLawEvidence:
     from cruxible_core.service.evidence.evidence import _claim_read_history_index
 
     # A one-Claim read needs one account, not a copy of the whole index.
@@ -530,10 +512,10 @@ def _claim_law_evidence_by_artifact_index(
     instance: PlaybillInstance,
     *,
     at: AcceptedProjectionCoordinate,
-) -> dict[tuple[str, str], ClaimLawEvidenceAny]:
+) -> dict[tuple[str, str], ClaimLawEvidence]:
     """Index every accepted Claim law account in one bounded history pass."""
 
-    found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
+    found: dict[tuple[str, str], ClaimLawEvidence] = {}
     records = instance.retained_record_reader()
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
         for location in history.claim_law_locations():
@@ -556,11 +538,11 @@ def claim_law_evidence_by_artifact_for_path(
     *,
     at: AcceptedProjectionCoordinate,
     path: str,
-) -> dict[tuple[str, str], ClaimLawEvidenceAny]:
+) -> dict[tuple[str, str], ClaimLawEvidence]:
     """One Claim path's law accounts by artifact: ``_claim_law_evidence_by_artifact_index``
     for a single lineage, read through the path index instead of every law record."""
 
-    found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
+    found: dict[tuple[str, str], ClaimLawEvidence] = {}
     records = instance.retained_record_reader()
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
         for location in history.claim_law_locations(path=path):
@@ -634,7 +616,7 @@ def _claim_admission_accounts(
     *,
     claim: ClaimArtifact,
     tree: Mapping[str, bytes],
-    law: ClaimLawEvidenceAny,
+    law: ClaimLawEvidence,
     bodies: ContentAddressedBodyStore | None = None,
     coordinate: AcceptedProjectionCoordinate | None = None,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
@@ -739,7 +721,7 @@ def resolve_playbill_claim_group(
     coordinate: AcceptedProjectionCoordinate,
     evaluated_at: datetime,
     claims: tuple[ClaimArtifact, ...],
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
 ) -> PlaybillClaimGroupResolution:
@@ -775,7 +757,7 @@ def resolve_playbill_claim_group(
         except ClaimNotFoundError as exc:
             raise ClaimNotFoundError(f"ClaimType:{predicate}") from exc
     contenders: list[ResolutionContender] = []
-    verdicts: list[ClaimVerdictResultAny] = []
+    verdicts: list[ClaimVerdictResult] = []
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     for claim in claims:
         shared = (
@@ -989,7 +971,7 @@ def service_explain_playbill_claim(
     identity: str,
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
+) -> PlaybillClaimExplanation:
     from cruxible_core.service.evidence.evidence import (
         ClaimVerdictReadContext,
         accepted_claim_attestations,
@@ -1103,53 +1085,31 @@ def service_explain_playbill_claim(
         admission_accounts=read.admission_accounts,
         evaluation_time=evaluated_at,
     )
-    if isinstance(verdict.verdict, ClaimVerdictResult):
-        freshness: list[ClaimEvidenceFreshnessLineV1] = []
-        for expiration in verdict.verdict.freshness_expirations:
-            context = capture_context.get(expiration.capture_digest)
-            if context is None:
-                raise ProposalIntegrityError(
-                    "cruxible.claim.evidence_freshness_invalid: expiration has no Claim citation"
-                )
-            citation_ids, contract_identity, logical_source = context
-            freshness.append(
-                ClaimEvidenceFreshnessLineV1(
-                    capture_digest=expiration.capture_digest,
-                    citation_ids=citation_ids,
+    freshness: list[ClaimEvidenceFreshnessLineV1] = []
+    for expiration in verdict.verdict.freshness_expirations:
+        context = capture_context.get(expiration.capture_digest)
+        if context is None:
+            raise ProposalIntegrityError(
+                "cruxible.claim.evidence_freshness_invalid: expiration has no Claim citation"
+            )
+        citation_ids, contract_identity, logical_source = context
+        freshness.append(
+            ClaimEvidenceFreshnessLineV1(
+                capture_digest=expiration.capture_digest,
+                citation_ids=citation_ids,
+                capture_contract_identity=contract_identity,
+                logical_source=logical_source,
+                observed_at=expiration.observed_at,
+                expires_at=expiration.expires_at,
+                state="expired" if evaluated_at >= expiration.expires_at else "current",
+                recapture_operation=EvidenceRecaptureOperationV1(
+                    claim_identity=claim.identity.qualified,
                     capture_contract_identity=contract_identity,
                     logical_source=logical_source,
-                    observed_at=expiration.observed_at,
-                    expires_at=expiration.expires_at,
-                    state="expired" if evaluated_at >= expiration.expires_at else "current",
-                    recapture_operation=EvidenceRecaptureOperationV1(
-                        claim_identity=claim.identity.qualified,
-                        capture_contract_identity=contract_identity,
-                        logical_source=logical_source,
-                    ),
-                )
+                ),
             )
-        return PlaybillClaimExplanationV3(
-            coordinate=public_coordinate,
-            evaluation_time=evaluated_at,
-            claim=view,
-            law_evidence=law,
-            verdict=verdict.verdict,
-            exact_attestations=exact_attestations,
-            source_handles=tuple(handles),
-            coverage=coverage,
-            admission_evaluation_time=evaluated_at,
-            admission_accounts=read.admission_accounts,
-            freshness=tuple(
-                sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))
-            ),
-            attestation_accounts=attestation_accounts,
-            retirement_context=retirement_context,
         )
-    if not isinstance(law, ClaimLawEvidenceV1):
-        raise ProposalIntegrityError(
-            "cruxible.claim.evidence_freshness_invalid: v2 law evidence produced a v1 verdict"
-        )
-    return PlaybillClaimExplanationV2(
+    return PlaybillClaimExplanation(
         coordinate=public_coordinate,
         evaluation_time=evaluated_at,
         claim=view,
@@ -1160,6 +1120,7 @@ def service_explain_playbill_claim(
         coverage=coverage,
         admission_evaluation_time=evaluated_at,
         admission_accounts=read.admission_accounts,
+        freshness=tuple(sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))),
         attestation_accounts=attestation_accounts,
         retirement_context=retirement_context,
     )
@@ -1238,8 +1199,7 @@ __all__ = [
     "CaptureEvidenceAdmissionV1",
     "ClaimAttestationAccountV1",
     "ClaimEvidenceFreshnessLineV1",
-    "PlaybillClaimExplanationV2",
-    "PlaybillClaimExplanationV3",
+    "PlaybillClaimExplanation",
     "PlaybillClaimGroupResolution",
     "PlaybillClaimList",
     "PlaybillClaimView",

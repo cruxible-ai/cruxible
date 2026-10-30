@@ -347,7 +347,7 @@ def test_unsatisfiable_type_does_not_gate_another_type_and_can_retire(
     instance, owner = initialize_local(tmp_path)
     query = _query()
     query_digest = query_definition_digest(query).tagged
-    authored_type = _claim_type()
+    authored_type = _claim_type(contract=SELF_SOURCE)
     blocker_type = _corroborated_type(
         query_digest,
         predicate="project.work_item.corrob99",
@@ -400,7 +400,7 @@ def test_cross_type_freeze_is_subject_scoped_through_the_proposal_path(
     expected_codes: list[str],
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    status_type = _claim_type().model_copy(
+    status_type = _claim_type(contract=SELF_SOURCE).model_copy(
         update={
             "admission_policy": ClaimAdmissionPolicy(
                 freeze_requirements=(
@@ -414,7 +414,7 @@ def test_cross_type_freeze_is_subject_scoped_through_the_proposal_path(
             )
         }
     )
-    summary_type = _claim_type().model_copy(
+    summary_type = _claim_type(contract=SELF_SOURCE).model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.summary"),
             "predicate": "project.work_item.summary",

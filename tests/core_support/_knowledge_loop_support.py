@@ -12,15 +12,14 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     DirectForeignSourceSelection,
-    capture_contract_digest,
     foreign_source_capture_contract,
     foreign_source_capture_contract_v1,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.query.definitions import (
     QueryDefinition,
@@ -242,13 +241,12 @@ def work_item_query(
         contract = factory("fixture.work-items")
         claim_type = _claim_type().model_copy(
             update={
-                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                     rules=(
-                        ClaimEvidenceAdmissionRuleV1(
+                        ClaimEvidenceAdmissionRule(
                             rule_id="coordinator-source",
                             claim_roles=("normative", "observation"),
-                            capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                            evidence_kinds=("self_asserted",),
+                            capture_contracts=(contract.identity.name,),
                             admission="direct",
                             subject_binding="exact_claim_subject",
                         ),

@@ -18,7 +18,6 @@ import sqlite3
 from cruxible_client.contracts.captures import AcceptedCaptureContract
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.errors import CruxibleError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -103,28 +102,11 @@ class CaptureContractNames:
         for rule in claim_type.evidence_admission_policy.rules:
             if role is not None and role not in rule.claim_roles:
                 continue
-            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
-                names.update(
-                    item.target.qualified if qualified else item.target.name
-                    for item in rule.capture_contracts
-                )
-            else:
-                names.update(
-                    self.name(digest, qualified=qualified)
-                    for digest in rule.capture_contract_digests
-                )
+            names.update(
+                item.target.qualified if qualified else item.target.name
+                for item in rule.capture_contracts
+            )
         return tuple(sorted(names, key=lambda item: item.encode("utf-8")))
-
-    @staticmethod
-    def names_by_digest(claim_type: ClaimType) -> bool:
-        """Whether any of this ClaimType's evidence rules still names contracts by digest."""
-
-        rules = claim_type.evidence_admission_policy.rules
-        return any(
-            bool(rule.capture_contract_digests)
-            for rule in rules
-            if not isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
-        )
 
     def lineage(self, identity: str) -> tuple[str, ...]:
         """Every accepted version digest of one contract identity, oldest first."""

@@ -29,8 +29,8 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
@@ -136,9 +136,8 @@ def installed_host(
     reset_permissions()
 
 
-def _claim_type(contract_digest: str) -> ClaimType:
+def _claim_type(contract: str) -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=PREDICATE),
         predicate=PREDICATE,
         allowed_subject_kinds=(SUBJECT_KIND,),
@@ -146,13 +145,12 @@ def _claim_type(contract_digest: str) -> ClaimType:
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="workspace-record",
                     claim_roles=("observation",),
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("database_record",),
+                    capture_contracts=(contract,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
@@ -429,9 +427,9 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         {
             "tag": "playbill-claim-type-authoring-payload-v1",
             "claim_type": _claim_type(
-                output_contract_pin.artifact_digest
+                output_contract_pin.target.name
                 if terminal_kind == "emit_capture"
-                else contract_pin.artifact_digest
+                else contract_pin.target.name
             ).model_dump(mode="json"),
         },
         # Advisories are named by their slug; core creates this one by it.

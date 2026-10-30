@@ -346,7 +346,7 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
     }
     lowered = lower_claim_type_input(rendered, tree={})
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"
-    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert lowered.artifact_format == "cruxible-claim-type-v10"
     assert lowered.evidence_admission_policy.rules[0].rule_id == "self"
     expanded = CliRunner().invoke(cli, ["claim-type", "propose", "--template", "--expanded"])
     assert expanded.exit_code == 0, expanded.output

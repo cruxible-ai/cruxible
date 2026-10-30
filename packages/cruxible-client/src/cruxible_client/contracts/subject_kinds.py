@@ -6,7 +6,7 @@ kind with an accepted SubjectKind, and the SubjectKind says how core names it:
 
 ``keys``
     An ordered list of key ClaimTypes (one, or several for a composite key).
-    Each is a ClaimType v8 about this kind only, literal and one-valued; its
+    Each is a ClaimType about this kind only, literal and one-valued; its
     canonical form governs its key value. The key parts of a Subject are
     ordinary Claims of those ClaimTypes. ``uniqueness`` is ``unique`` (a second
     live Subject with the same canonical key is refused) or ``hint`` (never
@@ -258,13 +258,6 @@ def key_claim_type_problem(
         return (
             f"key ClaimType {predicate!r} is not a live accepted ClaimType; accept it in this "
             "change or an earlier one"
-        )
-    if shape.artifact_format not in {"playbill-claim-type-v8", "cruxible-claim-type-v9"}:
-        return (
-            f"key ClaimType {predicate!r} must be a ClaimType v8 or later (it declares a "
-            "canonical form); "
-            "repair: state canonical_form ([] for none) in its `cruxible claim-type propose "
-            "--input` record, as `cruxible authoring example subject-kind` shows"
         )
     if shape.object_kind != "literal":
         return f"key ClaimType {predicate!r} must take a literal value"

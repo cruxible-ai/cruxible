@@ -530,14 +530,14 @@ def test_claim_type_input_preserves_optional_freshness_in_v8() -> None:
     plain = lower_claim_type_input(original, tree={})
     governed = lower_claim_type_input(fresh, tree={})
 
-    assert plain.artifact_format == "playbill-claim-type-v8"
+    assert plain.artifact_format == "cruxible-claim-type-v10"
     assert plain.evidence_freshness is None
     assert "evidence_freshness" not in original.model_dump(mode="json")
-    assert governed.artifact_format == "playbill-claim-type-v8"
+    assert governed.artifact_format == "cruxible-claim-type-v10"
     assert governed.evidence_freshness == freshness
 
 
-def test_claim_type_input_preserves_attestation_consequences_in_v8() -> None:
+def test_claim_type_input_preserves_attestation_consequences() -> None:
     original = claim_type_input_example()
     policy = ClaimAttestationConsequencePolicy(
         rules=(
@@ -558,7 +558,7 @@ def test_claim_type_input_preserves_attestation_consequences_in_v8() -> None:
         tree={},
     )
 
-    assert governed.artifact_format == "playbill-claim-type-v8"
+    assert governed.artifact_format == "cruxible-claim-type-v10"
     assert governed.evidence_freshness is None
     assert governed.attestation_consequence_policy == policy
 

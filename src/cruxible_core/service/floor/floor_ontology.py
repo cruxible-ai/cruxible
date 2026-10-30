@@ -60,7 +60,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.kits import KitInstalledArtifact, KitReceipt, kit_content_digest
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
@@ -134,22 +133,13 @@ ContractNamer = Callable[[str], str | None]
 def admitted_contracts(claim_type: ClaimType, names: ContractNamer) -> tuple[str, ...]:
     """The CaptureContract names a ClaimType's evidence rules admit, in byte order.
 
-    A v6 rule names contracts by identity; an older one names versions by
-    digest, each a version of one identity forever, so the name a digest
-    resolves to never changes once its version is accepted (an admitted pin
-    always is). A digest that resolves to nothing shows ``unresolved:<12 hex>``.
+    Every evidence rule names contracts by identity, so ``names`` (the digest
+    resolver the floor threads through its readers) is not consulted here.
     """
 
     found: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
-        if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
-            found.update(item.target.name for item in rule.capture_contracts)
-        else:
-            for digest in rule.capture_contract_digests:
-                name = names(digest)
-                found.add(
-                    name if name is not None else f"unresolved:{digest.rpartition(':')[2][:12]}"
-                )
+        found.update(item.target.name for item in rule.capture_contracts)
     return tuple(sorted(found, key=lambda item: item.encode()))
 
 

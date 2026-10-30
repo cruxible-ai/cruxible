@@ -11,14 +11,13 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    capture_contract_digest,
     capture_contract_path,
 )
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
@@ -30,16 +29,14 @@ from tests.test_claims.test_claims import _claim_type, _subject
 
 
 def _dependency_claim_type():
-    contract_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
     return _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-source",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(contract_digest,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

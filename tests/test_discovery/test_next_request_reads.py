@@ -290,7 +290,7 @@ def test_summary_matches_next_with_mutable_observations_and_retirement(tmp_path:
     assert summary.total_items == full.total_items
 
 
-def test_summary_bounds_rows_and_preserves_first_page_matching(
+def test_summary_bounds_rows_to_the_first_three_problems(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dataclasses import replace
@@ -306,18 +306,9 @@ def test_summary_bounds_rows_and_preserves_first_page_matching(
         for i in range(playbill_next.NEXT_MAX_LIMIT + 1)
     )
     monkeypatch.setattr(playbill_next, "_next_queue", lambda *a, **kw: replace(queue, items=items))
-    summary = playbill_next.summarize_playbill_next(
-        instance, request=request, match=lambda item: item.subject_identity == "5"
-    )
+    summary = playbill_next.summarize_playbill_next(instance, request=request)
     assert summary.items == items[:3]
     assert summary.total_items == len(items)
-    assert summary.matching_item == items[5]
-    assert (
-        playbill_next.summarize_playbill_next(
-            instance, request=request, match=lambda item: item == items[-1]
-        ).matching_item
-        is None
-    )
 
 
 def test_summary_avoids_cards_health_and_unneeded_dependency_facts(

@@ -22,7 +22,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
     parse_claim_type,
 )
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     claim_artifact_digest,
@@ -333,7 +333,7 @@ class ProjectionCheckContext:
         evaluation_time: datetime,
         stamps: Sequence[ProjectionBlockStampAny],
         facts_reader: _AcceptedQueryFactsRead | None = None,
-        verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+        verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
         resolution_statuses: Mapping[str, str] | None = None,
         backed_states: Mapping[str, tuple[str, bool] | None] | None = None,
     ) -> None:
@@ -544,7 +544,7 @@ class ProjectionCheckContext:
         per-Claim query fact rows are built for it.
         """
 
-        from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+        from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
         from cruxible_client.contracts.claims import claim_path
 
         context = ClaimVerdictReadContext(self.instance, self.coordinate)
@@ -566,7 +566,7 @@ class ProjectionCheckContext:
         identities = tuple(sorted(accepted))
         context.prefetch(tuple(claim_path(item.removeprefix("Claim:")) for item in identities))
         claims = tuple(context.claim(item) for item in identities)
-        verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
+        verdicts: MutableMapping[str, ClaimVerdictResult] = (
             self.verdicts if self.verdicts is not None else {}
         )
         if self.statuses is None or not all(
@@ -592,7 +592,7 @@ class ProjectionCheckContext:
             if verdict is None or claim.statement.subject.artifact_path not in present:
                 continue
             if (
-                claim_verdict_v1_compat(verdict).verdict in policy.visible_verdicts
+                reported_claim_verdict(verdict) in policy.visible_verdicts
                 and verdict.currency in policy.visible_currency
             ):
                 visible.add(claim.identity.qualified)

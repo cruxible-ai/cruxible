@@ -395,16 +395,9 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
         }
     assert "BriefInput" not in schemas
     assert "ClaimSlotPolicyV1" not in schemas
-    assert schemas["ClaimType"]["properties"]["artifact_format"]["enum"] == [
-        "playbill-claim-type-v1",
-        "playbill-claim-type-v3",
-        "playbill-claim-type-v4",
-        "playbill-claim-type-v5",
-        "playbill-claim-type-v6",
-        "playbill-claim-type-v7",
-        "playbill-claim-type-v8",
-        "cruxible-claim-type-v9",
-    ]
+    assert schemas["ClaimType"]["properties"]["artifact_format"]["const"] == (
+        "cruxible-claim-type-v10"
+    )
 
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",

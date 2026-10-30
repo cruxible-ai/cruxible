@@ -421,7 +421,7 @@ def coerce_text_spelling(value: object, value_type: ValueType) -> object:
 
 
 def canonical_operand(info: PredicateInfo, value: object, *, field_path: str) -> object:
-    """An incoming operand in the canonical form its predicate declares (ClaimType v8).
+    """An incoming operand in the canonical form its predicate declares.
 
     Stored values are canonical by law, so an operand compared with them is
     canonicalized by the same form first: two spellings equal under the form

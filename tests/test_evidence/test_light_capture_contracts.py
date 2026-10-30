@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from cruxible_client.contracts.capture_contract_inputs import (
@@ -22,9 +20,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV3,
     ClaimEvidenceAdmissionRule,
-    ClaimEvidenceAdmissionRuleV3,
     EvidenceAdmissionInput,
     evaluate_claim_evidence_admission,
 )
@@ -116,27 +112,21 @@ def test_v4_source_restriction_matches_recorded_external_source_only(source, ver
     assert result.verdict == verdict
 
 
-def test_v4_unrestricted_contract_admits_cas_and_v3_keeps_kind_gate_only_for_v1():
+def test_an_unrestricted_contract_admits_cas_whatever_its_evidence_kind():
     current = ClaimEvidenceAdmissionRule(**_rule(capture_contracts=["test.capture"]))
-    assert (
-        evaluate_claim_evidence_admission(
-            ClaimEvidenceAdmissionPolicy(rules=(current,)), _evidence()
-        ).verdict
-        == "eligible"
-    )
-    legacy = ClaimEvidenceAdmissionRuleV3(
-        **_rule(capture_contracts=current.capture_contracts, evidence_kinds=("observed",))
-    )
-    policy = ClaimEvidenceAdmissionPolicyV3(rules=(legacy,))
-    assert (
-        evaluate_claim_evidence_admission(policy, _evidence(evidence_kind="observed")).verdict
-        == "eligible"
-    )
-    assert (
-        evaluate_claim_evidence_admission(policy, _evidence(evidence_kind="other")).verdict
-        == "refused"
-    )
-    assert evaluate_claim_evidence_admission(policy, _evidence()).verdict == "eligible"
+    policy = ClaimEvidenceAdmissionPolicy(rules=(current,))
+    # A rule names contracts, never evidence kinds: every kind a contract
+    # captures is admitted alike.
+    for kind in (None, "observed", "other"):
+        assert evaluate_claim_evidence_admission(policy, _evidence(evidence_kind=kind)).verdict == (
+            "eligible"
+        )
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="evidence_kinds"):
+        ClaimEvidenceAdmissionRule(
+            **_rule(capture_contracts=current.capture_contracts, evidence_kinds=("observed",))
+        )
 
 
 @pytest.mark.parametrize("sources", [(), ("osv.record",)])
@@ -188,17 +178,20 @@ def test_contract_proposal_lowers_against_exact_base(tmp_path):
     assert result.proposal.candidate is not None, result.proposal.evaluation.diagnostics
 
 
-def test_source_overlap_is_per_contract_and_empty_means_all():
-    from cruxible_core.service.claims.evidence_rule_upgrade import _overlaps
-
+def test_source_admission_is_per_contract_and_empty_means_all():
     def rule(source):
         return ClaimEvidenceAdmissionRule(
             **_rule(capture_contracts=[{"contract": "test.capture", "logical_sources": source}])
         )
 
-    assert not _overlaps(rule(["osv.record"]), rule(["kev.record"]))
-    assert _overlaps(rule([]), rule(["osv.record"]))
-    assert _overlaps(rule(["osv.record"]), rule(["osv.record"]))
+    identity = "CaptureContract:test.capture"
+    osv, kev, every = rule(["osv.record"]), rule(["kev.record"]), rule([])
+    # Disjoint sources never both admit one Capture; an empty list admits every source.
+    assert osv.admits_source(identity=identity, logical_source="osv.record")
+    assert not kev.admits_source(identity=identity, logical_source="osv.record")
+    assert every.admits_source(identity=identity, logical_source="osv.record")
+    assert every.admits_source(identity=identity, logical_source=None)
+    assert not every.admits_source(identity="CaptureContract:other", logical_source=None)
 
 
 def test_source_admission_lookup_work_is_independent_of_rule_contract_count():
@@ -274,8 +267,10 @@ def test_sdk_payload_preserves_omitted_patch_fields_on_round_trip():
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])
-def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguous):
-    """Disjoint legacy kinds do not become ambiguous when new formats drop kinds."""
+def test_one_rule_admits_every_kind_of_a_contract_and_two_rules_on_it_are_ambiguous(
+    tmp_path, ambiguous
+):
+    """Rules name contracts, not kinds: each kind a v1 contract captures is judged alike."""
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.captures import (
         AcceptedCaptureContract,
@@ -315,19 +310,18 @@ def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguo
     )
 
     def rule(name, kind, admission):
-        return ClaimEvidenceAdmissionRuleV3(
+        return ClaimEvidenceAdmissionRule(
             rule_id=name,
             claim_roles=("observation",),
-            evidence_kinds=(kind,),
             capture_contracts=(ArtifactRef(role="capture-contract", target=contract.identity),),
             admission=admission,
             subject_binding="exact_claim_subject",
         )
 
-    rules = [rule("database", "database_record", "direct"), rule("other", "other", "origin_only")]
+    rules = [rule("database", "database_record", "direct")]
     if ambiguous:
-        rules.append(rule("second-database", "database_record", "direct"))
-    policy = ClaimEvidenceAdmissionPolicyV3(rules=tuple(rules))
+        rules.append(rule("other", "other", "origin_only"))
+    policy = ClaimEvidenceAdmissionPolicy(rules=tuple(rules))
     claim_type = _claim_type().model_copy(update={"evidence_admission_policy": policy})
     accepted = AcceptedCaptureContract(
         path=capture_contract_path(contract.identity.name),
@@ -351,10 +345,10 @@ def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguo
         )
         for item in decisions
     ] == [
-        ("database_record", "refused", None, "cruxible.evidence.admission_ambiguous")
+        (kind, "refused", None, "cruxible.evidence.admission_ambiguous")
         if ambiguous
-        else ("database_record", "eligible", "direct", None),
-        ("other", "eligible", "origin_only", None),
+        else (kind, "eligible", "direct", None)
+        for kind in ("database_record", "other")
     ]
 
 
@@ -413,51 +407,36 @@ def test_capture_contract_proposal_cannot_retire_reserved_coordinator(tmp_path):
     assert _write(instance, _set(f"{KIND}/wi-1", "title", "Still writable")).status == "accepted"
 
 
-@pytest.mark.parametrize("policy_version", [3, 4])
-def test_a_new_identity_policy_is_written_as_v4(tmp_path, policy_version):
-    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-    from cruxible_client.contracts.errors import FormatError
+def test_an_identity_policy_is_accepted_and_a_removed_policy_format_is_refused(tmp_path):
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.claim_types import (
+        ClaimTypeFormatError,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
     from cruxible_core.proposals.proposals import (
         AuthenticatedActor,
         ProposalAdmissionRequest,
-        _validate_identity_evidence_policy_format,
     )
     from tests.core_support._light_capture_support import record_contract
     from tests.core_support._support import initialize_local
     from tests.test_claims.test_claims import TIMESTAMP, _claim_type
 
     instance, _owner = initialize_local(tmp_path)
-    if policy_version == 4:
-        policy = ClaimEvidenceAdmissionPolicy(
-            rules=(
-                ClaimEvidenceAdmissionRule(
-                    **_rule(
-                        capture_contracts=[
-                            {"contract": "test.capture", "logical_sources": ["osv.record"]}
-                        ]
-                    )
-                ),
-            )
+    policy = ClaimEvidenceAdmissionPolicy(
+        rules=(
+            ClaimEvidenceAdmissionRule(
+                **_rule(
+                    capture_contracts=[
+                        {"contract": "test.capture", "logical_sources": ["osv.record"]}
+                    ]
+                )
+            ),
         )
-    else:
-        policy = ClaimEvidenceAdmissionPolicyV3(
-            rules=(
-                ClaimEvidenceAdmissionRuleV3(
-                    **_rule(
-                        capture_contracts=[
-                            {
-                                "role": "capture-contract",
-                                "target": {"kind": "CaptureContract", "name": "test.capture"},
-                            }
-                        ],
-                        evidence_kinds=("observed",),
-                    )
-                ),
-            )
-        )
+    )
     claim_type = _claim_type().model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v7",
             "evidence_requirement": "captured",
             "revision_evidence": "replace",
             "evidence_admission_policy": policy,
@@ -481,85 +460,15 @@ def test_a_new_identity_policy_is_written_as_v4(tmp_path, policy_version):
             timestamp=TIMESTAMP,
         )
 
-    if policy_version == 3:
-        # The refusal names the governed command that fixes it.
-        repair = "`cruxible claim-type upgrade`"
-        with pytest.raises(FormatError, match=re.escape(repair)):
-            _validate_identity_evidence_policy_format(claim_type)
-        result = submit()
-        assert result.candidate is None
-        (diagnostic,) = result.evaluation.diagnostics
-        assert diagnostic.code == "cruxible.claim_type.format_invalid"
-        assert repair in diagnostic.message
-        assert "state evidence_admission_policy explicitly" not in diagnostic.message
-    else:
-        result = submit()
-        assert result.candidate is not None, result.evaluation.diagnostics
+    result = submit()
+    assert result.candidate is not None, result.evaluation.diagnostics
 
-
-def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
-    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-    from cruxible_core.claims.claim_type_inputs import (
-        ClaimTypeInputRecord,
-        ClaimTypeInputReferenceError,
-        lower_claim_type_input,
-    )
-    from tests.core_support._pc_c_support import capture_contract
-    from tests.test_claims.test_claims import _claim_type
-
-    contract = capture_contract().model_copy(
-        update={"evidence_kinds": ("database_record", "other")}
-    )
-
-    def rule(name, kind):
-        return ClaimEvidenceAdmissionRuleV3(
-            **{
-                **_rule(),
-                "rule_id": name,
-                "capture_contracts": [{"role": "capture-contract", "target": contract.identity}],
-                "evidence_kinds": (kind,),
-            }
-        )
-
-    predecessor = _claim_type().model_copy(
-        update={
-            "artifact_format": "playbill-claim-type-v7",
-            "evidence_requirement": "captured",
-            "revision_evidence": "replace",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
-                rules=(rule("database", "database_record"), rule("other", "other"))
-            ),
-        }
-    )
-    tree = {
-        claim_type_path(predecessor.predicate): render_claim_type(predecessor),
-        capture_contract_path(contract.identity.name): render_capture_contract(contract),
-    }
-    with pytest.raises(
-        ClaimTypeInputReferenceError, match="state evidence_admission_policy explicitly"
-    ):
-        lower_claim_type_input(
-            ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
-            tree=tree,
-        )
-    # Covering the contract is lossless; an inherited legacy policy still upgrades.
-    covered = predecessor.model_copy(
-        update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
-                rules=(
-                    rule("both", "database_record").model_copy(
-                        update={"evidence_kinds": ("database_record", "other")}
-                    ),
-                )
-            )
-        }
-    )
-    tree[claim_type_path(predecessor.predicate)] = render_claim_type(covered)
-    result = lower_claim_type_input(
-        ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
-        tree=tree,
-    )
-    assert isinstance(result.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)
+    # A ClaimType stating a removed evidence-policy format is refused, never read.
+    wire = claim_type.model_dump(mode="json")
+    wire["evidence_admission_policy"]["tag"] = "playbill-claim-evidence-admission-policy-v3"
+    path = claim_type_path(claim_type.predicate)
+    with pytest.raises(ClaimTypeFormatError, match="strict validation"):
+        parse_claim_type(canonical_bytes(wire) + b"\n", path=path)
 
 
 @pytest.mark.parametrize("named", [True, False])

@@ -213,7 +213,6 @@
         "cruxible.proposal.approve",
         "cruxible.proposal.activate",
         "cruxible.compiler.upgrade",
-        "cruxible.claim-type.upgrade",
         "cruxible.line.enable",
         "cruxible.line.evaluate",
         "cruxible.line.dispatch",
@@ -4976,25 +4975,6 @@
             "title": "ArtifactPin",
             "type": "object"
           },
-          "ArtifactRef": {
-            "additionalProperties": false,
-            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
-            "properties": {
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
-              "target"
-            ],
-            "title": "ArtifactRef",
-            "type": "object"
-          },
           "CadenceSchedule": {
             "additionalProperties": false,
             "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
@@ -5618,69 +5598,6 @@
             "title": "ClaimEvidenceAdmissionPolicy",
             "type": "object"
           },
-          "ClaimEvidenceAdmissionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV1"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v1",
-                "default": "playbill-claim-evidence-admission-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV2": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV2"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v2",
-                "default": "playbill-claim-evidence-admission-policy-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV3": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV3",
-            "type": "object"
-          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
             "properties": {
@@ -5751,257 +5668,6 @@
               "capture_contracts"
             ],
             "title": "ClaimEvidenceAdmissionRule",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV1": {
-            "additionalProperties": false,
-            "description": "Frozen producer allowlist for historical ClaimTypes only.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "allowed_reducer_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Reducer Digests",
-                "type": "array"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v1",
-                "default": "playbill-claim-evidence-admission-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV2": {
-            "additionalProperties": false,
-            "description": "Evidence requirements; producer authorization belongs to governed mandates.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v2",
-                "default": "playbill-claim-evidence-admission-rule-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV3": {
-            "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ArtifactRef"
-                },
-                "title": "Capture Contracts",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contracts"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshness": {
@@ -6216,7 +5882,7 @@
           },
           "ClaimInverse": {
             "additionalProperties": false,
-            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "description": "How a ClaimType states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -6703,6 +6369,7 @@
           },
           "ClaimType": {
             "additionalProperties": false,
+            "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
             "properties": {
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
@@ -6723,17 +6390,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v7",
-                "enum": [
-                  "playbill-claim-type-v1",
-                  "playbill-claim-type-v3",
-                  "playbill-claim-type-v4",
-                  "playbill-claim-type-v5",
-                  "playbill-claim-type-v6",
-                  "playbill-claim-type-v7",
-                  "playbill-claim-type-v8",
-                  "cruxible-claim-type-v9"
-                ],
+                "const": "cruxible-claim-type-v10",
+                "default": "cruxible-claim-type-v10",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -6749,28 +6407,21 @@
                 "default": null
               },
               "canonical_form": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "nfc",
-                        "nfkc",
-                        "trim",
-                        "collapse_whitespace",
-                        "casefold",
-                        "upper",
-                        "strip_punctuation"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonical Form"
+                "default": [],
+                "items": {
+                  "enum": [
+                    "nfc",
+                    "nfkc",
+                    "trim",
+                    "collapse_whitespace",
+                    "casefold",
+                    "upper",
+                    "strip_punctuation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Canonical Form",
+                "type": "array"
               },
               "cardinality": {
                 "enum": [
@@ -6811,21 +6462,7 @@
                 "title": "Description"
               },
               "evidence_admission_policy": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
-                  }
-                ],
-                "title": "Evidence Admission Policy"
+                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
               },
               "evidence_freshness": {
                 "anyOf": [
@@ -6839,21 +6476,14 @@
                 "default": null
               },
               "evidence_requirement": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "none",
-                      "self",
-                      "captured"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "self",
+                "enum": [
+                  "none",
+                  "self",
+                  "captured"
                 ],
-                "default": null,
-                "title": "Evidence Requirement"
+                "title": "Evidence Requirement",
+                "type": "string"
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
@@ -6944,30 +6574,13 @@
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
               "revision_evidence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "replace",
-                      "accumulate"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "accumulate",
+                "enum": [
+                  "replace",
+                  "accumulate"
                 ],
-                "default": null,
-                "title": "Revision Evidence"
-              },
-              "slot_policy": {
-                "default": null,
-                "title": "Slot Policy",
-                "type": "null"
-              },
-              "subject_scope": {
-                "default": null,
-                "title": "Subject Scope",
-                "type": "null"
+                "title": "Revision Evidence",
+                "type": "string"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -13322,7 +12935,7 @@
           },
           "SubjectKindInput": {
             "additionalProperties": false,
-            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType v8 about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. The default\n``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
+            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. The default\n``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -21074,7 +20687,7 @@
           },
           "NoneClaimObject": {
             "additionalProperties": false,
-            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType v9 that declares an\ninverse admits one.",
+            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType that declares an\ninverse admits one.",
             "properties": {
               "kind": {
                 "const": "none",
@@ -25074,7 +24687,7 @@
           },
           "NoneClaimObject": {
             "additionalProperties": false,
-            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType v9 that declares an\ninverse admits one.",
+            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType that declares an\ninverse admits one.",
             "properties": {
               "kind": {
                 "const": "none",
@@ -38402,7 +38015,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -38479,7 +38091,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -38890,7 +38501,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -38967,7 +38577,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -39530,7 +39139,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -39607,7 +39215,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -40107,7 +39714,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -40210,7 +39816,6 @@
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
-              "cruxible.claim-type.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
@@ -40429,7 +40034,6 @@
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
               "cruxible.compiler.upgrade",
-              "cruxible.claim-type.upgrade",
               "cruxible.line.enable",
               "cruxible.line.evaluate",
               "cruxible.line.dispatch",
@@ -41130,7 +40734,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -41207,7 +40810,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -41834,7 +41436,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -41911,7 +41512,6 @@
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
                   "cruxible.compiler.upgrade",
-                  "cruxible.claim-type.upgrade",
                   "cruxible.line.enable",
                   "cruxible.line.evaluate",
                   "cruxible.line.dispatch",
@@ -45125,7 +44725,7 @@
           },
           "OrientPredicate": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps (``accumulate`` before v7).\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 7 for\n``playbill-claim-type-v7``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps.\nA full descriptor also names how the ClaimType settles rival Claims\n(``contention``), its format version (``format``: 10 for\n``cruxible-claim-type-v10``), its accepted ``revision`` and its ledger\n``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a\ndescriptor counts the kind's ``live_claims`` of the predicate and\n``subjects_with_value``: its live Subjects with at least one, both read\nfrom counters Claim writes maintain.\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -78166,25 +77766,6 @@
             "title": "ArtifactPin",
             "type": "object"
           },
-          "ArtifactRef": {
-            "additionalProperties": false,
-            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
-            "properties": {
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
-              "target"
-            ],
-            "title": "ArtifactRef",
-            "type": "object"
-          },
           "CallNode": {
             "additionalProperties": false,
             "description": "A typed call: the slot names the signature; the Line names the operation.",
@@ -78492,69 +78073,6 @@
             "title": "ClaimEvidenceAdmissionPolicy",
             "type": "object"
           },
-          "ClaimEvidenceAdmissionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV1"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v1",
-                "default": "playbill-claim-evidence-admission-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV2": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV2"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v2",
-                "default": "playbill-claim-evidence-admission-policy-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV3": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV3",
-            "type": "object"
-          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
             "properties": {
@@ -78627,257 +78145,6 @@
             "title": "ClaimEvidenceAdmissionRule",
             "type": "object"
           },
-          "ClaimEvidenceAdmissionRuleV1": {
-            "additionalProperties": false,
-            "description": "Frozen producer allowlist for historical ClaimTypes only.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "allowed_reducer_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Reducer Digests",
-                "type": "array"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v1",
-                "default": "playbill-claim-evidence-admission-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV2": {
-            "additionalProperties": false,
-            "description": "Evidence requirements; producer authorization belongs to governed mandates.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v2",
-                "default": "playbill-claim-evidence-admission-rule-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV3": {
-            "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ArtifactRef"
-                },
-                "title": "Capture Contracts",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contracts"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV3",
-            "type": "object"
-          },
           "ClaimEvidenceFreshness": {
             "additionalProperties": false,
             "properties": {
@@ -78920,7 +78187,7 @@
           },
           "ClaimInverse": {
             "additionalProperties": false,
-            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "description": "How a ClaimType states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -79390,6 +78657,7 @@
           },
           "ClaimType": {
             "additionalProperties": false,
+            "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
             "properties": {
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
@@ -79410,17 +78678,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v7",
-                "enum": [
-                  "playbill-claim-type-v1",
-                  "playbill-claim-type-v3",
-                  "playbill-claim-type-v4",
-                  "playbill-claim-type-v5",
-                  "playbill-claim-type-v6",
-                  "playbill-claim-type-v7",
-                  "playbill-claim-type-v8",
-                  "cruxible-claim-type-v9"
-                ],
+                "const": "cruxible-claim-type-v10",
+                "default": "cruxible-claim-type-v10",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -79436,28 +78695,21 @@
                 "default": null
               },
               "canonical_form": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "nfc",
-                        "nfkc",
-                        "trim",
-                        "collapse_whitespace",
-                        "casefold",
-                        "upper",
-                        "strip_punctuation"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonical Form"
+                "default": [],
+                "items": {
+                  "enum": [
+                    "nfc",
+                    "nfkc",
+                    "trim",
+                    "collapse_whitespace",
+                    "casefold",
+                    "upper",
+                    "strip_punctuation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Canonical Form",
+                "type": "array"
               },
               "cardinality": {
                 "enum": [
@@ -79498,21 +78750,7 @@
                 "title": "Description"
               },
               "evidence_admission_policy": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
-                  }
-                ],
-                "title": "Evidence Admission Policy"
+                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
               },
               "evidence_freshness": {
                 "anyOf": [
@@ -79526,21 +78764,14 @@
                 "default": null
               },
               "evidence_requirement": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "none",
-                      "self",
-                      "captured"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "self",
+                "enum": [
+                  "none",
+                  "self",
+                  "captured"
                 ],
-                "default": null,
-                "title": "Evidence Requirement"
+                "title": "Evidence Requirement",
+                "type": "string"
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
@@ -79631,30 +78862,13 @@
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
               "revision_evidence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "replace",
-                      "accumulate"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "accumulate",
+                "enum": [
+                  "replace",
+                  "accumulate"
                 ],
-                "default": null,
-                "title": "Revision Evidence"
-              },
-              "slot_policy": {
-                "default": null,
-                "title": "Slot Policy",
-                "type": "null"
-              },
-              "subject_scope": {
-                "default": null,
-                "title": "Subject Scope",
-                "type": "null"
+                "title": "Revision Evidence",
+                "type": "string"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -87672,25 +86886,6 @@
             "title": "ArtifactPin",
             "type": "object"
           },
-          "ArtifactRef": {
-            "additionalProperties": false,
-            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
-            "properties": {
-              "role": {
-                "title": "Role",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "role",
-              "target"
-            ],
-            "title": "ArtifactRef",
-            "type": "object"
-          },
           "CallNode": {
             "additionalProperties": false,
             "description": "A typed call: the slot names the signature; the Line names the operation.",
@@ -87998,69 +87193,6 @@
             "title": "ClaimEvidenceAdmissionPolicy",
             "type": "object"
           },
-          "ClaimEvidenceAdmissionPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV1"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v1",
-                "default": "playbill-claim-evidence-admission-policy-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV2": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV2"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v2",
-                "default": "playbill-claim-evidence-admission-policy-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionPolicyV3": {
-            "additionalProperties": false,
-            "properties": {
-              "rules": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
-                },
-                "title": "Rules",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ClaimEvidenceAdmissionPolicyV3",
-            "type": "object"
-          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
             "properties": {
@@ -88133,257 +87265,6 @@
             "title": "ClaimEvidenceAdmissionRule",
             "type": "object"
           },
-          "ClaimEvidenceAdmissionRuleV1": {
-            "additionalProperties": false,
-            "description": "Frozen producer allowlist for historical ClaimTypes only.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "allowed_reducer_digests": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Allowed Reducer Digests",
-                "type": "array"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v1",
-                "default": "playbill-claim-evidence-admission-rule-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV1",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV2": {
-            "additionalProperties": false,
-            "description": "Evidence requirements; producer authorization belongs to governed mandates.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contract_digests": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Capture Contract Digests",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v2",
-                "default": "playbill-claim-evidence-admission-rule-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contract_digests"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV2",
-            "type": "object"
-          },
-          "ClaimEvidenceAdmissionRuleV3": {
-            "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
-            "properties": {
-              "admission": {
-                "enum": [
-                  "origin_only",
-                  "direct",
-                  "derivational"
-                ],
-                "title": "Admission",
-                "type": "string"
-              },
-              "attestation_requirement": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "verified_provider",
-                  "verified_principal",
-                  "any_verified"
-                ],
-                "title": "Attestation Requirement",
-                "type": "string"
-              },
-              "capture_contracts": {
-                "items": {
-                  "$ref": "#/$defs/ArtifactRef"
-                },
-                "title": "Capture Contracts",
-                "type": "array"
-              },
-              "claim_roles": {
-                "items": {
-                  "enum": [
-                    "normative",
-                    "observation",
-                    "environment_binding",
-                    "derivation"
-                  ],
-                  "type": "string"
-                },
-                "title": "Claim Roles",
-                "type": "array"
-              },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
-              "rule_id": {
-                "title": "Rule Id",
-                "type": "string"
-              },
-              "subject_binding": {
-                "enum": [
-                  "exact_claim_subject",
-                  "contract_source_mapping"
-                ],
-                "title": "Subject Binding",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "rule_id",
-              "claim_roles",
-              "admission",
-              "subject_binding",
-              "evidence_kinds",
-              "capture_contracts"
-            ],
-            "title": "ClaimEvidenceAdmissionRuleV3",
-            "type": "object"
-          },
           "ClaimEvidenceFreshness": {
             "additionalProperties": false,
             "properties": {
@@ -88426,7 +87307,7 @@
           },
           "ClaimInverse": {
             "additionalProperties": false,
-            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "description": "How a ClaimType states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -88896,6 +87777,7 @@
           },
           "ClaimType": {
             "additionalProperties": false,
+            "description": "The one ClaimType: what a predicate means, admits and settles.\n\nOptional members are omitted from the wire when absent, so absence and a\nstated value never share a spelling.",
             "properties": {
               "admission_policy": {
                 "$ref": "#/$defs/ClaimAdmissionPolicy"
@@ -88916,17 +87798,8 @@
                 "type": "array"
               },
               "artifact_format": {
-                "default": "playbill-claim-type-v7",
-                "enum": [
-                  "playbill-claim-type-v1",
-                  "playbill-claim-type-v3",
-                  "playbill-claim-type-v4",
-                  "playbill-claim-type-v5",
-                  "playbill-claim-type-v6",
-                  "playbill-claim-type-v7",
-                  "playbill-claim-type-v8",
-                  "cruxible-claim-type-v9"
-                ],
+                "const": "cruxible-claim-type-v10",
+                "default": "cruxible-claim-type-v10",
                 "title": "Artifact Format",
                 "type": "string"
               },
@@ -88942,28 +87815,21 @@
                 "default": null
               },
               "canonical_form": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "enum": [
-                        "nfc",
-                        "nfkc",
-                        "trim",
-                        "collapse_whitespace",
-                        "casefold",
-                        "upper",
-                        "strip_punctuation"
-                      ],
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Canonical Form"
+                "default": [],
+                "items": {
+                  "enum": [
+                    "nfc",
+                    "nfkc",
+                    "trim",
+                    "collapse_whitespace",
+                    "casefold",
+                    "upper",
+                    "strip_punctuation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Canonical Form",
+                "type": "array"
               },
               "cardinality": {
                 "enum": [
@@ -89004,21 +87870,7 @@
                 "title": "Description"
               },
               "evidence_admission_policy": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
-                  },
-                  {
-                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
-                  }
-                ],
-                "title": "Evidence Admission Policy"
+                "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
               },
               "evidence_freshness": {
                 "anyOf": [
@@ -89032,21 +87884,14 @@
                 "default": null
               },
               "evidence_requirement": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "none",
-                      "self",
-                      "captured"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "self",
+                "enum": [
+                  "none",
+                  "self",
+                  "captured"
                 ],
-                "default": null,
-                "title": "Evidence Requirement"
+                "title": "Evidence Requirement",
+                "type": "string"
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
@@ -89137,30 +87982,13 @@
                 "$ref": "#/$defs/ClaimResolutionPolicy"
               },
               "revision_evidence": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "replace",
-                      "accumulate"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "default": "accumulate",
+                "enum": [
+                  "replace",
+                  "accumulate"
                 ],
-                "default": null,
-                "title": "Revision Evidence"
-              },
-              "slot_policy": {
-                "default": null,
-                "title": "Slot Policy",
-                "type": "null"
-              },
-              "subject_scope": {
-                "default": null,
-                "title": "Subject Scope",
-                "type": "null"
+                "title": "Revision Evidence",
+                "type": "string"
               },
               "unsure_hold_for": {
                 "anyOf": [
@@ -92654,7 +91482,7 @@
           },
           "QueryNone": {
             "additionalProperties": false,
-            "description": "One none behind a cell: ``rows[i].nones[column]`` lists a field's live nones.\n\nA none (a ClaimType v9 inverse Claim) says the field holds nothing (``of``\nabsent: a one-valued field's whole slot) or does not hold ``of``; it is\nnever a cell value. A cell with no value and no current none is unknown.",
+            "description": "One none behind a cell: ``rows[i].nones[column]`` lists a field's live nones.\n\nA none (an inverse Claim) says the field holds nothing (``of``\nabsent: a one-valued field's whole slot) or does not hold ``of``; it is\nnever a cell value. A cell with no value and no current none is unknown.",
             "properties": {
               "claim": {
                 "title": "Claim",

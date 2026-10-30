@@ -44,7 +44,8 @@ def test_procedure_consumption_reads_only_its_transitive_dependencies(
 
     instance, _owner, procedure = _world(tmp_path)
     accepted = instance.accepted_coordinate()
-    states = dependency_artifacts(instance.tree_at(accepted.git_oid))
+    # The index walks name references too: a ClaimType names its contracts.
+    states = dependency_artifacts(instance.tree_at(accepted.git_oid), by_name=True)
     by_identity = {state.identity.qualified: state for state in states}
     reachable = {procedure.identity.qualified}
     while True:

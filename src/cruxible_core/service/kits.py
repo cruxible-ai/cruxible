@@ -66,7 +66,6 @@ from cruxible_client.contracts.kits import (
     kit_receipt_document_id,
     kit_version_key,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
@@ -923,7 +922,7 @@ def _evidence_rule_consumers(
 ) -> tuple[tuple[str, ArtifactIdentity], ...]:
     """Live ClaimTypes whose evidence rules admit captures under this CaptureContract.
 
-    A semantic dependency, not a pin: an identity rule (ClaimType v6 and later)
+    A semantic dependency, not a pin: an identity rule
     names the contract by identity and a historical rule by exact digest, and
     neither is a reverse-pin edge. Retiring the contract strands every one of
     them, which admission refuses. Claims citing the contract are provenance and
@@ -941,11 +940,7 @@ def _evidence_rule_consumers(
         if claim_type.lifecycle.state != "live":
             continue
         for rule in claim_type.evidence_admission_policy.rules:
-            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
-                names = any(ref.target == contract.identity for ref in rule.capture_contracts)
-            else:
-                names = contract.artifact_digest in getattr(rule, "capture_contract_digests", ())
-            if names:
+            if any(ref.target == contract.identity for ref in rule.capture_contracts):
                 found.append((path, claim_type.identity))
                 break
     return tuple(found)

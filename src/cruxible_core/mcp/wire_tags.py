@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ValidationError
 
 #: A format tag: the frozen ``playbill-`` namespace, or the ``cruxible-`` one formats
-#: take at their next version bump (``cruxible-claim-type-v9``), one family, a version.
+#: take at their next version bump (``cruxible-claim-type-v10``), one family, a version.
 TAG_RE = re.compile(r"^(?:playbill|cruxible)-[a-z0-9-]+-v\d+(?:\.\d+)?$")
 _VERSION_RE = re.compile(r"-v(\d+)(?:\.(\d+))?$")
 

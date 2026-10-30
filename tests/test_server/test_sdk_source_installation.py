@@ -20,11 +20,10 @@ from cruxible_client.authoring.source import (
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
-    capture_contract_digest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
@@ -181,17 +180,14 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
     declare_by_slug(knowledge, SUBJECT_KIND)
     knowledge.subject(pb.new_subject(SUBJECT_KIND, key=SUBJECT_ID))
-    definition = _claim_type(capture_contract_digest(output_contract).tagged)
-    observed_rule = ClaimEvidenceAdmissionRuleV2.model_validate(
-        definition.evidence_admission_policy.rules[0].model_dump(
-            exclude={"tag", "allowed_reducer_digests"}
-        )
+    definition = _claim_type(output_contract.identity.name)
+    observed_rule = ClaimEvidenceAdmissionRule.model_validate(
+        definition.evidence_admission_policy.rules[0].model_dump(exclude={"tag"})
     )
     definition = definition.model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v5",
             "permitted_roles": ("derivation", "observation"),
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV2(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=tuple(
                     sorted(
                         (

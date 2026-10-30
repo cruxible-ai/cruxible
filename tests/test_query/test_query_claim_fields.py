@@ -23,7 +23,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+from cruxible_client.contracts.claim_verdicts import reported_claim_verdict
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -204,7 +204,7 @@ def _oracle(instance: PlaybillInstance, claim: str, *, at: Any = None, when: dat
     found = service_evaluate_playbill_claim_verdict(
         instance, claim_identity=claim, evaluation_time=when, at=at
     )
-    return claim_verdict_v1_compat(found.verdict).verdict
+    return reported_claim_verdict(found.verdict)
 
 
 def _catch_up(instance: PlaybillInstance, at: datetime) -> None:
@@ -226,7 +226,7 @@ def _served_verdicts(
         door_head=None,
         evaluation_time=at,
         read=lambda connection, _coordinate: {
-            str(claim): claim_verdict_v1_compat_name(str(verdict))
+            str(claim): reported_verdict_name(str(verdict))
             for claim, verdict in connection.execute(
                 "SELECT claim_id, verdict FROM claim_facts "
                 "WHERE lifecycle='live' AND verdict IS NOT NULL"
@@ -236,7 +236,7 @@ def _served_verdicts(
     return None if served is None else served[0]
 
 
-def claim_verdict_v1_compat_name(verdict: str) -> str:
+def reported_verdict_name(verdict: str) -> str:
     return "stale" if verdict == "stale_evidence" else verdict
 
 

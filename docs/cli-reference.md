@@ -111,8 +111,7 @@ a page's block markers), a state digest of exactly the records it changes,
 which exists before `init` too.
 
 - A change the server derives across several artifacts previews unless asked
-  to commit: `kit add`, `kit remove` and `claim-type upgrade`. Commit with
-  `--commit`.
+  to commit: `kit add` and `kit remove`. Commit with `--commit`.
 - A change that cannot be undone previews unless asked to commit, and commits
   only with the preview's coordinate: `instance decommission`,
   `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
@@ -1379,8 +1378,6 @@ cruxible claim-type propose --input FILE|- --name NAME [--dry-run|--commit] [--a
 cruxible claim-type propose --builtin semantic.alias|semantic.distinct_from [--name NAME]
   [--dry-run|--commit] [--json]
 cruxible claim-type migrate REQUEST_FILE|- [--json]
-cruxible claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
-  [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible orient --section
@@ -1494,39 +1491,15 @@ vocabulary and adds one disposition the operator form has no use for --
 paths build their candidate with the same function, so neither can drift from
 the other's law.
 
-Every ClaimType authoring path writes ClaimType v7 with identity evidence rules:
-`propose --input`, the SDK draft, the authoring examples and change-set members.
-A rule that names an exact contract digest no accepted contract version carries
-is refused, never authored as an exact-digest rule.
+A ClaimType has one format, `cruxible-claim-type-v10`, with identity evidence
+rules (`cruxible-claim-evidence-admission-policy-v4`); every authoring path
+writes it: `propose --input`, the SDK draft, the authoring examples and
+change-set members. A rule that names an exact contract digest no accepted
+contract version carries is refused, never authored as an exact-digest rule.
+Accepted state under an earlier ClaimType format is not read: such an instance
+reseeds (see [Upgrading](upgrading.md)).
 
-`upgrade` is the one move for an older ClaimType. A v1-v5 ClaimType whose rules
-still name contracts by exact digest first takes the identity-rule conversion,
-then the v7 move, in the same change set, carrying its Claims. A rule converts
-only when it keeps its meaning: every version of a named contract must be
-compatible with its predecessor, and two rules that did not overlap may not start
-matching the same evidence. It lists, per ClaimType, the accepted contract
-versions a converted rule newly admits, and leaves the rest unchanged with the
-reason. The change set carries every dependent Claim, so it previews by default
-(see [Previews](#previews)); commit the preview with `--commit --at OID`, then
-approve and activate the proposal as usual.
-
-Compiler revision 36 (`light-artifacts-v1`) writes only v4 identity evidence
-policies (`cruxible-claim-evidence-admission-policy-v4`); below it a write
-states v3. A ClaimType accepted with a v3 policy keeps working after the
-compiler upgrade, but an edit of it on revision 36 is refused until it is
-restated, and `next` reports the compiler facet as
-`claim_type_upgrade_available` naming it. On revision 36, `upgrade` restates
-each chosen live ClaimType's v3 policy as v4 in the same change set (listed
-under `restated`, with or without the v7 move). The restatement keeps every
-rule's id, roles, admission, subject binding and attestation requirement and
-names the same contracts with no `logical_sources` restriction; it drops the
-legacy `evidence_kinds`. That admits exactly the same evidence when every
-accepted CaptureContract v1 version of a named contract captures only kinds the
-rule lists; otherwise the ClaimType is left as it is and refused with
-`cruxible.claim_type.policy_restatement_inexact`, and you state its v4 policy
-explicitly with `claim-type propose`. Below revision 36 nothing is restated.
-
-ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
+A ClaimType states a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
 (`none`: the Claim's own origin supports it; `self`: the evidence rules decide;
 `captured`: a Capture under a declared contract is required) and a
@@ -1590,21 +1563,15 @@ that set an expiry is named in the verdict's `freshness_expirations` entry
 (`cruxible.claim.reobservation_refused`) and refreshes nothing; a Procedure's
 unchanged item whose Claim was retired after the run's base keeps its receipt
 and records nothing. Re-observing on a schedule (say hourly, under a longer
-`stale_after`) keeps a Claim current without revising it. `propose --input` lowers
-to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
-against its predecessor: a v7 field left out keeps the predecessor's value (over
-a ClaimType before v7: no descriptions, no default role, `self` and
-`accumulate`), and an explicit `null` clears `description`,
-`member_descriptions` or `default_role`. Inherited member descriptions of
-values the edited enum dropped, or an inherited default role the edit no longer
-permits, are refused by name rather than dropped. ClaimTypes before v7
-never switch on their own: `upgrade` proposes one change set moving the named
-live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
-`self` and `--revision-evidence` (default `replace`), carrying their Claims with
-their backing intact. It lists each ClaimType's revision-evidence change;
-`--dry-run` evaluates the change set and proposes nothing.
+`stale_after`) keeps a Claim current without revising it. Through `propose
+--input` a new ClaimType takes `self` and `replace`. An edit follows JSON
+merge-patch against its predecessor: a field left out keeps the predecessor's
+value, and an explicit `null` clears `description`, `member_descriptions` or
+`default_role`. Inherited member descriptions of values the edited enum dropped,
+or an inherited default role the edit no longer permits, are refused by name
+rather than dropped.
 
-ClaimType v8 is v7 plus a `canonical_form`: an ordered list of named transforms
+A ClaimType's `canonical_form` is an ordered list of named transforms
 every literal value of the predicate is stored and compared in. The closed set:
 `nfc` and `nfkc` (Unicode normalization; name at most one), `trim` (drop leading
 and trailing whitespace), `collapse_whitespace` (every whitespace run becomes
@@ -1619,9 +1586,9 @@ stays in the evidence the Claim cites), and the Claim law refuses a stored
 literal that is not canonical. Enum membership is checked after
 canonicalization, so every enum member must already be canonical. A query,
 `expect`, an enum check or a QueryDefinition comparison canonicalizes its
-operand by the same predicate's form first. `propose --input` lowers to v8 when
-the input names `canonical_form`; an edit that leaves it out keeps the
-predecessor's form, and `null` over a v8 ClaimType states no transform. Changing
+operand by the same predicate's form first. A new ClaimType's form is `[]` (no
+transform) unless the input names one; an edit that leaves it out keeps the
+predecessor's form, and `null` states no transform. Changing
 the form is a governed ClaimType succession: a dependent Claim whose stored
 value is not canonical under the new form is re-authored, not carried.
 Canonical forms apply where values become Claims. A Procedure's propose and
@@ -2032,7 +1999,7 @@ working (it resolves the Subject holding the slug, or creates it):
   "members": [
     {
       "kind": "claim_type",
-      "claim_type": "<dev.decision.slug: v8, literal string, one-valued>"
+      "claim_type": "<dev.decision.slug: literal string, one-valued>"
     },
     {
       "kind": "subject_kind",
@@ -3727,7 +3694,7 @@ before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
 
 A none states that a field holds nothing: an inverse Claim, on a ClaimType
-whose `inverse` declares how (ClaimType v9; any other refuses
+whose `inverse` declares how (any other refuses
 `cruxible.write.inverse_undeclared`). `set SUBJECT FIELD --none` replaces the
 live value of a one-valued field with a none (the same Claim, revised), and
 `set SUBJECT FIELD VALUE` over a none replaces it back. `add SUBJECT FIELD
@@ -3911,9 +3878,7 @@ counts the enablements as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
 reason, for any caller of the instance, without daemon scope; it also notes
 when enabled Lines have no consumer loop running here and when the provider lane
-is unavailable. When any live ClaimType still names
-CaptureContracts by digest, attention says so and suggests
-`cruxible claim-type upgrade`.
+is unavailable.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
 horizon, live Claim count and how many of the kind's Subjects hold a live value
@@ -3932,7 +3897,7 @@ ClaimType:` and `get SubjectKind:` cards. A full ClaimType descriptor (here and
 under `--kind`) and the `get ClaimType:` card also carry `contention` (the
 resolution `selector`, `on_conflict`: `unresolved` or `refuse`, and the
 admission policy's `corroboration` and `freeze` requirement counts when there
-are any), `format` (7 for `playbill-claim-type-v7`), the accepted `revision`
+are any), `format` (10 for `cruxible-claim-type-v10`), the accepted `revision`
 and the ledger `path`. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists

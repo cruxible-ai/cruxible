@@ -33,7 +33,6 @@ from cruxible_client.contracts.captures import (
     DirectClaimSelection,
     DirectForeignSourceSelection,
     builtin_contract_for_write,
-    capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
 )
@@ -48,8 +47,8 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -249,21 +248,26 @@ def _payload(
     if authoring.subject_shell is None and authoring.claim_type_artifact is None:
         return ClaimAuthoringPayloadV1(**base)
     claim_type = authoring.claim_type_artifact
-    if claim_type is not None and source is None:
-        profile = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+    if claim_type is not None:
+        # The drafted type names the contract the bound Claim installs in the
+        # same change: the coordinator's own words, or the cited foreign source.
+        profile = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, None)
+            if not isinstance(source_value, WorkingSelectionObservation)
+            else foreign_source_capture_contract(source_value.source_id)
+        )
         claim_type = claim_type.model_copy(
             update={
-                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                     rules=(
-                        ClaimEvidenceAdmissionRuleV1(
+                        ClaimEvidenceAdmissionRule(
                             rule_id="coordinator-source",
                             claim_roles=tuple(
                                 role
                                 for role in claim_type.permitted_roles
                                 if role in {"normative", "observation", "derivation"}
                             ),
-                            capture_contract_digests=(capture_contract_digest(profile).tagged,),
-                            evidence_kinds=("self_asserted",),
+                            capture_contracts=(profile.identity.name,),
                             admission="direct",
                             subject_binding="exact_claim_subject",
                         ),

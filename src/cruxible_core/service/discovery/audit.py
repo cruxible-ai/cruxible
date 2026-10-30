@@ -20,7 +20,6 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
     ClaimVerdictResult,
-    ClaimVerdictResultAny,
     EvidenceCurrency,
     EvidenceRelativeClaimVerdictV1,
     evaluate_claim_verdict,
@@ -363,7 +362,7 @@ def _current_verdict(
     *,
     evaluation_time: datetime,
     providers: Mapping[str, ProviderV1],
-) -> ClaimVerdictResultAny:
+) -> ClaimVerdictResult:
     statement = row.accepted.claim.statement
     return evaluate_claim_verdict(
         claim_statement_digest=row.accepted.statement_digest,
@@ -447,7 +446,7 @@ def _row(
         item.attestation_digest for item in independent if item.attestation_digest in effective
     }
     near_horizon = False
-    if isinstance(verdict, ClaimVerdictResult) and row.rule.max_evidence_age is not None:
+    if row.rule.max_evidence_age is not None:
         quarter = (
             timedelta(microseconds=row.rule.max_evidence_age.microseconds)
             / AUDIT_NEAR_FRESHNESS_HORIZON_DIVISOR

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -18,7 +18,7 @@ from cruxible_client.contracts.claim_types import (
     effective_inverse_stale_after,
 )
 from cruxible_client.contracts.content_memo import seal, sealed_derive, sealed_memo
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyAny
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_client.contracts.providers import ProviderV1
 
 EvidenceBasisKind = Literal[
@@ -69,7 +69,7 @@ def observation_trust_grade(
 
 
 @sealed_memo
-def _policy_digest(policy: ClaimEvidenceAdmissionPolicyAny) -> str:
+def _policy_digest(policy: ClaimEvidenceAdmissionPolicy) -> str:
     payload = policy.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -79,7 +79,19 @@ def _policy_digest(policy: ClaimEvidenceAdmissionPolicyAny) -> str:
     ).tagged
 
 
-class _ClaimAdjudicationRuleBase(_StrictVerdictModel):
+class ClaimAdjudicationRule(_StrictVerdictModel):
+    """How one exact accepted ClaimType judges its Claims' evidence.
+
+    ``origin_supports``: origin-only Captures count as admitted support in
+    every branch of the verdict, so the Claim is ``supported`` on its origin
+    alone (a ClaimType whose Claims need no evidence, or a key Claim written
+    with its Subject's creation); contradicting attestations still contradict
+    and freshness still ages it. ``origin_replay_exempt``: an origin-only entry
+    never needs a current replay, so erasing that copy of a Claim's own words
+    does not read it ``stale``; every other entry is judged as before.
+    """
+
+    tag: Literal["cruxible-claim-adjudication-rule-v4"] = "cruxible-claim-adjudication-rule-v4"
     claim_type_digest: str
     evidence_policy_digest: str
     shell_sensitive: bool
@@ -88,6 +100,8 @@ class _ClaimAdjudicationRuleBase(_StrictVerdictModel):
     minimum_supporting_control_domains: int = 1
     minimum_contradicting_control_domains: int = 1
     conflict_behavior: Literal["unresolved", "contradiction_precedence"] = "unresolved"
+    origin_supports: bool = False
+    origin_replay_exempt: bool = False
 
     @field_validator("claim_type_digest", "evidence_policy_digest")
     @classmethod
@@ -96,61 +110,29 @@ class _ClaimAdjudicationRuleBase(_StrictVerdictModel):
         return value
 
     @model_validator(mode="after")
-    def _thresholds(self) -> "_ClaimAdjudicationRuleBase":
+    def _thresholds(self) -> "ClaimAdjudicationRule":
         if (
             self.minimum_supporting_control_domains < 1
             or self.minimum_contradicting_control_domains < 1
         ):
             raise ValueError("Claim adjudication independence floors must be positive")
+        if self.origin_replay_exempt and not self.origin_supports:
+            raise ValueError("only a rule whose origin supports can exempt it from replay")
         return self
 
 
-class ClaimAdjudicationRuleV1(_ClaimAdjudicationRuleBase):
-    tag: Literal["playbill-claim-adjudication-rule-v1"] = "playbill-claim-adjudication-rule-v1"
-
-
-class ClaimAdjudicationRule(_ClaimAdjudicationRuleBase):
-    """The v1 rule for a ClaimType whose Claims need no evidence (requirement ``none``).
-
-    Origin-only Captures count as admitted support in every branch of the verdict,
-    so the Claim is ``supported`` on its origin alone; contradicting attestations
-    still contradict and freshness still ages it.
-    """
-
-    tag: Literal["playbill-claim-adjudication-rule-v2"] = "playbill-claim-adjudication-rule-v2"
-    origin_supports: Literal[True] = True
-
-
-class ClaimAdjudicationRuleV3(_ClaimAdjudicationRuleBase):
-    """The v2 rule, with a Claim's origin-only evidence exempt from current replay.
-
-    Under the v2 rule a ``none`` Claim is supported on its origin alone, yet an
-    origin-only copy of its evidence still had to replay currently, so erasing
-    that copy read the Claim ``stale``. Under v3 an origin-only entry never needs
-    a current replay; every other entry is judged as under v2. Compiled by Claim
-    law v2 revision 10 (compiler revision 35) wherever v2 would be.
-    """
-
-    tag: Literal["cruxible-claim-adjudication-rule-v3"] = "cruxible-claim-adjudication-rule-v3"
-    origin_supports: Literal[True] = True
-    origin_replay_exempt: Literal[True] = True
-
-
-ClaimAdjudicationRuleAny = ClaimAdjudicationRuleV1 | ClaimAdjudicationRule | ClaimAdjudicationRuleV3
-
-
-def _admitted_kinds(rule: ClaimAdjudicationRuleAny) -> frozenset[str]:
-    if isinstance(rule, ClaimAdjudicationRule | ClaimAdjudicationRuleV3):
+def _admitted_kinds(rule: ClaimAdjudicationRule) -> frozenset[str]:
+    if rule.origin_supports:
         return frozenset({"origin_only", "direct", "derivational"})
     return frozenset({"direct", "derivational"})
 
 
-def _replay_required(rule: ClaimAdjudicationRuleAny, evidence: CaptureVerdictEvidence) -> bool:
-    """Whether this entry must replay currently to count (rule v3 exempts origin-only)."""
+def _replay_required(rule: ClaimAdjudicationRule, evidence: CaptureVerdictEvidence) -> bool:
+    """Whether this entry must replay currently to count."""
 
     if not rule.require_current_replay:
         return False
-    return not (isinstance(rule, ClaimAdjudicationRuleV3) and evidence.admission == "origin_only")
+    return not (rule.origin_replay_exempt and evidence.admission == "origin_only")
 
 
 def claim_adjudication_rule(
@@ -160,15 +142,14 @@ def claim_adjudication_rule(
     origin_supports: bool = False,
     origin_replay_exempt: bool = False,
     inverse: bool = False,
-) -> ClaimAdjudicationRuleAny:
+) -> ClaimAdjudicationRule:
     """Compile the conservative rule from the exact accepted ClaimType.
 
-    Every ClaimType compiles the v1 rule except a v7 one whose evidence
-    requirement is ``none``, which compiles the v2 rule. ``origin_supports``
-    compiles the v2 rule whatever the requirement: Claim law v2 revision 9
-    asks it for a key Claim written with its Subject's creation, which the
-    creation itself covers. ``origin_replay_exempt`` (Claim law v2 revision 10)
-    compiles the v3 rule wherever the v2 rule would be compiled. ``inverse``
+    The origin supports a Claim whose ClaimType's evidence requirement is
+    ``none``, and wherever ``origin_supports`` asks it (the Claim law asks it
+    for a key Claim written with its Subject's creation, which the creation
+    itself covers). ``origin_replay_exempt`` exempts origin-only evidence from
+    current replay wherever the origin supports. ``inverse``
     compiles the rule an inverse Claim (a none) is judged by: its evidence ages
     on the inverse's own ``stale_after`` (``effective_inverse_stale_after``),
     which is the type's freshness unless the inverse declares its own.
@@ -200,7 +181,7 @@ def claim_adjudication_rule(
     )
 
 
-def _sealed(rule: ClaimAdjudicationRuleAny) -> ClaimAdjudicationRuleAny:
+def _sealed(rule: ClaimAdjudicationRule) -> ClaimAdjudicationRule:
     seal(rule)
     return rule
 
@@ -212,7 +193,7 @@ def _compile_claim_adjudication_rule(
     origin_supports: bool,
     origin_replay_exempt: bool = False,
     inverse: bool = False,
-) -> ClaimAdjudicationRuleAny:
+) -> ClaimAdjudicationRule:
     supports = origin_supports or effective_evidence_requirement(claim_type) == "none"
     horizon = (
         effective_inverse_stale_after(claim_type)
@@ -221,14 +202,7 @@ def _compile_claim_adjudication_rule(
         if claim_type.evidence_freshness is None
         else claim_type.evidence_freshness.stale_after
     )
-    rule_type: (
-        type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] | type[ClaimAdjudicationRuleV3]
-    ) = (
-        (ClaimAdjudicationRuleV3 if origin_replay_exempt else ClaimAdjudicationRule)
-        if supports
-        else ClaimAdjudicationRuleV1
-    )
-    return rule_type(
+    return ClaimAdjudicationRule(
         claim_type_digest=claim_type_digest,
         evidence_policy_digest=_policy_digest(claim_type.evidence_admission_policy),
         shell_sensitive=claim_type.referent_sensitivity == "shell",
@@ -241,11 +215,13 @@ def _compile_claim_adjudication_rule(
         conflict_behavior=(
             "contradiction_precedence" if claim_type.cardinality == "one" else "unresolved"
         ),
+        origin_supports=supports,
+        origin_replay_exempt=supports and origin_replay_exempt,
     )
 
 
 @sealed_memo
-def claim_adjudication_rule_digest(rule: ClaimAdjudicationRuleAny) -> str:
+def claim_adjudication_rule_digest(rule: ClaimAdjudicationRule) -> str:
     payload = rule.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -459,39 +435,6 @@ def _require_unique_evidence_digests(
         raise ValueError("Claim verdict evidence digests must be globally unique")
 
 
-class ClaimVerdictResultV1(_StrictVerdictModel):
-    """Verdict at one time; evidence digest tuples are lifetime stance inventory."""
-
-    tag: Literal["playbill-claim-verdict-v1"] = "playbill-claim-verdict-v1"
-    claim_statement_digest: str
-    adjudication_rule_digest: str
-    evaluation_time: datetime
-    verdict: EvidenceRelativeClaimVerdictV1
-    currency: EvidenceCurrency
-    basis_kinds: tuple[EvidenceBasisKind, ...]
-    authority_basis: tuple[str, ...]
-    provenance_grades: tuple[EvidenceProvenanceGrade, ...]
-    epistemic_grades: tuple[EvidenceEpistemicGrade, ...]
-    supporting_evidence_digests: tuple[str, ...]
-    contradicting_evidence_digests: tuple[str, ...]
-    unsure_evidence_digests: tuple[str, ...]
-    control_components: tuple[EvidenceControlComponent, ...]
-    refusal_codes: tuple[str, ...] = ()
-
-    @field_validator("claim_statement_digest", "adjudication_rule_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _evaluation_time(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("Claim verdict evaluation time must be timezone-aware")
-        return value
-
-
 class EvidenceFreshnessExpiration(_StrictVerdictModel):
     tag: Literal["playbill-evidence-freshness-expiration-v1"] = (
         "playbill-evidence-freshness-expiration-v1"
@@ -525,9 +468,14 @@ class EvidenceFreshnessExpiration(_StrictVerdictModel):
 
 
 class ClaimVerdictResult(_StrictVerdictModel):
-    """Verdict carrying the exact horizon-expiration vector for ClaimType v3."""
+    """Verdict at one time; evidence digest tuples are lifetime stance inventory.
 
-    tag: Literal["playbill-claim-verdict-v2"] = "playbill-claim-verdict-v2"
+    ``freshness_expirations`` is the exact horizon-expiration vector, one entry
+    per admitted Capture, when the rule ages evidence, and empty when it does
+    not: horizon-free and horizon-bearing Claims share this one result.
+    """
+
+    tag: Literal["cruxible-claim-verdict-v3"] = "cruxible-claim-verdict-v3"
     claim_statement_digest: str
     adjudication_rule_digest: str
     evaluation_time: datetime
@@ -541,7 +489,7 @@ class ClaimVerdictResult(_StrictVerdictModel):
     contradicting_evidence_digests: tuple[str, ...]
     unsure_evidence_digests: tuple[str, ...]
     control_components: tuple[EvidenceControlComponent, ...]
-    freshness_expirations: tuple[EvidenceFreshnessExpiration, ...]
+    freshness_expirations: tuple[EvidenceFreshnessExpiration, ...] = ()
     refusal_codes: tuple[str, ...] = ()
 
     @field_validator("claim_statement_digest", "adjudication_rule_digest")
@@ -568,36 +516,16 @@ class ClaimVerdictResult(_StrictVerdictModel):
         return value
 
 
-ClaimVerdictResultAny = ClaimVerdictResultV1 | ClaimVerdictResult
+def reported_claim_verdict(result: ClaimVerdictResult) -> EvidenceRelativeClaimVerdictV1:
+    """The verdict in the query vocabulary, which reads ``stale_evidence`` as ``stale``."""
 
-
-def claim_verdict_v1_compat(result: ClaimVerdictResultAny) -> ClaimVerdictResultV1:
-    """Project v2 freshness into the conservative v1 stale vocabulary."""
-
-    if isinstance(result, ClaimVerdictResultV1):
-        return result
-    return ClaimVerdictResultV1(
-        claim_statement_digest=result.claim_statement_digest,
-        adjudication_rule_digest=result.adjudication_rule_digest,
-        evaluation_time=result.evaluation_time,
-        verdict=("stale" if result.verdict == "stale_evidence" else result.verdict),
-        currency=result.currency,
-        basis_kinds=result.basis_kinds,
-        authority_basis=result.authority_basis,
-        provenance_grades=result.provenance_grades,
-        epistemic_grades=result.epistemic_grades,
-        supporting_evidence_digests=result.supporting_evidence_digests,
-        contradicting_evidence_digests=result.contradicting_evidence_digests,
-        unsure_evidence_digests=result.unsure_evidence_digests,
-        control_components=result.control_components,
-        refusal_codes=result.refusal_codes,
-    )
+    return "stale" if result.verdict == "stale_evidence" else result.verdict
 
 
 def _expiration(
     item: CaptureVerdictEvidence,
     *,
-    rule: ClaimAdjudicationRuleAny,
+    rule: ClaimAdjudicationRule,
     reobservations: tuple[CaptureReobservationEvidence, ...],
     evaluation_time: datetime,
 ) -> EvidenceFreshnessExpiration:
@@ -613,25 +541,22 @@ def _expiration(
 
 
 def verify_claim_verdict_freshness(
-    result: ClaimVerdictResultAny,
+    result: ClaimVerdictResult,
     *,
-    rule: ClaimAdjudicationRuleAny,
+    rule: ClaimAdjudicationRule,
     captures: tuple[CaptureVerdictEvidence, ...],
     reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> None:
-    """Refuse a v3 verdict whose committed expiration vector cannot reproduce."""
+    """Refuse a verdict whose committed expiration vector cannot reproduce."""
 
     admitted_kinds = _admitted_kinds(rule)
     if rule.max_evidence_age is None:
-        if isinstance(result, ClaimVerdictResult):
+        if result.freshness_expirations:
             raise ValueError(
-                "cruxible.claim.evidence_freshness_invalid: v2 verdict has no freshness rule"
+                "cruxible.claim.evidence_freshness_invalid: a rule without a freshness horizon "
+                "commits no expirations"
             )
         return
-    if not isinstance(result, ClaimVerdictResult):
-        raise ValueError(
-            "cruxible.claim.evidence_freshness_invalid: freshness rule requires a v2 verdict"
-        )
     expected = tuple(
         _expiration(
             item,
@@ -651,7 +576,7 @@ def verify_claim_verdict_freshness(
 def _capture_current(
     evidence: CaptureVerdictEvidence,
     *,
-    rule: ClaimAdjudicationRuleAny,
+    rule: ClaimAdjudicationRule,
     evaluation_time: datetime,
     reobservations: tuple[CaptureReobservationEvidence, ...] = (),
 ) -> bool:
@@ -674,7 +599,7 @@ def _capture_current(
 def evaluate_claim_verdict(
     *,
     claim_statement_digest: str,
-    rule: ClaimAdjudicationRuleAny,
+    rule: ClaimAdjudicationRule,
     evaluation_time: datetime,
     captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
@@ -684,7 +609,7 @@ def evaluate_claim_verdict(
     referent_current: bool = True,
     resolved_authority_basis: tuple[str, ...] = (),
     reobservations: tuple[CaptureReobservationEvidence, ...] = (),
-) -> ClaimVerdictResultAny:
+) -> ClaimVerdictResult:
     """Compute one replayable verdict from current evidence and resolved authority.
 
     ``resolved_authority_basis`` must already have been revalidated at
@@ -838,41 +763,11 @@ def evaluate_claim_verdict(
         if before_claim_interval
         else ("stale" if verdict in {"stale", "stale_evidence"} else "current")
     )
-    if rule.max_evidence_age is not None:
-        result = ClaimVerdictResult(
-            claim_statement_digest=claim_statement_digest,
-            adjudication_rule_digest=rule_digest,
-            evaluation_time=evaluation_time,
-            verdict=verdict,
-            currency=currency,
-            basis_kinds=tuple(sorted(basis)),
-            authority_basis=resolved_authority_basis,
-            provenance_grades=tuple(sorted(provenance)),
-            epistemic_grades=tuple(sorted(epistemic)),
-            supporting_evidence_digests=tuple(sorted(all_support)),
-            contradicting_evidence_digests=tuple(sorted(all_contradicting)),
-            unsure_evidence_digests=tuple(sorted(all_unsure)),
-            control_components=all_components,
-            freshness_expirations=tuple(
-                _expiration(
-                    item,
-                    rule=rule,
-                    reobservations=reobservations,
-                    evaluation_time=evaluation_time,
-                )
-                for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
-                if item.admission in admitted_kinds
-            ),
-        )
-        verify_claim_verdict_freshness(
-            result, rule=rule, captures=captures, reobservations=reobservations
-        )
-        return result
-    return ClaimVerdictResultV1(
+    result = ClaimVerdictResult(
         claim_statement_digest=claim_statement_digest,
         adjudication_rule_digest=rule_digest,
         evaluation_time=evaluation_time,
-        verdict=cast(EvidenceRelativeClaimVerdictV1, verdict),
+        verdict=verdict,
         currency=currency,
         basis_kinds=tuple(sorted(basis)),
         authority_basis=resolved_authority_basis,
@@ -882,19 +777,32 @@ def evaluate_claim_verdict(
         contradicting_evidence_digests=tuple(sorted(all_contradicting)),
         unsure_evidence_digests=tuple(sorted(all_unsure)),
         control_components=all_components,
+        freshness_expirations=(
+            ()
+            if rule.max_evidence_age is None
+            else tuple(
+                _expiration(
+                    item,
+                    rule=rule,
+                    reobservations=reobservations,
+                    evaluation_time=evaluation_time,
+                )
+                for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
+                if item.admission in admitted_kinds
+            )
+        ),
     )
+    verify_claim_verdict_freshness(
+        result, rule=rule, captures=captures, reobservations=reobservations
+    )
+    return result
 
 
 __all__ = [
     "CaptureReobservationEvidence",
     "CaptureVerdictEvidence",
-    "ClaimAdjudicationRuleAny",
-    "ClaimAdjudicationRuleV1",
     "ClaimAdjudicationRule",
-    "ClaimAdjudicationRuleV3",
-    "ClaimVerdictResultV1",
     "ClaimVerdictResult",
-    "ClaimVerdictResultAny",
     "EvidenceBasisKind",
     "EvidenceControlComponent",
     "EvidenceCurrency",
@@ -903,10 +811,10 @@ __all__ = [
     "EvidenceRelativeClaimVerdictV1",
     "EvidenceRelativeClaimVerdict",
     "EvidenceFreshnessExpiration",
+    "reported_claim_verdict",
     "ObservationTrustGrade",
     "claim_adjudication_rule",
     "claim_adjudication_rule_digest",
-    "claim_verdict_v1_compat",
     "evaluate_claim_verdict",
     "evidence_control_components",
     "observation_trust_grade",

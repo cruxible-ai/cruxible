@@ -28,10 +28,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimReadBatchRequest,
     ClaimReadBatchResult,
 )
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.floor import FloorDelta
@@ -280,18 +276,6 @@ def kit_status(instance_id: str) -> KitStatus:
 @router.post("/{instance_id}/kits", response_model=KitChangeResult)
 def kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResult:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
-
-
-@router.post(
-    "/{instance_id}/claim-types/upgrade",
-    response_model=ClaimTypeUpgradeResult,
-)
-def claim_type_upgrade(
-    instance_id: str, request: ClaimTypeUpgradeRequest
-) -> ClaimTypeUpgradeResult:
-    return playbill_api.playbill_claim_type_upgrade(
-        resolve_server_instance_id(instance_id), request
-    )
 
 
 @router.post("/{instance_id}/kits/remove", response_model=KitChangeResult)

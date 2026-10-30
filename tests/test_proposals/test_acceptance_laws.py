@@ -10,8 +10,6 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_LAW,
     CLAIM_LAW,
     CLAIM_TYPE_LAW,
-    CLAIM_TYPE_LAW_V3,
-    CLAIM_TYPE_LAW_V4,
     DOCUMENT_LAW,
     LIGHT_PROCEDURE_LAW,
     LINE_V6_ACCEPTANCE_LAW,
@@ -97,21 +95,30 @@ def test_one_claim_law_is_installed_and_removed_claim_formats_have_none() -> Non
         ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)
 
 
-def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() -> None:
+def test_one_claim_type_law_is_installed_and_removed_claim_type_formats_have_none() -> None:
     assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1").coordinate
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="cruxible-claim-type-v10").coordinate
         == CLAIM_TYPE_LAW
     )
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v3").coordinate
-        == CLAIM_TYPE_LAW_V3
+    for removed in (
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v2",
+        "playbill-claim-type-v3",
+        "playbill-claim-type-v4",
+        "playbill-claim-type-v5",
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
+        "cruxible-claim-type-v9",
+    ):
+        with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
+            ACCEPTANCE_LAWS.resolve_member(artifact_tag=removed)
+    # Another revision is not installed: replay refuses it.
+    earlier = _artifact_law_coordinate(
+        CLAIM_TYPE_LAW.identifier, "cruxible-claim-type-v10", semantic_revision=2
     )
-    assert (
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v4").coordinate
-        == CLAIM_TYPE_LAW_V4
-    )
-    with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
-        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v2")
+    with pytest.raises(ProposalIntegrityError, match="cannot be reproduced"):
+        ACCEPTANCE_LAWS.require_historical(identifier=earlier.identifier, digest=earlier.digest)
 
 
 def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:

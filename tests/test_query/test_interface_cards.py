@@ -359,7 +359,6 @@ def test_v4_card_adds_a_compact_attestation_consequence_policy_summary() -> None
     original = claim_type(STATUS_PREDICATE)
     governed = original.model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v4",
             "attestation_consequence_policy": ClaimAttestationConsequencePolicy(
                 rules=(
                     ClaimAttestationConsequenceRule(

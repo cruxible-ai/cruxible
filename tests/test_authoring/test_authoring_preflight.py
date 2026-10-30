@@ -29,15 +29,14 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     CaptureContractAny,
     builtin_contract_for_write,
-    capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -90,13 +89,12 @@ def _seed_claim_surface(
     shell = _subject()
     claim_type = (claim_type_override or _claim_type()).model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="coordinator-source",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=("self_asserted",),
+                        capture_contracts=(contract.identity.name,),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

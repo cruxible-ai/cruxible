@@ -20,7 +20,6 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.procedure_mandates import (
@@ -79,7 +78,7 @@ def keyed_claim_item(slug: str = "click") -> dict[str, object]:
 
 
 def _severity_type() -> ClaimType:
-    template = delivery._claim_type(capture_contract_digest(capture_contract()).tagged)
+    template = delivery._claim_type(capture_contract().identity.name)
     return template.model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=SEVERITY),

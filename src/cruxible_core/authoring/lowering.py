@@ -960,7 +960,7 @@ def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | 
 
 
 class AuthoringDuplicateStatement(FormatError):
-    """Two authored members state one statement once canonicalized (ClaimType v8)."""
+    """Two authored members state one statement once canonicalized."""
 
     error_code = "cruxible.authoring.duplicate_statement"
 

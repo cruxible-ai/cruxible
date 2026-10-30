@@ -40,8 +40,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
@@ -112,9 +112,8 @@ def _subject() -> SubjectShell:
     )
 
 
-def _claim_type(contract_digest: str) -> ClaimType:
+def _claim_type(contract: str) -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -122,13 +121,12 @@ def _claim_type(contract_digest: str) -> ClaimType:
         literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="direct-independent",
                     claim_roles=("normative", "observation"),
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("database_record",),
+                    capture_contracts=(contract,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
@@ -162,7 +160,7 @@ def _judge_claim_pinning(
     contract = build_capture_contract(name="test.events-v1", epistemic_grade="observed")
     contract_digest = capture_contract_digest(contract).tagged
     shell = _subject()
-    claim_type = _claim_type(contract_digest)
+    claim_type = _claim_type(contract.identity.name)
 
     run_coordinate = CaptureRunCoordinate(
         run_kind="procedure",

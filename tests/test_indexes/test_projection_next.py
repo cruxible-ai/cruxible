@@ -97,7 +97,7 @@ from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure, named
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
-from tests.test_claims.test_claims import _claim_type
+from tests.test_claims.test_claims import _claim_type, vocabulary_claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_query.test_query_execution_service import _instance_with_query
 
@@ -630,7 +630,7 @@ def test_ontology_claim_type_marker_goes_stale_after_claim_type_migration(
 ) -> None:
     instance, owner = _instance_with_query(tmp_path)
     predicate = "sec.vuln.severity"
-    ontology_type = _claim_type().model_copy(
+    ontology_type = vocabulary_claim_type().model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
             "predicate": predicate,

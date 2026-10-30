@@ -17,7 +17,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claim_verdicts import (
-    ClaimAdjudicationRuleV1,
+    ClaimAdjudicationRule,
     claim_adjudication_rule,
 )
 from cruxible_client.contracts.claims import (
@@ -34,7 +34,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -101,7 +101,6 @@ def claim_type(
     relation = bool(object_subject_kinds)
     cardinality = "many" if relation else "one"
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=byte_sorted(subject_kinds),
@@ -110,7 +109,7 @@ def claim_type(
         allowed_object_subject_kinds=byte_sorted(object_subject_kinds),
         cardinality=cardinality,
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality=cardinality,
@@ -140,7 +139,7 @@ def claim_type_pin(
     )
 
 
-def adjudication_rule(contract: ClaimType) -> ClaimAdjudicationRuleV1:
+def adjudication_rule(contract: ClaimType) -> ClaimAdjudicationRule:
     """Return the replayable verdict rule for one ClaimType."""
 
     return claim_adjudication_rule(

@@ -58,10 +58,6 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequest,
 )
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.declared_blocks import (
     BlockRepinResult,
 )
@@ -380,15 +376,6 @@ def handle_playbill_kit_add(
         )
 
     return _daemon_call(add, operation_name="cruxible_kit_add")
-
-
-def handle_playbill_claim_type_upgrade(
-    instance_id: str, request: ClaimTypeUpgradeRequest
-) -> ClaimTypeUpgradeResult:
-    return _daemon_call(
-        lambda client: client.upgrade_claim_types(instance_id, request),
-        operation_name="cruxible_claim_type_upgrade",
-    )
 
 
 def handle_playbill_kit_remove(instance_id: str, request: KitRemoveRequest) -> KitChangeResult:

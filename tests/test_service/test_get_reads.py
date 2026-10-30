@@ -229,7 +229,7 @@ def test_why_history_and_proof_reuse_todays_services(world: dict[str, Any]) -> N
     history = _get(instance, claim, detail="history").history
     subject_why = _get(instance, _SUBJECT, detail="why").why
 
-    assert why is not None and why["tag"].startswith("playbill-claim-explanation-")
+    assert why is not None and why["tag"].startswith("cruxible-claim-explanation-")
     assert proof is not None and proof["tag"] == "playbill-claim-read-v2"
     assert subject_why is not None and subject_why["tag"] == "playbill-explain-v1"
     assert history is not None
@@ -367,7 +367,6 @@ def test_a_refused_proposal_card_carries_its_refusal_and_no_dead_next_step(
 
     instance, _owner = initialize_local(tmp_path)
     payload = literal_claim_type().model_dump(mode="json")
-    payload["artifact_format"] = "playbill-claim-type-v3"
     payload["evidence_freshness"] = {
         "tag": "playbill-claim-evidence-freshness-v1",
         "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
@@ -478,21 +477,18 @@ def test_contract_succession_reads_by_identity_and_version(tmp_path: Path) -> No
     assert _get(instance, first, detail="why").why is not None
 
 
-def test_a_digest_rule_resolves_to_the_contract_it_names(tmp_path: Path) -> None:
+def test_an_identity_rule_names_the_contract_on_the_card(tmp_path: Path) -> None:
     from tests.test_claims.test_identity_evidence_rules import (
         IDENTITY,
-        ORIGINAL,
-        _digest,
-        _digest_rule,
-        _v5_type,
+        PREDICATE,
+        _v6_type,
         _World,
     )
-    from tests.test_claims.test_identity_evidence_rules import PREDICATE as V5_PREDICATE
 
     world = _World(tmp_path)
-    world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
+    world.seed(_v6_type())
 
-    card = _get(world.instance, f"ClaimType:{V5_PREDICATE}").card
+    card = _get(world.instance, f"ClaimType:{PREDICATE}").card
 
     assert card is not None and card.model_dump()["evidence"] == (IDENTITY.qualified,)
 

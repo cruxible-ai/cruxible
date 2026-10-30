@@ -11,10 +11,10 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy as ClaimEvidenceAdmissionPolicy,
 )
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+    ClaimEvidenceAdmissionRule as ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module
@@ -35,7 +35,6 @@ from tests.core_support._knowledge_loop_support import (
 from tests.test_claims.test_claims import _claim_type
 
 OWNER = OrientCaller("owner", "admin")
-UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run claim-type upgrade"
 
 
 @pytest.fixture(scope="module")
@@ -107,15 +106,17 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert "sha256:" not in json.dumps(wire["kinds"])
 
 
-def test_attention_names_digest_named_rules_and_suggests_the_upgrade(seeded) -> None:  # type: ignore[no-untyped-def]
+def test_attention_suggests_no_claim_type_upgrade(seeded) -> None:  # type: ignore[no-untyped-def]
+    """Every evidence rule names contracts by identity: there is nothing to upgrade."""
+
     result = service_playbill_orient(seeded, caller=OWNER, surface="mcp")
 
     assert result.attention is not None
-    assert result.attention.notes == (UPGRADE_NOTE,)
-    assert "cruxible_claim_type_upgrade()" in result.next
+    assert result.attention.notes == ()
+    assert not any("upgrade" in call for call in result.next)
 
 
-def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
+def test_attention_shows_next_top_rows_without_adding_notes(
     own_seeded,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,9 +135,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
     monkeypatch.setattr(
         orient_module,
         "summarize_playbill_next",
-        lambda *args, **kwargs: SimpleNamespace(
-            items=(other, item), total_items=7, matching_item=item, setup_items=0
-        ),
+        lambda *args, **kwargs: SimpleNamespace(items=(other, item), total_items=7, setup_items=0),
     )
 
     attention = service_playbill_orient(own_seeded, caller=OWNER).attention
@@ -147,8 +146,8 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         "repair proposal_stale: sha256:0123456789ab",
         "warning claim_uncovered: ClaimType:project.work_item.status",
     )
-    # next's own line is reused; orient does not add a second upgrade note.
-    assert attention.notes == ("warning claim_uncovered: ClaimType:project.work_item.status",)
+    # next's rows are shown once, in top; orient adds no note of its own for them.
+    assert attention.notes == ()
 
 
 @pytest.mark.parametrize(
@@ -325,7 +324,6 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
                                 ),
                             ),
                         ),
-                        evidence_kinds=("self_asserted",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -337,7 +335,6 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
     with seeded.bind_accepted_projection(coordinate) as projection:
         names = CaptureContractNames(seeded, coordinate, connection=projection.typed.connection)
         assert names.admitted(identity_named) == ("sec.advisory-feed",)
-        assert not names.names_by_digest(identity_named)
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
 
 
@@ -364,7 +361,6 @@ def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-unt
         claim_types=(status, owner),
         subjects_by_kind={SUBJECT_KIND: 2},
         evidence={status.predicate: ("feed",), owner.predicate: ("feed",)},
-        digest_named=0,
         procedures=(),
         documents=(),
         queries=(),
@@ -433,7 +429,6 @@ def test_orient_advertises_names_by_the_shared_rule(seeded) -> None:  # type: ig
         claim_types=(status, shadowed, other),
         subjects_by_kind={SUBJECT_KIND: 2},
         evidence={},
-        digest_named=0,
         procedures=(),
         documents=(),
         queries=(),
@@ -529,7 +524,6 @@ def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
         claim_types=types,
         subjects_by_kind={SUBJECT_KIND: 2},
         evidence={item.predicate: value for item, value in zip(types, evidence, strict=True)},
-        digest_named=0,
         procedures=(),
         documents=(),
         queries=(),
@@ -601,15 +595,14 @@ def test_attention_summary_preserves_complete_orient_bytes(
         kwargs.pop("claims", None)
         return dependency_fold(*args, **kwargs)
 
-    def full_queue(instance, *, request, caller_principal_id, caller_rung, match, heads):  # type: ignore[no-untyped-def]
+    def full_queue(instance, *, request, caller_principal_id, caller_rung, heads):  # type: ignore[no-untyped-def]
         result = service_playbill_next(
             instance,
             request=request,
             caller_principal_id=caller_principal_id,
             caller_rung=caller_rung,
         )
-        matching = next((item for item in result.items if match(item)), None)
-        return PlaybillNextSummary(result.items, result.total_items, matching)
+        return PlaybillNextSummary(result.items, result.total_items)
 
     # The previous path constructed public Claim cards, all dependency facts,
     # the entire law-evidence map, health facets and a digested next page.

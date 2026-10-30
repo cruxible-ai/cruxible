@@ -1,8 +1,4 @@
-"""ClaimType v8: the canonical form literal values are stored and compared in.
-
-Every earlier format keeps its exact bytes, digest and ``model_dump``: the new
-field exists on the shared model, is null for them and is never written.
-"""
+"""A ClaimType's canonical form: how its literal values are stored and compared."""
 
 from __future__ import annotations
 
@@ -17,7 +13,6 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_types import (
-    V8_FIELDS,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -26,15 +21,14 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from tests.test_claims._claim_type_format_fixtures import historical_claim_types
-from tests.test_claims.test_claim_type_v7 import PRE_V7_FINGERPRINTS, v7
+from tests.test_claims.test_claim_type_v7 import v7
 
 PATH = claim_type_path("project.work_item.status")
 
 
 def v8(form: tuple[str, ...] = ("trim", "casefold"), **update: object) -> ClaimType:
     base = v7().model_dump(mode="python")
-    base.update(artifact_format="playbill-claim-type-v8", canonical_form=form)
+    base.update(canonical_form=form)
     base.update(update)
     return ClaimType.model_validate(base)
 
@@ -96,31 +90,18 @@ def test_a_form_refuses_unknown_repeated_and_conflicting_transforms() -> None:
 # --- the format ------------------------------------------------------------------
 
 
-def test_every_earlier_format_keeps_its_bytes_digest_and_model_dump() -> None:
-    from tests.test_claims._claim_type_format_fixtures import fingerprints
-
-    assert fingerprints() == PRE_V7_FINGERPRINTS
-    for claim_type in (*historical_claim_types().values(), v7()):
-        assert not set(V8_FIELDS) & set(claim_type.model_dump(mode="json"))
-        assert effective_canonical_form(claim_type) == ()
-
-
-def test_v8_writes_its_form_round_trips_and_digests_apart_from_v7() -> None:
+def test_a_claim_type_always_states_its_form_and_digests_it() -> None:
+    plain = v7()
+    assert plain.model_dump(mode="json")["canonical_form"] == []
+    assert effective_canonical_form(plain) == ()
     claim_type = v8()
     assert claim_type.model_dump(mode="json")["canonical_form"] == ["trim", "casefold"]
     assert parse_claim_type(render_claim_type(claim_type), path=PATH) == claim_type
-    assert claim_type_digest(claim_type) != claim_type_digest(v7())
+    assert claim_type_digest(claim_type) != claim_type_digest(plain)
     assert effective_canonical_form(claim_type) == ("trim", "casefold")
-    empty = v8(())
-    assert empty.model_dump(mode="json")["canonical_form"] == []
-    assert effective_canonical_form(empty) == ()
-
-
-def test_v8_states_its_form_and_only_v8_may_carry_one() -> None:
-    with pytest.raises(ValidationError, match="states its canonical_form explicitly"):
+    assert v8(()) == plain
+    with pytest.raises(ValidationError, match="canonical_form"):
         v8(None)  # type: ignore[arg-type]
-    with pytest.raises(ValidationError, match="only ClaimType v8 and later can carry"):
-        v7(canonical_form=("trim",))
 
 
 def test_a_form_applies_only_to_literals_and_every_enum_member_is_already_canonical() -> None:
@@ -131,11 +112,9 @@ def test_a_form_applies_only_to_literals_and_every_enum_member_is_already_canoni
     assert v8(("upper",), literal_schema={"enum": ["DONE"], "type": "string"})
 
 
-def test_the_claim_type_law_accepts_v8_under_the_v7_rules() -> None:
-    from cruxible_client.contracts.laws import (
-        ACCEPTANCE_LAWS,
-        CLAIM_TYPE_LAW_V8_REVISION_1,
-    )
+def test_the_claim_type_law_accepts_a_form_under_the_requirement_rules() -> None:
+    from cruxible_client.contracts.claim_types import CLAIM_TYPE_FORMAT
+    from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, CLAIM_TYPE_LAW
 
     accepted = evaluate_claim_type_law(v8(), path=PATH, predecessor=None)
     assert accepted.verdict == "accepted", accepted
@@ -145,34 +124,28 @@ def test_the_claim_type_law_accepts_v8_under_the_v7_rules() -> None:
     )
     assert refused.verdict == "refused"
     assert refused.diagnostics[0].code == "cruxible.claim_type.evidence_requirement_unsatisfiable"
-    installed = ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v8")
-    assert installed.coordinate == CLAIM_TYPE_LAW_V8_REVISION_1
+    installed = ACCEPTANCE_LAWS.resolve_member(artifact_tag=CLAIM_TYPE_FORMAT)
+    assert installed.coordinate == CLAIM_TYPE_LAW
 
 
 # --- lowering authored input -----------------------------------------------------
 
 
-def test_stating_a_form_lowers_to_v8_and_an_edit_keeps_it_unless_named() -> None:
+def test_lowering_states_a_form_and_an_edit_keeps_it_unless_named() -> None:
     from tests.test_claims.test_claim_type_v7 import _input, _lower
 
     plain = _lower(_input(canonical_form=None), {})
-    assert plain.artifact_format == "playbill-claim-type-v7"
+    assert plain.canonical_form == ()
     formed = _lower(_input(canonical_form=["nfc", "trim"]), {})
-    assert formed.artifact_format == "playbill-claim-type-v8"
     assert formed.canonical_form == ("nfc", "trim")
     path = claim_type_path(formed.predicate)
     tree = {path: render_claim_type(formed)}
     kept = _lower(_input(), tree)
-    assert (kept.artifact_format, kept.canonical_form) == (
-        "playbill-claim-type-v8",
-        ("nfc", "trim"),
-    )
+    assert kept.canonical_form == ("nfc", "trim")
     cleared = _lower(_input(canonical_form=None), tree)
-    assert (cleared.artifact_format, cleared.canonical_form) == ("playbill-claim-type-v8", ())
+    assert cleared.canonical_form == ()
     moved = _lower(_input(canonical_form=["casefold"]), tree)
     assert moved.canonical_form == ("casefold",)
     assert moved.lifecycle.predecessor_digest == claim_type_digest(formed).tagged
-    # Over a v7 ClaimType, leaving the field out stays v7.
-    assert _lower(_input(), {path: render_claim_type(plain)}).artifact_format == (
-        "playbill-claim-type-v7"
-    )
+    # Over a ClaimType without a form, leaving the field out keeps none.
+    assert _lower(_input(), {path: render_claim_type(plain)}).canonical_form == ()

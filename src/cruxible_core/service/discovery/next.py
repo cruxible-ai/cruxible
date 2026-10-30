@@ -63,12 +63,11 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResult,
-    ClaimVerdictResultAny,
     EvidenceFreshnessExpiration,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
-    ClaimLawEvidenceAny,
+    ClaimLawEvidence,
     LiteralClaimObject,
     SubjectClaimObject,
     _is_claim_type_rederivation,
@@ -91,7 +90,6 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
@@ -671,9 +669,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     ),
     "provider_lane": frozenset({"not_reported", "available", "unavailable"}),
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
-    "compiler": frozenset(
-        {"current", "upgrade_available", "no_upgrade_path", "claim_type_upgrade_available"}
-    ),
+    "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
     "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
     "triggers": frozenset({"not_observed", "scheduled", "unscheduled"}),
@@ -853,7 +849,6 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.proposal.activate": "proposal activate",
     "cruxible.compiler.upgrade": "compiler upgrade",
-    "cruxible.claim-type.upgrade": "claim-type upgrade",
     "cruxible.line.enable": "line enable",
     "cruxible.line.evaluate": "line evaluate",
     "cruxible.line.dispatch": "line dispatch",
@@ -945,7 +940,6 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.proposal.activate": "cruxible_proposal_activate",
     "cruxible.compiler.upgrade": "cruxible_compiler_upgrade",
-    "cruxible.claim-type.upgrade": "cruxible_claim_type_upgrade",
     "cruxible.line.enable": "cruxible_line_enable",
     "cruxible.line.evaluate": "cruxible_line_evaluate",
     "cruxible.line.dispatch": "cruxible_line_dispatch",
@@ -1161,7 +1155,7 @@ def _role_contracts(claim_type: ClaimType, role: str) -> tuple[str, ...]:
     names = {
         item.target.name
         for rule in claim_type.evidence_admission_policy.rules
-        if isinstance(rule, ClaimEvidenceAdmissionIdentityRule) and role in rule.claim_roles
+        if role in rule.claim_roles
         for item in rule.capture_contracts
     }
     return tuple(
@@ -1369,9 +1363,6 @@ def _mcp_repair_call(
 
     if operation == "cruxible.compiler.upgrade":
         return _mcp_call("cruxible_compiler_upgrade")
-    if operation == "cruxible.claim-type.upgrade":
-        # The bare request previews every ClaimType the upgrade would change.
-        return _mcp_call("cruxible_claim_type_upgrade", request={})
     if operation == "cruxible.line.enable" and text("line"):
         return _mcp_call("cruxible_line_enable", line=text("line"))
     if operation == "cruxible.line.evaluate" and text("line") and text("since") and text("until"):
@@ -1514,8 +1505,6 @@ def _sdk_repair_call(
         return "cx.inbox()" + _sdk_call(".list", line=line, status="unread")
     if operation == "cruxible.prediction.settle" and (prediction := text("prediction_id")):
         return _sdk_call("cx.settle", prediction)
-    if operation == "cruxible.claim-type.upgrade":
-        return _sdk_call("cx.upgrade_claim_types")
     if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
@@ -1653,9 +1642,6 @@ def _repair_command(
     elif operation == "cruxible.compiler.upgrade":
         # No operands: the command targets the compiler the daemon runs, which
         # is the one this repair names in its facet's detail.
-        pass
-    elif operation == "cruxible.claim-type.upgrade":
-        # No operands: the bare command previews every ClaimType it would change.
         pass
     elif operation == "cruxible.line.evaluate":
         line, since, until = values.get("line"), values.get("since"), values.get("until")
@@ -2422,7 +2408,7 @@ def _oracle_claim_rows(
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...],
     claims: tuple[ClaimArtifact, ...] | None,
     resolution_statuses: Mapping[str, str] | None,
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
     access_profile: CoverageAccessProfile | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
@@ -2643,7 +2629,7 @@ def _resolve_coordinate(
 
 def _claim_threshold_evidence(
     instance: PlaybillInstance, *, at: AcceptedProjectionCoordinate
-) -> Mapping[str, ClaimLawEvidenceAny]:
+) -> Mapping[str, ClaimLawEvidence]:
     """A lazy law-evidence map; only threshold-bearing Claims need these records."""
 
     return ClaimVerdictReadContext(instance, at).history().law_evidence
@@ -2655,7 +2641,7 @@ def _claim_attestation_threshold_items(
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
     claims: tuple[ClaimArtifact, ...],
-    law_evidence: Mapping[str, ClaimLawEvidenceAny],
+    law_evidence: Mapping[str, ClaimLawEvidence],
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = (),
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Emit v4 queue consequences from current independent attestation components."""
@@ -2695,7 +2681,7 @@ def _claim_threshold_rows(
     accepted: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
     claim: ClaimArtifact,
-    law_evidence: Mapping[str, ClaimLawEvidenceAny],
+    law_evidence: Mapping[str, ClaimLawEvidence],
     claim_types: dict[str, ClaimType],
     evaluation_time: datetime,
     door_events: Iterable[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]],
@@ -2944,7 +2930,7 @@ def _claim_items(
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = (),
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
     claims: tuple[ClaimArtifact, ...] | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
     access_profile: CoverageAccessProfile | None = None,
@@ -3014,7 +3000,7 @@ def _claim_slot_rows(
     internal: AcceptedProjectionCoordinate,
     group: list[ClaimArtifact],
     resolution_statuses: Mapping[str, str] | None,
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None,
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     time_boundaries: set[datetime] | None,
@@ -3098,17 +3084,16 @@ def _claim_slot_rows(
             ).verdict
             if verdicts_by_identity is not None:
                 verdicts_by_identity[claim.identity.qualified] = verdict
-        if time_boundaries is not None and isinstance(verdict, ClaimVerdictResult):
+        if time_boundaries is not None:
             for expiration in verdict.freshness_expirations:
                 time_boundaries.add(expiration.expires_at)
                 time_boundaries.add(
                     expiration.expires_at - _expiring_lead(expiration, expiring_within)
                 )
         if verdict.verdict == "stale_evidence":
-            expirations = (
-                verdict.freshness_expirations if isinstance(verdict, ClaimVerdictResult) else ()
+            expired = tuple(
+                item for item in verdict.freshness_expirations if evaluation_time >= item.expires_at
             )
-            expired = tuple(item for item in expirations if evaluation_time >= item.expires_at)
             member_rows.append(
                 _item(
                     severity="repair",
@@ -3138,7 +3123,7 @@ def _claim_slot_rows(
                 )
             )
             continue
-        if isinstance(verdict, ClaimVerdictResult) and verdict.verdict in {
+        if verdict.verdict in {
             "supported",
             "contradicted",
             "unresolved",
@@ -3687,7 +3672,7 @@ def _attestation_resolving_accounts(
     instance: PlaybillInstance,
     *,
     lineage: tuple[_AttestationLineageArtifact, ...],
-    law_by_artifact: Mapping[tuple[str, str], ClaimLawEvidenceAny],
+    law_by_artifact: Mapping[tuple[str, str], ClaimLawEvidence],
 ) -> tuple[dict[str, tuple[CaptureAdmissionAccountV1, ...]], bool]:
     """Select immutable accounts under authored/rederivation authority law."""
 
@@ -3867,13 +3852,13 @@ class _DoorFold:
         instance: PlaybillInstance,
         coordinate: AcceptedProjectionCoordinate,
         *,
-        law_by_artifact: Callable[[], Mapping[tuple[str, str], ClaimLawEvidenceAny]],
+        law_by_artifact: Callable[[], Mapping[tuple[str, str], ClaimLawEvidence]],
         claim_types: dict[str, ClaimType | None],
     ) -> None:
         self._instance = instance
         self._coordinate = coordinate
         self._law_source = law_by_artifact
-        self._law_index: Mapping[tuple[str, str], ClaimLawEvidenceAny] | None = None
+        self._law_index: Mapping[tuple[str, str], ClaimLawEvidence] | None = None
         self._contents = _ObservedContents(instance, coordinate)
         self._lineages: dict[str, tuple[tuple[_AttestationLineageArtifact, ...], bool]] = {}
         self._accounts: dict[
@@ -3881,7 +3866,7 @@ class _DoorFold:
         ] = {}
         self._claim_types = claim_types
 
-    def _law(self) -> Mapping[tuple[str, str], ClaimLawEvidenceAny]:
+    def _law(self) -> Mapping[tuple[str, str], ClaimLawEvidence]:
         if self._law_index is None:
             self._law_index = self._law_source()
         return self._law_index
@@ -5370,10 +5355,9 @@ def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
 
 
 def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
-    """The accepted compiler and the ClaimType upgrade it leaves to run.
+    """The accepted compiler, which is always the one this process installs.
 
-    Accepted state always runs the compiler this process installs: an instance
-    under any other coordinate refuses to open.
+    An instance under any other coordinate refuses to open.
     """
 
     accepted = instance.accepted_coordinate().compiler
@@ -5384,45 +5368,7 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
         "running_compiler_digest": running.rule_digest,
         "running_compiler_revision": compiler_revision_label(running),
     }
-    return _claim_type_upgrade_health(instance, detail)
-
-
-def _claim_type_upgrade_health(
-    instance: PlaybillInstance, detail: Mapping[str, object]
-) -> PlaybillNextHealthV1:
-    """A current compiler, or the ClaimType upgrade it leaves to run.
-
-    The compiler writes only v4 identity evidence policies. A ClaimType
-    accepted with a v3 policy keeps working as it is, but is edited only after
-    the governed `claim-type upgrade` restates its policy. The genesis seeds a
-    new instance starts with are not counted: nothing is pending on an instance
-    the moment it is created.
-    """
-
-    head = instance.accepted_coordinate()
-    pending = instance.pending_policy_restatements(head.git_oid)
-    if not pending.count:
-        return PlaybillNextHealthV1(state="current", detail=detail)
-    upgrade = PlaybillNextRepairV1(
-        operation="cruxible.claim-type.upgrade",
-        target=instance.descriptor.instance_id,
-        required_change="propose_approve_and_activate_the_claim_type_upgrade",
-    )
-    return PlaybillNextHealthV1(
-        state="claim_type_upgrade_available",
-        detail={
-            **detail,
-            "count": pending.count,
-            "claim_types": list(pending.first),
-            "message": (
-                "these ClaimTypes state a v3 evidence policy and keep working as they are; "
-                "editing one waits for `cruxible claim-type upgrade` to restate it as v4"
-            ),
-        },
-        repair=upgrade.model_copy(
-            update={"command": _repair_command(upgrade.operation, arguments=upgrade.arguments)}
-        ),
-    )
+    return PlaybillNextHealthV1(state="current", detail=detail)
 
 
 #: One `line dispatch` admits at most this many occurrences.
@@ -6295,7 +6241,7 @@ def _projection_items(
     evaluation_time: datetime,
     access_profile: CoverageAccessProfile,
     observation: NextWorkspaceObservation | None,
-    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResult] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
     served: ServedRows | None = None,
@@ -6855,7 +6801,7 @@ def _queue_at(
     # One request evaluates a Claim's verdict at exactly one coordinate and one
     # evaluation time, so the folds that need it share the result instead of
     # each walking all 740 Claims. The map dies with the request.
-    verdicts_by_identity: dict[str, ClaimVerdictResultAny] = {}
+    verdicts_by_identity: dict[str, ClaimVerdictResult] = {}
     # Derive the whole population ONCE, here, through the same fold `orient`
     # uses. `_claim_items` used to walk every live Claim itself and evaluate
     # whatever the map did not already hold, so a `next` paid for the entire
@@ -7175,7 +7121,6 @@ class PlaybillNextSummary:
 
     items: tuple[PlaybillNextItemV1, ...]
     total_items: int
-    matching_item: PlaybillNextItemV1 | None
     setup_items: int = 0
 
 
@@ -7185,15 +7130,13 @@ def summarize_playbill_next(
     request: NextRequest,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
-    match: Callable[[PlaybillNextItemV1], bool] | None = None,
     heads: ReadHeads | None = None,
 ) -> PlaybillNextSummary:
-    """Count the queue and return its first three problem rows plus one optional matched row.
+    """Count the queue and return its first three problem rows.
 
     Setup rows are counted apart (``setup_items``): a choice the operator owns
     is not a problem, and sorts after every one.
 
-    Matches search the same first maximum-size page orient previously read.
     Claim rows at the current heads come from the worker's stored rows, with
     whatever it has not yet followed derived on read; a disabled or cold
     worker falls back to the full fold. Other inputs are observed per request.
@@ -7217,14 +7160,9 @@ def summarize_playbill_next(
         read_context=ClaimVerdictReadContext(instance, coordinate),
         heads=heads,
     )
-    matching = (
-        None
-        if match is None
-        else next((item for item in queue.items[:NEXT_MAX_LIMIT] if match(item)), None)
-    )
     setup = sum(item.severity == "setup" for item in queue.items)
     problems = queue.items[: len(queue.items) - setup]
-    return PlaybillNextSummary(problems[:3], len(problems), matching, setup)
+    return PlaybillNextSummary(problems[:3], len(problems), setup)
 
 
 def service_playbill_next(

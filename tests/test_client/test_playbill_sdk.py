@@ -52,7 +52,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -961,7 +961,7 @@ def test_claim_type_builder_writes_v7_with_identity_rules(tmp_path: Path) -> Non
         attestation_consequence_policy=policy,
     )
 
-    assert draft.definition.artifact_format == "playbill-claim-type-v7"
+    assert draft.definition.artifact_format == "cruxible-claim-type-v10"
     assert draft.definition.attestation_consequence_policy == policy
     assert draft.definition.evidence_requirement == "self"
     assert draft.definition.revision_evidence == "replace"
@@ -1385,7 +1385,6 @@ def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
     """One whole ClaimType a change set can define, minimal but real."""
 
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("sec.vuln",),
@@ -1394,7 +1393,7 @@ def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
         literal_schema={"type": "string"} if object_kind == "literal" else None,
         cardinality="one",
         permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=()),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=()),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",

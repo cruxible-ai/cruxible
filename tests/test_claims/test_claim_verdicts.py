@@ -13,7 +13,7 @@ from cruxible_client.contracts.claim_attestations import (
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
-    ClaimAdjudicationRuleV1,
+    ClaimAdjudicationRule,
     ClaimVerdictResult,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
@@ -39,7 +39,7 @@ def _coordinate() -> AcceptedCoordinate:
     )
 
 
-def _rule(**updates: object) -> ClaimAdjudicationRuleV1:
+def _rule(**updates: object) -> ClaimAdjudicationRule:
     claim_type = _claim_type()
     rule = claim_adjudication_rule(
         claim_type,
@@ -296,6 +296,22 @@ def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> Non
     )
     with pytest.raises(ValueError, match="cruxible.claim.evidence_freshness_invalid"):
         verify_claim_verdict_freshness(forged, rule=rule, captures=(evidence,))
+    # One result for horizon-free and horizon-bearing Claims: without a horizon
+    # the committed vector is empty, and a vector without a horizon is refused.
+    horizon_free = _rule(max_evidence_age=None)
+    plain = evaluate_claim_verdict(
+        claim_statement_digest=STATEMENT_DIGEST,
+        rule=horizon_free,
+        evaluation_time=NOW + timedelta(seconds=6),
+        captures=(evidence,),
+        attestations=(),
+        providers={},
+    )
+    assert isinstance(plain, ClaimVerdictResult)
+    assert plain.tag == stale.tag
+    assert plain.freshness_expirations == ()
+    with pytest.raises(ValueError, match="commits no expirations"):
+        verify_claim_verdict_freshness(stale, rule=horizon_free, captures=(evidence,))
 
 
 def test_freshness_horizon_applies_only_to_admitted_capture_evidence() -> None:
@@ -347,24 +363,20 @@ def test_observation_trust_presentation_is_a_separate_fixed_axis() -> None:
     assert observation_trust_grade("witnessed") == "witnessed"
 
 
-def test_rule_v3_exempts_a_none_types_origin_only_evidence_from_current_replay() -> None:
-    from cruxible_client.contracts.claim_verdicts import (
-        ClaimAdjudicationRule,
-        ClaimAdjudicationRuleV3,
-    )
-
+def test_the_replay_exemption_spares_a_none_types_origin_only_evidence() -> None:
     claim_type = _claim_type()
     none_type = claim_type.model_copy(update={"evidence_requirement": "none"})
     type_digest = claim_type_digest(claim_type).tagged
-    v2 = claim_adjudication_rule(none_type, claim_type_digest=type_digest).model_copy(
+    supporting = claim_adjudication_rule(none_type, claim_type_digest=type_digest).model_copy(
         update={"require_current_replay": True}
     )
-    v3 = claim_adjudication_rule(
+    exempt = claim_adjudication_rule(
         none_type, claim_type_digest=type_digest, origin_replay_exempt=True
     ).model_copy(update={"require_current_replay": True})
-    assert isinstance(v2, ClaimAdjudicationRule) and isinstance(v3, ClaimAdjudicationRuleV3)
-    assert claim_adjudication_rule_digest(v2) != claim_adjudication_rule_digest(v3)
-    # A type whose Claims need evidence compiles v1 either way.
+    assert supporting.origin_supports and not supporting.origin_replay_exempt
+    assert exempt.origin_supports and exempt.origin_replay_exempt
+    assert claim_adjudication_rule_digest(supporting) != claim_adjudication_rule_digest(exempt)
+    # A type whose Claims need evidence compiles the same rule either way.
     assert claim_adjudication_rule(
         claim_type, claim_type_digest=type_digest, origin_replay_exempt=True
     ) == claim_adjudication_rule(claim_type, claim_type_digest=type_digest)
@@ -382,14 +394,14 @@ def test_rule_v3_exempts_a_none_types_origin_only_evidence_from_current_replay()
             providers={},
         ).verdict
 
-    assert verdict(v2) == "stale"
-    assert verdict(v3) == "supported"
-    # Direct evidence still needs a current replay under v3.
+    assert verdict(supporting) == "stale"
+    assert verdict(exempt) == "supported"
+    # Direct evidence still needs a current replay under the exemption.
     direct = _capture("direct", replay=False)
     assert (
         evaluate_claim_verdict(
             claim_statement_digest=STATEMENT_DIGEST,
-            rule=v3,
+            rule=exempt,
             evaluation_time=NOW,
             captures=(direct,),
             attestations=(),

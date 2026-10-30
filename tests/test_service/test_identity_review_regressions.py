@@ -1599,7 +1599,7 @@ def test_a_non_claim_subject_pin_still_closes_over_a_succession(
             )
         }
     )
-    assert notes.artifact_format == "playbill-claim-type-v7"
+    assert notes.artifact_format == "cruxible-claim-type-v10"
     accept(instance, change_set(ClaimTypeInput(kind="claim_type", claim_type=notes)))
 
     refused = compile_(instance, change_set(_succession(instance, pinned, retire=retire)))

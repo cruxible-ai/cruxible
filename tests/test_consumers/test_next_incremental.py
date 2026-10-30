@@ -646,10 +646,7 @@ def _claim_type(state: World) -> str | None:
         fields["evidence_freshness"] = ClaimEvidenceFreshness(
             stale_after=ClaimFreshnessDuration(microseconds=stale_after)
         ).model_dump(mode="json")
-        if fields["artifact_format"] == "playbill-claim-type-v1":
-            fields["artifact_format"] = "playbill-claim-type-v3"
     elif change == "policy":
-        fields["artifact_format"] = "playbill-claim-type-v4"
         fields["attestation_consequence_policy"] = ClaimAttestationConsequencePolicy(
             rules=(
                 ClaimAttestationConsequenceRule(

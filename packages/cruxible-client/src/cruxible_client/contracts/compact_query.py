@@ -380,7 +380,7 @@ class QueryClaimValue(QueryClaim):
 class QueryNone(BaseModel):
     """One none behind a cell: ``rows[i].nones[column]`` lists a field's live nones.
 
-    A none (a ClaimType v9 inverse Claim) says the field holds nothing (``of``
+    A none (an inverse Claim) says the field holds nothing (``of``
     absent: a one-valued field's whole slot) or does not hold ``of``; it is
     never a cell value. A cell with no value and no current none is unknown.
     """

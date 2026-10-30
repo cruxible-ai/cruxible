@@ -161,10 +161,6 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole as ClaimRoleValue
-from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequest,
-    ClaimTypeUpgradeResult,
-)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
     ClaimEvidenceFreshness,
@@ -1324,7 +1320,7 @@ class ChangeSetDraft:
         """Declare how Subjects of one kind are named: by key ClaimTypes, or minted.
 
         Every new Subject is of a kind with an accepted SubjectKind. Give ``keys``
-        (key ClaimTypes by predicate, in key order: each a ClaimType v8 about this
+        (key ClaimTypes by predicate, in key order: each a ClaimType about this
         kind only, literal and one-valued, accepted or defined in this set) with
         optional ``uniqueness`` -- the default ``unique`` refuses a second Subject
         with the same key, ``hint`` only surfaces it in the duplicates audit -- or
@@ -2899,38 +2895,6 @@ class Cruxible:
             self._instance_id, status=status, limit=limit, cursor=cursor
         )
 
-    def upgrade_claim_types(
-        self,
-        *claim_types: str | ClaimTypeRef,
-        revision_evidence: Literal["replace", "accumulate"] = "replace",
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> ClaimTypeUpgradeResult:
-        """Propose moving live ClaimTypes to v7 as one reviewed change set.
-
-        Names no ClaimType to move every live one before v7. v7 states what a
-        statement-changing revision keeps (``revision_evidence``, default
-        ``replace``). On compiler revision 36 the same change set restates each
-        v3 evidence policy as v4, admitting exactly the same evidence (an edit
-        needs it first). Every Claim is carried with its backing intact. The change
-        set carries every dependent Claim, so it previews by default and
-        proposes nothing; commit that preview with ``dry_run=False,
-        at=result.coordinate.git_oid``. Approve as usual.
-
-        Next: ``cx.proposal(result.proposal_id).review()`` and approve it.
-        """
-
-        for item in claim_types:
-            if isinstance(item, ClaimTypeRef):
-                self._assert_coordinate(item.coordinate)
-        request = ClaimTypeUpgradeRequest(
-            claim_types=tuple(_address(item, RefKind.CLAIM_TYPE) for item in claim_types),
-            revision_evidence=revision_evidence,
-            dry_run=dry_run,
-            at=at,
-        )
-        return self._client.upgrade_claim_types(self._instance_id, request)
-
     def refresh(self) -> api.Head:
         """Re-read the accepted head (a pinned context re-reads its own coordinate).
 
@@ -3056,7 +3020,7 @@ class Cruxible:
         """Draft a ClaimType, reading its accepted definition through get.
 
         ``canonical_form`` names the ordered transforms every literal value is
-        stored and compared in (ClaimType v8); left out, a successor keeps its
+        stored and compared in; left out, a successor keeps its
         predecessor's form, and a new ClaimType states none (v7).
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
@@ -3116,10 +3080,9 @@ class Cruxible:
                 accepted = ClaimType.model_validate(envelope)
                 evidence_requirement = effective_evidence_requirement(accepted)
                 revision_evidence = effective_revision_evidence(accepted)
-                if form is None and accepted.artifact_format == "playbill-claim-type-v8":
-                    form = accepted.canonical_form or ()
+                if form is None:
+                    form = accepted.canonical_form
         definition = ClaimType(
-            artifact_format="playbill-claim-type-v7" if form is None else "playbill-claim-type-v8",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
@@ -3144,7 +3107,7 @@ class Cruxible:
             attestation_consequence_policy=attestation_consequence_policy,
             evidence_requirement=evidence_requirement,
             revision_evidence=revision_evidence,
-            canonical_form=cast(Any, form),
+            canonical_form=cast(Any, () if form is None else form),
         )
         return ClaimTypeDraft(self, definition)
 

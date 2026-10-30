@@ -69,7 +69,6 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    CLAIM_TYPE_V9_FORMAT,
     AcceptedClaimType,
     ClaimInverse,
     ClaimInverseObjectKey,
@@ -83,7 +82,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidence,
     ClaimVerdictResult,
-    ClaimVerdictResultV1,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -103,12 +101,11 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyAny,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionTrace,
     EvidenceAdmissionInput,
     VerifiedAttestationGrade,
     evaluate_claim_evidence_admission_trace,
-    evidence_rule_matches_capture_source,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -175,7 +172,7 @@ class NoneClaimObject(_StrictClaimModel):
     ``of`` names the unit within the slot: omitted for an inverse keyed by
     ``slot`` (the whole one-valued slot), the absent object itself for one keyed
     by ``object``, and the key value (a literal in the key ClaimType's canonical
-    form) for one keyed by ``object_key``. Only a ClaimType v9 that declares an
+    form) for one keyed by ``object_key``. Only a ClaimType that declares an
     inverse admits one.
     """
 
@@ -784,67 +781,10 @@ def claim_citation_references(claim: ClaimArtifact) -> tuple[ClaimCitation, ...]
     return claim.backing.citations
 
 
-class ClaimLawEvidenceV1(_StrictClaimModel):
-    tag: Literal["playbill-claim-law-evidence-v1"] = "playbill-claim-law-evidence-v1"
-    law_digest: str
-    adjudication_rule_digest: str
-    statement_digest: str
-    artifact_digest: str
-    initial_verdict: Literal["supported", "uncovered", "stale", "contradicted", "unresolved"]
-    evidence_basis: tuple[Literal["origin_only", "direct", "derivational"], ...]
-    evaluation_time: datetime | None = None
-    verdict_result: ClaimVerdictResultV1 | None = None
-    verified_attestation_digests: tuple[str, ...] = ()
-    verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
-    verdict_captures: tuple[CaptureVerdictEvidence, ...] = ()
-
-    @field_validator(
-        "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
-    )
-    @classmethod
-    def _digests(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("Claim law evaluation time must be timezone-aware")
-        return value
-
-    @field_validator("verified_attestation_digests")
-    @classmethod
-    def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("verified ClaimAttestationV1 digests must be sorted and unique")
-        for item in value:
-            CasDigest.from_tagged(item)
-        return value
-
-    @field_validator("verified_attestations")
-    @classmethod
-    def _verified_attestations(
-        cls, value: tuple[VerifiedClaimAttestationV1, ...]
-    ) -> tuple[VerifiedClaimAttestationV1, ...]:
-        digests = tuple(item.attestation_digest for item in value)
-        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
-            raise ValueError("verified ClaimAttestations must be sorted and unique")
-        return value
-
-    @field_validator("verdict_captures")
-    @classmethod
-    def _verdict_captures(
-        cls, value: tuple[CaptureVerdictEvidence, ...]
-    ) -> tuple[CaptureVerdictEvidence, ...]:
-        digests = tuple(item.capture_digest for item in value)
-        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
-            raise ValueError("verdict Captures must be sorted and unique")
-        return value
-
-
 class ClaimLawEvidence(_StrictClaimModel):
-    tag: Literal["playbill-claim-law-evidence-v2"] = "playbill-claim-law-evidence-v2"
+    """What the Claim law found for one accepted Claim, horizon-free or not."""
+
+    tag: Literal["cruxible-claim-law-evidence-v3"] = "cruxible-claim-law-evidence-v3"
     law_digest: str
     adjudication_rule_digest: str
     statement_digest: str
@@ -909,13 +849,16 @@ class ClaimLawEvidence(_StrictClaimModel):
         return value
 
 
-ClaimLawEvidenceAny = ClaimLawEvidenceV1 | ClaimLawEvidence
+def parse_claim_law_evidence(value: object) -> ClaimLawEvidence:
+    """Read retained Claim-law evidence; a removed envelope is refused, not read."""
 
-
-def parse_claim_law_evidence(value: object) -> ClaimLawEvidenceAny:
-    if isinstance(value, dict) and value.get("tag") == "playbill-claim-law-evidence-v2":
-        return ClaimLawEvidence.model_validate(value)
-    return ClaimLawEvidenceV1.model_validate(value)
+    if (
+        not isinstance(value, dict)
+        or value.get("tag") != ClaimLawEvidence.model_fields["tag"].default
+    ):
+        declared = value.get("tag") if isinstance(value, dict) else None
+        raise ClaimFormatError(f"unsupported Claim law evidence: {declared!r}")
+    return ClaimLawEvidence.model_validate(value)
 
 
 class ClaimLawResult(_StrictClaimModel):
@@ -924,7 +867,7 @@ class ClaimLawResult(_StrictClaimModel):
     statement_digest: str | None = None
     required_tier: PermissionTier | None = None
     approval_scope: tuple[str, ...] = ()
-    evidence: ClaimLawEvidenceAny | None = None
+    evidence: ClaimLawEvidence | None = None
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
     @model_validator(mode="after")
@@ -1073,7 +1016,7 @@ def _literal_violation(
 
 
 def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> bool:
-    """Deterministic closed subset sufficient for frozen ClaimType v1 schemas."""
+    """Deterministic closed subset sufficient for ClaimType literal schemas."""
 
     return _literal_violation(value, schema, at="", numeric_bounds=False) is None
 
@@ -1379,10 +1322,7 @@ def _self_source_capture_admitted_by_rule(
         return False
     return any(
         claim.statement.role in rule.claim_roles
-        and rule.names_capture_contract(
-            digest=capture_contract.artifact_digest,
-            identity=capture_contract.contract.identity.qualified,
-        )
+        and rule.names_capture_contract(identity=capture_contract.contract.identity.qualified)
         for rule in claim_type.evidence_admission_policy.rules
     )
 
@@ -1443,10 +1383,7 @@ def _copy_capture_admitted_by_rule(
         return False
     return any(
         claim.statement.role in rule.claim_roles
-        and rule.names_capture_contract(
-            digest=capture_contract.artifact_digest,
-            identity=capture_contract.contract.identity.qualified,
-        )
+        and rule.names_capture_contract(identity=capture_contract.contract.identity.qualified)
         for rule in claim_type.evidence_admission_policy.rules
     )
 
@@ -1490,7 +1427,7 @@ class CaptureEvidenceKindEvaluation:
 
 
 @sealed_memo
-def _evidence_admission_policy_key(policy: ClaimEvidenceAdmissionPolicyAny) -> bytes:
+def _evidence_admission_policy_key(policy: ClaimEvidenceAdmissionPolicy) -> bytes:
     """Exact policy content; a mutable copy is encoded afresh, never remembered."""
     return canonical_bytes(policy.model_dump(mode="json"))
 
@@ -1558,14 +1495,9 @@ def evaluate_capture_evidence_admissions(
             rule
             for rule in claim_type.evidence_admission_policy.rules
             if claim.statement.role in rule.claim_roles
-            and rule.names_capture_contract(
-                digest=capture_contract.artifact_digest,
+            and rule.names_capture_contract(identity=capture_contract.contract.identity.qualified)
+            and rule.admits_source(
                 identity=capture_contract.contract.identity.qualified,
-            )
-            and evidence_rule_matches_capture_source(
-                rule,
-                identity=capture_contract.contract.identity.qualified,
-                evidence_kind=kind,
                 logical_source=logical_source,
             )
         )
@@ -1964,7 +1896,7 @@ def _inverse_object_refusal(
     """Refuse an inverse its ClaimType does not declare, or whose ``of`` misses the key."""
 
     inverse = contract.inverse
-    if contract.artifact_format != CLAIM_TYPE_V9_FORMAT or inverse is None:
+    if inverse is None:
         return _diagnostic(
             "cruxible.claim.inverse_undeclared",
             f"ClaimType {contract.predicate!r} declares no inverse, so a Claim of it cannot "
@@ -2155,7 +2087,7 @@ def evaluate_claim_law(
     With `origin_replay_exempt` (revision 10) a ``none`` type compiles
     adjudication rule v3, whose origin-only entries need no current replay.
 
-    An inverse Claim (object ``none``, ClaimType v9) is judged by the type's
+    An inverse Claim (object ``none``) is judged by the type's
     inverse: its object names the unit the inverse is keyed by, it cites at least
     one Capture an inverse evidence rule admits, and a revision that changes
     polarity (a flip) stays in its unit and carries exactly the evidence it cites,
@@ -2450,7 +2382,7 @@ def evaluate_claim_law(
                 path=path,
                 field="object",
             )
-        # ClaimType v8: a stored literal is always in its declared canonical form.
+        # A stored literal is always in its declared canonical form.
         # No Claim accepted before v8 names a v8 ClaimType, so every earlier
         # Claim is judged exactly as before.
         if not claim_type_retirement_shape_exempt and not is_canonical_literal(
@@ -3255,26 +3187,6 @@ def evaluate_claim_law(
                     sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
                 ),
             )
-            if isinstance(verdict_result, ClaimVerdictResult)
-            else ClaimLawEvidenceV1(
-                law_digest=law_digest,
-                adjudication_rule_digest=adjudication_rule_digest,
-                statement_digest=statement_digest,
-                artifact_digest=digest,
-                initial_verdict=verdict_result.verdict,
-                evidence_basis=basis,
-                evaluation_time=evaluated_at,
-                verdict_result=verdict_result,
-                verified_attestation_digests=tuple(
-                    sorted(item.attestation_digest for item in verified_attestations)
-                ),
-                verified_attestations=tuple(
-                    sorted(verified_attestations, key=lambda item: item.attestation_digest)
-                ),
-                verdict_captures=tuple(
-                    sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
-                ),
-            )
         ),
     )
 
@@ -3282,13 +3194,10 @@ def evaluate_claim_law(
 __all__ = [
     "AcceptedClaim",
     "ClaimArtifact",
-    "ClaimArtifact",
     "ClaimBacking",
     "ClaimCitation",
     "ClaimFormatError",
-    "ClaimLawEvidenceV1",
     "ClaimLawEvidence",
-    "ClaimLawEvidenceAny",
     "ClaimLawResult",
     "ClaimObject",
     "ClaimReferentContext",

@@ -301,11 +301,7 @@ class _Identity:
 
 @dataclass(frozen=True)
 class _Meaning:
-    """What a predicate means and how its Claims are backed (ClaimType v7).
-
-    A ClaimType before v7 has no description, no default role, requirement
-    ``self`` and revision evidence ``accumulate``: the meaning it always had.
-    """
+    """What a predicate means and how its Claims are backed."""
 
     description: str | None = None
     member_descriptions: tuple[ClaimTypeMemberDescription, ...] = ()
@@ -332,14 +328,14 @@ class WorldClaimType(ClaimTypeRef):
     permitted_roles: tuple[ClaimRole, ...]
     referent_sensitivity: ReferentSensitivity
     literal_schema: dict[str, object] | None
-    #: What the predicate means (ClaimType v7), and what each enum member means.
+    #: What the predicate means, and what each enum member means.
     description: str | None
     member_descriptions: tuple[ClaimTypeMemberDescription, ...]
     #: The role a write takes when it names none.
     default_role: ClaimRole | None
-    #: What backs a Claim: ``none``, ``self`` (before v7) or ``captured``.
+    #: What backs a Claim: ``none``, ``self`` or ``captured``.
     evidence_requirement: EvidenceRequirement
-    #: What a statement-changing revision keeps: ``replace`` or ``accumulate`` (before v7).
+    #: What a statement-changing revision keeps: ``replace`` or ``accumulate``.
     revision_evidence: RevisionEvidence
     _world: World = field(repr=False, compare=False)
     _node: _Node = field(repr=False, compare=False)

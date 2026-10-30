@@ -1,6 +1,6 @@
 {
-  "artifact_digest": "sha256:da68b96ac81805e16b6cefbc94d76060812d36b6eb3a7e8f9b5041006b0434bc",
-  "canonical_wire": "{\n  \"admission_policy\": {\n    \"corroboration_requirements\": [],\n    \"freeze_requirements\": [],\n    \"tag\": \"playbill-claim-admission-policy-v1\"\n  },\n  \"allowed_object_subject_kinds\": [],\n  \"allowed_subject_kinds\": [\n    \"project.work_item\"\n  ],\n  \"artifact_format\": \"playbill-claim-type-v1\",\n  \"cardinality\": \"one\",\n  \"evidence_admission_policy\": {\n    \"rules\": [],\n    \"tag\": \"playbill-claim-evidence-admission-policy-v1\"\n  },\n  \"identity\": {\n    \"kind\": \"ClaimType\",\n    \"name\": \"project.work_item.status\"\n  },\n  \"lifecycle\": {\n    \"predecessor_digest\": null,\n    \"state\": \"live\"\n  },\n  \"literal_schema\": {\n    \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n    \"enum\": [\n      \"blocked\",\n      \"done\",\n      \"ready\"\n    ],\n    \"type\": \"string\"\n  },\n  \"object_kind\": \"literal\",\n  \"permitted_roles\": [\n    \"normative\",\n    \"observation\"\n  ],\n  \"pins\": [],\n  \"predicate\": \"project.work_item.status\",\n  \"referent_sensitivity\": \"identity\",\n  \"resolution_policy\": {\n    \"cardinality\": \"one\",\n    \"conflict_result\": \"unresolved\",\n    \"eligible_verdicts\": [\n      \"supported\"\n    ],\n    \"require_current\": true,\n    \"required_basis_kinds\": [],\n    \"selector\": \"only_contender\",\n    \"tag\": \"playbill-claim-resolution-policy-v1\"\n  }\n}\n",
+  "artifact_digest": "sha256:33c401b98bed146f8d18823f69b8ecfe2e0e285e7102567a0ba52c2fb1d577d1",
+  "canonical_wire": "{\n  \"admission_policy\": {\n    \"corroboration_requirements\": [],\n    \"freeze_requirements\": [],\n    \"tag\": \"playbill-claim-admission-policy-v1\"\n  },\n  \"allowed_object_subject_kinds\": [],\n  \"allowed_subject_kinds\": [\n    \"project.work_item\"\n  ],\n  \"artifact_format\": \"cruxible-claim-type-v10\",\n  \"canonical_form\": [],\n  \"cardinality\": \"one\",\n  \"evidence_admission_policy\": {\n    \"rules\": [],\n    \"tag\": \"cruxible-claim-evidence-admission-policy-v4\"\n  },\n  \"evidence_requirement\": \"self\",\n  \"identity\": {\n    \"kind\": \"ClaimType\",\n    \"name\": \"project.work_item.status\"\n  },\n  \"lifecycle\": {\n    \"predecessor_digest\": null,\n    \"state\": \"live\"\n  },\n  \"literal_schema\": {\n    \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n    \"enum\": [\n      \"blocked\",\n      \"done\",\n      \"ready\"\n    ],\n    \"type\": \"string\"\n  },\n  \"member_descriptions\": [],\n  \"object_kind\": \"literal\",\n  \"permitted_roles\": [\n    \"normative\",\n    \"observation\"\n  ],\n  \"pins\": [],\n  \"predicate\": \"project.work_item.status\",\n  \"referent_sensitivity\": \"identity\",\n  \"resolution_policy\": {\n    \"cardinality\": \"one\",\n    \"conflict_result\": \"unresolved\",\n    \"eligible_verdicts\": [\n      \"supported\"\n    ],\n    \"require_current\": true,\n    \"required_basis_kinds\": [],\n    \"selector\": \"only_contender\",\n    \"tag\": \"playbill-claim-resolution-policy-v1\"\n  },\n  \"revision_evidence\": \"accumulate\"\n}\n",
   "claim_type": {
     "admission_policy": {
       "corroboration_requirements": [],
@@ -11,12 +11,14 @@
     "allowed_subject_kinds": [
       "project.work_item"
     ],
-    "artifact_format": "playbill-claim-type-v1",
+    "artifact_format": "cruxible-claim-type-v10",
+    "canonical_form": [],
     "cardinality": "one",
     "evidence_admission_policy": {
       "rules": [],
-      "tag": "playbill-claim-evidence-admission-policy-v1"
+      "tag": "cruxible-claim-evidence-admission-policy-v4"
     },
+    "evidence_requirement": "self",
     "identity": {
       "kind": "ClaimType",
       "name": "project.work_item.status"
@@ -34,6 +36,7 @@
       ],
       "type": "string"
     },
+    "member_descriptions": [],
     "object_kind": "literal",
     "permitted_roles": [
       "normative",
@@ -52,6 +55,7 @@
       "required_basis_kinds": [],
       "selector": "only_contender",
       "tag": "playbill-claim-resolution-policy-v1"
-    }
+    },
+    "revision_evidence": "accumulate"
   }
 }

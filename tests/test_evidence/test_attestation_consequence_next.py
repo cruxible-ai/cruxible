@@ -116,7 +116,6 @@ def threshold_world(
     base_type = _claim_type(contract=contract)
     claim_type = base_type.model_copy(
         update={
-            "artifact_format": "playbill-claim-type-v4",
             "attestation_consequence_policy": ClaimAttestationConsequencePolicy(
                 rules=(
                     ClaimAttestationConsequenceRule(

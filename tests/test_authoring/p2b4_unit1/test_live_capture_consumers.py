@@ -25,8 +25,8 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.providers import provider_path, render_provider
@@ -139,17 +139,14 @@ def run_capture_producers(
     shell = _subject()
     claim_type = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="live-v2-capture",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=tuple(
-                            sorted(
-                                (contract_digest, capture_contract_digest(terminal_contract).tagged)
-                            )
+                        capture_contracts=tuple(
+                            sorted((contract.identity.name, terminal_contract.identity.name))
                         ),
-                        evidence_kinds=("database_record",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

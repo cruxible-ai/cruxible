@@ -69,7 +69,6 @@ def test_identity_fixture_compiles_its_typed_evidence_dependencies(tmp_path):
 
 
 def test_write_fixture_self_source_policy_matches_the_contract_it_accepts(tmp_path):
-    from cruxible_client.contracts.captures import capture_contract_digest
     from tests.core_support._write_support import CLAIM_TYPES, SELF_SOURCE, seed_write_surface
 
     instance, _ = seed_write_surface(tmp_path)
@@ -78,6 +77,5 @@ def test_write_fixture_self_source_policy_matches_the_contract_it_accepts(tmp_pa
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
     status = next(item for item in CLAIM_TYPES if item.predicate.endswith(".status"))
-    assert status.evidence_admission_policy.rules[0].capture_contract_digests == (
-        capture_contract_digest(accepted).tagged,
-    )
+    (rule,) = status.evidence_admission_policy.rules
+    assert [item.target for item in rule.capture_contracts] == [accepted.identity]

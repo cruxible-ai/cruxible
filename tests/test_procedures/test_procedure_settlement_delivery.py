@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -132,7 +131,7 @@ def _condition(*, only_subject: str | None, require_claim: bool = False) -> Quer
 def _predicate_claim_type(predicate: str) -> Any:
     """The fixture's severity ClaimType, under another predicate when asked."""
 
-    claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
+    claim_type = _claim_type(capture_contract().identity.name)
     if predicate == PREDICATE:
         return claim_type
     return claim_type.model_copy(

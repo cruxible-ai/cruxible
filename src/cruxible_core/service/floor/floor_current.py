@@ -293,7 +293,7 @@ class ValueRenderer:
                 return _Shown(marker, None, note, plain=marker)
             return self.text(value, note=note, text_name=text_name)
         if isinstance(obj, NoneClaimObject):
-            # An inverse (ClaimType v9): the unit holds nothing.
+            # An inverse: the unit holds nothing.
             absent = obj.of
             marker = (
                 "none"

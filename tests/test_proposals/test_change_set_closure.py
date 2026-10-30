@@ -17,7 +17,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
@@ -61,7 +61,6 @@ def claim_type(
     pins: tuple[ArtifactPin, ...] = (),
 ) -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),
@@ -69,7 +68,7 @@ def claim_type(
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one",

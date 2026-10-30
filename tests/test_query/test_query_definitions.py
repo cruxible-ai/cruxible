@@ -19,7 +19,7 @@ from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionF
 from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_V3_ACCEPTANCE_LAW
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionPolicy,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -77,7 +77,6 @@ TIMESTAMP = "2026-08-16T14:00:00.000000Z"
 
 def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
         predicate=predicate,
         allowed_subject_kinds=("project.work_item",),
@@ -86,7 +85,7 @@ def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
         allowed_object_subject_kinds=() if object_kind == "literal" else ("project.person",),
         cardinality="one" if object_kind == "literal" else "many",
         permitted_roles=("normative",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(),
         admission_policy=ClaimAdmissionPolicy(),
         resolution_policy=ClaimResolutionPolicy(
             cardinality="one" if object_kind == "literal" else "many",

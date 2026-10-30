@@ -50,7 +50,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("claim-type", "propose"): "active",
     ("capture-contract", "propose"): "active",
     ("claim-type", "migrate"): "active",
-    ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",
     ("set",): "active",
     ("add",): "active",
@@ -748,7 +747,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     )
 
     envelope = {
-        "artifact_format": "playbill-claim-type-v1",
+        "artifact_format": "cruxible-claim-type-v10",
         "identity": {"kind": "ClaimType", "name": "sec.vuln.severity"},
         "predicate": "sec.vuln.severity",
         "allowed_subject_kinds": ("sec.vulnerability",),
