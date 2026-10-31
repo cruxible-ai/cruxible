@@ -342,3 +342,156 @@ def test_one_capture_decodes_once_across_completeness_specs_and_watch_sets() -> 
     # Fields are read once per (declaration, record): the watch sets reuse them.
     assert extract.STATS.field_reads == 5 * 4
     assert isinstance(watch_a.results[0], RecordArm)
+
+
+def _rerun_field(content: bytes, row: Any, *, enums: Any = _enums, **overrides: Any):  # type: ignore[no-untyped-def]
+    return run_extract(
+        _node(**overrides),
+        capture_digest="sha256:" + __import__("hashlib").sha256(content).hexdigest(),
+        content=content,
+        decoding=JSON,
+        row=row,
+        enums=enums,
+    )
+
+
+def _row(**fields: str) -> Any:
+    declared = {
+        "date_added": "date?",
+        "due_date": "date?",
+        "ransomware_use": "enum_of security.vulnerability.kev_ransomware_use?",
+        "vendor_project": "string",
+    }
+    declared.update(fields)
+    return validate_contract({"name": "security.kev-entry", "version": 1, "fields": declared})
+
+
+def test_a_warm_field_cache_never_serves_a_result_typed_under_another_declaration() -> None:
+    """F1: the field layer is keyed by the effective type, requiredness, name and enums."""
+
+    content = _catalog(_entry("CVE-2026-0001", vendorProject="7", dueDate=None))
+    fields = {
+        "vendor_project": {"at": "vendorProject", "presence": "required"},
+        "due_date": {"at": "dueDate", "parse": "date", "presence": "optional"},
+        "ransomware_use": {"at": "knownRansomwareCampaignUse", "presence": "optional"},
+    }
+
+    first = _rerun_field(content, _row(), fields=fields).records[0].fields
+    assert isinstance(first["vendor_project"], FieldPresent)
+    assert isinstance(first["due_date"], FieldAbsent)
+    assert isinstance(first["ransomware_use"], FieldPresent)
+
+    # The same Capture and path under an int row type is a different key.
+    as_int = _rerun_field(content, _row(vendor_project="int"), fields=fields).records[0].fields
+    assert isinstance(as_int["vendor_project"], FieldInvalid)
+    assert as_int["vendor_project"].problem.code == "type_mismatch"
+
+    # A cached optional absence never answers for a required field.
+    required = {**fields, "due_date": {"at": "dueDate", "parse": "date", "presence": "required"}}
+    due = _rerun_field(content, _row(), fields=required).records[0].fields["due_date"]
+    assert isinstance(due, FieldInvalid) and due.problem.code == "absent_required"
+
+    # A field read under another name names itself in its problem.
+    renamed_row = _row(vendor_id="int")
+    renamed = {**fields, "vendor_id": {"at": "vendorProject", "presence": "required"}}
+    renamed.pop("vendor_project")
+    renamed_result = (
+        _rerun_field(content, renamed_row, fields=renamed).records[0].fields["vendor_id"]
+    )
+    assert isinstance(renamed_result, FieldInvalid)
+    assert renamed_result.problem.field == "vendor_id"
+
+    # A changed enum membership is a different key: "Unknown" leaves the enum.
+    narrowed = _rerun_field(content, _row(), enums=lambda _name: ("Known",), fields=fields)
+    use = narrowed.records[0].fields["ransomware_use"]
+    assert isinstance(use, FieldInvalid) and use.problem.code == "not_in_enum"
+    assert extract.STATS.decodes == 1
+
+
+def test_a_changed_nested_contract_is_a_different_field_key() -> None:
+    """F1: a nested Contract's resolved shape is part of the field typing."""
+
+    content = json.dumps(
+        {"count": 1, "vulnerabilities": [{"cveID": "CVE-1", "vendor": {"name": "Acme"}}]}
+    ).encode()
+    loose = validate_contract({"name": "vendor", "version": 1, "fields": {"name": "string"}})
+    strict = validate_contract(
+        {"name": "vendor", "version": 1, "fields": {"name": "string", "id": "int"}}
+    )
+    row = validate_contract(
+        {"name": "security.kev-entry", "version": 1, "fields": {"vendor": "vendor@1"}}
+    )
+    node = _node(
+        fields={"vendor": {"at": "vendor", "presence": "required"}}, header={}, complete_when=None
+    )
+
+    def run(nested: Any) -> Any:
+        return (
+            run_extract(
+                node,
+                capture_digest="sha256:" + "0" * 64,
+                content=content,
+                decoding=JSON,
+                row=row,
+                resolve=lambda _ref: nested,
+            )
+            .records[0]
+            .fields["vendor"]
+        )
+
+    assert isinstance(run(loose), FieldPresent)
+    result = run(strict)
+    assert isinstance(result, FieldInvalid) and result.problem.code == "absent_required"
+
+
+def test_a_changed_key_enum_membership_rebuilds_the_record_index() -> None:
+    """F1: layer D is keyed by the key types as resolved, enum members included."""
+
+    content = _catalog(_entry("CVE-2026-0001"))
+    node = _node(
+        key={"use": {"at": "knownRansomwareCampaignUse", "type": "enum_of k.use"}},
+        duplicates="first",
+    )
+
+    def run(members: tuple[str, ...]) -> Any:
+        return run_extract(
+            node,
+            capture_digest="sha256:" + "1" * 64,
+            content=content,
+            decoding=JSON,
+            row=KEV_ROW,
+            enums=lambda name: members if name == "k.use" else RANSOMWARE,
+        )
+
+    assert run(("Unknown",)).records[0].key == {"use": "Unknown"}
+    assert isinstance(run(("Known",)).results[0], InvalidRecordArm)
+    assert extract.STATS.decodes == 2
+
+
+@pytest.mark.parametrize("size", [5, 500])
+def test_a_warm_watch_set_visits_only_its_keys_records_whatever_the_capture_holds(
+    size: int,
+) -> None:
+    """F2: selection after layer D is O(|only_keys|): fixed watch sets cost the same."""
+
+    content = _catalog(*(_entry(f"CVE-2026-{index:04d}") for index in range(1, size + 1)))
+    _run(content)
+    extract.STATS.reset()
+
+    watched = _run(content, only_keys=[{"cve_id": "CVE-2026-0003"}, {"cve_id": "CVE-2026-0001"}])
+    assert [record.key["cve_id"] for record in watched.records] == [
+        "CVE-2026-0001",
+        "CVE-2026-0003",
+    ]
+    assert extract.STATS.d_hits == 1 and extract.STATS.decodes == 0
+    assert extract.STATS.selected == 2
+    assert extract.STATS.field_reads == 0 and extract.STATS.f_hits == 2 * 4
+
+    extract.STATS.reset()
+    empty = _run(content, only_keys=[])
+    assert empty.records == [] and extract.STATS.selected == 0
+    assert extract.STATS.field_reads == 0 and extract.STATS.f_hits == 0
+
+    extract.STATS.reset()
+    unknown = _run(content, only_keys=[{"cve_id": "CVE-1999-0000"}])
+    assert unknown.records == [] and extract.STATS.selected == 0

@@ -16,10 +16,15 @@ else:
   duplicate and key problems;
 - E, evaluation: ``(D key, complete_when, header spec)`` -> completeness and
   the header's field results;
-- F, field: ``(D key, field spec, locator)`` -> one field result, filled lazily.
+- F, field: ``(D key, field typing, locator)`` -> one field result, filled
+  lazily. The field typing is the field's name, declaration, effective row
+  type and requiredness, with every enum membership and nested Contract the
+  type resolves to.
 
-A runtime ``only_keys`` is selected after layer D through its key index, at
-``O(|only_keys|)``, and is never part of a cache key.
+Key and header specs are keyed the same way, by their types as resolved. A
+runtime ``only_keys`` is selected after layer D through its key index and the
+record positions D holds, at ``O(|only_keys|)``, and is never part of a cache
+key.
 """
 
 from __future__ import annotations
@@ -58,6 +63,7 @@ from cruxible_client.contracts.shapes import (
     FieldAbsent,
     FieldInvalid,
     FieldPresent,
+    FieldResultType,
     FieldType,
     IntType,
     InvalidRecordArm,
@@ -65,9 +71,13 @@ from cruxible_client.contracts.shapes import (
     NestedType,
     Problem,
     RecordArm,
+    RecordType,
     RecordValue,
+    RefusalType,
+    ResultType,
     ResultValue,
     StringType,
+    VariantType,
     check_value,
 )
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
@@ -541,7 +551,12 @@ def field_result_wire(result: FieldResult) -> dict[str, object]:
 
 @dataclass
 class ExtractCacheStats:
-    """What the cache did, for the tests that hold it to its cost."""
+    """What the cache did, for the tests that hold it to its cost.
+
+    ``selected`` counts the records a run visits after layer D: every record
+    without ``only_keys``, and only the watched keys' records with it, so a
+    warm watch-set run's work is ``O(|only_keys|)`` whatever the Capture holds.
+    """
 
     decodes: int = 0
     d_hits: int = 0
@@ -549,6 +564,7 @@ class ExtractCacheStats:
     e_hits: int = 0
     field_reads: int = 0
     f_hits: int = 0
+    selected: int = 0
 
     def reset(self) -> None:
         for name in self.__dataclass_fields__:
@@ -563,6 +579,10 @@ class _Index:
     """Layer D: one decoded Capture's records under one selector and key spec."""
 
     records: list[tuple[str, object]]
+    #: Each record's position in document order, and the record by its locator,
+    #: built once with the index so a watch-set run never scans the records.
+    positions: dict[str, int]
+    by_locator: dict[str, object]
     keys: dict[str, dict[str, object]]
     key_problems: dict[str, tuple[Problem, ...]]
     duplicate_of: dict[str, str]
@@ -622,6 +642,7 @@ def _index(
     decoding: CaptureDecoding,
     key_types: Mapping[str, FieldType],
     enums: EnumResolver | None,
+    typing: _Typing,
 ) -> tuple[tuple[object, ...], _Index]:
     extractor = EXTRACTOR_VERSIONS[decoding.format]
     d_key = (
@@ -629,7 +650,12 @@ def _index(
         extractor,
         canonical_bytes(decoding.model_dump(mode="json")),
         node.records,
-        extract_spec_digest({"key": node.key, "key_types": key_types}),
+        extract_spec_digest(
+            {
+                "key": node.key,
+                "types": {name: typing.of(key_types[name]) for name in node.key},
+            }
+        ),
     )
     cached = _D.lookup(d_key)
     if cached is not _MISSING:
@@ -725,6 +751,8 @@ def _index(
     }
     built = _Index(
         records=records,
+        positions={locator: position for position, (locator, _r) in enumerate(records)},
+        by_locator=dict(records),
         keys=keys,
         key_problems=problems,
         duplicate_of=duplicate_of,
@@ -757,11 +785,17 @@ def _evaluate(
     *,
     header_types: Mapping[str, FieldType],
     enums: EnumResolver | None,
+    typing: _Typing,
 ) -> _Evaluation:
     e_key = (
         d_key,
         extract_spec_digest(node.complete_when),
-        extract_spec_digest({"header": node.header, "types": header_types}),
+        extract_spec_digest(
+            {
+                "header": node.header,
+                "types": {name: typing.of(header_types[name]) for name in node.header},
+            }
+        ),
     )
     cached = _E.lookup(e_key)
     if cached is not _MISSING:
@@ -887,6 +921,78 @@ def _result_wire(item: _Record | InvalidRecordArm | DuplicateArm) -> dict[str, o
     return item.model_dump(mode="json")
 
 
+class _Typing:
+    """Every typing declaration one field's result depends on, resolved once per run.
+
+    A field result is read under its effective type, and that type may name
+    an enum whose members a ClaimType declares (``enum_of``) or a Contract it
+    nests (``contract``, ``variant``, ``record``...). Each cache key carries
+    the type together with what those names resolve to *now*, so a changed
+    enum membership or nested Contract version is a different key, never a
+    stale hit.
+    """
+
+    def __init__(
+        self,
+        resolve: Callable[[ContractRef], Contract | None] | None,
+        enums: EnumResolver | None,
+    ) -> None:
+        self._resolve = resolve
+        self._enums = enums
+        self._memo: dict[bytes, object] = {}
+
+    def of(self, field_type: FieldType) -> object:
+        dumped = field_type.model_dump(mode="json")
+        spelling = canonical_bytes(dumped)
+        found = self._memo.get(spelling)
+        if found is None:
+            found = {"type": dumped, "resolved": self._dependencies(field_type)}
+            self._memo[spelling] = found
+        return found
+
+    def _dependencies(self, field_type: FieldType) -> list[object]:
+        found: list[object] = []
+        seen: set[bytes] = set()
+        pending: list[FieldType] = [field_type]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, EnumOfType):
+                members = None if self._enums is None else self._enums(item.claim_type)
+                found.append(
+                    {
+                        "enum_of": item.claim_type,
+                        "members": None if members is None else list(members),
+                    }
+                )
+                continue
+            if isinstance(item, ListType):
+                pending.append(item.item)
+                continue
+            if isinstance(item, FieldResultType):
+                pending.append(item.value)
+                continue
+            refs: list[ContractRef] = []
+            if isinstance(item, NestedType | RecordType | ResultType | RefusalType):
+                refs = [item.contract]
+            elif isinstance(item, VariantType):
+                refs = list(item.arms.values())
+            for ref in refs:
+                pinned = canonical_bytes(ref.model_dump(mode="json"))
+                if pinned in seen:
+                    continue
+                seen.add(pinned)
+                target = None if self._resolve is None else self._resolve(ref)
+                found.append(
+                    {
+                        "contract": ref.model_dump(mode="json"),
+                        "resolved": None if target is None else target.model_dump(mode="json"),
+                    }
+                )
+                if target is not None:
+                    pending.extend(declared.type for declared in target.fields.values())
+        return found
+
+
 def run_extract(
     node: ExtractNode,
     *,
@@ -907,6 +1013,7 @@ def run_extract(
             "extract_decoding_undeclared",
             "the Capture's CaptureContract declares no decoding",
         )
+    typing = _Typing(resolve, enums)
     types = {name: row.fields[name].type for name in node.fields}
     keys = dict(key_types or {name: declared.field_type() for name, declared in node.key.items()})
     headers = dict(
@@ -919,8 +1026,9 @@ def run_extract(
         decoding=decoding,
         key_types=keys,
         enums=enums,
+        typing=typing,
     )
-    evaluation = _evaluate(node, d_key, index, header_types=headers, enums=enums)
+    evaluation = _evaluate(node, d_key, index, header_types=headers, enums=enums, typing=typing)
     for name, declared in node.header.items():
         result = evaluation.header[name]
         if declared.presence == "required" and result[0] != "present":
@@ -935,29 +1043,42 @@ def run_extract(
                     **({"lexeme": lexeme} if lexeme is not None else {}),
                 },
             )
+    selected: Iterable[str]
     if only_keys is None:
-        selected: Iterable[tuple[str, object]] = index.records
+        selected = index.positions
     else:
-        wanted: list[str] = []
+        # O(|only_keys|): the key index names each watched key's records and
+        # the position map orders them; no record outside the watch set is read.
+        wanted: dict[str, None] = {}
         for key in only_keys:
-            wanted.extend(index.by_key.get(_key_of(key), ()))
-        positions = {locator: position for position, (locator, _r) in enumerate(index.records)}
-        selected = sorted(
-            ((locator, None) for locator in dict.fromkeys(wanted)),
-            key=lambda item: positions[item[0]],
-        )
-    record_data = None
+            for locator in index.by_key.get(_key_of(key), ()):
+                wanted[locator] = None
+        selected = sorted(wanted, key=index.positions.__getitem__)
     held: list[_Record | InvalidRecordArm | DuplicateArm] = []
     invalid_records = 0
     duplicates = 0
     invalid_fields: dict[str, int] = {}
-    field_digests = {name: extract_spec_digest(declared) for name, declared in node.fields.items()}
     required = {
         name: declared.presence == "required"
         or (declared.presence is None and not row.fields[name].optional)
         for name, declared in node.fields.items()
     }
-    for locator, record in selected:
+    # A field result is keyed by everything that types it: the field's name
+    # (it appears in its problems), its declaration, its effective row type
+    # with what that type resolves to, and whether it is required.
+    field_digests = {
+        name: extract_spec_digest(
+            {
+                "name": name,
+                "declared": declared,
+                "type": typing.of(types[name]),
+                "required": required[name],
+            }
+        )
+        for name, declared in node.fields.items()
+    }
+    for locator in selected:
+        STATS.selected += 1
         problems = index.key_problems.get(locator)
         if problems is not None:
             invalid_records += 1
@@ -976,10 +1097,7 @@ def run_extract(
                 duplicates += 1
             held.append(DuplicateArm(record=locator, key=key, first=first))
             continue
-        if record is None:
-            if record_data is None:
-                record_data = dict(index.records)
-            record = record_data[locator]
+        record = index.by_locator[locator]
         fields: dict[str, Held] = {}
         for name, declared in node.fields.items():
             f_key = (d_key, field_digests[name], locator)
