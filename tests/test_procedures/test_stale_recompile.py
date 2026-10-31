@@ -270,12 +270,11 @@ def test_procedure_recompile_matches_fresh_prepare_at_head_and_never_lowers_at_o
 def _two_line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     """One fan-out Procedure behind two accepted Lines: they propose independently."""
 
-    from tests.test_procedures.test_proposal_fan_out import FAN_OUT
-
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
     )
+    from tests.test_procedures.test_proposal_fan_out import FAN_OUT
 
     instance, owner, root, line, procedure = proposal_world(
         tmp_path,

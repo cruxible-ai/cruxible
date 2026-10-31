@@ -7,10 +7,9 @@ already admitted runs again only when ``repeat`` says so.
 
 from datetime import timedelta
 
-from cruxible_client.contracts.canonical import canonical_bytes
-
 import pytest
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
 from cruxible_client.contracts.procedure_mandates import (

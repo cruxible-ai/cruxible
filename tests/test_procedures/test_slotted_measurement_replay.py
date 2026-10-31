@@ -240,7 +240,7 @@ def _slotted_world(tmp_path, *, landed=False):
                     {
                         "call": "captured",
                         "id": "read",
-                                                "captures": {"capture": contract.identity.name},
+                        "captures": {"capture": contract.identity.name},
                         "slot": "fetch",
                         "input": _source_request(instance, root).model_dump(mode="json"),
                     },
