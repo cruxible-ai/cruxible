@@ -451,7 +451,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
         assert format_refusal.code == "cruxible.proposal.member_format_invalid"
         assert format_refusal.severity == "error"
         assert format_refusal.message == (
-            "new CaptureContracts require cruxible-capture-contract-v3, or v4 with decoding"
+            "new CaptureContracts require cruxible-capture-contract-v4"
         )
         assert instance.accepted_coordinate() == base
         assert dict(instance.tree_at(instance.accepted_coordinate().git_oid)) == accepted_tree

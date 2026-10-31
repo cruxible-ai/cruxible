@@ -98,7 +98,6 @@ def dependency_pins(
         "cruxible-line-v8",
         "cruxible-provider-v6",
         "cruxible-provider-identity-v3",
-        "cruxible-capture-contract-v3",
         "cruxible-capture-contract-v4",
     }:
         return tuple(pins)

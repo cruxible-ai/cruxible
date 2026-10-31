@@ -441,11 +441,14 @@ class NamedCaptureRetentionPolicy(_StrictCaptureModel):
 
 
 class NamedCaptureContract(_StrictCaptureModel):
-    """The stored CaptureContract: v3, or v4 when it declares how its bytes decode."""
+    """The stored CaptureContract (format v4).
 
-    artifact_format: Literal["cruxible-capture-contract-v3", "cruxible-capture-contract-v4"] = (
-        "cruxible-capture-contract-v3"
-    )
+    ``decoding`` is optional: it declares how the bytes decode for an
+    ``extract``, and a Procedure whose extract reads a CaptureContract without
+    it is refused when it is accepted.
+    """
+
+    artifact_format: Literal["cruxible-capture-contract-v4"] = "cruxible-capture-contract-v4"
     identity: ArtifactIdentity
     shape: CaptureShape | Literal["coordinator_self_source"]
     replay: CaptureReplay
@@ -456,21 +459,8 @@ class NamedCaptureContract(_StrictCaptureModel):
     decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
-    @model_validator(mode="before")
-    @classmethod
-    def _format_for_decoding(cls, value: object) -> object:
-        if (
-            isinstance(value, dict)
-            and value.get("decoding") is not None
-            and "artifact_format" not in value
-        ):
-            return {**value, "artifact_format": "cruxible-capture-contract-v4"}
-        return value
-
     @model_validator(mode="after")
     def _shape(self) -> NamedCaptureContract:
-        if (self.artifact_format == "cruxible-capture-contract-v4") != (self.decoding is not None):
-            raise ValueError("CaptureContract format v4 is exactly the one that declares decoding")
         if self.identity.kind != "CaptureContract" or not _CONTRACT_ID_RE.fullmatch(
             self.identity.name
         ):
@@ -1146,7 +1136,6 @@ def _parse_capture_contract(
         {
             "playbill-capture-contract-v1",
             "cruxible-capture-contract-v2",
-            "cruxible-capture-contract-v3",
             "cruxible-capture-contract-v4",
         }
     ):

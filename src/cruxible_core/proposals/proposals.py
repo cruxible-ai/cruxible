@@ -1856,11 +1856,7 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
         if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
             named = NAMED_REFERENCE_FORMATS[kind.name]
             if artifact_tag != named and not (
-                (kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2")
-                or (
-                    kind.name == "capture-contract"
-                    and artifact_tag == "cruxible-capture-contract-v4"
-                )
+                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
             ):
                 raise FormatError(f"New {kind.name} artifacts require {named}.")
     if context.historical_law_coordinate is None:
@@ -3131,12 +3127,9 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     if (
         context.historical_law_coordinate is None
         and not context.rechecking
-        and contract.artifact_format
-        not in {"cruxible-capture-contract-v3", "cruxible-capture-contract-v4"}
+        and contract.artifact_format != "cruxible-capture-contract-v4"
     ):
-        raise FormatError(
-            "new CaptureContracts require cruxible-capture-contract-v3, or v4 with decoding"
-        )
+        raise FormatError("new CaptureContracts require cruxible-capture-contract-v4")
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
         previous = parse_capture_contract(context.parent_content, path=context.path)

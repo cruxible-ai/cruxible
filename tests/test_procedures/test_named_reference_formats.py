@@ -237,7 +237,7 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
         (
             "capture-contracts/check.json",
             "cruxible-capture-contract-v2",
-            "cruxible-capture-contract-v3",
+            "cruxible-capture-contract-v4",
         ),
         ("providers/check.json", "cruxible-provider-v4", "cruxible-provider-v6"),
         # provider-interfaces/: no acceptance law is registered for either tag

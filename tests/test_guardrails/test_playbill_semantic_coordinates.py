@@ -22,7 +22,6 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
-    CAPTURE_CONTRACT_V4_LAW,
     CLAIM_LAW_V2_REVISION_10,
     CLAIM_LAW_V3_REVISION_11,
     CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -282,22 +281,11 @@ LAW_COORDINATES += (
 
 LAW_COORDINATES += (
     (
-        CAPTURE_CONTRACT_V4_LAW,
-        "cruxible.capture-contract.named.v2",
-        "cruxible-capture-contract-v4",
-        1,
-        "sha256:429486d66392c18c188619c26925a7257d36bd97bcdef3b8b459a864fa7df3c6",
-    ),
-)
-
-
-LAW_COORDINATES += (
-    (
         NAMED_REFERENCE_LAWS[0],
         "cruxible.capture-contract.named.v1",
-        "cruxible-capture-contract-v3",
+        "cruxible-capture-contract-v4",
         1,
-        "sha256:6555affa65a4c90224a03b0b3305fad1c89ef4f61d15bbee153a24c04b61dcc1",
+        "sha256:e2d78b0e54a0055bf9d100d1726f5fae6c32b1658532ab85ba093f4717c45be3",
     ),
     (
         NAMED_REFERENCE_LAWS[1],
