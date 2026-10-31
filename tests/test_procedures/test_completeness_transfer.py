@@ -634,3 +634,135 @@ def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
     assert state.status == "succeeded", state.terminal
     inbox_sinks = [complete_ for node_id, complete_ in sinks if node_id != "out"]
     assert inbox_sinks == [complete]
+
+
+def _filter_count_derive(source: str, *, prefix: str) -> list[dict[str, Any]]:
+    """filter present(status) over ``source`` -> count -> derive fixed/affected, as transforms."""
+
+    return [
+        {
+            "node_id": f"{prefix}kept",
+            "transform_kind": "filter",
+            "spec": {
+                "tag": "cruxible-transform-filter-spec-v1",
+                "input": source,
+                "where": "present($item.fields.status)",
+            },
+            "as": f"{prefix}kept",
+        },
+        {
+            "node_id": f"{prefix}count",
+            "transform_kind": "aggregate",
+            "spec": {
+                "tag": "cruxible-transform-aggregate-spec-v1",
+                "input": f"$steps.{prefix}kept",
+                "op": "count",
+            },
+            "as": f"{prefix}count",
+        },
+        {
+            "node_id": f"{prefix}verdict",
+            "transform_kind": "derive",
+            "spec": {
+                "tag": "cruxible-transform-derive-spec-v1",
+                "input": {"open": f"$steps.{prefix}count"},
+                "cases": [{"when": "eq($item.fields.open, 0)", "value": "fixed"}],
+                "else": "affected",
+            },
+            "as": f"{prefix}verdict",
+        },
+    ]
+
+
+_SHAPED = {
+    "node_id": "shaped",
+    "transform_kind": "shape",
+    "as": "shaped",
+}
+
+
+def _shaped(invalid: bool) -> dict[str, Any]:
+    return {
+        **_SHAPED,
+        "spec": {
+            "tag": "cruxible-transform-shape-spec-v1",
+            "input": [_record("open", invalid=invalid)],
+            "fields": {"status": {"from": "$item.fields.status"}},
+        },
+    }
+
+
+def _repeat_world(tmp_path: Path, body: list[dict[str, Any]], after: list[dict[str, Any]]) -> Any:
+    instance = world(tmp_path, operation_build())
+    explicit_after = []
+    for index, step in enumerate(after):
+        following = after[index + 1]["node_id"] if index + 1 < len(after) else "finished"
+        explicit_after.append({"explicit": {"kind": "transform", **step, "next": following}})
+    author_procedure(
+        instance,
+        ProcedureSpec.model_validate(
+            {
+                "procedure": "test.repeat-rows",
+                "input": {},
+                "output": {"verdict": "string"},
+                "steps": [
+                    {
+                        "repeat": "retry",
+                        "max_attempts": 1,
+                        "body": [{**item, "operation": "transform"} for item in body],
+                        "until": "shaped.count >= 0",
+                        **({"next": after[0]["node_id"]} if after else {}),
+                    },
+                    *explicit_after,
+                    {
+                        "project": "finished",
+                        "fields": {
+                            "verdict": (
+                                "$steps.verdict.result"
+                                if after
+                                else "$steps.retry.final.verdict.result"
+                            )
+                        },
+                        "output": {"verdict": "string"},
+                    },
+                ],
+                "returns": "finished",
+                "budget": {"provider_calls": 0},
+            }
+        ),
+    )
+    author_line(instance, name="test.repeat-rows-line", procedure="test.repeat-rows", parameters={})
+    return instance
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_a_lossy_rows_read_inside_a_repeat_body_taints_the_derived_negative(
+    tmp_path: Path, sinks: list[tuple[str, bool]], invalid: bool
+) -> None:
+    """Re-review F3/F5: shape keeps the invalid status; a body filter over its rows view
+    must not read it as absence and reach a complete "fixed"."""
+
+    body = [_shaped(invalid), *_filter_count_derive("$steps.shaped.rows", prefix="")]
+    instance = _repeat_world(tmp_path, body, [])
+
+    state = _run(instance, "test.repeat-rows-line")
+
+    assert state.status == "succeeded", state
+    assert state.result == {"verdict": "fixed" if invalid else "affected"}
+    assert sinks == [("finished", not invalid)]
+
+
+@pytest.mark.parametrize(
+    "view", ["$steps.retry.final.shaped.rows", "$steps.retry.attempts.0.outputs.shaped.rows"]
+)
+@pytest.mark.parametrize("invalid", [False, True])
+def test_a_repeats_final_and_attempt_values_keep_their_bodies_dropped_fields(
+    tmp_path: Path, sinks: list[tuple[str, bool]], invalid: bool, view: str
+) -> None:
+    instance = _repeat_world(tmp_path, [_shaped(invalid)], _filter_count_derive(view, prefix=""))
+
+    state = _run(instance, "test.repeat-rows-line")
+
+    assert state.status == "succeeded", state
+    assert state.result == {"verdict": "fixed" if invalid else "affected"}
+    assert sinks == [("finished", not invalid)]

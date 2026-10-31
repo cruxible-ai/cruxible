@@ -5656,10 +5656,14 @@ class ProcedureExecutor:
         # Repeat is the AND over the attempts used: every body output of every
         # attempt, each its own completeness AND that of what it read.
         attempts_complete = True
+        # Each attempt's body outputs carry the completeness law locally: what
+        # each holds incomplete, and the invalid fields its rows view drops.
+        attempt_trackers: list[Completeness] = []
         for attempt in range(1, node.max_attempts + 1):
             local_outputs: dict[str, CanonicalValue] = {}
             local_provenance: dict[str, AliasProvenanceV1] = {}
-            local_incomplete: set[str] = set()
+            local = Completeness()
+            attempt_trackers.append(local)
             for body in node.body:
                 own_complete = self._run_repeat_body(
                     body,
@@ -5670,14 +5674,19 @@ class ProcedureExecutor:
                     local_provenance=local_provenance,
                     records=records,
                 )
+                records_kept = body.operation == "transform"
                 body_complete = own_complete and all(
-                    alias not in local_incomplete
-                    if alias in local_outputs and alias != body.as_
-                    else state.completeness.reads_complete(((alias, path),))
+                    (
+                        local
+                        if alias in local_outputs and alias != body.as_
+                        else state.completeness
+                    ).reads_complete(((alias, path),), records_kept=records_kept)
                     for alias, path in _referenced_reads(body.spec)
                 )
+                local.mark(body.as_, body_complete)
+                if records_kept:
+                    local.drop(body.as_, dropped_rows(local_outputs[body.as_]))
                 if not body_complete:
-                    local_incomplete.add(body.as_)
                     attempts_complete = False
                 self._check_budget(
                     admission,
@@ -5722,6 +5731,18 @@ class ProcedureExecutor:
                     {"attempts": attempts, "final": local_outputs}
                 )
                 state.completeness.mark(node.as_, attempts_complete)
+                # The repeat's value keeps each body output's lossy rows view,
+                # under the attempt it came from and, for the last, ``final``.
+                for index, tracker in enumerate(attempt_trackers):
+                    for body_alias, views in tracker.dropped.items():
+                        for at, rows in views.items():
+                            places: list[tuple[str, ...]] = [
+                                ("attempts", str(index), "outputs", body_alias)
+                            ]
+                            if index == len(attempt_trackers) - 1:
+                                places.append(("final", body_alias))
+                            for place in places:
+                                state.completeness.drop(node.as_, rows, at=(*place, *at))
                 repeated_tokens = frozenset(
                     token for provenance in local_provenance.values() for token in provenance.whole
                 )
