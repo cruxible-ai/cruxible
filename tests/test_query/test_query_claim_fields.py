@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
 from cruxible_client.contracts.compact_query import QueryRequest
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS, ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -468,7 +469,16 @@ def test_a_named_query_and_a_state_tap_carry_the_columns(world: SimpleNamespace)
         parameters={},
         coordinate=coordinate,
     ).value
-    assert tapped == state_tap_value(run.result)
+    # A Procedure read is complete: it runs under its row ceiling, not the
+    # definition's interactive limits, and is the same query run so.
+    complete = service_run_playbill_query(
+        instance,
+        name=definition.query.identity.name,
+        evaluation_time=at,
+        procedure_read=ProcedureReadCeiling(rows=DEFAULT_MAX_READ_ROWS),
+    )
+    assert tapped == state_tap_value(complete.result)
+    assert tapped["rows"] == state_tap_value(run.result)["rows"]  # type: ignore[index]
     fields = [
         {item["name"]: item.get("value") for item in row["fields"]}
         for row in tapped["rows"]  # type: ignore[index]

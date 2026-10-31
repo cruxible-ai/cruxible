@@ -683,8 +683,10 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         else:
             assert "tag" not in payload
         if name == "procedure":
-            assert [node["spec"]["tag"] for node in payload["definition"]["nodes"]] == [
-                "playbill-transform-adapter-spec-v1",
+            # The retired adapter is a literal project node; the rest are transforms.
+            literal, *transforms = payload["definition"]["nodes"]
+            assert (literal["kind"], sorted(literal["literal"])) == ("project", ["items"])
+            assert [node["spec"]["tag"] for node in transforms] == [
                 "playbill-transform-shape-items-spec-v1",
                 "playbill-transform-filter-items-spec-v1",
                 "playbill-transform-dedupe-items-spec-v1",

@@ -231,9 +231,9 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
             tmp_path, contents=canonical_bytes(value), contract=contract, accept_procedure=False
         )
         source, shape = procedure.definition.nodes
-        request = {**source.request, "coordinate": "0/16B6C50", "selector": selector}
+        request = {**source.input, "coordinate": "0/16B6C50", "selector": selector}
         definition = procedure.definition.model_copy(
-            update={"nodes": (source.model_copy(update={"request": request}), shape)}
+            update={"nodes": (source.model_copy(update={"input": request}), shape)}
         )
         procedure = revalidated(
             procedure.model_copy(
@@ -272,10 +272,12 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
         assert (
             envelope.run_coordinate.executable_digest == provider_digest(provider_artifact).tagged
         )
-        material = json.loads(instance.body_store().read(envelope.commitment.digest, access=access))
-        assert material["content"]["text"] == canonical_bytes(value).decode("utf-8")
+        # The workspace read commits the file's exact bytes.
+        material = instance.body_store().read(envelope.commitment.digest, access=access)
+        assert material == canonical_bytes(value)
+        assert json.loads(material) == value
         assert observation.source_read_receipt is not None
-        assert material["source"]["bytes_digest"] == observation.source_read_receipt.bytes_digest
+        assert envelope.commitment.digest == observation.source_read_receipt.bytes_digest
     else:
         instance, _owner = initialize_local(tmp_path)
         provider_artifact = capture_provider_build(contract)
@@ -449,7 +451,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
         assert format_refusal.code == "cruxible.proposal.member_format_invalid"
         assert format_refusal.severity == "error"
         assert format_refusal.message == (
-            "new CaptureContracts require cruxible-capture-contract-v3"
+            "new CaptureContracts require cruxible-capture-contract-v3, or v4 with decoding"
         )
         assert instance.accepted_coordinate() == base
         assert dict(instance.tree_at(instance.accepted_coordinate().git_oid)) == accepted_tree
@@ -467,7 +469,7 @@ def test_external_capture_admission_refuses_retired_format_or_requires_exact_con
     assert evidence.evidence_basis == ("direct",)
     assert claim.backing.source_mappings == ()
     assert envelope.commitment.materialization == "cas"
-    assert json.loads(material["content"]["text"]) == value
+    assert json.loads(material) == value
     assert instance.body_store().verify(envelope.commitment.digest)
     assert (
         verify_capture(
