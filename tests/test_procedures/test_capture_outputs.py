@@ -40,6 +40,7 @@ def _paired_world(
     *,
     trigger_input: str | None = None,
     acquisition: dict[str, Any] | None = None,
+    returned: tuple[str, ...] = ("left", "note"),
 ) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
@@ -146,7 +147,7 @@ def _paired_world(
             {
                 "procedure": "test.paired",
                 "input": {},
-                "output": {"left": "string", "note": "string"},
+                "output": {name: "string" for name in returned},
                 "slots": {
                     "pair": {
                         "in": "demo.pair.request@1",
@@ -163,7 +164,7 @@ def _paired_world(
                     },
                     {
                         "project": "out",
-                        "fields": {"left": "$doc.left", "note": "$doc.note"},
+                        "fields": {name: f"$doc.{name}" for name in returned},
                     },
                 ],
                 "returns": "out",
@@ -361,3 +362,44 @@ def test_a_line_trigger_aimed_at_a_two_field_call_is_refused_by_any_name(
 
     with pytest.raises(AuthoringLoweringError, match="trigger_target_ambiguous"):
         _paired_world(tmp_path, trigger_input=trigger_input)
+
+
+@pytest.mark.parametrize("reason", ["stale", "oversized"])
+def test_a_call_whose_every_capture_is_omitted_still_binds_its_typed_fields(
+    tmp_path: Path, reason: str
+) -> None:
+    """Re-review F6: omitting the captures omits only them; the operation's own
+    fields (the required note) stay readable, with no Capture produced or charged."""
+
+    rule = (
+        {"max_age": "PT1M", "on_stale": "omit"} if reason == "stale" else {"on_oversized": "omit"}
+    )
+    instance = _paired_world(
+        tmp_path,
+        acquisition={"doc.left": rule, "doc.right": rule},
+        returned=("note",),
+    )
+    old, big = "2026-10-29T11:00:00Z", b"x" * 8192  # past max_age; past 4096 max_bytes
+
+    def output(context):  # type: ignore[no-untyped-def]
+        if reason == "stale":
+            return {
+                "left": _wire(b'{"side": "left"}', observed_at=old),
+                "right": _wire(b'{"side": "right"}', observed_at=old),
+                "note": "paired",
+            }
+        return {"left": _wire(big), "right": _wire(big), "note": "paired"}
+
+    state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+
+    assert state.status == "succeeded", state.terminal
+    assert state.result == {"note": "paired"}
+    decisions = {
+        item["input_name"]: item["decision"]["disposition"]
+        for item in _journal(instance, state.run_id, "source_acquisition")
+    }
+    assert decisions == {"doc.left": "omitted", "doc.right": "omitted"}
+    assert _journal(instance, state.run_id, "produced_capture") == []
+    (final,) = _journal(instance, state.run_id, "attempt_finalized")
+    assert final["capture_bytes"] == 0
+    assert final["source_capture_associations"] == []

@@ -3901,12 +3901,14 @@ class ProcedureExecutor:
                 occurrence_path=occurrence.occurrence_path,
                 invocation_receipt_digest=invocation_receipt_digest,
             )
-        if selected:
-            assert isinstance(material, dict)
-            omitted = set(fields) - set(selected)
-            state.outputs[node.as_] = normalize_canonical(
-                {name: value for name, value in material.items() if name not in omitted}
-            )
+        # The call's value: its record without the omitted capture fields. Its
+        # other fields are the operation's own output, valid whatever was
+        # omitted; a call left with no field at all binds nothing.
+        assert isinstance(material, dict)
+        omitted = set(fields) - set(selected)
+        kept = {name: value for name, value in material.items() if name not in omitted}
+        if kept:
+            state.outputs[node.as_] = normalize_canonical(kept)
             state.provenance[node.as_] = AliasProvenanceV1(whole=frozenset(base | tokens))
         reserved_store.release()
 
