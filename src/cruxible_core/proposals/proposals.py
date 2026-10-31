@@ -389,7 +389,7 @@ REMOVED_NOUNS: Final[Mapping[str, str]] = {
     ),
     "source-acquisition-policies/": (
         "SourceAcquisitionPolicies are removed; declare acquisition_defaults on the "
-        "Procedure, or acquisition per Source alias on the Line."
+        "Procedure, or acquisition per capture output (<alias>.<field>) on the Line."
     ),
 }
 

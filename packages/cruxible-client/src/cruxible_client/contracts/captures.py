@@ -2716,7 +2716,7 @@ def provider_capture_receipt_matches_occurrence(
         and receipt.implementation_digest == occurrence.implementation_digest
         and receipt.materialization_digest == local.materialization_digest
         and receipt.deployment_digest == local.deployment_digest
-        and receipt.capture_contract_digest == occurrence.capture_contract_digest
+        and receipt.capture_contracts == occurrence.capture_contracts
         and receipt.budget_translation == occurrence.budget_translation
         and receipt.secret_references == expected_secret_receipts
     )
@@ -2788,9 +2788,15 @@ def validate_provider_external_capture_result(
     occurrence: ProviderExternalOccurrencePlan,
     producer: ArtifactIdentity,
     bound_generation: str,
+    field: str = "capture",
     source_read_receipt: SourceReadReceipt | None = None,
 ) -> None:
     """Every Source-result validity check independent of the result's byte length.
+
+    ``field`` is the capture field ``result`` was read from (``capture``, the
+    one field of a call whose operation returns its whole output as Capture
+    wire, or of the core-served read): its own pinned CaptureContract, in the
+    occurrence and the receipt, must be ``contract``.
 
     F05b: classifying an over-budget result as a typed ``oversized``
     acquisition outcome must never bypass these -- an invalid result stays
@@ -2810,8 +2816,8 @@ def validate_provider_external_capture_result(
         raise CaptureFormatError("CaptureContract does not permit CAS materialization")
     contract_digest_value = capture_contract_digest(contract).tagged
     if (
-        occurrence.capture_contract_digest != contract_digest_value
-        or receipt.capture_contract_digest != contract_digest_value
+        occurrence.capture_contracts.get(field) != contract_digest_value
+        or receipt.capture_contracts.get(field) != contract_digest_value
         or receipt.outcome.status != "ok"
         or receipt.output is None
         or producer.kind != "Provider"
@@ -2863,6 +2869,7 @@ def build_provider_external_capture_v2(
     occurrence: ProviderExternalOccurrencePlan,
     producer: ArtifactIdentity,
     bound_generation: str,
+    field: str = "capture",
     source_read_receipt: SourceReadReceipt | None = None,
     provider_output: object | None = None,
 ) -> CaptureBuildResult:
@@ -2883,6 +2890,7 @@ def build_provider_external_capture_v2(
         occurrence=occurrence,
         producer=producer,
         bound_generation=bound_generation,
+        field=field,
         source_read_receipt=source_read_receipt,
     )
     contract_digest_value = capture_contract_digest(contract).tagged

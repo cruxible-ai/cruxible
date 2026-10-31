@@ -141,7 +141,7 @@ class LineSpec(_StrictLineModel):
     holds one exact ``{build, operation}`` per slot, including the slots of
     invoked children (keyed ``<invoke node path>.<slot>``); core records them
     when the Line is accepted, and runs never rebind. ``acquisition`` replaces
-    the Procedure's ``acquisition_defaults`` per Source alias.
+    the Procedure's ``acquisition_defaults`` per capture output (``<alias>.<field>``).
 
     When it runs is not the Line's to say: every Trigger aimed at it is its own
     governed artifact, and Triggers drive it only while the Line is enabled.
@@ -417,13 +417,14 @@ def evaluate_line_spec_law(
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
-    from cruxible_client.contracts.procedures.artifacts import acquisition_aliases
+    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
 
-    unknown_aliases = sorted(set(line.acquisition) - acquisition_aliases(definition))
-    if unknown_aliases:
+    unknown_keys = sorted(set(line.acquisition) - acquisition_keys(definition))
+    if unknown_keys:
         return _refusal(
             "cruxible.line.acquisition_unknown_source",
-            f"Line acquisition names no acquiring call alias of its Procedure: {unknown_aliases}.",
+            "Line acquisition names no capture output (<alias>.<field>) of its Procedure: "
+            f"{unknown_keys}.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:

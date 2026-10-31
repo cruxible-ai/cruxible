@@ -697,7 +697,7 @@ def _author_acquire(transport: CruxibleClient, instance_id: str) -> None:
             "owned_contracts": [
                 item.model_dump(mode="json", by_alias=True) for item in _contracts()
             ],
-            "acquisition_defaults": {"advisory": _policy().model_dump(mode="json")},
+            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
             "retire": False,
         },
     ]

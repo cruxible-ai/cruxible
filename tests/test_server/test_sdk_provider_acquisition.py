@@ -332,7 +332,7 @@ def _fetch_procedure(
             )
         ),
         activation_policy="drain",
-        acquisition_defaults={_ALIAS: policy},
+        acquisition_defaults={f"{_ALIAS}.capture": policy},
     )
     from tests.support.procedures import revalidated
 

@@ -3,9 +3,12 @@
 A call acquires when its slot's out Contract carries ``capture<K>`` fields (or
 when its operation returns its whole output as Capture wire). Each such field
 is one capture output, described by ``{node_path, field, capture_kind,
-acquisition_key}``. Admission, trigger binding and execution all read these
-descriptors; a trigger substitutes exactly one of them, named ``<alias>.<field>``
-(or the alias alone when its call has one capture field).
+acquisition_key}``, and keyed ``<alias>.<field>``: its acquisition rule, its
+plan decision, its journal records and its Capture budget are all its own.
+Admission, trigger binding and execution all read these descriptors. A trigger
+substitutes one of them, named ``<alias>.<field>``, and only from a call with
+exactly one capture field: substituting one field of a call would leave the
+call's other fields unproduced.
 """
 
 from __future__ import annotations
@@ -39,8 +42,8 @@ class CaptureOutputDescriptor(BaseModel):
 
     ``node_path`` is the call's node id, ``field`` its capture field,
     ``capture_kind`` the CaptureContract the field's bytes are committed as,
-    and ``acquisition_key`` the key its acquisition rule is named by (the
-    call's alias).
+    and ``acquisition_key`` (``<alias>.<field>``) the key its acquisition
+    rule, plan decision and journal records are named by.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -74,7 +77,7 @@ def capture_output_descriptors(
                     alias=node.as_,
                     field=field,
                     capture_kind=capture.target.name,
-                    acquisition_key=node.as_,
+                    acquisition_key=f"{node.as_}.{field}",
                 )
             )
     return tuple(found)
@@ -91,10 +94,12 @@ class TriggerTargetRefused(ValueError):
 def trigger_capture_output(
     definition: ProcedureDefinition, trigger_input: str
 ) -> CaptureOutputDescriptor:
-    """The one capture output a trigger substitutes: ``<alias>.<field>`` or a one-field alias.
+    """The one capture output a trigger substitutes, named ``<alias>.<field>``.
 
-    A bare alias naming a call with several capture fields is
-    ``trigger_target_ambiguous``: the trigger must name the field.
+    Only a call with exactly one capture field can be substituted: a trigger
+    aimed at a call with several, by any name, is ``trigger_target_ambiguous``
+    (binding one field would leave the others, and the call's typed fields,
+    unproduced). Such a call runs normally when nothing substitutes it.
     """
 
     alias, _dot, field = trigger_input.partition(".")
@@ -104,21 +109,21 @@ def trigger_capture_output(
             "trigger_target_unknown",
             f"trigger_input {trigger_input!r} names no acquiring call's capture output",
         )
-    if field:
-        named = [item for item in outputs if item.field == field]
-        if len(named) != 1:
-            raise TriggerTargetRefused(
-                "trigger_target_unknown",
-                f"acquiring call {alias!r} has no capture field {field!r}",
-            )
-        return named[0]
     if len(outputs) != 1:
         raise TriggerTargetRefused(
             "trigger_target_ambiguous",
             f"acquiring call {alias!r} commits {len(outputs)} capture fields "
-            f"({', '.join(item.field for item in outputs)}); name one as {alias}.<field>",
+            f"({', '.join(item.field for item in outputs)}); a trigger substitutes only a "
+            "call with one capture field",
         )
-    return outputs[0]
+    (output,) = outputs
+    if field != output.field:
+        raise TriggerTargetRefused(
+            "trigger_target_unknown",
+            f"trigger_input {trigger_input!r} names no capture output; name it "
+            f"{output.reference!r}",
+        )
+    return output
 
 
 def procedure_capture_problem(

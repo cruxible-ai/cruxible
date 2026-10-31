@@ -1754,7 +1754,8 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
     source_accepted = _accepted(source_definition, pins=(capture_contract,))
     fixture = _fixture(tmp_path)
     landed = LandedCaptureRunInputV1(
-        input_name="capture",
+        # A landed Capture binds one capture output, <alias>.<field>.
+        input_name="capture.capture",
         capture_digest=_digest("v4-source-capture"),
         capture_contract_digest=capture_contract.artifact_digest,
         landing_cursor="partition:0001",
@@ -1779,7 +1780,9 @@ def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -
         executor._verify_input_planes(  # noqa: SLF001
             admission.model_copy(
                 update={
-                    "landed_capture_inputs": (landed.model_copy(update={"input_name": "missing"}),)
+                    "landed_capture_inputs": (
+                        landed.model_copy(update={"input_name": "capture.missing"}),
+                    )
                 }
             ),
             source_accepted,

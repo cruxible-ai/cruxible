@@ -83,7 +83,7 @@ def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         {
             **served.model_dump(mode="python"),
             "max_authority": "propose",
-            "trigger_input": fixtures.SOURCE_ALIAS,
+            "trigger_input": fixtures.SOURCE_CAPTURE,
             "trigger_event": selector,
         }
     )

@@ -451,7 +451,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 item.model_dump(mode="json", by_alias=True)
                 for item in (input_contract, output_contract)
             ],
-            "acquisition_defaults": {"advisory": _policy().model_dump(mode="json")},
+            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
             "retire": False,
         },
         {
@@ -531,7 +531,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             kind="procedure",
             definition=_authored(definition, same_set_kinds=set()),
             activation_policy="drain",
-            acquisition_defaults={"advisory": _policy()},
+            acquisition_defaults={"advisory.capture": _policy()},
             contracts=tuple(
                 CarriedContractInput(
                     name=contract.identity.name,

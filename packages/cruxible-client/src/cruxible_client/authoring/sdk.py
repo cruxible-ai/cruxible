@@ -1228,15 +1228,17 @@ class ChangeSetDraft:
         at it fires (:meth:`trigger`; a Trigger does nothing until then), and
         inherits the Procedure's hard caps as its budget unless one is given.
         ``trigger_input`` binds the triggering Capture (or a manual run's
-        event input) to a named Source alias; the Line then accepts only that
-        Source's exact CaptureContract event, and every Trigger aimed at it
-        must fire on it.
+        event input) to one capture output, ``<alias>.<field>``, of a call
+        with that one capture field; the Line then accepts only that field's
+        exact CaptureContract event, and every Trigger aimed at it must fire
+        on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
         Lowering refuses a Procedure with an ``exhaust_tap`` node: no run path
         admits one, so the Line could never run.
-        ``acquisition`` maps a Source alias to ``{max_age, on_unavailable}`` and
-        replaces the Procedure's default for it.
+        ``acquisition`` maps a capture output, ``<alias>.<field>``, to
+        ``{max_age, on_unavailable, ...}`` and replaces the Procedure's default
+        for it.
         ``parameters`` is the Procedure's input record; lowering checks it
         against the Procedure's input contract. ``max_authority`` (observe,
         propose or settle) caps this Line below its Procedure's own capability

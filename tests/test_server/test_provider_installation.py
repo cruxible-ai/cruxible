@@ -549,7 +549,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
                     "effect": "external_read",
                 }
             },
-            "acquisition_defaults": {"observation": _policy().model_dump(mode="json")},
+            "acquisition_defaults": {"observation.capture": _policy().model_dump(mode="json")},
             "steps": [
                 {
                     "call": "observation",

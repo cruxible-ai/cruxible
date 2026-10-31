@@ -289,29 +289,35 @@ def test_reserved_b4_source_capture_association_requires_canonical_occurrence_pa
     with pytest.raises(ValidationError, match="occurrence path"):
         ProcedureSourceCaptureAssociation(
             occurrence_path=occurrence_path,
+            field="capture",
             invocation_receipt_digest=_digest("receipt"),
             capture_digest=_digest("capture"),
         )
 
 
-def test_reserved_b4_source_capture_associations_are_path_sorted_and_unique() -> None:
+def test_source_capture_associations_are_sorted_and_unique_by_path_and_field() -> None:
     first = ProcedureSourceCaptureAssociation(
         occurrence_path="a/provider",
+        field="capture",
         invocation_receipt_digest=_digest("receipt-a"),
         capture_digest=_digest("capture-a"),
     )
     second = ProcedureSourceCaptureAssociation(
         occurrence_path="b/provider",
+        field="capture",
         invocation_receipt_digest=_digest("receipt-b"),
         capture_digest=_digest("capture-b"),
     )
-    assert ProcedureRunReceipt._source_associations((first, second)) == (  # noqa: SLF001
+    # One occurrence with two capture fields associates each on its own.
+    sibling = first.model_copy(update={"field": "other", "capture_digest": _digest("other")})
+    assert ProcedureRunReceipt._source_associations((first, sibling, second)) == (  # noqa: SLF001
         first,
+        sibling,
         second,
     )
-    with pytest.raises(ValueError, match="path-sorted and unique"):
+    with pytest.raises(ValueError, match="sorted and unique"):
         ProcedureRunReceipt._source_associations((second, first))  # noqa: SLF001
-    with pytest.raises(ValueError, match="path-sorted and unique"):
+    with pytest.raises(ValueError, match="sorted and unique"):
         ProcedureRunReceipt._source_associations((first, first))  # noqa: SLF001
 
 

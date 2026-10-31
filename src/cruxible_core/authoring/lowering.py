@@ -181,7 +181,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     ProcedureOwnedContract,
-    acquisition_aliases,
+    acquisition_keys,
     parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
@@ -3324,17 +3324,16 @@ def _render_line_member(
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
-    aliases = acquisition_aliases(procedure.definition)
+    aliases = acquisition_keys(procedure.definition)
     unknown = sorted(set(payload.acquisition) - aliases)
     if unknown:
         _refuse(
             "cruxible.authoring.line_acquisition_unknown_source",
             "acquisition",
-            f"Line acquisition names no acquiring call alias of {payload.procedure_name!r}: "
-            f"{unknown}.",
+            f"Line acquisition names no capture output of {payload.procedure_name!r}: {unknown}.",
             repair_kind="replace_acquisition",
             repair_description=(
-                f"Key acquisition rules by acquiring call alias: {sorted(aliases)}."
+                f"Key acquisition rules by capture output <alias>.<field>: {sorted(aliases)}."
             ),
         )
 

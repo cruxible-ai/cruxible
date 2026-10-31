@@ -326,13 +326,13 @@ def test_provider_result_cannot_diverge_from_the_durable_invocation_receipt(
         ("occurrence_path", "source/other"),
         ("deployment_digest", digest("deployment", "other")),
         ("materialization_digest", digest("materialization", "other")),
-        ("capture_contract_digest", digest("contract", "other")),
+        ("capture_contracts", {"capture": digest("contract", "other")}),
     ],
 )
 def test_invocation_receipt_cannot_be_crossed_with_another_admitted_occurrence(
     tmp_path: Path,
     field: str,
-    value: str,
+    value: object,
 ) -> None:
     fixture = provider_capture_fixture(tmp_path)
     receipt = fixture.receipt.model_copy(update={field: value})

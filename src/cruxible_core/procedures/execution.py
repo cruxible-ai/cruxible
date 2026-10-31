@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Callable, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
 from cruxible_client.contracts.shapes import Contract, ContractRef
@@ -235,7 +235,6 @@ from cruxible_core.procedures.reference_binding import (
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.procedures.terminal_dependencies import (
     TAINT_ACCEPTED_STATE,
-    TAINT_CONSERVATIVE_DEFAULT,
     TAINT_OMITTED_OPTIONAL,
     TAINT_UNPROMOTED_EXHAUST,
     AcquisitionInputOutcomeV1,
@@ -2547,7 +2546,10 @@ class ProcedureExecutor:
                 item.model_dump(mode="json")
                 for item in sorted(
                     state.source_capture_associations,
-                    key=lambda item: item.occurrence_path.encode("utf-8"),
+                    key=lambda item: (
+                        item.occurrence_path.encode("utf-8"),
+                        item.field.encode("utf-8"),
+                    ),
                 )
             ],
             "budget": ProcedureRunBudget(
@@ -2618,36 +2620,54 @@ class ProcedureExecutor:
                 and occurrence.node_id == node.node_id
                 and occurrence.repeat_node_id is None
             )
-            supplied = next(
-                (item for item in admission.landed_capture_inputs if item.input_name == node.as_),
-                None,
-            )
-            if supplied is not None:
-                contract_pin = self._pin(
-                    next(iter(node.captures.values())), label=f"call {node.node_id!r} captures"
+            # Each capture field is pinned, ruled and decided on its own.
+            pins = {
+                field: self._pin(reference, label=f"call {node.node_id!r} captures")
+                for field, reference in node.captures.items()
+            }
+            contracts = {
+                field: self.capture_contracts.get(pin.artifact_digest)
+                for field, pin in pins.items()
+            }
+            if any(
+                contract is None
+                or capture_contract_digest(contract).tagged != pins[field].artifact_digest
+                or self._acquisition_rule(node, field) is None
+                for field, contract in contracts.items()
+            ):
+                raise ExecutionError(
+                    "source_acquisition_plan_mismatch: Source closure does not reproduce"
                 )
-                contract = self.capture_contracts.get(contract_pin.artifact_digest)
+            supplied = tuple(
+                item
+                for item in admission.landed_capture_inputs
+                if item.input_name.partition(".")[0] == node.as_
+            )
+            if supplied:
+                # Only a one-field call is substituted: its one capture output.
+                field, contract_pin = next(iter(pins.items()))
+                key = f"{node.as_}.{field}"
                 selected = next(
-                    (item for item in selection.decisions if item.input_name == node.as_),
+                    (item for item in selection.decisions if item.input_name == key),
                     None,
+                )
+                captured = (
+                    self.capture_contracts.get(supplied[0].capture_contract_digest)
+                    if len(supplied) == 1
+                    else None
                 )
                 if (
                     matches
-                    or contract is None
-                    or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
-                    or (
-                        captured_contract := self.capture_contracts.get(
-                            supplied.capture_contract_digest
-                        )
-                    )
-                    is None
-                    or captured_contract.identity != contract_pin.target
-                    or capture_contract_digest(captured_contract).tagged
-                    != supplied.capture_contract_digest
-                    or self._acquisition_rule(node) is None
+                    or len(pins) != 1
+                    or len(supplied) != 1
+                    or supplied[0].input_name != key
+                    or captured is None
+                    or captured.identity != contract_pin.target
+                    or capture_contract_digest(captured).tagged
+                    != supplied[0].capture_contract_digest
                     or selected is None
                     or selected.disposition != "selected"
-                    or selected.selected_capture_digests != (supplied.capture_digest,)
+                    or selected.selected_capture_digests != (supplied[0].capture_digest,)
                 ):
                     raise ExecutionError(
                         "source_acquisition_plan_mismatch: supplied Source closure differs"
@@ -2658,18 +2678,12 @@ class ProcedureExecutor:
                     "source_acquisition_plan_mismatch: Source occurrence is not exact"
                 )
             occurrence = matches[0]
-            contract_pin = self._pin(
-                next(iter(node.captures.values())),
-                label=f"call {node.node_id!r} captures",
-            )
-            contract = self.capture_contracts.get(contract_pin.artifact_digest)
             if (
                 occurrence.input_name != node.as_
-                or occurrence.capture_contract_digest != contract_pin.artifact_digest
+                or occurrence.capture_contracts
+                != {field: pin.artifact_digest for field, pin in pins.items()}
                 or not self._occurrence_matches_slot(occurrence, node.slot)
                 or occurrence.effect_class == "external_mutation"
-                or contract is None
-                or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
             ):
                 raise ExecutionError(
                     "source_acquisition_plan_mismatch: Source closure does not reproduce"
@@ -2726,7 +2740,9 @@ class ProcedureExecutor:
                 taint_labels=(TAINT_ACCEPTED_STATE,),
             )
         for landed in prepared.landed_capture_materials:
-            name = landed.input.input_name
+            # A landed Capture is one capture output, <alias>.<field>; the
+            # substituted call's alias holds its value.
+            name = landed.input.input_name.partition(".")[0]
             state.outputs[name] = normalize_canonical(landed.material.value)
             state.capture_bytes += len(canonical_bytes(landed.material.value))
             tokens = {
@@ -2755,7 +2771,7 @@ class ProcedureExecutor:
                 ),
                 epistemic_grade=landed.material.epistemic_grade,
                 provenance_grade=landed.material.provenance_grade,
-                acquisition_input_name=name,
+                acquisition_input_name=landed.input.input_name,
             )
         for exhaust in prepared.exhaust_materials:
             digest = run_input_digest(exhaust.input)
@@ -2938,29 +2954,37 @@ class ProcedureExecutor:
         """Refuse every cross-plane relabel before the first node can observe a value."""
         self._use_plan(accepted)
 
-        nodes: dict[str, ReadNode | CallNode] = {
-            node.as_: node
-            for node in accepted.procedure.definition.nodes
-            if isinstance(node, ReadNode) or (isinstance(node, CallNode) and node.acquires)
-        }
+        # A read is named by its alias; an acquiring call's admitted input by the
+        # capture output it binds, <alias>.<field>.
+        nodes: dict[str, tuple[ReadNode | CallNode, str | None]] = {}
+        for node in accepted.procedure.definition.nodes:
+            if isinstance(node, ReadNode):
+                nodes[node.as_] = (node, None)
+            elif isinstance(node, CallNode):
+                for name in node.captures:
+                    nodes[f"{node.as_}.{name}"] = (node, name)
         for run_input in admission.run_inputs:
-            node = nodes.get(run_input.input_name)
-            if node is None:
+            found = nodes.get(run_input.input_name)
+            if found is None:
                 raise ProcedureBoundaryRefused(
                     "input_material_mismatch",
                     f"Admitted input {run_input.input_name!r} names no Procedure input node.",
                 )
+            node, field = found
             try:
                 validate_node_input_plane(node, run_input)
-                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(node, CallNode):
-                    pins = {
-                        self._pin(ref, label=f"call {node.node_id!r} captures").artifact_digest
-                        for ref in node.captures.values()
-                    }
-                    if run_input.capture_contract_digest not in pins:
-                        raise ValueError(
-                            "landed Capture does not match the call's capture CaptureContract"
-                        )
+                if (
+                    isinstance(run_input, LandedCaptureRunInputV1)
+                    and isinstance(node, CallNode)
+                    and field is not None
+                    and run_input.capture_contract_digest
+                    != self._pin(
+                        node.captures[field], label=f"call {node.node_id!r} captures"
+                    ).artifact_digest
+                ):
+                    raise ValueError(
+                        "landed Capture does not match its capture field's CaptureContract"
+                    )
             except ValueError as exc:
                 raise ProcedureBoundaryRefused(
                     "input_material_mismatch",
@@ -3453,10 +3477,16 @@ class ProcedureExecutor:
     ) -> None:
         """Run a call with captures through its admitted Provider occurrence.
 
-        Each ``capture<K>`` field of the slot's out Contract is committed
-        byte-exact as a Capture of its pinned CaptureContract; every other
-        field is normalized and checked by the out Contract. The call's value
-        names each Capture by digest.
+        One Provider invocation serves the call. Each ``capture<K>`` field of
+        the slot's out Contract is its own capture output, ``<alias>.<field>``:
+        committed byte-exact under its own pinned CaptureContract, decided by
+        its own acquisition rule (availability, freshness, replayability,
+        size), journaled with its own acquisition and produced-Capture records,
+        associated with the occurrence under its field path, and charged to the
+        run's Capture budget on its own. Every other field is normalized and
+        checked by the out Contract. The call's value names each selected
+        Capture by digest; an omitted field is absent from it, and its omission
+        taints the control lineage.
         """
 
         if node.as_ in state.outputs:
@@ -3470,36 +3500,31 @@ class ProcedureExecutor:
                 "An acquiring call requires the admitted acquisition carrier.",
                 node_id=node.node_id,
             )
-        rule = self._acquisition_rule(node)
-        if rule is None:
-            raise _RunRefusal(
-                "source_acquisition_unavailable",
-                "No declared acquisition rule serves this acquiring call.",
-                node_id=node.node_id,
-            )
-        # The first capture field is the acquisition's own Capture; any other
-        # capture field is committed beside it under the same CaptureContract.
-        capture_field, capture_ref = next(iter(node.captures.items()))
-        extra_fields = tuple(field for field in node.captures if field != capture_field)
+        fields = tuple(node.captures)
+        rules: dict[str, AcquisitionRule] = {}
+        for field in fields:
+            rule = self._acquisition_rule(node, field)
+            if rule is None:
+                raise _RunRefusal(
+                    "source_acquisition_unavailable",
+                    f"No declared acquisition rule serves capture output {node.as_}.{field}.",
+                    node_id=node.node_id,
+                )
+            rules[field] = rule
         occurrence = self._planned_external_occurrence(
             state=state,
             node_id=node.node_id,
             repeat_node_id=None,
             occurrence_kind="source",
         )
-        contract_pin = self._pin(capture_ref, label=f"call {node.node_id!r} captures")
-        if any(
-            self._pin(node.captures[field], label=f"call {node.node_id!r} captures") != contract_pin
-            for field in extra_fields
-        ):
-            raise _RunRefusal(
-                "provider_acquisition_plan_mismatch",
-                "An acquiring call commits its capture fields under one CaptureContract.",
-                node_id=node.node_id,
-            )
+        pins = {
+            field: self._pin(node.captures[field], label=f"call {node.node_id!r} captures")
+            for field in fields
+        }
         if (
             occurrence.input_name != node.as_
-            or occurrence.capture_contract_digest != contract_pin.artifact_digest
+            or occurrence.capture_contracts
+            != {field: pin.artifact_digest for field, pin in pins.items()}
             or not self._occurrence_matches_slot(occurrence, node.slot)
             or occurrence.effect_class == "external_mutation"
         ):
@@ -3508,6 +3533,15 @@ class ProcedureExecutor:
                 "The admitted acquiring occurrence differs from the graph binding.",
                 node_id=node.node_id,
             )
+        contracts: dict[str, CaptureContract] = {}
+        for field, pin in pins.items():
+            found = self.capture_contracts.get(pin.artifact_digest)
+            if found is None or capture_contract_digest(found).tagged != pin.artifact_digest:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
+                )
+            contracts[field] = found
         resolved_request = normalize_canonical(
             _resolve_template(
                 node.input,
@@ -3515,17 +3549,18 @@ class ProcedureExecutor:
                 outputs=state.outputs,
             )
         )
-        offending_origin = disallowed_origin(rule, resolved_request)
-        if offending_origin is not None:
-            # F05/§4.1,§4.4: a hard eligibility gate, never an omit choice,
-            # exactly like permitted_replayability -- checked before any
-            # provider is invoked.
-            raise _RunRefusal(
-                cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
-                f"Call alias {node.as_!r} requests {offending_origin!r}, whose origin is "
-                f"not in the Line's permitted acquisition.origins for this field.",
-                node_id=node.node_id,
-            )
+        for field, rule in rules.items():
+            offending_origin = disallowed_origin(rule, resolved_request)
+            if offending_origin is not None:
+                # F05/§4.1,§4.4: a hard eligibility gate, never an omit choice,
+                # exactly like permitted_replayability -- checked before any
+                # provider is invoked.
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                    f"Capture output {node.as_}.{field} requests {offending_origin!r}, whose "
+                    "origin is not in the Line's permitted acquisition.origins for this field.",
+                    node_id=node.node_id,
+                )
         workspace_request: ExecutedWorkspaceFileSourceRequestV2 | None = None
         if bound_operation(occurrence).builtin == "workspace.file":
             # The author names the workspace logically, or not at all; the daemon
@@ -3550,18 +3585,12 @@ class ProcedureExecutor:
             "source_request_derived",
             derived_request.model_dump(mode="json"),
         )
-        contract = self.capture_contracts.get(contract_pin.artifact_digest)
-        if contract is None or capture_contract_digest(contract).tagged != (
-            contract_pin.artifact_digest
-        ):
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
-            )
         source_read_receipt: SourceReadReceipt | None = None
         provider_payload = resolved_request
         if workspace_request is not None:
             assert self.workspace_file_reader is not None  # resolved by it above
+            # The core-served read has exactly one capture field (an acceptance law).
+            (workspace_contract,) = contracts.values()
             try:
                 workspace_read = self.workspace_file_reader.read(
                     workspace_request,
@@ -3569,7 +3598,7 @@ class ProcedureExecutor:
                     admission_binding_digest=admission.admission_binding_digest,
                     occurrence_path=occurrence.occurrence_path,
                     policy_coordinate=admission.accepted_coordinate,
-                    resolved_max_bytes=contract.selection_budget.max_bytes,
+                    resolved_max_bytes=workspace_contract.selection_budget.max_bytes,
                     derived_request_digest=derived_request.request_digest,
                     read_at=self.clock.now(),
                 )
@@ -3600,64 +3629,56 @@ class ProcedureExecutor:
                 occurrence=occurrence,
             )
         except _ProviderNodeRefusal as exc:
-            # Only a typed refusal the operation declares absorbable, under a
-            # rule that omits an unavailable input, is absorbed.
-            absorbable = (
-                provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
-                and rule.on_unavailable == "omit"
-            )
-            if not absorbable:
+            # Only a typed refusal the operation declares absorbable is absorbed,
+            # and only for a capture output whose rule omits an unavailable input.
+            absorbable = provider_refusal_is_absorbable(occurrence.operation, exc.outcome)
+            if not absorbable or any(rule.on_unavailable != "omit" for rule in rules.values()):
                 raise
-            unavailable = ProcedureSourceAcquisitionResultV1(
-                node_id=node.node_id,
-                input_name=node.as_,
-                outcome="unavailable",
-                reason_code="cruxible.acquisition.unavailable",
-                detail=exc.refusal.message,
-            )
-            decision = apply_acquisition_result(
-                rule,
-                unavailable,
-                default_authorized=rule.input_name in self.default_authorizations,
-                evaluation_time=(admission.occurrence_evaluation_time),
-            )
-            self._append_event(
-                admission,
-                records,
-                "source_acquisition",
-                {
-                    "tag": "playbill-procedure-source-acquisition-v1",
-                    "node_id": node.node_id,
-                    "input_name": node.as_,
-                    "result": unavailable.model_dump(mode="json"),
-                    "decision": decision.model_dump(mode="json"),
-                    "provider_refusal": exc.outcome.model_dump(mode="json"),
-                    "audit": {
-                        "deployment_digest": admission.deployment_snapshot_digest,
-                        "recorded_at": format_datetime(self.clock.now()),
-                    },
-                },
-            )
-            self._bind_acquisition(
-                node,
-                admission=admission,
-                state=state,
-                records=records,
-                rule=rule,
-                result=unavailable,
-                decision=decision,
-            )
+            unavailable: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+            unavailable_decisions: dict[str, AcquisitionInputDecision] = {}
+            for field, rule in rules.items():
+                unavailable[field] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rule.input_name,
+                    outcome="unavailable",
+                    reason_code="cruxible.acquisition.unavailable",
+                    detail=exc.refusal.message,
+                )
+                unavailable_decisions[field] = apply_acquisition_result(
+                    rule,
+                    unavailable[field],
+                    default_authorized=rule.input_name in self.default_authorizations,
+                    evaluation_time=admission.occurrence_evaluation_time,
+                )
+                self._journal_acquisition(
+                    admission,
+                    records,
+                    node=node,
+                    field=field,
+                    result=unavailable[field],
+                    decision=unavailable_decisions[field],
+                    provider_refusal=exc.outcome.model_dump(mode="json"),
+                )
+            for field, rule in rules.items():
+                self._bind_omission(
+                    admission=admission,
+                    state=state,
+                    rule=rule,
+                    decision=unavailable_decisions[field],
+                )
             return
-        offending_result_origin = disallowed_origin(rule, output)
-        if offending_result_origin is not None:
-            # F05/§4.1,§4.4: the result's own url/final_url fields (e.g. after
-            # a redirect) are checked too, before any Capture conversion.
-            raise _RunRefusal(
-                cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
-                f"Call alias {node.as_!r} result names {offending_result_origin!r}, whose "
-                f"origin is not in the Line's permitted acquisition.origins for this field.",
-                node_id=node.node_id,
-            )
+        for field, rule in rules.items():
+            offending_result_origin = disallowed_origin(rule, output)
+            if offending_result_origin is not None:
+                # F05/§4.1,§4.4: the result's own url/final_url fields (e.g. after
+                # a redirect) are checked too, before any Capture conversion.
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
+                    f"Capture output {node.as_}.{field} result names "
+                    f"{offending_result_origin!r}, whose origin is not in the Line's permitted "
+                    "acquisition.origins for this field.",
+                    node_id=node.node_id,
+                )
         out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
         # An operation whose out Contract carries no capture<K> field returns
         # its whole output as Capture wire; the call's value then names only
@@ -3674,149 +3695,117 @@ class ProcedureExecutor:
                 state=state,
                 node_id=node.node_id,
             )
-        try:
-            if whole_wire:
-                provider_result = ProviderResultToExternalCapture.model_validate(output)
-            elif workspace_request is None or source_read_receipt is None:
-                if not isinstance(output, dict):
-                    raise ValueError("an acquiring call's output is a record")
-                provider_result = ProviderResultToExternalCapture.model_validate(
-                    output.get(capture_field)
-                )
-            else:
-                # The core-served read commits the file's exact bytes, the ones
-                # core read and handed the operation; its output structures them.
-                assert isinstance(provider_payload, dict)
-                provider_result = ProviderResultToExternalCapture(
-                    source_identity=workspace_request.logical_source,
-                    coordinate_type=workspace_request.coordinate_type,
-                    coordinate=workspace_request.coordinate,
-                    selector_type=workspace_request.selector_type,
-                    selector=workspace_request.selector,
-                    replayability=workspace_request.replayability,
-                    content_base64=str(provider_payload["bytes"]),
-                    byte_length=int(cast(int, provider_payload["byte_length"])),
-                    bytes_digest=str(provider_payload["bytes_digest"]),
-                    observed_at=source_read_receipt.read_at,
-                )
-        except (ValidationError, ValueError) as exc:
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={
-                    "node_id": node.node_id,
-                    "reason": f"capture field {capture_field!r} is not Capture wire",
-                },
-            ) from exc
-        try:
-            # F05b: every check independent of the result's byte length runs
-            # before classifying it as oversized, so a schema, replayability
-            # or receipt-binding violation is never hidden behind on_oversized
-            # just because the same result also happens to be over budget.
-            validate_provider_external_capture_result(
-                contract=contract,
-                result=provider_result,
-                receipt=invocation_receipt,
-                occurrence=occurrence,
-                producer=self.slot_bindings[node.slot].build.target,
-                bound_generation=admission.accepted_coordinate.generation_root,
-                source_read_receipt=source_read_receipt,
-            )
-        except (CaptureFormatError, ValidationError, ValueError) as exc:
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-            ) from exc
-        if provider_result.byte_length > contract.selection_budget.max_bytes:
-            # F05: a real oversized read is the typed acquisition outcome
-            # (on_oversized), not a generic protocol violation -- it is
-            # classified before any Capture conversion is attempted, exactly
-            # as an unavailable result is classified above.
-            oversized = ProcedureSourceAcquisitionResultV1(
-                node_id=node.node_id,
-                input_name=node.as_,
-                outcome="oversized",
-                reason_code=ACQUISITION_OVERSIZED,
-                detail=(
-                    f"Read {provider_result.byte_length} bytes against a "
-                    f"{contract.selection_budget.max_bytes}-byte Capture budget."
-                ),
-            )
-            decision = apply_acquisition_result(
-                rule,
-                oversized,
-                default_authorized=rule.input_name in self.default_authorizations,
-                evaluation_time=(admission.occurrence_evaluation_time),
-            )
-            self._append_event(
-                admission,
-                records,
-                "source_acquisition",
-                {
-                    "tag": "playbill-procedure-source-acquisition-v1",
-                    "node_id": node.node_id,
-                    "input_name": node.as_,
-                    "result": oversized.model_dump(mode="json"),
-                    "decision": decision.model_dump(mode="json"),
-                    "audit": {
-                        "deployment_digest": admission.deployment_snapshot_digest,
-                        "recorded_at": format_datetime(self.clock.now()),
+        wires: dict[str, ProviderResultToExternalCapture] = {}
+        for field in fields:
+            try:
+                if whole_wire:
+                    wires[field] = ProviderResultToExternalCapture.model_validate(output)
+                elif workspace_request is None or source_read_receipt is None:
+                    if not isinstance(output, dict):
+                        raise ValueError("an acquiring call's output is a record")
+                    wires[field] = ProviderResultToExternalCapture.model_validate(output.get(field))
+                else:
+                    # The core-served read commits the file's exact bytes, the
+                    # ones core read and handed the operation; its output
+                    # structures them.
+                    assert isinstance(provider_payload, dict)
+                    wires[field] = ProviderResultToExternalCapture(
+                        source_identity=workspace_request.logical_source,
+                        coordinate_type=workspace_request.coordinate_type,
+                        coordinate=workspace_request.coordinate,
+                        selector_type=workspace_request.selector_type,
+                        selector=workspace_request.selector,
+                        replayability=workspace_request.replayability,
+                        content_base64=str(provider_payload["bytes"]),
+                        byte_length=int(cast(int, provider_payload["byte_length"])),
+                        bytes_digest=str(provider_payload["bytes_digest"]),
+                        observed_at=source_read_receipt.read_at,
+                    )
+            except (ValidationError, ValueError) as exc:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={
+                        "node_id": node.node_id,
+                        "reason": f"capture field {field!r} is not Capture wire",
                     },
-                },
-            )
-            self._bind_acquisition(
-                node,
-                admission=admission,
-                state=state,
-                records=records,
-                rule=rule,
-                result=oversized,
-                decision=decision,
-            )
-            return
+                ) from exc
+        producer = self.slot_bindings[node.slot].build.target
+        bound_generation = admission.accepted_coordinate.generation_root
+        for field in fields:
+            try:
+                # F05b: every check independent of the result's byte length runs
+                # before classifying it as oversized, so a schema, replayability
+                # or receipt-binding violation is never hidden behind
+                # on_oversized just because the same result is also over budget.
+                validate_provider_external_capture_result(
+                    contract=contracts[field],
+                    result=wires[field],
+                    receipt=invocation_receipt,
+                    occurrence=occurrence,
+                    producer=producer,
+                    bound_generation=bound_generation,
+                    field=field,
+                    source_read_receipt=source_read_receipt,
+                )
+            except (CaptureFormatError, ValidationError, ValueError) as exc:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
+                ) from exc
         reserved_store = ReservedCaptureStore(
             bodies=self.bodies,
             reservations=self.material_reservations,
             admission=admission,
         )
-        try:
-            built = build_provider_external_capture_v2(
-                store=reserved_store,
-                contract=contract,
-                result=provider_result,
-                receipt=invocation_receipt,
-                occurrence=occurrence,
-                producer=self.slot_bindings[node.slot].build.target,
-                bound_generation=admission.accepted_coordinate.generation_root,
-                source_read_receipt=source_read_receipt,
-                provider_output=None if whole_wire else output,
-            )
-            envelope = built.envelope
-            source = envelope.source
-            assert isinstance(source, ExternalSourceReference)
-            material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
-            assert isinstance(output, dict)
-            extras: dict[str, tuple[str, bytes]] = {}
-            for field in extra_fields:
-                extra_result = ProviderResultToExternalCapture.model_validate(output.get(field))
-                extra = build_provider_external_capture_v2(
+        results: dict[str, ProcedureSourceAcquisitionResultV1] = {}
+        built: dict[str, Any] = {}
+        bodies: dict[str, bytes] = {}
+        for field in fields:
+            wire, contract = wires[field], contracts[field]
+            if wire.byte_length > contract.selection_budget.max_bytes:
+                # F05: a real oversized read is the typed acquisition outcome
+                # (on_oversized) of this capture output alone, classified before
+                # its Capture is committed.
+                results[field] = ProcedureSourceAcquisitionResultV1(
+                    node_id=node.node_id,
+                    input_name=rules[field].input_name,
+                    outcome="oversized",
+                    reason_code=ACQUISITION_OVERSIZED,
+                    detail=(
+                        f"Read {wire.byte_length} bytes against a "
+                        f"{contract.selection_budget.max_bytes}-byte Capture budget."
+                    ),
+                )
+                continue
+            try:
+                built[field] = build_provider_external_capture_v2(
                     store=reserved_store,
                     contract=contract,
-                    result=extra_result,
+                    result=wire,
                     receipt=invocation_receipt,
                     occurrence=occurrence,
-                    producer=self.slot_bindings[node.slot].build.target,
-                    bound_generation=admission.accepted_coordinate.generation_root,
-                    provider_output=output,
+                    producer=producer,
+                    bound_generation=bound_generation,
+                    field=field,
+                    source_read_receipt=source_read_receipt,
+                    provider_output=None if whole_wire else output,
                 )
-                extras[field] = (
-                    extra.capture_digest,
-                    base64.b64decode(extra_result.content_base64, validate=True),
-                )
-            material = (
-                {capture_field: built.capture_digest}
-                if whole_wire
-                # The core-served read: the operation's own structured result,
-                # beside the capture field of the bytes core read.
+                bodies[field] = base64.b64decode(wire.content_base64, validate=True)
+            except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
+                raise _InternalFailure(
+                    "provider_protocol_violation",
+                    details={"node_id": node.node_id, "reason": "Capture conversion failed"},
+                ) from exc
+        digests = {field: item.capture_digest for field, item in built.items()}
+        if whole_wire:
+            material: CanonicalValue = normalize_canonical(digests)
+        else:
+            assert isinstance(output, dict)
+            # The call's value: its out record, each committed capture field
+            # naming its Capture. An oversized field is checked as absent.
+            record = (
+                {**output, **digests}
+                if workspace_request is None
                 else {
                     **self._validate_operation_value(
                         occurrence,
@@ -3826,115 +3815,120 @@ class ProcedureExecutor:
                         state=state,
                         node_id=node.node_id,
                     ),  # type: ignore[dict-item]
-                    capture_field: built.capture_digest,
+                    **digests,
                 }
+            )
+            for field in fields:
+                if field not in digests and workspace_request is None:
+                    record.pop(field, None)
+            material = (
+                normalize_canonical(record)
                 if workspace_request is not None
                 else self._validate_operation_value(
                     occurrence,
-                    normalize_canonical(
-                        {
-                            **output,
-                            capture_field: built.capture_digest,
-                            **{field: digest for field, (digest, _body) in extras.items()},
-                        }
-                    ),
+                    normalize_canonical(record),
                     direction="out",
                     admission=admission,
                     state=state,
                     node_id=node.node_id,
+                    absent_captures=frozenset(field for field in fields if field not in digests),
                 )
             )
-            acquisition_receipt = CaptureAcquisitionReceiptV1(
-                capture_contract_digest=envelope.capture_contract_digest,
-                producer=envelope.producer,
-                producer_binding_digest=envelope.producer_binding_digest,
-                source_identity=source.source_identity,
-                coordinate_type=source.coordinate_type,
-                coordinate=source.coordinate,
-                selector_type=source.selector_type,
-                selector=source.selector,
-                commitment=envelope.commitment,
-                observed_at=envelope.observed_at,
-                replayability=source.replayability,
-                source_effective_time=envelope.source_effective_time,
-            )
-            acquisition = ExternalCaptureAcquisitionV1(
-                receipt=acquisition_receipt,
-                envelope=envelope,
-                capture_digest=built.capture_digest,
-                epistemic_grade=contract.epistemic_grade,
-                provenance_grade="daemon-fetched",
-                canonical_material=material,
-            )
-        except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
-            raise _InternalFailure(
-                "provider_protocol_violation",
-                details={"node_id": node.node_id, "reason": "Capture conversion failed"},
-            ) from exc
-        result = ProcedureSourceAcquisitionResultV1(
-            node_id=node.node_id,
-            input_name=node.as_,
-            outcome="acquired",
-            acquisition=acquisition,
-        )
-        decision = apply_acquisition_result(
-            rule,
-            result,
-            default_authorized=rule.input_name in self.default_authorizations,
-            evaluation_time=(admission.occurrence_evaluation_time),
-        )
-        self._append_event(
-            admission,
-            records,
-            "source_acquisition",
-            {
-                "tag": "playbill-procedure-source-acquisition-v1",
-                "node_id": node.node_id,
-                "input_name": node.as_,
-                "result": result.model_dump(mode="json", exclude={"acquisition"}),
-                "decision": decision.model_dump(mode="json"),
-                "audit": {
-                    "deployment_digest": admission.deployment_snapshot_digest,
-                    "recorded_at": format_datetime(self.clock.now()),
-                },
-            },
-        )
-        if decision.disposition != "selected":
-            # The attempted read remains journaled, but an ineligible Capture
-            # must not be published as an output of this run.
-            reserved_store.release()
-        self._bind_acquisition(
-            node,
-            admission=admission,
-            state=state,
-            records=records,
-            rule=rule,
-            result=result,
-            decision=decision,
-            occurrence_path=occurrence.occurrence_path,
-            invocation_receipt_digest=invocation_receipt_digest,
-            material_byte_length=len(material_bytes),
-        )
-        if decision.disposition == "selected":
-            state.source_capture_associations.append(
-                ProcedureSourceCaptureAssociation(
-                    occurrence_path=occurrence.occurrence_path,
-                    invocation_receipt_digest=invocation_receipt_digest,
-                    capture_digest=built.capture_digest,
-                )
-            )
-            state.capture_bodies[built.capture_digest] = material_bytes
-            state.capture_contracts[built.capture_digest] = contract_pin.artifact_digest
-            for digest, body in extras.values():
-                state.capture_bodies[digest] = body
-                state.capture_contracts[digest] = contract_pin.artifact_digest
-                state.capture_bytes += len(body)
-                state.facts[digest] = DependencyEvidenceFactsV1(
-                    epistemic_grade=contract.epistemic_grade,
+        for field, item in built.items():
+            envelope = item.envelope
+            source = envelope.source
+            assert isinstance(source, ExternalSourceReference)
+            results[field] = ProcedureSourceAcquisitionResultV1(
+                node_id=node.node_id,
+                input_name=rules[field].input_name,
+                outcome="acquired",
+                acquisition=ExternalCaptureAcquisitionV1(
+                    receipt=CaptureAcquisitionReceiptV1(
+                        capture_contract_digest=envelope.capture_contract_digest,
+                        producer=envelope.producer,
+                        producer_binding_digest=envelope.producer_binding_digest,
+                        source_identity=source.source_identity,
+                        coordinate_type=source.coordinate_type,
+                        coordinate=source.coordinate,
+                        selector_type=source.selector_type,
+                        selector=source.selector,
+                        commitment=envelope.commitment,
+                        observed_at=envelope.observed_at,
+                        replayability=source.replayability,
+                        source_effective_time=envelope.source_effective_time,
+                    ),
+                    envelope=envelope,
+                    capture_digest=item.capture_digest,
+                    epistemic_grade=contracts[field].epistemic_grade,
                     provenance_grade="daemon-fetched",
-                    acquisition_input_name=rule.input_name,
+                    canonical_material=material,
+                ),
+            )
+        # Each capture output is decided by its own rule, on its own Capture:
+        # one field can be stale or ineligible while another is selected.
+        decisions = {
+            field: apply_acquisition_result(
+                rules[field],
+                results[field],
+                default_authorized=rules[field].input_name in self.default_authorizations,
+                evaluation_time=admission.occurrence_evaluation_time,
+            )
+            for field in fields
+        }
+        for field in fields:
+            self._journal_acquisition(
+                admission,
+                records,
+                node=node,
+                field=field,
+                result=results[field],
+                decision=decisions[field],
+            )
+        for field in fields:
+            if decisions[field].disposition == "refused":
+                # The attempted reads remain journaled, but an ineligible
+                # Capture is never published as an output of this run.
+                reserved_store.release()
+                self._refuse_acquisition(
+                    node,
+                    admission=admission,
+                    rule=rules[field],
+                    result=results[field],
+                    decision=decisions[field],
                 )
-                self._extend_alias(state, node.as_, frozenset({produced_capture_token(digest)}))
+        selected = tuple(field for field in fields if decisions[field].disposition == "selected")
+        for field in fields:
+            if decisions[field].disposition == "omitted":
+                self._bind_omission(
+                    admission=admission, state=state, rule=rules[field], decision=decisions[field]
+                )
+        base = _node_policy_tokens(node, self.references) | state.control
+        if admission.acquisition_policy_digest is not None:
+            base = base | {policy_token(admission.acquisition_policy_digest)}
+        tokens: set[DependencyToken] = set()
+        for field in selected:
+            acquisition = results[field].acquisition
+            assert acquisition is not None  # a selected result carries its Capture
+            tokens |= self._bind_capture_output(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+                field=field,
+                rule=rules[field],
+                acquisition=acquisition,
+                body=bodies[field],
+                contract_digest=pins[field].artifact_digest,
+                occurrence_path=occurrence.occurrence_path,
+                invocation_receipt_digest=invocation_receipt_digest,
+            )
+        if selected:
+            assert isinstance(material, dict)
+            omitted = set(fields) - set(selected)
+            state.outputs[node.as_] = normalize_canonical(
+                {name: value for name, value in material.items() if name not in omitted}
+            )
+            state.provenance[node.as_] = AliasProvenanceV1(whole=frozenset(base | tokens))
         reserved_store.release()
 
     def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
@@ -4145,120 +4139,137 @@ class ProcedureExecutor:
             and occurrence.operation_signature_digest == binding.operation_signature_digest
         )
 
-    def _acquisition_rule(self, node: CallNode) -> AcquisitionRule | None:
+    def _acquisition_rule(self, node: CallNode, field: str) -> AcquisitionRule | None:
         if self.acquisition_rules is None:
             return None
-        # An acquiring call's rule is named by its alias.
-        return self.acquisition_rules.rule_for(node.node_id, node.as_)
+        # Each capture output's rule is named <alias>.<field>.
+        return self.acquisition_rules.rule_for(node.node_id, f"{node.as_}.{field}")
 
-    def _bind_acquisition(
+    def _journal_acquisition(
+        self,
+        admission: ProcedureRunAdmission,
+        records: list[StoredProcedureJournalRecordV1],
+        *,
+        node: CallNode,
+        field: str,
+        result: ProcedureSourceAcquisitionResultV1,
+        decision: AcquisitionInputDecision,
+        provider_refusal: object | None = None,
+    ) -> None:
+        """Journal one capture output's acquisition attempt and its decision."""
+
+        self._append_event(
+            admission,
+            records,
+            "source_acquisition",
+            {
+                "tag": "playbill-procedure-source-acquisition-v1",
+                "node_id": node.node_id,
+                "input_name": result.input_name,
+                "field": field,
+                "result": result.model_dump(mode="json", exclude={"acquisition"}),
+                "decision": decision.model_dump(mode="json"),
+                **({} if provider_refusal is None else {"provider_refusal": provider_refusal}),
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+
+    def _refuse_acquisition(
+        self,
+        node: CallNode,
+        *,
+        admission: ProcedureRunAdmission,
+        rule: AcquisitionRule,
+        result: ProcedureSourceAcquisitionResultV1,
+        decision: AcquisitionInputDecision,
+    ) -> NoReturn:
+        """Refuse the run for one capture output its rule refuses."""
+
+        details: dict[str, object] = {"input_name": rule.input_name}
+        message = f"Capture output {rule.input_name!r} refuses this result. "
+        if (
+            result.acquisition is not None
+            and rule.max_age is not None
+            and "cruxible.acquisition.stale" in decision.reason_codes
+        ):
+            evaluation_time = admission.occurrence_evaluation_time
+            delta = evaluation_time - result.acquisition.envelope.observed_at
+            details.update(
+                age_microseconds=(delta.days * 86_400 + delta.seconds) * 1_000_000
+                + delta.microseconds,
+                max_age_microseconds=rule.max_age.microseconds,
+            )
+            message += (
+                f"Capture age is {delta.total_seconds()}s; max_age is "
+                f"{rule.max_age.microseconds / 1_000_000}s. "
+            )
+        message += (
+            f"Repair: fetch a fresh available Capture for {rule.input_name!r} "
+            "within its contract and age bounds."
+        )
+        raise _RunRefusal(
+            cast(
+                ProcedureNodeRefusalCode,
+                decision.reason_codes[0]
+                if decision.reason_codes
+                else "cruxible.acquisition.refused",
+            ),
+            message,
+            node_id=node.node_id,
+            details=details,
+        )
+
+    def _bind_omission(
+        self,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+        rule: AcquisitionRule,
+        decision: AcquisitionInputDecision,
+    ) -> None:
+        """An omitted capture output binds no Capture and taints the control lineage."""
+
+        marker = _decision_digest(admission.run_id, decision)
+        state.facts[marker] = DependencyEvidenceFactsV1(
+            epistemic_grade="predicted",
+            provenance_grade="self-asserted",
+            taint_labels=(TAINT_OMITTED_OPTIONAL,),
+            acquisition_input_name=rule.input_name,
+        )
+        state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+            input_name=rule.input_name,
+            disposition="omitted",
+        )
+        state.control = state.control | {receipt_token(marker)}
+
+    def _bind_capture_output(
         self,
         node: CallNode,
         *,
         admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
+        field: str,
         rule: AcquisitionRule,
-        result: ProcedureSourceAcquisitionResultV1,
-        decision: AcquisitionInputDecision,
-        occurrence_path: str | None = None,
-        invocation_receipt_digest: str | None = None,
-        material_byte_length: int | None = None,
-    ) -> None:
-        """Bind one acquisition result to the run.
+        acquisition: ExternalCaptureAcquisitionV1,
+        body: bytes,
+        contract_digest: str,
+        occurrence_path: str,
+        invocation_receipt_digest: str,
+    ) -> frozenset[DependencyToken]:
+        """Bind one selected capture output: its Capture, budget, evidence and association.
 
-        ``material_byte_length`` is the length of the selected material's exact
-        canonical bytes when the caller holds them, so the run's Capture budget
-        is charged without encoding the material again.
+        Returns the tokens the call's value carries for it.
         """
-        base = _node_policy_tokens(node, self.references) | state.control
-        if admission.acquisition_policy_digest is not None:
-            base = base | {policy_token(admission.acquisition_policy_digest)}
-        if decision.disposition == "refused":
-            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
-                input_name=rule.input_name,
-                disposition="refused",
-            )
-            details: dict[str, object] = {"input_name": rule.input_name}
-            message = f"Acquiring call {rule.input_name!r} refuses this result. "
-            if (
-                result.acquisition is not None
-                and rule.max_age is not None
-                and "cruxible.acquisition.stale" in decision.reason_codes
-            ):
-                evaluation_time = admission.occurrence_evaluation_time
-                age = (evaluation_time - result.acquisition.envelope.observed_at).total_seconds()
-                delta = evaluation_time - result.acquisition.envelope.observed_at
-                details.update(
-                    age_microseconds=(delta.days * 86_400 + delta.seconds) * 1_000_000
-                    + delta.microseconds,
-                    max_age_microseconds=rule.max_age.microseconds,
-                )
-                message += (
-                    f"Capture age is {age}s; max_age is {rule.max_age.microseconds / 1_000_000}s. "
-                )
-            message += (
-                f"Repair: fetch a fresh available Capture for alias {rule.input_name!r} "
-                "within its contract and age bounds."
-            )
-            raise _RunRefusal(
-                cast(
-                    ProcedureNodeRefusalCode,
-                    decision.reason_codes[0]
-                    if decision.reason_codes
-                    else "cruxible.acquisition.refused",
-                ),
-                message,
-                node_id=node.node_id,
-                details=details,
-            )
-        if decision.disposition == "omitted":
-            marker = _decision_digest(admission.run_id, decision)
-            state.facts[marker] = DependencyEvidenceFactsV1(
-                epistemic_grade="predicted",
-                provenance_grade="self-asserted",
-                taint_labels=(TAINT_OMITTED_OPTIONAL,),
-                acquisition_input_name=rule.input_name,
-            )
-            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
-                input_name=rule.input_name,
-                disposition="omitted",
-            )
-            state.control = state.control | {receipt_token(marker)}
-            return
-        if decision.disposition == "defaulted":
-            marker = _decision_digest(admission.run_id, decision)
-            state.outputs[node.as_] = normalize_canonical(decision.default_value)
-            state.facts[marker] = DependencyEvidenceFactsV1(
-                epistemic_grade="predicted",
-                provenance_grade="self-asserted",
-                taint_labels=(TAINT_CONSERVATIVE_DEFAULT,),
-                acquisition_input_name=rule.input_name,
-            )
-            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
-                input_name=rule.input_name,
-                disposition="defaulted",
-            )
-            state.provenance[node.as_] = AliasProvenanceV1(whole=base | {receipt_token(marker)})
-            return
-        acquisition = result.acquisition
-        if acquisition is None:  # pragma: no cover - typed-result invariant
-            raise ExecutionError("selected acquisition carries no Capture")
-        material = acquisition.canonical_material
-        if material is None:
-            raise _RunRefusal(
-                "source_material_unavailable",
-                "This acquisition mode produced no canonical material for the run.",
-                node_id=node.node_id,
-            )
-        normalized = normalize_canonical(material)
-        state.capture_bytes += (
-            len(canonical_bytes(normalized))
-            if material_byte_length is None
-            else material_byte_length
-        )
-        state.outputs[node.as_] = normalized
-        state.facts[acquisition.capture_digest] = DependencyEvidenceFactsV1(
+
+        digest = acquisition.capture_digest
+        state.capture_bytes += len(body)
+        state.capture_bodies[digest] = body
+        state.capture_contracts[digest] = contract_digest
+        state.facts[digest] = DependencyEvidenceFactsV1(
             epistemic_grade=acquisition.epistemic_grade,
             provenance_grade=acquisition.provenance_grade,
             acquisition_input_name=rule.input_name,
@@ -4266,15 +4277,7 @@ class ProcedureExecutor:
         state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
             input_name=rule.input_name,
             disposition="acquired",
-            capture_digests=(acquisition.capture_digest,),
-        )
-        state.provenance[node.as_] = AliasProvenanceV1(
-            whole=base
-            | {
-                produced_capture_token(acquisition.capture_digest),
-                receipt_token(acquisition.receipt.digest),
-                policy_token(acquisition.envelope.capture_contract_digest),
-            }
+            capture_digests=(digest,),
         )
         self._append_event(
             admission,
@@ -4284,13 +4287,11 @@ class ProcedureExecutor:
                 "tag": "playbill-procedure-produced-capture-v1",
                 "node_id": node.node_id,
                 "input_name": rule.input_name,
-                "capture_digest": acquisition.capture_digest,
+                "field": field,
+                "capture_digest": digest,
                 "capture_contract_digest": acquisition.envelope.capture_contract_digest,
                 "acquisition_receipt_digest": acquisition.receipt.digest,
-                **_source_capture_association_fields(
-                    occurrence_path,
-                    invocation_receipt_digest,
-                ),
+                **_source_capture_association_fields(occurrence_path, invocation_receipt_digest),
                 "observed_at": format_datetime(acquisition.envelope.observed_at),
                 "epistemic_grade": acquisition.epistemic_grade,
                 "provenance_grade": acquisition.provenance_grade,
@@ -4299,6 +4300,21 @@ class ProcedureExecutor:
                     "recorded_at": format_datetime(self.clock.now()),
                 },
             },
+        )
+        state.source_capture_associations.append(
+            ProcedureSourceCaptureAssociation(
+                occurrence_path=occurrence_path,
+                field=field,
+                invocation_receipt_digest=invocation_receipt_digest,
+                capture_digest=digest,
+            )
+        )
+        return frozenset(
+            {
+                produced_capture_token(digest),
+                receipt_token(acquisition.receipt.digest),
+                policy_token(acquisition.envelope.capture_contract_digest),
+            }
         )
 
     def _run_child(
@@ -5077,8 +5093,14 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmission,
         state: _RunState,
         node_id: str,
+        absent_captures: frozenset[str] = frozenset(),
     ) -> CanonicalValue:
-        """Check one value against the bound operation's exact in or out Contract."""
+        """Check one value against the bound operation's exact in or out Contract.
+
+        ``absent_captures`` names capture fields the run did not commit (an
+        oversized capture output): the value is checked as if they were
+        optional, since the call's value never names them.
+        """
 
         ref = occurrence.operation.in_ if direction == "in" else occurrence.operation.out
         resolve = closure_lookup(occurrence.contracts)
@@ -5088,6 +5110,17 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 "provider_protocol_violation",
                 details={"node_id": node_id, "reason": f"{ref.spelling} is not in the plan"},
+            )
+        if absent_captures:
+            contract = contract.model_copy(
+                update={
+                    "fields": {
+                        name: declared.model_copy(update={"optional": True})
+                        if name in absent_captures
+                        else declared
+                        for name, declared in contract.fields.items()
+                    }
+                }
             )
         try:
             validate_operation_value(
@@ -5355,7 +5388,13 @@ class ProcedureExecutor:
                     "invocation_id": invocation_id,
                 },
                 input=payload,
-                capture_contract=occurrence.capture_contract_digest,
+                # The runtime protocol names one CaptureContract: the call's,
+                # when it commits exactly one capture field.
+                capture_contract=(
+                    next(iter(occurrence.capture_contracts.values()))
+                    if len(occurrence.capture_contracts) == 1
+                    else None
+                ),
                 budgets=ProviderRuntimeBudgets(
                     wall_clock_seconds=wall_clock_seconds,
                     output_bytes=budget.runtime_output_bytes_cap,
@@ -5448,7 +5487,7 @@ class ProcedureExecutor:
             operation=verified_binding.operation,
             operation_signature_digest=verified_binding.operation_signature_digest,
             protocol_version=verified_binding.protocol_version,
-            capture_contract_digest=occurrence.capture_contract_digest,
+            capture_contracts=occurrence.capture_contracts,
             input_digest=input_digest,
             outcome=outcome,
             output=journal_output,

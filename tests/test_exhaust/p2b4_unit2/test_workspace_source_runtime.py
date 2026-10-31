@@ -142,7 +142,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         update={
             "nodes": (
                 authored.definition.nodes[0].model_copy(
-                    update={"request": request.model_dump(mode="json")}
+                    update={"input": request.model_dump(mode="json")}
                 ),
             )
         }
@@ -155,7 +155,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     )
     old_node = accepted.procedure.definition.nodes[0]
     assert isinstance(old_node, CallNode)
-    source_node = old_node.model_copy(update={"request": request.model_dump(mode="json")})
+    source_node = old_node.model_copy(update={"input": request.model_dump(mode="json")})
     definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
     definition._authored = authored_definition
     # is_workspace_file_signature() (cruxible_client.contracts.captures) keys

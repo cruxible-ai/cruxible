@@ -63,7 +63,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     ProcedureNodeSupport,
     ProcedureRunnable,
-    acquisition_aliases,
+    acquisition_keys,
     procedure_path,
     procedure_runnability,
 )
@@ -575,7 +575,10 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
     )
     acquisition: dict[str, AcquisitionDefault] = Field(
         default_factory=dict,
-        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+        description=(
+            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
+            "Procedure default."
+        ),
     )
     input: object
 
@@ -1587,12 +1590,15 @@ def _plan_external_occurrences(
             "budget_translation": translation,
         }
         if isinstance(node, CallNode) and node.acquires:
-            capture_pin = resolved_pin(accepted_procedure, next(iter(node.captures.values())))
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
                     "input_name": node.as_,
-                    "capture_contract_digest": capture_pin.artifact_digest,
+                    # Each capture field is pinned to its own CaptureContract.
+                    "capture_contracts": {
+                        field: resolved_pin(accepted_procedure, reference).artifact_digest
+                        for field, reference in node.captures.items()
+                    },
                     "source_runtime_plan_digest": typed_digest(
                         Sha256Value,
                         "cruxible-acquiring-call-plan-v1",
@@ -1628,7 +1634,7 @@ def _line_external_occurrences(
         runtime_policy=runtime_policy,
         budget=budget,
         supplied_source_inputs=(
-            # The substituted call's alias: a trigger names <alias>.<field> or <alias>.
+            # The substituted call's alias: a trigger names its one capture output.
             frozenset({accepted_line.line.trigger_input.partition(".")[0]})
             if accepted_line.line.trigger_input is not None
             else frozenset()
@@ -1640,7 +1646,7 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
     return tuple(
         sorted(
-            acquisition_aliases(definition),
+            acquisition_keys(definition),
             key=lambda item: item.encode("utf-8"),
         )
     )
@@ -1682,7 +1688,7 @@ def procedure_acquisition_rules(
     accepted: AcceptedProcedure,
     overrides: Mapping[str, AcquisitionDefault] | None = None,
 ) -> dict[str, AcquisitionRule]:
-    """The run's acquisition rule per Source alias: the Line's, else the Procedure's."""
+    """The run's acquisition rule per capture output: the Line's, else the Procedure's."""
 
     procedure = authored_procedure(accepted)
     return resolve_acquisition_rules(
@@ -1699,11 +1705,12 @@ def _plan_selection_decision(
     occurrences: tuple[ProviderExternalOccurrencePlan, ...],
     capture_contracts: Mapping[str, CaptureContract],
 ) -> ProcedureSelectionDecision:
-    """Evaluate the run's acquisition rules against this plan, per PLANNED occurrence.
+    """Evaluate the run's acquisition rules against this plan, per capture output.
 
     This is a PLAN-time evaluation and it says only what a plan can say: which
-    Source alias each planned occurrence serves, and whether its CaptureContract
-    is accepted and fits the run's output budget (an oversized contract refuses).
+    capture outputs (``<alias>.<field>``) each planned occurrence serves, and
+    whether each field's own CaptureContract is accepted and fits the run's
+    output budget (an oversized contract refuses).
     It never invents an acquisition outcome: staleness and unavailability fire
     only from a real read, in ``apply_acquisition_result`` at execution time.
     """
@@ -1711,28 +1718,32 @@ def _plan_selection_decision(
     decisions: list[AcquisitionInputDecision] = []
     for occurrence in occurrences:
         alias = occurrence.input_name
-        if occurrence.occurrence_kind != "source" or alias is None or alias not in rules:
+        if occurrence.occurrence_kind != "source" or alias is None:
             continue
-        contract = capture_contracts.get(occurrence.capture_contract_digest or "")
-        if contract is None:
-            decisions.append(
-                AcquisitionInputDecision(
-                    input_name=alias, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
+        for field, contract_digest in occurrence.capture_contracts.items():
+            key = f"{alias}.{field}"
+            if key not in rules:
+                continue
+            contract = capture_contracts.get(contract_digest)
+            if contract is None:
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
+                    )
                 )
-            )
-            continue
-        if contract.selection_budget.max_bytes > (
-            occurrence.budget_translation.policy_output_bytes_cap
-        ):
-            decisions.append(
-                AcquisitionInputDecision(
-                    input_name=alias,
-                    disposition="refused",
-                    reason_codes=(ACQUISITION_OVERSIZED,),
+                continue
+            if contract.selection_budget.max_bytes > (
+                occurrence.budget_translation.policy_output_bytes_cap
+            ):
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key,
+                        disposition="refused",
+                        reason_codes=(ACQUISITION_OVERSIZED,),
+                    )
                 )
-            )
-            continue
-        decisions.append(AcquisitionInputDecision(input_name=alias, disposition="selected"))
+                continue
+            decisions.append(AcquisitionInputDecision(input_name=key, disposition="selected"))
     ordered = tuple(
         sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
     )
@@ -2309,6 +2320,7 @@ def _state_from_records(
                         raise TypeError("Source Capture association is partial")
                     association = ProcedureSourceCaptureAssociation(
                         occurrence_path=occurrence_path,
+                        field=str(payload.get("field")),
                         invocation_receipt_digest=invocation_receipt_digest,
                         capture_digest=str(payload.get("capture_digest")),
                     )
@@ -2371,10 +2383,12 @@ def _state_from_records(
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
             ) from exc
-        if tuple(item.occurrence_path for item in source_capture_associations) != tuple(
+        if tuple(
+            (item.occurrence_path, item.field) for item in source_capture_associations
+        ) != tuple(
             sorted(
-                {item.occurrence_path for item in source_capture_associations},
-                key=str.encode,
+                {(item.occurrence_path, item.field) for item in source_capture_associations},
+                key=lambda pair: (pair[0].encode("utf-8"), pair[1].encode("utf-8")),
             )
         ) or any(
             item.invocation_receipt_digest not in invocation_receipt_digests
@@ -2387,7 +2401,10 @@ def _state_from_records(
         expected_source_associations = tuple(
             sorted(
                 produced_source_associations,
-                key=lambda item: item.occurrence_path.encode("utf-8"),
+                key=lambda item: (
+                    item.occurrence_path.encode("utf-8"),
+                    item.field.encode("utf-8"),
+                ),
             )
         )
         if source_capture_associations != expected_source_associations:
@@ -2595,15 +2612,23 @@ def _state_from_records(
     next_kind: Literal["retry", "done", "terminal"] = (
         "done" if status == "succeeded" else "retry" if status == "running" else "terminal"
     )
-    captures_by_path = {
-        item.occurrence_path: item
-        for item in (source_capture_associations or tuple(produced_source_associations))
-    }
+    # One observation per capture field an occurrence produced; an occurrence
+    # that produced none (omitted, refused, still running) reports its reads.
+    captures_by_path: dict[str, list[ProcedureSourceCaptureAssociation]] = {}
+    for item in source_capture_associations or tuple(produced_source_associations):
+        captures_by_path.setdefault(item.occurrence_path, []).append(item)
     observations = tuple(
         ProcedureSourceObservation(
             occurrence_path=occurrence_path,
             node_id=None if derived is None else derived.node_id,
-            input_name=None if derived is None else derived.input_name,
+            input_name=(
+                None
+                if derived is None
+                else derived.input_name
+                if association is None
+                else f"{derived.input_name}.{association.field}"
+            ),
+            field=None if association is None else association.field,
             source_read_receipt=receipt,
             source_read_receipt_digest=(
                 None if receipt is None else source_read_receipt_digest(receipt)
@@ -2614,15 +2639,14 @@ def _state_from_records(
             capture_digest=None if association is None else association.capture_digest,
         )
         for occurrence_path, derived, receipt, association in (
-            (
-                path,
-                derived_source_requests.get(path),
-                source_reads.get(path),
-                captures_by_path.get(path),
-            )
+            (path, derived_source_requests.get(path), source_reads.get(path), produced)
             for path in sorted(
                 set(derived_source_requests) | set(source_reads) | set(captures_by_path),
                 key=lambda item: item.encode("utf-8"),
+            )
+            for produced in (
+                cast(list[ProcedureSourceCaptureAssociation | None], captures_by_path.get(path))
+                or [None]
             )
         )
     )
@@ -4725,7 +4749,7 @@ def service_recover_provider_invocations(
                         occurrence.local_execution.operation_signature_digest
                     ),
                     protocol_version=occurrence.local_execution.protocol_version,
-                    capture_contract_digest=occurrence.capture_contract_digest,
+                    capture_contracts=occurrence.capture_contracts,
                     input_digest=started.input_digest,
                     outcome=outcome,
                     egress=ProviderEgressObservation(

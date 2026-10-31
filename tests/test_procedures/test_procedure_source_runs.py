@@ -126,6 +126,8 @@ SEED_STAMP = "2026-09-12T11:00:00.000000Z"
 ACCEPT_STAMP = "2026-09-12T11:30:00.000000Z"
 PROCEDURE_NAME = "osv-advisory"
 SOURCE_ALIAS = "advisory"
+#: The workspace read's one capture output, as acquisition rules and triggers name it.
+SOURCE_CAPTURE = f"{SOURCE_ALIAS}.capture"
 RELATIVE_PATH = "data/osv-advisory.json"
 ADVISORY = b"high"
 
@@ -566,7 +568,7 @@ def _world(  # noqa: PLR0913
         root=workspace_root,
         contract=accepted_contract,
         relative_path=relative_path,
-        acquisition_defaults={SOURCE_ALIAS: accepted_policy},
+        acquisition_defaults={SOURCE_CAPTURE: accepted_policy},
     )
     if document:
         definition = procedure.definition.model_copy(
@@ -697,7 +699,8 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
     assert invoker.spawn_calls == 1
 
     observation = state.source_observations[0]
-    assert observation.input_name == SOURCE_ALIAS
+    assert observation.input_name == SOURCE_CAPTURE
+    assert observation.field == "capture"
     assert observation.occurrence_path == "source/read"
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
@@ -815,7 +818,7 @@ def _served_line(
                 operation=WORKSPACE_FILE_OPERATION,
             )
         },
-        acquisition={SOURCE_ALIAS: policy},
+        acquisition={SOURCE_CAPTURE: policy},
         max_authority="observe",
         budgets={
             "max_capture_bytes": caps.max_capture_bytes,

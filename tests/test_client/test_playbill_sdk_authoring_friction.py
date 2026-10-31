@@ -227,9 +227,9 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     draft.line(
         name="consume-feed",
         procedure="consume",
-        acquisition={"feed": {"max_age": "PT10M", "on_unavailable": "refuse"}},
+        acquisition={"feed.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}},
         max_authority="observe",
-        trigger_input="feed",
+        trigger_input="feed.capture",
     )
     draft.trigger(name="on-feed", schedule=landing, line="consume-feed")
     draft.trigger(
@@ -239,9 +239,9 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     )
     members = draft._compiled().payload.members
     line = next(m for m in members if isinstance(m, LineAuthoringPayload))
-    assert line.trigger_input == "feed" and "trigger_policy" not in line.model_dump()
-    assert line.acquisition["feed"].max_age.microseconds == 600_000_000
-    assert line.acquisition["feed"].on_unavailable == "refuse"
+    assert line.trigger_input == "feed.capture" and "trigger_policy" not in line.model_dump()
+    assert line.acquisition["feed.capture"].max_age.microseconds == 600_000_000
+    assert line.acquisition["feed.capture"].on_unavailable == "refuse"
     triggers = {m.name: m for m in members if isinstance(m, TriggerAuthoringPayload)}
     assert (triggers["on-feed"].line_name, triggers["on-feed"].schedule) == (
         "consume-feed",

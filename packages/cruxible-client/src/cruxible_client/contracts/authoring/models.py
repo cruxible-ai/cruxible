@@ -1013,12 +1013,12 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     by slot, or ``<invoke node path>.<slot>`` for an invoked child; a slot left
     out is fitted through the signature index (exactly one live operation must
     serve its signature). Lowering records the exact ``{build, operation}``.
-    ``acquisition`` replaces the Procedure's acquisition defaults per Source
-    alias. A budget left unset lowers to the Procedure's own hard caps.
+    ``acquisition`` replaces the Procedure's acquisition defaults per capture
+    output (``<alias>.<field>``). A budget left unset lowers to the Procedure's own hard caps.
     ``parameters`` is the Procedure's input record, checked against its input
     Contract when the Line lowers. When the Line runs is not its own: Triggers
-    aim at it. ``trigger_input`` binds the triggering Capture to one Source
-    input, and lowering declares the exact event that input accepts.
+    aim at it. ``trigger_input`` binds the triggering Capture to one capture
+    output, ``<alias>.<field>``, and lowering declares the exact event it accepts.
     """
 
     tag: Literal["cruxible-line-authoring-payload-v2"] = "cruxible-line-authoring-payload-v2"
@@ -1185,7 +1185,7 @@ class ContractAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure input with its acquisition defaults per Source alias.
+    """A Procedure input with its acquisition defaults per capture output.
 
     A Line's ``acquisition`` replaces a default for any alias it names; the run
     admission records the resolved rules' digest for replay.

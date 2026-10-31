@@ -318,7 +318,7 @@ class _SourceInvoker:
         )
 
 
-def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result"):
+def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result.capture"):
     from cruxible_core.procedures.ports import ResolvedAcquisitionRules
 
     return ResolvedAcquisitionRules(
@@ -407,12 +407,14 @@ def _source_fixture(
         )
     )
     policy = AcquisitionDefault(max_age=CanonicalDuration(microseconds=60_000_000))
+    (source_field,) = source_node.captures
+    source_output = f"{source_node.as_}.{source_field}"
     procedure = authored.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": pins,
-            "acquisition_defaults": {source_node.as_: policy},
+            "acquisition_defaults": {source_output: policy},
         }
     )
     # New Procedure artifacts are accepted only in the named (v3) format at the
@@ -451,9 +453,7 @@ def _source_fixture(
         },
     )
     policy_digest = acquisition_rules_digest(
-        resolve_acquisition_rules(
-            (source_node.as_,), defaults={source_node.as_: policy}, overrides={}
-        )
+        resolve_acquisition_rules((source_output,), defaults={source_output: policy}, overrides={})
     )
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]
@@ -463,7 +463,7 @@ def _source_fixture(
             "occurrence_path": "source/direct",
             "occurrence_kind": "source",
             "input_name": source_node.as_,
-            "capture_contract_digest": contract_pin.artifact_digest,
+            "capture_contracts": {source_field: contract_pin.artifact_digest},
             "contracts": (
                 _VALUE_CONTRACT,
                 _ENVELOPE_CONTRACT,

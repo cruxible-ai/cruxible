@@ -55,11 +55,11 @@ def bind_trigger_capture(
             "trigger_capture_input: an exact retained event is required "
             "(a manual run passes it as the event input)",
         )
-    rule = rules.get(node.as_)
+    rule = rules.get(output.acquisition_key)
     if rule is None:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
-            "trigger_capture_input: the Source input has no acquisition rule",
+            "trigger_capture_input: the capture output has no acquisition rule",
         )
     contract = contracts.get(resolved_pin(procedure, node.captures[output.field]).artifact_digest)
     if contract is None or contract.identity != selector.capture_contract_identity:
@@ -139,9 +139,9 @@ def bind_trigger_capture(
             "trigger_capture_stale"
             if failure == ACQUISITION_STALE
             else "trigger_capture_forbidden",
-            f"Source alias {node.as_!r} has Capture age "
+            f"Capture output {output.acquisition_key!r} has Capture age "
             f"{(evaluation_time - envelope.observed_at).total_seconds()}s, exceeding max_age; "
-            f"repair: supply a fresh Capture for {node.as_!r}."
+            f"repair: supply a fresh Capture for {output.acquisition_key!r}."
             if failure == ACQUISITION_STALE
             else "The acquisition rule forbids this Capture.",
         )
@@ -155,7 +155,7 @@ def bind_trigger_capture(
     # No material change or fresh acquisition: keep the original observation and producer proof.
     return LandedCaptureRunMaterialV1(
         input=LandedCaptureRunInputV1(
-            input_name=node.as_,
+            input_name=output.acquisition_key,
             capture_digest=digest,
             capture_contract_digest=envelope.capture_contract_digest,
             landing_cursor="procedure-event:" + event.record_digest,

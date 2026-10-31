@@ -964,7 +964,7 @@ def test_an_absorbable_source_refusal_is_absorbed_only_under_omit(tmp_path, on_u
     )
     instance, root = sourced_world(
         tmp_path,
-        acquisition={"doc": {"max_age": "P1D", "on_unavailable": on_unavailable}},
+        acquisition={"doc.capture": {"max_age": "P1D", "on_unavailable": on_unavailable}},
         bindings={"read": fetcher.identity.name},
         builds=(fetcher,),
     )
@@ -1414,7 +1414,7 @@ def test_a_real_oversized_read_routes_through_on_oversized_not_a_protocol_violat
     omitting = _fetch_world(
         tmp_path / "omit",
         line_name="test.fetched-omit",
-        acquisition={"doc": {"on_oversized": "omit"}},
+        acquisition={"doc.capture": {"on_oversized": "omit"}},
     )
     state, _ = run_line(
         omitting,
@@ -1457,7 +1457,7 @@ def test_an_oversized_and_schema_invalid_result_reports_the_schema_violation(tmp
     big = _fetch_world(
         tmp_path / "oversized-bad-schema",
         line_name="test.fetched-oversized-bad-schema",
-        acquisition={"doc": {"on_oversized": "omit"}},
+        acquisition={"doc.capture": {"on_oversized": "omit"}},
     )
     state, _ = run_line(
         big,
@@ -1480,7 +1480,7 @@ def test_a_line_acquisition_origin_outside_the_permitted_set_refuses(tmp_path):
     instance = _fetch_world(
         tmp_path / "bad-origin",
         line_name="test.fetched-bad-origin",
-        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        acquisition={"doc.capture": {"origins": ["https://permitted.example"]}},
         request_url="https://not-permitted.example/feed",
     )
     state, _ = run_line(instance, invoker=Invoker(), name="test.fetched-bad-origin")
@@ -1498,7 +1498,7 @@ def test_a_line_acquisition_origin_inside_the_permitted_set_is_not_refused(tmp_p
     instance = _fetch_world(
         tmp_path / "good-origin",
         line_name="test.fetched-good-origin",
-        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        acquisition={"doc.capture": {"origins": ["https://permitted.example"]}},
         request_url="https://permitted.example/feed",
     )
     state, _ = run_line(
@@ -1517,7 +1517,7 @@ def test_a_scheme_relative_url_under_restricted_origins_refuses_before_any_call(
     instance = _fetch_world(
         tmp_path / "scheme-relative-origin",
         line_name="test.fetched-scheme-relative",
-        acquisition={"doc": {"origins": ["https://permitted.example"]}},
+        acquisition={"doc.capture": {"origins": ["https://permitted.example"]}},
         request_url="//evil.example/feed",
     )
     invoker = Invoker()
@@ -1641,23 +1641,26 @@ def test_a_line_acquisition_max_age_violation_refuses_like_the_old_policy(tmp_pa
 
     instance, _root = sourced_world(
         tmp_path,
-        acquisition_defaults={"doc": {"max_age": "P1D"}},
-        acquisition={"doc": {"max_age": "PT1S", "on_unavailable": "refuse"}},
+        acquisition_defaults={"doc.capture": {"max_age": "P1D"}},
+        acquisition={"doc.capture": {"max_age": "PT1S", "on_unavailable": "refuse"}},
     )
     line = accepted_line(instance, SOURCE_LINE)
-    assert line.acquisition["doc"].max_age.microseconds == 1_000_000
+    assert line.acquisition["doc.capture"].max_age.microseconds == 1_000_000
     # The Line's override replaces the Procedure's default for that alias.
     rules = resolve_acquisition_rules(
-        ("doc",),
-        defaults={"doc": AcquisitionDefault.model_validate({"max_age": "P1D"})},
+        ("doc.capture",),
+        defaults={"doc.capture": AcquisitionDefault.model_validate({"max_age": "P1D"})},
         overrides=line.acquisition,
     )
-    assert rules["doc"].max_age.microseconds == 1_000_000
+    assert rules["doc.capture"].max_age.microseconds == 1_000_000
     # The same eligibility law the policy's max_age used: an older Capture is stale.
     stale = SimpleNamespace(observed_at=NOW - timedelta(seconds=10))
     fresh = SimpleNamespace(observed_at=NOW)
-    assert capture_selection_failure(rules["doc"], stale, evaluation_time=NOW) == ACQUISITION_STALE
-    assert capture_selection_failure(rules["doc"], fresh, evaluation_time=NOW) is None
+    assert (
+        capture_selection_failure(rules["doc.capture"], stale, evaluation_time=NOW)
+        == ACQUISITION_STALE
+    )
+    assert capture_selection_failure(rules["doc.capture"], fresh, evaluation_time=NOW) is None
 
 
 # --- 11. a format-7 Procedure with slots: acceptance and execution -------------

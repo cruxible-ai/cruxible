@@ -261,7 +261,8 @@ class ProcedureInput(_StrictInputModel):
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
-    #: Default acquisition rule per Source alias; a Line's acquisition overrides it.
+    #: Default acquisition rule per capture output <alias>.<field>; a Line's acquisition
+    #: overrides it.
     acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -433,7 +434,10 @@ class LineInput(_StrictInputModel):
     )
     acquisition: dict[str, AcquisitionDefault] = Field(
         default_factory=dict,
-        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+        description=(
+            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
+            "Procedure default."
+        ),
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,

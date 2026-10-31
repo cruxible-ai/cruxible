@@ -62,7 +62,7 @@ def _occurrence(
         operation_signature_digest=signature_digest,
         implementation_digest=_D,
         effect_class="external_read",
-        capture_contract_digest="sha256:" + "2" * 64 if kind == "source" else None,
+        capture_contracts={"capture": "sha256:" + "2" * 64} if kind == "source" else {},
         local_execution=local,
     )
 

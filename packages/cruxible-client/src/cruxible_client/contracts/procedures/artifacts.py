@@ -118,8 +118,9 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
 
     Every dependency the graph names resolves at the accepted coordinate; the
     envelope itself pins nothing. ``acquisition_defaults`` holds the
-    Procedure's acquisition rule per Source alias (``max_age``,
-    ``on_unavailable``); a Line's ``acquisition`` overrides them field by field.
+    Procedure's acquisition rule per capture output, ``<alias>.<field>``
+    (``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides
+    them output by output.
     """
 
     artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"
@@ -192,10 +193,12 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             raise ValueError(
                 "every owned Contract must be referenced by name exactly within its owner"
             )
-        aliases = acquisition_aliases(self.definition)
-        unknown = sorted(set(self.acquisition_defaults) - aliases)
+        keys = acquisition_keys(self.definition)
+        unknown = sorted(set(self.acquisition_defaults) - keys)
         if unknown:
-            raise ValueError(f"acquisition_defaults name no acquiring call's alias: {unknown}")
+            raise ValueError(
+                f"acquisition_defaults name no capture output (<alias>.<field>): {unknown}"
+            )
         guard_halts = procedure_guard_halt_targets(self.definition)
         nodes = []
         for index, node in enumerate(self.definition.nodes):
@@ -510,15 +513,20 @@ def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, ob
     return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
 
 
-def acquisition_aliases(definition: ProcedureDefinition) -> set[str]:
-    """The alias of every acquiring call (one with captures): what acquisition rules key."""
+def acquisition_keys(definition: ProcedureDefinition) -> set[str]:
+    """Every capture output, ``<alias>.<field>``: what acquisition rules key."""
 
-    return {node.as_ for node in definition.nodes if isinstance(node, CallNode) and node.acquires}
+    return {
+        f"{node.as_}.{field}"
+        for node in definition.nodes
+        if isinstance(node, CallNode)
+        for field in node.captures
+    }
 
 
 __all__ = [
     "DIRECT_NODE_KINDS",
-    "acquisition_aliases",
+    "acquisition_keys",
     "LINE_NODE_KINDS",
     "AcceptedProcedure",
     "ProcedureNodeSupport",

@@ -1,12 +1,18 @@
-"""Capture outputs: a call commits each capture<K> field, and a trigger names exactly one.
+"""Capture outputs: each capture<K> field of a call is its own capture output.
 
-An acquiring call's out Contract may carry several ``capture<K>`` fields; run
-normally, each is committed byte-exact as its own Capture and the call's value
-names every one. A Line's trigger substitutes one capture output by
-``<alias>.<field>``: a bare alias naming a call with several capture fields is
-``trigger_target_ambiguous``. Single-field substitution itself (direct ``line
-run`` with an event, and the Line lane through a Trigger) is covered on the
-workspace world in ``test_trigger_capture_inputs`` and ``test_manual_line_runs``.
+An acquiring call's out Contract may carry several ``capture<K>`` fields, each
+pinned to its own CaptureContract. Run normally, each field is its own capture
+output ``<alias>.<field>``: committed byte-exact under its own CaptureContract,
+decided by its own acquisition rule (a stale field omits or refuses while its
+sibling is selected), journaled with its own produced-Capture record naming
+its field path, associated with the occurrence per field, charged to the
+Capture budget per field, and verifiable as evidence after the instance is
+reopened. A trigger aimed at a call with several capture fields is refused
+``trigger_target_ambiguous`` by any name. Single-field substitution itself is
+covered on the workspace world: the manual ``line run`` with an event in
+``test_manual_line_runs::test_a_manual_run_passes_its_event_as_the_lines_source_input``
+and the Trigger lane in
+``test_trigger_capture_inputs::test_a_trigger_substitutes_its_one_capture_output_by_name``.
 """
 
 from __future__ import annotations
@@ -29,7 +35,12 @@ from tests.test_procedures.test_b2_operations import run_line
 LINE_NAME = "test.paired-line"
 
 
-def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
+def _paired_world(
+    tmp_path: Path,
+    *,
+    trigger_input: str | None = None,
+    acquisition: dict[str, Any] | None = None,
+) -> Any:
     from cruxible_client.authoring.inputs import LineInput
     from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
@@ -60,7 +71,9 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
         operation,
     )
 
+    # The two capture fields are pinned to two different CaptureContracts.
     capture_contract = record_contract(name="test.events-v1", replay="exact")
+    other_contract = record_contract(name="test.other-v1", replay="exact")
     request = Contract.model_validate(
         {"name": "demo.pair.request", "version": 1, "fields": {"query": {"type": "string"}}}
     )
@@ -70,7 +83,7 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
             "version": 1,
             "fields": {
                 "left": {"type": "capture<test.events-v1>"},
-                "right": {"type": "capture<test.events-v1>"},
+                "right": {"type": "capture<test.other-v1>"},
                 "note": {"type": "string"},
             },
         }
@@ -119,9 +132,10 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
             **contract_files(),
             contract_path(request.name, request.version): render_contract(request),
             contract_path(result.name, result.version): render_contract(result),
-            capture_contract_path(capture_contract.identity.name): render_capture_contract(
-                capture_contract
-            ),
+            **{
+                capture_contract_path(item.identity.name): render_capture_contract(item)
+                for item in (capture_contract, other_contract)
+            },
         },
         name="pair-contracts",
     )
@@ -132,7 +146,7 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
             {
                 "procedure": "test.paired",
                 "input": {},
-                "output": {"left": "string", "right": "string", "note": "string"},
+                "output": {"left": "string", "note": "string"},
                 "slots": {
                     "pair": {
                         "in": "demo.pair.request@1",
@@ -143,13 +157,13 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
                 "steps": [
                     {
                         "call": "doc",
-                        "captures": {"left": "test.events-v1", "right": "test.events-v1"},
+                        "captures": {"left": "test.events-v1", "right": "test.other-v1"},
                         "slot": "pair",
                         "input": {"query": "orders"},
                     },
                     {
                         "project": "out",
-                        "fields": {"left": "$doc.left", "right": "$doc.right", "note": "$doc.note"},
+                        "fields": {"left": "$doc.left", "note": "$doc.note"},
                     },
                 ],
                 "returns": "out",
@@ -165,11 +179,13 @@ def _paired_world(tmp_path: Path, *, trigger_input: str | None = None) -> Any:
     }
     if trigger_input is not None:
         line["trigger_input"] = trigger_input
+    if acquisition is not None:
+        line["acquisition"] = acquisition
     author(instance, LineInput.model_validate(line), name="line")
     return instance
 
 
-def _wire(content: bytes) -> dict[str, Any]:
+def _wire(content: bytes, observed_at: str = "2026-10-29T12:00:00Z") -> dict[str, Any]:
     return {
         "source_identity": "demo.events",
         "coordinate_type": "database-snapshot-v1",
@@ -180,29 +196,139 @@ def _wire(content: bytes) -> dict[str, Any]:
         "content_base64": base64.b64encode(content).decode("ascii"),
         "byte_length": len(content),
         "bytes_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-        "observed_at": "2026-10-29T12:00:00Z",
+        "observed_at": observed_at,
     }
 
 
-def test_a_call_with_two_capture_fields_commits_both_and_runs_normally(tmp_path: Path) -> None:
-    instance = _paired_world(tmp_path)
-    invoker = Invoker(
-        output=lambda context: {
-            "left": _wire(b'{"side": "left"}'),
-            "right": _wire(b'{"side": "right"}'),
-            "note": "paired",
-        }
-    )
+def _journal(instance: Any, run_id: str, event_kind: str) -> list[dict[str, Any]]:
+    from cruxible_core.exhaust.payloads import read_payload
+    from cruxible_core.service.procedures.measurements import _journal as journal_of
+    from cruxible_core.storage.cas import BodyAccessContext
 
-    state, _ = run_line(instance, invoker=invoker, name=LINE_NAME)
+    journal, stream = journal_of(instance)
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    return [
+        read_payload(instance.body_store(), stored.record.payload_digest, access=access)
+        for stored in journal.select_records(stream, run_id=run_id, event_kind=event_kind)
+    ]
+
+
+def _paired_output(*, right_observed_at: str = "2026-10-29T12:00:00Z"):  # type: ignore[no-untyped-def]
+    return lambda context: {
+        "left": _wire(b'{"side": "left"}'),
+        "right": _wire(b'{"side": "right"}', observed_at=right_observed_at),
+        "note": "paired",
+    }
+
+
+def test_each_capture_field_is_committed_journaled_and_verified_on_its_own(
+    tmp_path: Path,
+) -> None:
+    """F6, deviations 1-2: two fields, two CaptureContracts, two production proofs."""
+
+    from cruxible_client.contracts.capture_reads import CaptureReadRequest
+    from cruxible_client.contracts.captures import capture_contract_digest
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._light_capture_support import record_contract
+
+    instance = _paired_world(tmp_path)
+    state, _ = run_line(instance, invoker=Invoker(output=_paired_output()), name=LINE_NAME)
 
     assert state.status == "succeeded", state.terminal
     assert state.result["note"] == "paired"
-    left, right = state.result["left"], state.result["right"]
-    assert left.startswith("sha256:") and right.startswith("sha256:") and left != right
+    produced = _journal(instance, state.run_id, "produced_capture")
+    by_field = {item["field"]: item for item in produced}
+    assert set(by_field) == {"left", "right"}
+    assert {field: item["input_name"] for field, item in by_field.items()} == {
+        "left": "doc.left",
+        "right": "doc.right",
+    }
+    # Each field is committed under its own pinned CaptureContract.
+    assert by_field["left"]["capture_contract_digest"] == (
+        capture_contract_digest(record_contract(name="test.events-v1", replay="exact")).tagged
+    )
+    assert by_field["right"]["capture_contract_digest"] == (
+        capture_contract_digest(record_contract(name="test.other-v1", replay="exact")).tagged
+    )
+    assert state.result["left"] == by_field["left"]["capture_digest"]
+    # One acquisition decision per capture output, and one observation per field.
+    decisions = {
+        item["input_name"]: item["decision"]["disposition"]
+        for item in _journal(instance, state.run_id, "source_acquisition")
+    }
+    assert decisions == {"doc.left": "selected", "doc.right": "selected"}
+    assert [(item.field, item.input_name) for item in state.source_observations] == [
+        ("left", "doc.left"),
+        ("right", "doc.right"),
+    ]
+    # Both Captures verify as new evidence (production proof required) after reopening.
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    for item in produced:
+        read = service_read_playbill_capture(
+            reopened,
+            request=CaptureReadRequest(capture_digest=item["capture_digest"], max_bytes=4096),
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+        assert read.status == "verified", (item["field"], read)
 
 
-def test_the_descriptors_name_each_capture_output_and_a_bare_alias_is_ambiguous(
+@pytest.mark.parametrize(
+    ("on_stale", "status"), [("omit", "succeeded"), ("refuse", "node_refused")]
+)
+def test_a_stale_field_is_decided_by_its_own_rule_while_its_sibling_is_selected(
+    tmp_path: Path, on_stale: str, status: str
+) -> None:
+    """Per-field eligibility: only doc.right is bound by max_age, and only it is stale."""
+
+    instance = _paired_world(
+        tmp_path, acquisition={"doc.right": {"max_age": "PT1M", "on_stale": on_stale}}
+    )
+    output = _paired_output(right_observed_at="2026-10-29T11:00:00Z")
+
+    state, _ = run_line(instance, invoker=Invoker(output=output), name=LINE_NAME)
+
+    assert state.status == status, state.terminal
+    decisions = {
+        item["input_name"]: (item["decision"]["disposition"], item["decision"]["reason_codes"])
+        for item in _journal(instance, state.run_id, "source_acquisition")
+    }
+    expected = "omitted" if on_stale == "omit" else "refused"
+    assert decisions == {
+        "doc.left": ("selected", []),
+        "doc.right": (expected, ["cruxible.acquisition.stale"]),
+    }
+    if on_stale == "refuse":
+        assert state.terminal.code == "cruxible.acquisition.stale"
+        assert state.terminal.details["input_name"] == "doc.right"
+        return
+    # The omitted field is absent from the call's value; its sibling is produced,
+    # and only its bytes are charged to the run's Capture budget.
+    (produced,) = _journal(instance, state.run_id, "produced_capture")
+    assert produced["field"] == "left"
+    (final,) = _journal(instance, state.run_id, "attempt_finalized")
+    assert final["capture_bytes"] == len(b'{"side": "left"}')
+    assert [item.field for item in final_associations(final)] == ["left"]
+
+
+def final_associations(final: dict[str, Any]) -> list[Any]:
+    from cruxible_client.contracts.procedures.results import ProcedureSourceCaptureAssociation
+
+    return [
+        ProcedureSourceCaptureAssociation.model_validate(item)
+        for item in final["source_capture_associations"]
+    ]
+
+
+def test_line_acquisition_names_capture_outputs_not_aliases(tmp_path: Path) -> None:
+    from cruxible_core.authoring.lowering import AuthoringLoweringError
+
+    with pytest.raises(AuthoringLoweringError, match="names no capture output"):
+        _paired_world(tmp_path, acquisition={"doc": {"max_age": "PT1M"}})
+
+
+def test_the_descriptors_name_each_capture_output_and_a_trigger_cannot_split_the_call(
     tmp_path: Path,
 ) -> None:
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
@@ -213,32 +339,25 @@ def test_the_descriptors_name_each_capture_output_and_a_bare_alias_is_ambiguous(
     definition = parse_procedure(tree[path], path=path).definition
 
     assert [
-        (item.node_path, item.field, item.capture_kind)
+        (item.node_path, item.field, item.capture_kind, item.acquisition_key)
         for item in capture_output_descriptors(definition)
     ] == [
-        ("doc", "left", "test.events-v1"),
-        ("doc", "right", "test.events-v1"),
+        ("doc", "left", "test.events-v1", "doc.left"),
+        ("doc", "right", "test.other-v1", "doc.right"),
     ]
-    assert trigger_capture_output(definition, "doc.right").field == "right"
-    with pytest.raises(TriggerTargetRefused) as caught:
-        trigger_capture_output(definition, "doc")
-    assert caught.value.code == "trigger_target_ambiguous"
+    for named in ("doc", "doc.right", "doc.left"):
+        with pytest.raises(TriggerTargetRefused) as caught:
+            trigger_capture_output(definition, named)
+        assert caught.value.code == "trigger_target_ambiguous", named
 
 
-def test_a_line_trigger_aimed_at_a_two_field_call_by_alias_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize("trigger_input", ["doc", "doc.right"])
+def test_a_line_trigger_aimed_at_a_two_field_call_is_refused_by_any_name(
+    tmp_path: Path, trigger_input: str
+) -> None:
+    """F7: substitution of a multi-field call is refused, explicit field target included."""
+
     from cruxible_core.authoring.lowering import AuthoringLoweringError
 
     with pytest.raises(AuthoringLoweringError, match="trigger_target_ambiguous"):
-        _paired_world(tmp_path, trigger_input="doc")
-
-
-def test_a_line_trigger_naming_one_capture_field_is_accepted(tmp_path: Path) -> None:
-    from cruxible_client.contracts.procedures.line_specs import parse_line_spec
-
-    instance = _paired_world(tmp_path, trigger_input="doc.right")
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    line = parse_line_spec(tree[f"lines/{LINE_NAME}.json"], path=f"lines/{LINE_NAME}.json")
-
-    assert line.trigger_input == "doc.right"
-    assert line.trigger_event is not None
-    assert line.trigger_event.capture_contract_identity.name == "test.events-v1"
+        _paired_world(tmp_path, trigger_input=trigger_input)

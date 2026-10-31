@@ -1,11 +1,12 @@
 """Trigger-input rules for a Line: which capture output a trigger substitutes.
 
-A Line's ``trigger_input`` names one capture output of its Procedure:
-``<alias>.<capture field>``, or the alias alone when that call commits exactly
-one capture field. The triggering Capture is bound to that field and the call
-does not run. A bare alias naming a call with several capture fields is refused
-``trigger_target_ambiguous``. The Line law calls :func:`validate_trigger_input`;
-Line admission resolves the output with :func:`trigger_capture_source`.
+A Line's ``trigger_input`` names one capture output of its Procedure,
+``<alias>.<capture field>``, of a call that commits exactly that one capture
+field. The triggering Capture is bound to that field and the call does not
+run. A trigger aimed at a call with several capture fields, by any name, is
+refused ``trigger_target_ambiguous``; such a call runs normally. The Line law
+calls :func:`validate_trigger_input`; Line admission resolves the output with
+:func:`trigger_capture_target`.
 """
 
 from __future__ import annotations

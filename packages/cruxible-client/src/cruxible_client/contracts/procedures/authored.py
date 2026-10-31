@@ -304,7 +304,9 @@ class ProcedureSpec(_Model):
     )
     acquisition_defaults: dict[str, AcquisitionDefault] = Field(
         default_factory=dict,
-        description="Default acquisition rule per Source alias; a Line overrides it.",
+        description=(
+            "Default acquisition rule per capture output <alias>.<field>; a Line overrides it."
+        ),
     )
     steps: tuple[Step, ...] = Field(min_length=1)
     # Names/schema details are optional: retained owners can preserve their

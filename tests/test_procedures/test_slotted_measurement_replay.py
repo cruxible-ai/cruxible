@@ -235,7 +235,9 @@ def _slotted_world(tmp_path, *, landed=False):
                         "effect": "pure",
                     },
                 },
-                "acquisition_defaults": {"captured": AcquisitionDefault().model_dump(mode="json")},
+                "acquisition_defaults": {
+                    "captured.capture": AcquisitionDefault().model_dump(mode="json")
+                },
                 "steps": [
                     {
                         "call": "captured",

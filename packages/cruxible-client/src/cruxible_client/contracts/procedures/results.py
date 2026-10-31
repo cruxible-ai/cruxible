@@ -953,7 +953,11 @@ class ProcedureSourceObservation(_StrictResultModel):
     )
     occurrence_path: str
     node_id: str | None = None
+    #: The capture output observed, ``<alias>.<field>`` (the call's alias when
+    #: the occurrence produced no Capture).
     input_name: str | None = None
+    #: The capture field this observation's Capture is, when it produced one.
+    field: str | None = Field(default=None, exclude_if=lambda value: value is None)
     source_read_receipt: SourceReadReceipt | None = None
     source_read_receipt_digest: str | None = None
     invocation_receipt_digest: str | None = None
@@ -979,12 +983,14 @@ class ProcedureSourceObservation(_StrictResultModel):
 
 
 class ProcedureSourceCaptureAssociation(_StrictResultModel):
-    """Reserved B4 association between one Provider occurrence and one Capture."""
+    """One capture field of one Provider occurrence, and the Capture it produced."""
 
     tag: Literal["playbill-procedure-source-capture-association-v1"] = (
         "playbill-procedure-source-capture-association-v1"
     )
     occurrence_path: str
+    #: The capture field of the occurrence's out Contract the Capture is.
+    field: str
     invocation_receipt_digest: str
     capture_digest: str
 
@@ -1386,9 +1392,13 @@ class ProcedureRunReceipt(_StrictResultModel):
         cls,
         value: tuple[ProcedureSourceCaptureAssociation, ...],
     ) -> tuple[ProcedureSourceCaptureAssociation, ...]:
-        paths = tuple(item.occurrence_path for item in value)
-        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Source Capture associations must be path-sorted and unique")
+        keys = tuple((item.occurrence_path, item.field) for item in value)
+        if keys != tuple(
+            sorted(set(keys), key=lambda key: (key[0].encode("utf-8"), key[1].encode("utf-8")))
+        ):
+            raise ValueError(
+                "Source Capture associations must be sorted and unique by occurrence path and field"
+            )
         return value
 
     @model_validator(mode="after")

@@ -308,7 +308,11 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
     operation_signature_digest: str
     implementation_digest: str
     effect_class: Literal["pure", "external_read", "external_mutation"]
-    capture_contract_digest: str | None = None
+    #: An acquiring call's capture fields: each field's accepted CaptureContract
+    #: digest, pinned independently. Empty for every other occurrence.
+    capture_contracts: dict[str, str] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     contracts: tuple[Contract, ...] = ()
     local_execution: VerifiedProviderBinding
     secret_plan: ProviderSecretResolutionPlan
@@ -319,9 +323,15 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
         "provider_artifact_digest",
         "operation_signature_digest",
         "implementation_digest",
-        "capture_contract_digest",
         "source_runtime_plan_digest",
     )(_digest)
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _capture_contracts(cls, value: dict[str, str]) -> dict[str, str]:
+        for digest in value.values():
+            _digest(digest)
+        return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
 
     @property
     def build_digest(self) -> str:
@@ -357,7 +367,7 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
         if self.occurrence_kind == "source":
             if (
                 self.input_name is None
-                or self.capture_contract_digest is None
+                or not self.capture_contracts
                 or self.source_runtime_plan_digest is None
             ):
                 raise ValueError("Source occurrence requires its Source runtime fields")
@@ -365,7 +375,7 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
                 raise ValueError("a Source occurrence cannot mutate")
         elif (
             self.input_name is not None
-            or self.capture_contract_digest is not None
+            or self.capture_contracts
             or self.source_runtime_plan_digest is not None
         ):
             raise ValueError("Provider occurrence requires only its operation fields")
@@ -467,7 +477,10 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     operation: str
     operation_signature_digest: str
     protocol_version: str
-    capture_contract_digest: str | None = None
+    #: The occurrence's capture fields and their CaptureContract digests.
+    capture_contracts: dict[str, str] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     input_digest: str
     outcome: ProviderInvocationOutcome
     output: object | None = None
@@ -498,9 +511,15 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
         "materialization_digest",
         "deployment_digest",
         "operation_signature_digest",
-        "capture_contract_digest",
         "input_digest",
     )(_digest)
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _capture_contracts(cls, value: dict[str, str]) -> dict[str, str]:
+        for digest in value.values():
+            _digest(digest)
+        return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
 
     @field_validator("secret_references")
     @classmethod

@@ -190,7 +190,10 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     # The Source's acquisition rule is the child Procedure's own default: a
     # Line's acquisition rules name only its root Procedure's Sources.
     built = type(authored).model_validate(
-        {**authored.model_dump(mode="json"), "acquisition_defaults": {"observation": _policy()}}
+        {
+            **authored.model_dump(mode="json"),
+            "acquisition_defaults": {"observation.capture": _policy()},
+        }
     )
     accept(pb.procedure(definition=built))
 
