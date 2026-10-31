@@ -20,9 +20,7 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -33,6 +31,8 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     TransformNode,
 )
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Predicate
 from tests.support.inbox import inbox_node
 from tests.support.procedures import named
 
@@ -49,12 +49,8 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
     )
 
 
-def _predicate(alias: str) -> GuardPredicate:
-    return GuardPredicate(
-        left=PredicateOperand(kind="step", alias=alias),
-        operator="eq",
-        right=PredicateOperand(kind="literal", value=True),
-    )
+def _predicate(alias: str) -> Predicate:
+    return Comparison(op="eq", left=step_ref(alias), right=LiteralOperand(literal=True))
 
 
 def _slot_signature(*, effect: str = "external_mutation") -> dict[str, object]:
@@ -239,8 +235,6 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
                 predicate=_predicate("rows"),
                 on_true="hot",
                 on_false="join",
-                refusal_code="branch.false",
-                message="Take the cold path.",
             ),
             ProjectNode(
                 node_id="hot",
@@ -284,8 +278,6 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                     predicate=_predicate("rows"),
                     on_true="hot",
                     on_false="join",
-                    refusal_code="branch.false",
-                    message="Take the cold path.",
                 ),
                 ProjectNode(
                     node_id="hot",
@@ -345,8 +337,6 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
         predicate=_predicate("rows"),
         on_true="result",
         on_false="stop",
-        refusal_code="guard.empty",
-        message="No rows are available.",
     )
     result = ProjectNode(
         node_id="result",
@@ -384,14 +374,12 @@ def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bo
     )
     gate = GuardNode(
         node_id="gate",
-        predicate=GuardPredicate(
-            left=PredicateOperand(kind="literal", value=True),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=True),
+        predicate=Comparison(
+            op="eq", left=LiteralOperand(literal=True), right=LiteralOperand(literal=True)
         ),
         on_false="stop" if explicit_halt else "$abort",
-        refusal_code="guard.false",
-        message="The guard refused.",
+        refusal_code=None if explicit_halt else "guard.false",
+        message=None if explicit_halt else "The guard refused.",
     )
     nodes: tuple[object, ...] = (
         (result, HaltNode(node_id="stop", reason="The guard refused."), gate)
@@ -414,10 +402,8 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
         (
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="literal", value=True),
-                    operator="eq",
-                    right=PredicateOperand(kind="literal", value=True),
+                predicate=Comparison(
+                    op="eq", left=LiteralOperand(literal=True), right=LiteralOperand(literal=True)
                 ),
                 on_false="$abort",
                 refusal_code="guard.false",
@@ -455,8 +441,6 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                     predicate=_predicate("rows"),
                     on_true="result",
                     on_false="stop",
-                    refusal_code="guard.empty",
-                    message="No rows are available.",
                 ),
                 TransformNode(
                     node_id="result",

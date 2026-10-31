@@ -1904,75 +1904,6 @@ def _accepted(
     )
 
 
-def _verify_source(context: _MemberContext, procedure: Any) -> None:
-    """Resolve a source graph's retained declarations against candidate state."""
-
-    from cruxible_client.contracts.query.definitions import (
-        parse_query_definition,
-        query_definition_path,
-    )
-    from cruxible_core.authoring.procedure_source import verify_source_bindings
-
-    def source_lookup(identity: str) -> object | None:
-        kind = identity.split(":", 1)[0]
-        if kind == "QueryDefinition":
-            path = query_definition_path(identity.split(":", 1)[1])
-            content = context.candidate_tree.get(path)
-            return None if content is None else parse_query_definition(content, path=path)
-        if kind == "Contract":
-            contract: object | None = _candidate_contract(context, identity.split(":", 1)[1])
-            return contract
-        owners = {
-            "Provider": (context.resolved.providers, "provider"),
-            "Procedure": (context.resolved.procedures, "procedure"),
-            "ClaimType": (context.resolved.claim_types, "claim_type"),
-            "CaptureContract": (context.resolved.capture_contracts, "contract"),
-        }
-        if kind not in owners:
-            return None
-        mapping, attribute = owners[kind]
-        selected = mapping.get(identity)
-        return None if selected is None else getattr(selected, attribute)
-
-    source = procedure.definition.source
-    type_ids = tuple("ClaimType:" + name for name in (() if source is None else source.claim_types))
-    subject_kinds: tuple[str, ...] = ()
-    if (
-        source is not None
-        and getattr(source, "syntax_rules", source.rules) == "cruxible.procedure-source.v2"
-    ):
-        from cruxible_core.authoring.procedure_source import source_ontology_names
-        from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
-
-        names = source_ontology_names(source.text)
-        states = context.candidate_states
-        if isinstance(states, SelectedRows) and states.owner is not None:
-            owner = states.owner
-            type_ids, subject_kinds = (
-                owner.claim_type_names(names)
-                if isinstance(owner, EvaluationRows)
-                else owner.call(lambda rows: rows.claim_type_names(names))
-            )
-        else:
-            # Cold replay already materialized definitions; use the same name relation.
-            from cruxible_core.indexes.typed_state import claim_type_names
-
-            matched = [
-                row
-                for accepted in context.resolved.claim_types.values()
-                for row in claim_type_names(accepted.claim_type)
-                if row[2] in names or row[3] in names
-            ]
-            type_ids = tuple(sorted({row[0] for row in matched if row[1] == "predicate"}))
-            subject_kinds = tuple(sorted({row[2] for row in matched if row[1] == "subject_kind"}))
-    verify_source_bindings(
-        procedure,
-        lookup=source_lookup,
-        claim_types=(source_lookup(identity) for identity in type_ids),
-        subject_kinds=subject_kinds,
-    )
-
-
 def _reserved_provider_refusal_codes() -> frozenset[str]:
     from cruxible_core.providers.provider_runtime_contract import (
         PROVIDER_RUNTIME_RESERVED_REFUSAL_CODES,
@@ -2054,7 +1985,6 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     procedure = parse_procedure(context.content, path=context.path)
     installed = _installed(context, procedure.artifact_format)
 
-    _verify_source(context, procedure)
     predecessor: AcceptedProcedure | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)

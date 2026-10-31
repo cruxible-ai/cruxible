@@ -7,7 +7,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -24,8 +24,6 @@ from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
-    AuthoringArtifactReference,
-    AuthoringCandidateReference,
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
     AuthoringExactContentObject,
@@ -191,23 +189,6 @@ AuthoringSourceInput: TypeAlias = Annotated[
 ]
 
 
-class AcceptedReferenceInput(_StrictInputModel):
-    kind: Literal["accepted"]
-    role: str
-    target: str
-
-
-class SlotReferenceInput(_StrictInputModel):
-    kind: Literal["slot"]
-    slot_name: str
-
-
-class CarriedContractReferenceInput(_StrictInputModel):
-    kind: Literal["carried_contract"]
-    name: str
-    role: str
-
-
 class CarriedContractInput(_StrictInputModel):
     name: str
     description: str | None = None
@@ -254,15 +235,16 @@ class ClaimInput(_StrictInputModel):
 
 
 class ProcedureInput(_StrictInputModel):
+    """A Procedure, authored in the one typed form: a :class:`ProcedureSpec`.
+
+    The stored Procedure graph is produced by lowering the spec; a graph is
+    never authored directly, and the retired Python source request is refused
+    (``procedure_authoring_form_retired``).
+    """
+
     kind: Literal["procedure"]
-    definition: dict[str, object] = Field(default_factory=dict)
-    spec: ProcedureSpec | None = Field(default=None, exclude_if=lambda value: value is None)
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
+    spec: ProcedureSpec
     retire: bool = False
-    contracts: tuple[CarriedContractInput, ...] = ()
-    #: Default acquisition rule per capture output <alias>.<field>; a Line's acquisition
-    #: overrides it.
-    acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -272,22 +254,53 @@ class ProcedureInput(_StrictInputModel):
             kind = value.pop("kind", "procedure")
             retire = value.pop("retire", False)
             return {"kind": kind, "retire": retire, "spec": value}
+        if isinstance(value, dict) and ("definition" in value or "contracts" in value):
+            definition = value.get("definition")
+            form = (
+                "a source_request (the retired @procedure Python source)"
+                if isinstance(definition, dict) and "source_request" in definition
+                else "a graph definition"
+            )
+            raise PydanticCustomError(
+                "procedure_authoring_form_retired",
+                "procedure_authoring_form_retired: a Procedure is authored as one typed "
+                "ProcedureSpec ({procedure, input, steps, ...}), not as {form}",
+                {"form": form},
+            )
         return value
 
-    @model_validator(mode="after")
-    def _one_form(self) -> "ProcedureInput":
-        if self.spec is None and not self.definition:
-            raise PydanticCustomError("missing", "a Procedure input requires spec or definition")
-        if self.spec is not None and (self.definition or self.contracts):
-            raise ValueError("use either spec or definition/contracts")
-        return self
 
-    @field_validator("definition", mode="before")
-    @classmethod
-    def _definition(cls, value: object) -> dict[str, object]:
-        if not isinstance(value, dict):
-            raise ValueError("Procedure input definition must be an object")
-        return cast(dict[str, object], value)
+def lowered_procedure_payload(
+    *,
+    definition: dict[str, object],
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"],
+    acquisition_defaults: dict[str, AcquisitionDefault],
+    contracts: tuple[CarriedContractInput, ...],
+) -> ProcedureAuthoringPayload:
+    """The lowered spec: its stored graph and the Contracts the graph names."""
+
+    owned = tuple(
+        sorted(
+            (
+                ProcedureOwnedContract(
+                    identity=ArtifactIdentity(kind="Contract", name=contract.name),
+                    schema=ContractSchema(
+                        description=contract.description,
+                        fields=contract.fields,
+                        allow_extra=contract.allow_extra,
+                    ),
+                )
+                for contract in contracts
+            ),
+            key=lambda contract: canonical_bytes(contract.model_dump(mode="json", by_alias=True)),
+        )
+    )
+    return ProcedureAuthoringPayload(
+        definition=definition,
+        activation_policy=activation_policy,
+        owned_contracts=owned,
+        acquisition_defaults=acquisition_defaults,
+    )
 
 
 class SubjectInput(_StrictInputModel):
@@ -813,156 +826,21 @@ def lower_bound_claim_input(
     )
 
 
-def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
-    kind, separator, name = value.partition(":")
-    if not separator:
-        raise AuthoringInputError(
-            "cruxible.authoring.accepted_target_invalid",
-            field_path,
-            "Accepted references use ArtifactKind:name.",
-            "Replace target with an identity returned by orient or get.",
-        )
-    try:
-        return ArtifactIdentity(kind=kind, name=name)
-    except ValueError as exc:
-        raise AuthoringInputError(
-            "cruxible.authoring.accepted_target_invalid",
-            field_path,
-            "Accepted reference identity is not canonical.",
-            "Replace target with an identity returned by orient or get.",
-        ) from exc
-
-
-def _procedure_references(
-    value: object,
-    *,
-    contracts: dict[str, ProcedureOwnedContract],
-    field_path: str = "input.definition",
-) -> object:
-    if isinstance(value, dict):
-        if value.get("kind") == "accepted" and set(value) == {"kind", "role", "target"}:
-            accepted_reference = AcceptedReferenceInput.model_validate(value)
-            return AuthoringArtifactReference(
-                role=accepted_reference.role,
-                target=_artifact_identity(
-                    accepted_reference.target, field_path=f"{field_path}.target"
-                ),
-            ).model_dump(mode="json")
-        if value.get("kind") == "candidate" and set(value) == {"kind", "role", "target"}:
-            role = value["role"]
-            target = value["target"]
-            if not isinstance(role, str) or not isinstance(target, str):
-                raise AuthoringInputError(
-                    "cruxible.authoring.candidate_reference_invalid",
-                    field_path,
-                    "Candidate references require text role and target fields.",
-                    "Use {kind: candidate, role: <role>, target: ArtifactKind:name}.",
-                )
-            return AuthoringCandidateReference(
-                role=role,
-                target=_artifact_identity(target, field_path=f"{field_path}.target"),
-            ).model_dump(mode="json")
-        if value.get("kind") == "slot" and set(value) == {"kind", "slot_name"}:
-            slot_reference = SlotReferenceInput.model_validate(value)
-            return {
-                "tag": "playbill-procedure-pin-slot-ref-v1",
-                "slot_name": slot_reference.slot_name,
-            }
-        if value.get("kind") == "carried_contract" and set(value) == {
-            "kind",
-            "name",
-            "role",
-        }:
-            reference = CarriedContractReferenceInput.model_validate(value)
-            contract = contracts.get(reference.name)
-            if contract is None:
-                raise AuthoringInputError(
-                    "cruxible.authoring.carried_contract_unresolved",
-                    f"{field_path}.name",
-                    "The carried Contract reference has no matching declaration.",
-                    "Declare that name in input.contracts or repair the reference.",
-                )
-            return reference.model_dump(mode="json")
-        return {
-            key: _procedure_references(
-                member,
-                contracts=contracts,
-                field_path=f"{field_path}.{key}",
-            )
-            for key, member in value.items()
-        }
-    if isinstance(value, list | tuple):
-        return [
-            _procedure_references(
-                member,
-                contracts=contracts,
-                field_path=f"{field_path}[{index}]",
-            )
-            for index, member in enumerate(value)
-        ]
-    return value
-
-
 def _procedure_payload(
     value: ProcedureInput,
 ) -> ProcedureAuthoringPayload:
-    if not value.retire:
-        refuse_unserved_procedure_nodes(value.definition, field_path="input.definition")
-    if value.spec is not None:
-        try:
-            lower_procedure_spec(value.spec)  # shared offline syntax/reference checks
-        except ProcedureSpecError as exc:
-            raise AuthoringInputError(exc.code, exc.field_path, exc.message, exc.repair) from exc
-        return ProcedureAuthoringPayload(
-            definition={
-                "name": value.spec.procedure,
-                "procedure_spec": value.spec.model_dump(mode="json", by_alias=True),
-            },
-            owned_contracts=(),
-            activation_policy=value.spec.activation,
-            acquisition_defaults=value.spec.acquisition_defaults,
-            retire=value.retire,
-        )
-    contracts = tuple(
-        sorted(
-            (
-                ProcedureOwnedContract(
-                    identity=ArtifactIdentity(kind="Contract", name=contract.name),
-                    schema=ContractSchema(
-                        description=contract.description,
-                        fields=contract.fields,
-                        allow_extra=contract.allow_extra,
-                    ),
-                )
-                for contract in value.contracts
-            ),
-            key=lambda contract: canonical_bytes(contract.model_dump(mode="json", by_alias=True)),
-        )
-    )
-    by_name = {contract.identity.name: contract for contract in contracts}
-    if len(by_name) != len(contracts):
-        raise AuthoringInputError(
-            "cruxible.authoring.carried_contract_duplicate",
-            "input.contracts",
-            "Carried Contract names must be unique.",
-            "Remove or rename the duplicate declaration.",
-        )
-    if value.definition.get("graph_format") == 7:
-        from copy import deepcopy
-
-        # This tree already carries typed names. Legacy reference spellings
-        # inside templates are opaque data, never authoring instructions.
-        definition = deepcopy(value.definition)
-    else:
-        definition = cast(
-            dict[str, object],
-            _procedure_references(value.definition, contracts=by_name),
-        )
+    try:
+        lower_procedure_spec(value.spec)  # shared offline syntax/reference checks
+    except ProcedureSpecError as exc:
+        raise AuthoringInputError(exc.code, exc.field_path, exc.message, exc.repair) from exc
     return ProcedureAuthoringPayload(
-        definition=definition,
-        activation_policy=value.activation_policy,
-        owned_contracts=contracts,
-        acquisition_defaults=value.acquisition_defaults,
+        definition={
+            "name": value.spec.procedure,
+            "procedure_spec": value.spec.model_dump(mode="json", by_alias=True),
+        },
+        owned_contracts=(),
+        activation_policy=value.spec.activation,
+        acquisition_defaults=value.spec.acquisition_defaults,
         retire=value.retire,
     )
 
@@ -1226,7 +1104,6 @@ def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
 
 
 __all__ = [
-    "AcceptedReferenceInput",
     "ApprovalPolicyInput",
     "ProcedureRuntimePolicyInput",
     "AuthoringChangeSetMemberInput",
@@ -1235,7 +1112,6 @@ __all__ = [
     "AuthoringObjectInput",
     "AuthoringSourceInput",
     "CarriedContractInput",
-    "CarriedContractReferenceInput",
     "ChangeSetInput",
     "ClaimDispositionInput",
     "ClaimRetirementInput",
@@ -1250,10 +1126,10 @@ __all__ = [
     "TriggerInput",
     "LiteralObjectInput",
     "ProcedureInput",
+    "lowered_procedure_payload",
     "ProcedureMandateInput",
     "QueryDefinitionInput",
     "SelfSourceInput",
-    "SlotReferenceInput",
     "SubjectObjectInput",
     "SubjectInput",
     "SubjectKindInput",

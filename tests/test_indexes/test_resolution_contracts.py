@@ -34,14 +34,14 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -154,15 +154,13 @@ def _accepted() -> AcceptedProcedure:
             ),
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="count", alias="rows"),
-                    operator="gt",
-                    right=PredicateOperand(kind="literal", value=0),
+                predicate=Comparison(
+                    op="gt",
+                    left=CountOperand(count=step_ref("rows")),
+                    right=LiteralOperand(literal=0),
                 ),
                 on_true="hot",
                 on_false="cold",
-                refusal_code="empty",
-                message="No rows.",
             ),
             ProjectNode(
                 node_id="hot",

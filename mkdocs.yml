@@ -81,7 +81,6 @@ nav:
       - For AI agents: for-ai-agents.md
       - Kits: kits.md
   - Reference:
-      - Procedure source authoring: procedure-source.md
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
   - Operations:

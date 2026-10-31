@@ -480,7 +480,7 @@ rerun `cruxible stub`.
 
 Every payload argument accepts `-` for standard input, so a heredoc or a pipe
 works and no throwaway file lands on disk. Real artifacts stay files:
-Procedure source, signed source bundles, kit directories, key directories,
+signed source bundles, kit directories, key directories,
 cited workspace files and pages.
 
 ### Proposals, approval and activation
@@ -788,11 +788,11 @@ names (`pypi.release`, `cisa.kev.catalog`) it writes on its Captures'
 caller names the source (`web.fetch`, `workspace.file`) omit it. The
 declaration is not yet checked against what a run stamps.
 
-In Python, `@procedure` from `cruxible_client.authoring.source` turns a
-decorated function into a `ProcedureSource`, compiled into the same governed
-graph; its `slots=` declare open slots by interface, and a source with
-unbound slots builds a Blueprint. See the [Procedure source
-reference](procedure-source.md).
+A Procedure is authored in one typed form, the `ProcedureSpec`: references are
+typed (`{"$ref": "step", "step": "parse", "path": ["items"]}`), guards and a
+repeat's `until` are the same typed closed predicate the transforms use, and a
+guard's arms are typed actions (`abort`, `halt`, `goto`). In Python, `Sequence`
+from `cruxible_client.authoring.procedures` is a thin builder over that spec.
 
 ### Lines, Triggers and mandates
 

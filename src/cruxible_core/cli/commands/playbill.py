@@ -5888,7 +5888,10 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
         else:
             for key, value in card.items():
                 if key == "authored" and result.kind == "procedure" and value is not None:
-                    click.echo(json.dumps(value, ensure_ascii=False, indent=2))
+                    from cruxible_client.contracts.refs import concise
+
+                    # Review rendering: each typed reference shown as its $... text.
+                    click.echo(json.dumps(concise(value), ensure_ascii=False, indent=2))
                     continue
                 if value in (None, [], {}):
                     continue

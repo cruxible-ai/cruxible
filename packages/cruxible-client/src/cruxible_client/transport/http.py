@@ -53,10 +53,6 @@ from cruxible_client.contracts.principals import (
     PRINCIPAL_ID_HEADER,
     is_canonical_principal_id,
 )
-from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreview,
-    ProcedureSourcePreviewRequest,
-)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
@@ -1558,17 +1554,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json", by_alias=True),
         )
         return self._parse_model(response, contracts.QueryResultRecord)
-
-    def preview_procedure_source(
-        self, instance_id: str, *, request: ProcedureSourcePreviewRequest
-    ) -> ProcedureSourcePreview:
-        from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreview
-
-        response = self._client.post(
-            f"/api/v1/{instance_id}/procedures/source/preview",
-            json=request.model_dump(mode="json", by_alias=True),
-        )
-        return self._parse_model(response, ProcedureSourcePreview)
 
     def procedure_readiness(
         self,

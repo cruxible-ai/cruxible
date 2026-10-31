@@ -56,7 +56,13 @@ def _author_user_procedure(world) -> None:
             "input": {"n": "integer"},
             "output": {"n": "integer"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "steps": [
+                {
+                    "call": "result",
+                    "slot": "increment",
+                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                }
+            ],
             "returns": "result",
             "budget": {"wall_clock": "PT30S", "provider_calls": 1},
         }

@@ -18,12 +18,12 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
     ProcedureDefinition,
     ProjectNode,
     SelectNode,
 )
+from cruxible_client.contracts.refs import input_ref
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.support.procedures import bind_fixture, named
 from tests.test_procedures.test_procedure_execution import (
@@ -44,15 +44,9 @@ def definition(*, early=False):
     pi, po = named(_owned_pin("contract-in", ci)), named(_owned_pin("contract-out", co))
     branch = GuardNode(
         node_id="choose",
-        predicate=GuardPredicate(
-            left=PredicateOperand(kind="input", input_name="choice"),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=True),
-        ),
+        predicate=Comparison(op="eq", left=input_ref("choice"), right=LiteralOperand(literal=True)),
         on_true="yes",
         on_false="no",
-        refusal_code="choice",
-        message="Choose a branch",
     )
     factory = ProjectNode
     nodes = [

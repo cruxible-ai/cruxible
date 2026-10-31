@@ -59,7 +59,7 @@ stdin, so a heredoc or a pipe works and nothing lands on disk: `write -`,
 --grep-results -`, `coverage resolve --bindings -`, the Procedure and Line input, `--at`,
 `--resolution-contract` and `--trigger-event` files, access profiles and
 cursors, and `body store -`. One command reads stdin for one argument; a second
-`-` is refused. Real artifacts stay files: Procedure source, signed source
+`-` is refused. Real artifacts stay files: signed source
 bundles, kit and provider lock files, key directories, cited workspace files
 and block pages.
 

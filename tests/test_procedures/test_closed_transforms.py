@@ -20,14 +20,14 @@ from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
     HaltNode,
-    PredicateOperand,
     ProcedureDefinition,
     ProjectNode,
     TransformNode,
 )
 from cruxible_client.contracts.procedures.nodes import TransformDeriveSpec, TransformFilterSpec
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
@@ -134,7 +134,10 @@ def _count_fixed(records: tuple[dict[str, Any], ...]) -> tuple[Any, ...]:
         _transform(
             "kept",
             "filter",
-            {"input": "$steps.feed.rows", "where": "present($item.fields.status)"},
+            {
+                "input": "$steps.feed.rows",
+                "where": {"op": "present", "of": {"$ref": "item", "path": ["fields", "status"]}},
+            },
         ),
         _transform("count", "aggregate", {"input": "$steps.kept", "op": "count"}),
         _transform(
@@ -142,7 +145,16 @@ def _count_fixed(records: tuple[dict[str, Any], ...]) -> tuple[Any, ...]:
             "derive",
             {
                 "input": {"open": "$steps.count"},
-                "cases": [{"when": "eq($item.fields.open, 0)", "value": "fixed"}],
+                "cases": [
+                    {
+                        "when": {
+                            "op": "eq",
+                            "left": {"$ref": "item", "path": ["fields", "open"]},
+                            "right": {"literal": 0},
+                        },
+                        "value": "fixed",
+                    }
+                ],
                 "else": "affected",
             },
         ),
@@ -180,7 +192,14 @@ def test_a_filter_keeps_only_true_rows_and_unknown_marks_it_incomplete(tmp_path:
         _transform(
             "kept",
             "filter",
-            {"input": "$steps.feed.rows", "where": 'eq($item.fields.status, "open")'},
+            {
+                "input": "$steps.feed.rows",
+                "where": {
+                    "op": "eq",
+                    "left": {"$ref": "item", "path": ["fields", "status"]},
+                    "right": {"literal": "open"},
+                },
+            },
         ),
         _returned("kept"),
     )
@@ -198,15 +217,11 @@ def test_a_guard_over_an_incomplete_value_carries_it_into_its_branch(tmp_path: P
         *_count_fixed((_status("open", invalid=True),))[:3],
         GuardNode(
             node_id="gate",
-            predicate=GuardPredicate(
-                left=PredicateOperand(kind="step", alias="count", path=("result",)),
-                operator="eq",
-                right=PredicateOperand(kind="literal", value=0),
+            predicate=Comparison(
+                op="eq", left=step_ref("count", "result"), right=LiteralOperand(literal=0)
             ),
             on_true="result",
             on_false="stop",
-            refusal_code="gate",
-            message="Open items remain.",
         ),
         # The branch's value reads nothing incomplete; its control lineage does.
         ProjectNode(
@@ -270,7 +285,16 @@ def test_a_derive_without_else_is_refused() -> None:
         TransformDeriveSpec.model_validate(
             {
                 "input": {"open": "$steps.count"},
-                "cases": [{"when": "eq($item.fields.open, 0)", "value": "fixed"}],
+                "cases": [
+                    {
+                        "when": {
+                            "op": "eq",
+                            "left": {"$ref": "item", "path": ["fields", "open"]},
+                            "right": {"literal": 0},
+                        },
+                        "value": "fixed",
+                    }
+                ],
             }
         )
 
@@ -291,7 +315,12 @@ def test_a_predicate_outside_the_closed_grammar_is_refused(where: object) -> Non
 
 def test_a_predicate_outside_the_closed_grammar_is_refused_by_the_graph(tmp_path: Path) -> None:
     payload = _transform(
-        "kept", "filter", {"input": "$steps.feed.rows", "where": "present($item.fields.status)"}
+        "kept",
+        "filter",
+        {
+            "input": "$steps.feed.rows",
+            "where": {"op": "present", "of": {"$ref": "item", "path": ["fields", "status"]}},
+        },
     ).model_dump(mode="json", by_alias=True)
     payload["spec"]["where"] = "loop($item.fields.status)"
     with pytest.raises(ValidationError, match="predicate_outside_closed_grammar"):

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Context, Decimal, InvalidOperation
@@ -29,7 +29,9 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -43,6 +45,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.refs import Ref
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 
 CONTRACT_ARTIFACT_FORMAT = "cruxible-contract-v1"
@@ -1710,26 +1713,6 @@ Truth = Literal["true", "false", "unknown"]
 Scalar: TypeAlias = str | int | bool | Decimal | date | datetime
 
 
-class FieldOperand(_Shape):
-    """``$item.fields.<name>``: evaluates only when the field is present."""
-
-    field: str
-
-    _field = field_validator("field")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate field")
-    )
-
-
-class ParameterOperand(_Shape):
-    """``$parameters.<name>``."""
-
-    parameter: str
-
-    _parameter = field_validator("parameter")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate parameter")
-    )
-
-
 class LiteralOperand(_Shape):
     literal: str | int | bool
 
@@ -1741,7 +1724,35 @@ class LiteralOperand(_Shape):
         return value
 
 
-Operand: TypeAlias = FieldOperand | ParameterOperand | LiteralOperand
+class CountOperand(_Shape):
+    """The number of elements of the referenced list (guards and repeat ``until`` only)."""
+
+    count: Ref
+
+
+def _operand_tag(value: object) -> str | None:
+    if isinstance(value, Ref):
+        return "ref"
+    if isinstance(value, LiteralOperand):
+        return "literal"
+    if isinstance(value, CountOperand):
+        return "count"
+    if isinstance(value, Mapping):
+        if "$ref" in value:
+            return "ref"
+        if "literal" in value:
+            return "literal"
+        if "count" in value:
+            return "count"
+    return None
+
+
+Operand: TypeAlias = Annotated[
+    Annotated[Ref, Tag("ref")]
+    | Annotated[LiteralOperand, Tag("literal")]
+    | Annotated[CountOperand, Tag("count")],
+    Discriminator(_operand_tag),
+]
 ComparisonOp = Literal["eq", "ne", "lt", "le", "gt", "ge"]
 
 
@@ -1752,18 +1763,18 @@ class Comparison(_Shape):
 
 
 class Membership(_Shape):
+    """``left`` is (``in``) or is not (``not_in``) one of the literal members or a list."""
+
     op: Literal["in", "not_in"]
     left: Operand
-    right: tuple[str | int | bool, ...] | ParameterOperand
+    right: tuple[str | int | bool, ...] | Ref
 
 
 class Presence(_Shape):
-    op: Literal["present", "absent"]
-    field: str
+    """Whether the referenced value is ``present`` (or ``absent``)."""
 
-    _field = field_validator("field")(
-        lambda value: _nfc_identifier(value, _FIELD_NAME_RE, label="predicate field")
-    )
+    op: Literal["present", "absent"]
+    of: Ref
 
 
 class AllOf(_Shape):
@@ -1788,12 +1799,89 @@ for _model in (AllOf, AnyOf, Not):
     _model.model_rebuild()
 _PREDICATE: Any = TypeAdapter(Predicate)
 
+PredicateContext = Literal["record", "run"]
+
+
+def predicate_refs(predicate: Predicate) -> Iterator[Ref]:
+    """Every reference a predicate reads, in order."""
+
+    if isinstance(predicate, AllOf | AnyOf):
+        for part in predicate.of:
+            yield from predicate_refs(part)
+        return
+    if isinstance(predicate, Not):
+        yield from predicate_refs(predicate.of)
+        return
+    if isinstance(predicate, Presence):
+        yield predicate.of
+        return
+    for operand in (predicate.left, predicate.right):
+        if isinstance(operand, Ref):
+            yield operand
+        elif isinstance(operand, CountOperand):
+            yield operand.count
+
+
+def _has_count(predicate: Predicate) -> bool:
+    if isinstance(predicate, AllOf | AnyOf):
+        return any(_has_count(part) for part in predicate.of)
+    if isinstance(predicate, Not):
+        return _has_count(predicate.of)
+    if isinstance(predicate, Presence):
+        return False
+    return any(isinstance(operand, CountOperand) for operand in (predicate.left, predicate.right))
+
+
+def predicate_context_problem(predicate: Predicate, context: PredicateContext) -> str | None:
+    """Why ``predicate`` cannot be evaluated where it is used, or ``None``.
+
+    A ``record`` predicate (a transform's ``where``/``when``) reads the current
+    record's fields (``item`` references ``fields.<f>``) and Line parameters; a
+    ``run`` predicate (a guard, a repeat ``until``) reads the Procedure input,
+    parameters and earlier steps, and may count a list.
+    """
+
+    for ref in predicate_refs(predicate):
+        if ref.root == "param":
+            if len(ref.path) != 1:
+                return f"a predicate reads one parameter by name, not {ref.render()!r}"
+            continue
+        if context == "record":
+            if ref.root != "item" or len(ref.path) != 2 or ref.path[0] != "fields":
+                return (
+                    "a record predicate reads the record's fields ($item.fields.<f>) and "
+                    f"parameters, not {ref.render()!r}"
+                )
+        elif ref.root == "item":
+            return f"a guard or repeat predicate cannot read the current item {ref.render()!r}"
+    if context == "record" and _has_count(predicate):
+        return "a record predicate cannot count a list; aggregate it with a transform"
+    return None
+
+
 _UNKNOWN = object()
 _ABSENT = object()
 
 
 def _not(value: Truth) -> Truth:
     return {"true": "false", "false": "true", "unknown": "unknown"}[value]  # type: ignore[return-value]
+
+
+def _record_value(
+    ref: Ref,
+    fields: Mapping[str, FieldPresent | FieldAbsent | FieldInvalid],
+    parameters: Mapping[str, object],
+    required: frozenset[str],
+) -> object:
+    if ref.root == "param":
+        return parameters.get(ref.path[0], _UNKNOWN)
+    name = ref.path[-1]
+    result = fields.get(name)
+    if isinstance(result, FieldPresent):
+        return result.value
+    if isinstance(result, FieldAbsent) and name not in required:
+        return _ABSENT
+    return _UNKNOWN
 
 
 def _operand(
@@ -1804,14 +1892,9 @@ def _operand(
 ) -> object:
     if isinstance(operand, LiteralOperand):
         return operand.literal
-    if isinstance(operand, ParameterOperand):
-        return parameters.get(operand.parameter, _UNKNOWN)
-    result = fields.get(operand.field)
-    if isinstance(result, FieldPresent):
-        return result.value
-    if isinstance(result, FieldAbsent) and operand.field not in required:
-        return _ABSENT
-    return _UNKNOWN
+    if isinstance(operand, CountOperand):
+        return _UNKNOWN
+    return _record_value(operand, fields, parameters, required)
 
 
 def _comparable(left: object, right: object) -> tuple[Any, Any] | None:
@@ -1863,9 +1946,13 @@ def evaluate_predicate(
     stated = parameters or {}
     needed = frozenset(required)
     if isinstance(predicate, Presence):
-        result = values.get(predicate.field)
+        if predicate.of.root == "param":
+            present = predicate.of.path[0] in stated
+            return "true" if present == (predicate.op == "present") else "false"
+        name = predicate.of.path[-1]
+        result = values.get(name)
         if isinstance(result, FieldInvalid) or (
-            isinstance(result, FieldAbsent | type(None)) and predicate.field in needed
+            isinstance(result, FieldAbsent | type(None)) and name in needed
         ):
             return "unknown"
         present = isinstance(result, FieldPresent)
@@ -1887,8 +1974,8 @@ def evaluate_predicate(
     if left is _UNKNOWN:
         return "unknown"
     if isinstance(predicate, Membership):
-        if isinstance(predicate.right, ParameterOperand):
-            members = stated.get(predicate.right.parameter, _UNKNOWN)
+        if isinstance(predicate.right, Ref):
+            members = _record_value(predicate.right, values, stated, needed)
             if members is _UNKNOWN or not isinstance(members, (list, tuple, frozenset, set)):
                 return "unknown"
         else:
@@ -1928,123 +2015,14 @@ def evaluate_predicate(
     return "true" if outcome else "false"
 
 
-_CALL_RE = re.compile(r"\s*([a-z_]+)\s*\(")
-
-
-def parse_predicate(text: str) -> Predicate:
-    """Read the closed call form: ``eq($item.fields.status, "fixed")``, ``all_of(a, b)``.
-
-    Operands are ``$item.fields.<f>``, ``$parameters.<p>``, or a string,
-    integer or boolean literal; ``in``/``not_in`` take a ``[...]`` literal list
-    or a parameter. Anything else is refused.
-    """
-
-    reader = _PredicateReader(text)
-    predicate = reader.predicate()
-    reader.skip()
-    if reader.position != len(text):
-        raise ContractFormatError(f"the predicate {text!r} has trailing text")
-    return predicate
-
-
-class _PredicateReader:
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.position = 0
-
-    def skip(self) -> None:
-        while self.position < len(self.text) and self.text[self.position].isspace():
-            self.position += 1
-
-    def expect(self, symbol: str) -> None:
-        self.skip()
-        if not self.text.startswith(symbol, self.position):
-            raise ContractFormatError(f"the predicate {self.text!r} expected {symbol!r}")
-        self.position += len(symbol)
-
-    def peek(self, symbol: str) -> bool:
-        self.skip()
-        return self.text.startswith(symbol, self.position)
-
-    def predicate(self) -> Predicate:
-        match = _CALL_RE.match(self.text, self.position)
-        if match is None:
-            raise ContractFormatError(f"the predicate {self.text!r} is not a closed form")
-        op = match.group(1)
-        self.position = match.end()
-        data: dict[str, Any]
-        if op in ("all_of", "any_of"):
-            parts = [self.predicate()]
-            while self.peek(","):
-                self.expect(",")
-                parts.append(self.predicate())
-            data = {"op": op, "of": parts}
-        elif op == "not":
-            data = {"op": "not", "of": self.predicate()}
-        elif op in ("present", "absent"):
-            operand = self.operand()
-            if not isinstance(operand, dict) or "field" not in operand:
-                raise ContractFormatError(f"{op} takes $item.fields.<f>")
-            data = {"op": op, "field": operand["field"]}
-        elif op in ("eq", "ne", "lt", "le", "gt", "ge"):
-            left = self.operand()
-            self.expect(",")
-            data = {"op": op, "left": left, "right": self.operand()}
-        elif op in ("in", "not_in"):
-            left = self.operand()
-            self.expect(",")
-            if self.peek("["):
-                self.expect("[")
-                members = [self.literal()]
-                while self.peek(","):
-                    self.expect(",")
-                    members.append(self.literal())
-                self.expect("]")
-                right: object = members
-            else:
-                right = self.operand()
-            data = {"op": op, "left": left, "right": right}
-        else:
-            raise ContractFormatError(f"{op!r} is outside the closed predicate grammar")
-        self.expect(")")
-        if isinstance(data.get("of"), list):
-            data["of"] = [item for item in data["of"]]
-        return cast(Predicate, _PREDICATE.validate_python(data))
-
-    def literal(self) -> str | int | bool:
-        self.skip()
-        rest = self.text[self.position :]
-        string = re.match(r'"(?:[^"\\]|\\.)*"', rest)
-        if string is not None:
-            self.position += string.end()
-            return cast(str, json.loads(string.group(0)))
-        number = re.match(r"-?[0-9]+(?![0-9.])", rest)
-        if number is not None:
-            self.position += number.end()
-            return int(number.group(0))
-        for word, value in (("true", True), ("false", False)):
-            if rest.startswith(word):
-                self.position += len(word)
-                return value
-        raise ContractFormatError(f"the predicate {self.text!r} has an invalid literal")
-
-    def operand(self) -> dict[str, object]:
-        self.skip()
-        rest = self.text[self.position :]
-        reference = re.match(r"\$(item\.fields|parameters)\.([a-z][a-z0-9_]*)", rest)
-        if reference is not None:
-            self.position += reference.end()
-            if reference.group(1) == "item.fields":
-                return {"field": reference.group(2)}
-            return {"parameter": reference.group(2)}
-        return {"literal": self.literal()}
-
-
-def as_predicate(value: Predicate | str | Mapping[str, object]) -> Predicate:
-    """A predicate from its call form or its structured form."""
+def as_predicate(value: Predicate | Mapping[str, object]) -> Predicate:
+    """A predicate from its structured form; expression strings are not a predicate form."""
 
     if isinstance(value, str):
-        return parse_predicate(value)
+        raise ContractFormatError(
+            "a predicate is a typed structure ({op, left, right}, {op, of}); "
+            "expression strings are not accepted"
+        )
     if isinstance(value, BaseModel):
         return value
     return cast(Predicate, _PREDICATE.validate_python(value))
@@ -2061,6 +2039,7 @@ __all__ = [
     "BoolType",
     "CaptureType",
     "Comparison",
+    "CountOperand",
     "Contract",
     "ContractField",
     "ContractFormatError",
@@ -2076,7 +2055,6 @@ __all__ = [
     "EnumType",
     "FieldAbsent",
     "FieldInvalid",
-    "FieldOperand",
     "FieldPresent",
     "FieldResult",
     "FieldResultType",
@@ -2089,8 +2067,8 @@ __all__ = [
     "Membership",
     "NestedType",
     "Not",
-    "ParameterOperand",
     "Predicate",
+    "PredicateContext",
     "Presence",
     "Problem",
     "ProblemCode",
@@ -2122,11 +2100,12 @@ __all__ = [
     "edge_refusal",
     "evaluate_contract_law",
     "evaluate_predicate",
+    "predicate_context_problem",
+    "predicate_refs",
     "map_type_refs",
     "parse_contract",
     "parse_contract_ref",
     "parse_field_spelling",
-    "parse_predicate",
     "parse_type",
     "pin_contract_refs",
     "records",

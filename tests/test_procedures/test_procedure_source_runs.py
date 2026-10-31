@@ -23,7 +23,7 @@ from typing import Any, cast, get_args
 
 import pytest
 
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -353,7 +353,7 @@ def _procedure(  # noqa: PLR0913
             max_items=200,
             max_repeat_attempts=1,
         ),
-        terminal_capability=2,
+        terminal_capability=1,
     )
     procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=PROCEDURE_NAME),
@@ -1608,50 +1608,12 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     assert lowered.proposed_tree[procedure_path(PROCEDURE_NAME)] == render_procedure(procedure)
 
 
-def _authored_definition(procedure: ProcedureArtifact) -> dict[str, object]:
-    """Render the same graph the way an author names it, not the way it resolved."""
-
-    def rewrite(value: object) -> object:
-        if isinstance(value, dict):
-            if set(value) == {"role", "target", "artifact_digest"}:
-                target = cast(dict[str, str], value["target"])
-                if target["kind"] == "Contract":
-                    return {
-                        "kind": "carried_contract",
-                        "name": target["name"],
-                        "role": value["role"],
-                    }
-                return {
-                    "tag": "playbill-authoring-artifact-reference-v1",
-                    "role": value["role"],
-                    "target": target,
-                    "resolution": "accepted_at_intent_base",
-                }
-            return {key: rewrite(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [rewrite(item) for item in value]
-        return value
-
-    rendered = procedure.definition.model_dump(mode="json", by_alias=True)
-    return cast(dict[str, object], rewrite(rendered))
-
-
 def _sdk_procedure_input(procedure: ProcedureArtifact) -> ProcedureInput:
-    return ProcedureInput(
-        kind="procedure",
-        definition=_authored_definition(procedure),
-        activation_policy=procedure.activation_policy,
-        contracts=tuple(
-            CarriedContractInput(
-                name=contract.identity.name,
-                description=contract.contract_schema.description,
-                fields=contract.contract_schema.fields,
-                allow_extra=contract.contract_schema.allow_extra,
-            )
-            for contract in procedure.owned_contracts
-        ),
-        acquisition_defaults=dict(procedure.acquisition_defaults),
-    )
+    """The stored graph as an author writes it: the one typed spec it decompiles to."""
+
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+
+    return ProcedureInput(kind="procedure", spec=decompile_procedure(procedure))
 
 
 def test_a_line_over_a_source_procedure_authors_without_an_acquisition_override(

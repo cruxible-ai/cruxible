@@ -31,6 +31,7 @@ from tests.support.operation_world import (
     slotted_spec,
     world,
 )
+from tests.support.procedures import refs
 
 
 @dataclass(frozen=True)
@@ -477,14 +478,16 @@ def plain_spec(*, name="test.plain"):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
-            "returns": "result",
-            "budget": {"provider_calls": 0},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {"value": "integer"},
+                "output": {"value": "integer"},
+                "steps": [{"project": "result", "fields": {"value": "$input.value"}}],
+                "returns": "result",
+                "budget": {"provider_calls": 0},
+            }
+        )
     )
 
 
@@ -574,17 +577,19 @@ def _plain_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {},
-            "output": {"value": "integer"},
-            "steps": [
-                {"project": "shaped", "fields": {"value": 1}},
-                {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
-            ],
-            "returns": "shaped",
-            "budget": {"provider_calls": 0},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {},
+                "output": {"value": "integer"},
+                "steps": [
+                    {"project": "shaped", "fields": {"value": 1}},
+                    {verb: (_self_sourced_subject_item(f"Plain direct {verb}."),)},
+                ],
+                "returns": "shaped",
+                "budget": {"provider_calls": 0},
+            }
+        )
     )
 
 
@@ -594,18 +599,22 @@ def _call_terminal_spec(*, name, verb):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": name,
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-            "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
-                {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
-            ],
-            "returns": "result",
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": name,
+                "input": {"value": "integer"},
+                "output": {"value": "integer"},
+                "slots": {
+                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
+                },
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                    {verb: (_self_sourced_subject_item(f"Called direct {verb}."),)},
+                ],
+                "returns": "result",
+                "budget": {"provider_calls": 1},
+            }
+        )
     )
 
 
@@ -714,17 +723,19 @@ def test_an_invoked_child_uses_the_parent_lines_binding_under_its_node_path(tmp_
     first, second = operation_build(build="a"), operation_build(build="d")
     instance = slotted_world(tmp_path, first, second)
     parent = ProcedureSpec.model_validate(
-        {
-            "procedure": "test.parent",
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "steps": [
-                {"invoke": "test.slotted", "id": "child", "input": {"value": "$input.value"}},
-                {"project": "finished", "fields": {"value": "$input.value"}},
-            ],
-            "returns": "finished",
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": "test.parent",
+                "input": {"value": "integer"},
+                "output": {"value": "integer"},
+                "steps": [
+                    {"invoke": "test.slotted", "id": "child", "input": {"value": "$input.value"}},
+                    {"project": "finished", "fields": {"value": "$input.value"}},
+                ],
+                "returns": "finished",
+                "budget": {"provider_calls": 1},
+            }
+        )
     )
     author_procedure(instance, parent, name="parent")
     # The child's slot is keyed under the invoke node; the parent Line names its build.
@@ -751,42 +762,44 @@ def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignor
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            "procedure": "test.sourced",
-            **({} if description is None else {"description": description}),
-            **(
-                {}
-                if acquisition_defaults is None
-                else {"acquisition_defaults": acquisition_defaults}
-            ),
-            "input": {},
-            "output": {"length": "integer"},
-            "slots": {
-                "read": {
-                    "in": "workspace.file.request@1",
-                    "out": "workspace.file.result@1",
-                    "effect": "pure",
-                }
-            },
-            "steps": [
-                {
-                    "call": "doc",
-                    "captures": {"capture": "test.orders-v1"},
-                    "slot": "read",
-                    "input": {
-                        "logical_source": "commerce.production.orders",
-                        "relative_path": "data/doc.json",
-                        "coordinate_type": "database-snapshot-v1",
-                        "coordinate": {"lsn": "workspace"},
-                        "selector_type": "relation-primary-key-v1",
-                        "selector": {"id": 7, "relation": "orders"},
-                    },
+        refs(
+            {
+                "procedure": "test.sourced",
+                **({} if description is None else {"description": description}),
+                **(
+                    {}
+                    if acquisition_defaults is None
+                    else {"acquisition_defaults": acquisition_defaults}
+                ),
+                "input": {},
+                "output": {"length": "integer"},
+                "slots": {
+                    "read": {
+                        "in": "workspace.file.request@1",
+                        "out": "workspace.file.result@1",
+                        "effect": "pure",
+                    }
                 },
-                {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
-            ],
-            "returns": "out",
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+                "steps": [
+                    {
+                        "call": "doc",
+                        "captures": {"capture": "test.orders-v1"},
+                        "slot": "read",
+                        "input": {
+                            "logical_source": "commerce.production.orders",
+                            "relative_path": "data/doc.json",
+                            "coordinate_type": "database-snapshot-v1",
+                            "coordinate": {"lsn": "workspace"},
+                            "selector_type": "relation-primary-key-v1",
+                            "selector": {"id": 7, "relation": "orders"},
+                        },
+                    },
+                    {"project": "out", "fields": {"length": "$doc.source.byte_length"}},
+                ],
+                "returns": "out",
+                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            }
+        )
     )
 
 
@@ -1098,23 +1111,25 @@ def _severity_world(tmp_path):  # type: ignore[no-untyped-def]
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
-            {
-                "procedure": "test.slotted",
-                "input": {"value": "integer"},
-                "output": {"severity": "string"},
-                "slots": {
-                    "compute": {
-                        "in": "test.value@1",
-                        "out": "test.severity_value@1",
-                        "effect": "pure",
-                    }
-                },
-                "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
-                ],
-                "returns": "result",
-                "budget": {"provider_calls": 1},
-            }
+            refs(
+                {
+                    "procedure": "test.slotted",
+                    "input": {"value": "integer"},
+                    "output": {"severity": "string"},
+                    "slots": {
+                        "compute": {
+                            "in": "test.value@1",
+                            "out": "test.severity_value@1",
+                            "effect": "pure",
+                        }
+                    },
+                    "steps": [
+                        {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                    ],
+                    "returns": "result",
+                    "budget": {"provider_calls": 1},
+                }
+            )
         ),
     )
     author_line(instance)
@@ -1301,29 +1316,31 @@ def _fetch_world(
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
-            {
-                "procedure": "test.fetched",
-                "input": {},
-                "output": {"ok": "bool"},
-                "slots": {
-                    "fetch": {
-                        "in": "demo.fetch.request@1",
-                        "out": "demo.fetch.result@1",
-                        "effect": "external_read",
-                    }
-                },
-                "steps": [
-                    {
-                        "call": "doc",
-                        "captures": {"capture": capture_contract.identity.name},
-                        "slot": "fetch",
-                        "input": request,
+            refs(
+                {
+                    "procedure": "test.fetched",
+                    "input": {},
+                    "output": {"ok": "bool"},
+                    "slots": {
+                        "fetch": {
+                            "in": "demo.fetch.request@1",
+                            "out": "demo.fetch.result@1",
+                            "effect": "external_read",
+                        }
                     },
-                    {"project": "out", "fields": {"ok": True}},
-                ],
-                "returns": "out",
-                "budget": {"provider_calls": 1, "capture_bytes": 65536},
-            }
+                    "steps": [
+                        {
+                            "call": "doc",
+                            "captures": {"capture": capture_contract.identity.name},
+                            "slot": "fetch",
+                            "input": request,
+                        },
+                        {"project": "out", "fields": {"ok": True}},
+                    ],
+                    "returns": "out",
+                    "budget": {"provider_calls": 1, "capture_bytes": 65536},
+                }
+            )
         ),
     )
     author_line(
@@ -1707,18 +1724,20 @@ def emitting_spec(*, description=None):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.procedures.authored import ProcedureSpec
 
     return ProcedureSpec.model_validate(
-        {
-            **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
-            "steps": [
-                {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
-                {
-                    "emit": "test.procedure-output",
-                    "input": {"value": "$input.value"},
-                    "result": {"value": "$result.value"},
-                },
-            ],
-            "budget": {"provider_calls": 1, "capture_bytes": 65536},
-        }
+        refs(
+            {
+                **slotted_spec(description=description).model_dump(mode="json", by_alias=True),
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}},
+                    {
+                        "emit": "test.procedure-output",
+                        "input": {"value": "$input.value"},
+                        "result": {"value": "$result.value"},
+                    },
+                ],
+                "budget": {"provider_calls": 1, "capture_bytes": 65536},
+            }
+        )
     )
 
 

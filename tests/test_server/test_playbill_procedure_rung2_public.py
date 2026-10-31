@@ -19,9 +19,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
-from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.authoring.inputs import ProcedureInput
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import SubjectKindAuthoringPayload
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import capture_contract_digest
@@ -282,50 +283,36 @@ def _procedure_definition(
             max_items=200,
             max_repeat_attempts=1,
         ),
-        terminal_capability=2,
+        terminal_capability=2 if terminal_kind == "propose_change_set" else 1,
     )
 
 
-def _authored(definition: ProcedureDefinition, *, same_set_kinds: set[str]) -> dict[str, object]:
-    """Render the graph the way an author names it: references, never caller digests.
+def _authored(definition: ProcedureDefinition) -> ProcedureInput:
+    """The graph as an author writes it: the one typed spec it decompiles to.
 
-    Owned Contracts are carried by name; artifacts accepted at the base are
-    referenced for resolution there; artifacts defined in this same change set
-    are referenced as candidates in it.
+    The spec names its dependencies; lowering resolves each at the intent base
+    (or in the change set that stages it), and carries no caller digest.
     """
 
-    # Current authoring names dependencies; exact invocation bindings remain in receipts.
-    definition = definition.model_dump(mode="json", by_alias=True)
+    from cruxible_client.contracts.artifacts import ArtifactIdentity as Identity
+    from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+    from cruxible_client.contracts.procedures.decompile import decompile_procedure
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 
-    def rewrite(value: object) -> object:
-        if isinstance(value, dict):
-            if set(value) == {"role", "target", "artifact_digest"}:
-                target = value["target"]
-                if target["kind"] == "Contract":
-                    return {
-                        "kind": "carried_contract",
-                        "name": target["name"],
-                        "role": value["role"],
-                    }
-                if target["kind"] in same_set_kinds:
-                    return {
-                        "tag": "playbill-authoring-candidate-reference-v1",
-                        "role": value["role"],
-                        "target": target,
-                        "resolution": "candidate_in_change_set",
-                    }
-                return {
-                    "tag": "playbill-authoring-artifact-reference-v1",
-                    "role": value["role"],
-                    "target": target,
-                    "resolution": "accepted_at_intent_base",
-                }
-            return {key: rewrite(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [rewrite(item) for item in value]
-        return value
-
-    return rewrite(definition)  # type: ignore[return-value]
+    input_contract, output_contract = _contracts()
+    artifact = ProcedureArtifact(
+        identity=Identity(kind="Procedure", name=definition.name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        owned_contracts=tuple(
+            sorted((input_contract, output_contract), key=lambda c: c.identity.name)
+        ),
+        activation_policy="drain",
+    )
+    spec = decompile_procedure(artifact).model_copy(
+        update={"acquisition_defaults": {"advisory.capture": _policy()}}
+    )
+    return ProcedureInput(kind="procedure", spec=spec)
 
 
 def _binding_digest(workspace: Path) -> str:
@@ -441,22 +428,13 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             name=SUBJECT_KIND, keys=(f"{SUBJECT_KIND}.slug",), uniqueness="unique"
         ).model_dump(mode="json"),
         create_by_key(SUBJECT_KIND, SUBJECT_ID).model_dump(mode="json"),  # type: ignore[attr-defined]
-        {
-            "tag": "cruxible-procedure-authoring-payload-v3",
-            "definition": _authored(definition, same_set_kinds={"CaptureContract"}),
-            "activation_policy": "drain",
-            "owned_contracts": [
-                item.model_dump(mode="json", by_alias=True)
-                for item in (input_contract, output_contract)
-            ],
-            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
-            "retire": False,
-        },
+        lower_authoring_input(_authored(definition)).model_dump(mode="json", by_alias=True),
         {
             "tag": "cruxible-line-authoring-payload-v2",
             "name": LINE_NAME,
             "procedure_name": PROCEDURE_NAME,
-            "max_authority": "propose",
+            # A Procedure can do what its terminals do: emitting a Capture observes.
+            "max_authority": "observe" if terminal_kind == "emit_capture" else "propose",
         },
         {
             "tag": "cruxible-procedure-mandate-authoring-payload-v2",
@@ -525,22 +503,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             ]
         )
         pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
-        authored = ProcedureInput(
-            kind="procedure",
-            definition=_authored(definition, same_set_kinds=set()),
-            activation_policy="drain",
-            acquisition_defaults={"advisory.capture": _policy()},
-            contracts=tuple(
-                CarriedContractInput(
-                    name=contract.identity.name,
-                    description=contract.contract_schema.description,
-                    fields=contract.contract_schema.fields,
-                    allow_extra=contract.contract_schema.allow_extra,
-                )
-                for contract in (input_contract, output_contract)
-            ),
-        )
-        prepared = pb.procedure(definition=authored).prepare()
+        prepared = pb.procedure(definition=_authored(definition)).prepare()
         assert not prepared.refused, prepared.diagnostics
         submitted_procedure = prepared.submit(accept="never").status()
         assert submitted_procedure.proposal_id is not None

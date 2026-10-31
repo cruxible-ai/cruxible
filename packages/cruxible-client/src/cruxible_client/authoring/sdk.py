@@ -80,7 +80,6 @@ from cruxible_client.authoring.selectors import (
     WorkspaceFiles,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
-from cruxible_client.authoring.source import ProcedureSource
 from cruxible_client.authoring.source_map import (
     DiagnosticSourceMap,
     capture_keyword_sites,
@@ -823,7 +822,7 @@ class PredictionSettlement:
 
 
 #: Every form ``cx.procedure`` accepts.
-ProcedureDefinitionInput: TypeAlias = ProcedureInput | ProcedureSequence | ProcedureSource
+ProcedureDefinitionInput: TypeAlias = ProcedureInput | ProcedureSequence
 
 
 @dataclass(frozen=True)
@@ -1154,7 +1153,7 @@ class ChangeSetDraft:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence,
     ) -> ChangeSetDraft:
         """Compose a Procedure with its Line and mandate in one existing changeset.
 
@@ -4089,48 +4088,27 @@ class Cruxible:
     def procedure(
         self,
         *,
-        definition: ProcedureInput | ProcedureSequence | ProcedureSource,
+        definition: ProcedureInput | ProcedureSequence,
     ) -> ProcedureDraft:
-        """Author a Procedure from a Sequence or the input shared by CLI and HTTP.
+        """Author a Procedure from a Sequence or the typed ProcedureSpec input.
 
-        A Sequence first performs its local structural checks and builds that
-        same input. Its preview never runs providers or replaces daemon preflight.
-
-        Declare owned input/output schemas in ``definition.contracts`` and use
-        ``carried_contract`` references in its graph. ``accepted`` references
-        resolve at the intent base. A Procedure declares each slot's signature
-        ``{in, out, effect}`` and names no provider: a Line binds every slot to
-        one exact build and operation when it is accepted.
-
-        Activation, retirement, and per-Source ``acquisition_defaults`` are also
-        carried by this input.
+        A Sequence builds that same spec (``{kind: procedure, spec}``), the one
+        authoring form every surface submits; its preview never runs providers
+        or replaces daemon preflight. A Procedure declares each slot's
+        signature ``{in, out, effect}`` and names no provider: a Line binds
+        every slot to one exact build and operation when it is accepted.
 
         Next: ``draft.submit()``, then ``cx.accepted_procedure(name).run(...)`` once
         accepted.
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
-        if isinstance(definition, ProcedureSource):
-            definition = definition.build(world=self.world())
         if isinstance(definition, ProcedureSequence):
             definition = definition.build()
         if not isinstance(definition, ProcedureInput):
-            raise TypeError(
-                "procedure definition must be a ProcedureInput, ProcedureSource "
-                "or authoring Sequence"
-            )
+            raise TypeError("procedure definition must be a ProcedureInput or a Sequence")
         payload = lower_authoring_input(definition)
         assert isinstance(payload, ProcedureAuthoringPayload)
-        if definition.spec is not None:
-            pass  # the shared typed authored-form lowering checks it
-        elif "source_request" in definition.definition:
-            from cruxible_client.contracts.procedures.source_requests import (
-                ProcedureSourceRequest,
-            )
-
-            ProcedureSourceRequest.model_validate(definition.definition["source_request"])
-        elif not isinstance(definition.definition.get("nodes"), list | tuple):
-            raise ValueError("Procedure input must declare its nodes")
         return ProcedureDraft(
             self,
             payload,

@@ -44,10 +44,6 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     KitStatus,
 )
-from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreview,
-    ProcedureSourcePreviewRequest,
-)
 from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
@@ -1050,15 +1046,6 @@ def query_playbill(
     req: contracts.QueryRequest,
 ) -> contracts.QueryResultRecord:
     return playbill_api.playbill_query(resolve_server_instance_id(instance_id), request=req)
-
-
-@router.post("/{instance_id}/procedures/source/preview", response_model=ProcedureSourcePreview)
-def procedure_source_preview(
-    instance_id: str, req: ProcedureSourcePreviewRequest
-) -> ProcedureSourcePreview:
-    return playbill_api.playbill_procedure_source_preview(
-        resolve_server_instance_id(instance_id), request=req
-    )
 
 
 @router.get(

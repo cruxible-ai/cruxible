@@ -448,24 +448,25 @@ def test_depublish_transport_sends_file_id_and_keeps_the_frozen_result() -> None
 
 
 @pytest.mark.parametrize("kind", ["source", "state_tap", "exhaust_tap", "return", "constant"])
-def test_a_retired_node_kind_wire_and_sdk_authoring_refuse_without_transport(kind: str) -> None:
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.contracts.authoring.inputs import (
-        ProcedureInput,
-        lower_authoring_input,
-    )
+def test_a_graph_wire_and_sdk_authoring_refuse_without_transport(kind: str) -> None:
+    """A graph (retired node kinds or not) is never authored: the spec is the one form."""
 
-    raw = procedure_example().model_dump(mode="json")
-    raw["definition"]["nodes"][0] = {"kind": kind, "node_id": "retired", "as": "rows"}
-    definition = ProcedureInput.model_validate(raw)
-    with pytest.raises(AuthoringInputError) as caught:
-        lower_authoring_input(definition)
-    assert caught.value.code == "cruxible.procedure.node_kind_retired"
-    assert caught.value.field_path == "input.definition.nodes[0]"
-    assert repr(kind) in caught.value.message
-    with pytest.raises(AuthoringInputError) as sdk_caught:
-        Cruxible.procedure(object(), definition=definition)
-    assert sdk_caught.value.code == caught.value.code
+    from pydantic import ValidationError
+
+    from cruxible_client.authoring.examples import procedure_example
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+
+    raw = {
+        "kind": "procedure",
+        "definition": {"name": "retired", "nodes": [{"kind": kind, "node_id": "retired"}]},
+    }
+    with pytest.raises(ValidationError) as caught:
+        ProcedureInput.model_validate(raw)
+    assert caught.value.errors()[0]["type"] == "procedure_authoring_form_retired"
+    spec = procedure_example().spec.model_dump(mode="json", by_alias=True)
+    spec["steps"][0] = {"explicit": {"kind": kind, "node_id": "retired"}}
+    with pytest.raises(ValidationError, match="retired step 'explicit'"):
+        Cruxible.procedure(object(), definition=ProcedureInput.model_validate(spec))
 
 
 @pytest.mark.parametrize("entrypoint", ["input", "compiled", "intent"])

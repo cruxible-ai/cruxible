@@ -24,7 +24,6 @@ from cruxible_client import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import (
-    CarriedContractInput,
     ClaimInput,
     ProcedureInput,
     QueryDefinitionInput,
@@ -46,10 +45,6 @@ from cruxible_client.contracts.get_reads import GetProcedureCard, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimResolutionPolicy,
-)
-from cruxible_client.contracts.procedures.models import (
-    ProcedureBudget,
-    ProcedureHardCaps,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
@@ -379,65 +374,54 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
 
 
 def _assess_procedure(query: str) -> ProcedureInput:
-    """The assess Procedure over the accepted policy query, its Contracts carried."""
+    """The assess Procedure over the accepted policy query: one typed spec."""
 
-    def carried(name: str, role: str) -> dict[str, str]:
-        return {"kind": "carried_contract", "name": name, "role": role}
-
-    contract_in = carried("assess-input", "contract-in")
-    contract_out = carried("assess-result", "contract-out")
-    return ProcedureInput(
-        kind="procedure",
-        definition={
-            "name": "secops.vuln.assess",
+    return ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "secops.vuln.assess",
             "description": "Classify a vulnerability from governed policy and service facts.",
-            "contract_in": contract_in,
-            "contract_out": contract_out,
-            "nodes": [
+            "input": {},
+            "output": {"lane": "string"},
+            "input_contract": "assess-input",
+            "output_contract": "assess-result",
+            "activation": "drain",
+            "steps": [
                 {
-                    "kind": "read",
-                    "node_id": "read-policy",
-                    "query": {"kind": "accepted", "role": "query", "target": query},
-                    "parameters": {},
-                    "as": "policy_rows",
-                    "next": "classify",
+                    "read": "policy_rows",
+                    "id": "read-policy",
+                    "query": query.removeprefix("QueryDefinition:"),
                 },
                 {
-                    "kind": "project",
-                    "node_id": "classify",
-                    "contract_out": contract_out,
-                    "fields": {"input": "$steps.policy_rows"},
-                    "as": "decision",
-                    "next": "result",
+                    "project": "decision",
+                    "id": "classify",
+                    "fields": {
+                        "input": {"$ref": "step", "step": "policy_rows"},
+                        "lane": "standard",
+                    },
+                    "output": {"input": "json", "lane": "string"},
                 },
                 {
-                    "kind": "project",
-                    "node_id": "result",
-                    "fields": {"lane": "$steps.decision.lane"},
-                    "contract_out": contract_out,
-                    "as": "result",
+                    "project": "result",
+                    "fields": {"lane": {"$ref": "step", "step": "decision", "path": ["lane"]}},
+                    "output": {"lane": "string"},
+                    "contract": "assess-result",
                 },
             ],
             "returns": "result",
-            "budget": ProcedureBudget(
-                wall_clock=RUN_WALL_CLOCK,
-                max_provider_calls=0,
-                max_capture_bytes=0,
-            ).model_dump(mode="json"),
-            "hard_caps": ProcedureHardCaps(
-                max_wall_clock=MAX_WALL_CLOCK,
-                max_provider_calls=0,
-                max_capture_bytes=0,
-                max_items=200,
-                max_repeat_attempts=1,
-            ).model_dump(mode="json"),
-            "terminal_capability": 1,
-        },
-        contracts=(
-            CarriedContractInput(name="assess-input", fields={}, allow_extra=True),
-            CarriedContractInput(name="assess-result", fields={}, allow_extra=True),
-        ),
-        activation_policy="drain",
+            "budget": {
+                "wall_clock": f"PT{RUN_WALL_CLOCK.microseconds // 1_000_000}S",
+                "provider_calls": 0,
+                "capture_bytes": 0,
+            },
+            "caps": {
+                "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+                "provider_calls": 0,
+                "capture_bytes": 0,
+                "items": 200,
+                "repeat_attempts": 1,
+            },
+        }
     )
 
 

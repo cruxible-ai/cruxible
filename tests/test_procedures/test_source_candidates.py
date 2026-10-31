@@ -1,79 +1,12 @@
-"""Typed candidates use ordinary proposal delivery and backend-owned bindings."""
+"""Typed candidates use ordinary proposal delivery and backend-owned bindings.
 
-import textwrap
+A ``playbill-source-claim-candidate-v1`` template is a proposal item the
+executor binds to the run's exact evidence and admitted Claim reads.
+"""
 
 import pytest
 
-from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
-from cruxible_client.contracts.procedures.source_compiler import SourceCompileError, compile_source
-from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSourceProgram,
-    SourceClaimType,
-)
 from tests.test_procedures import test_procedure_proposal_delivery as delivery
-from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
-from tests.test_procedures.test_source_compiler import INPUT, OUTPUT
-
-
-def source_program(value="'high'"):
-    return ProcedureSourceProgram(
-        text=textwrap.dedent(f"""
-            def example(request, world):
-                subject = world.security.advisory['osv-2026-0001']
-                candidate = claim_candidate(
-                    subject=subject, predicate=world.claim_type('security.advisory.severity'),
-                    value={value}, role='observation',
-                    rationale='Author supplied this observation.',
-                    self_source='The advisory is high severity.')
-                return propose_change_set(candidates=[candidate],
-                    result=Output.value(value='proposed'))
-        """),
-        filename="candidate.py",
-        function="example",
-        contracts={"Output": OUTPUT},
-        subject_kinds=("security.advisory",),
-        claim_types={
-            "security.advisory.severity": SourceClaimType(
-                structure=ClaimTypeStructure(
-                    predicate="security.advisory.severity",
-                    allowed_subject_kinds=("security.advisory",),
-                    object_kind="literal",
-                    literal_schema={"type": "string", "enum": ["high", "low"]},
-                    cardinality="one",
-                    permitted_roles=("observation",),
-                ),
-            )
-        },
-    )
-
-
-def test_candidate_compilation_binds_type_and_rejects_wrong_range():
-    compiled = compile_source(
-        source_program(),
-        name="example",
-        input=INPUT,
-        output=OUTPUT,
-        budget=_budget(),
-        hard_caps=_hard_caps(),
-        terminal_capability=2,
-    )
-    terminal = compiled.definition.nodes[-1]
-    assert terminal.kind == "propose_change_set"
-    assert terminal.claim_types[0].target.qualified == "ClaimType:security.advisory.severity"
-    assert terminal.candidate_templates[0]["source_kind"] == "self_source"
-    assert "capture_digest" not in terminal.candidate_templates[0]
-    with pytest.raises(SourceCompileError) as failure:
-        compile_source(
-            source_program("'invalid'"),
-            name="example",
-            input=INPUT,
-            output=OUTPUT,
-            budget=_budget(),
-            hard_caps=_hard_caps(),
-            terminal_capability=2,
-        )
-
-    assert failure.value.diagnostic.code == "cruxible.source.contract_value_invalid"
 
 
 def test_candidate_binding_rejects_unrelated_evidence_and_preserves_copy_role():
@@ -296,56 +229,33 @@ def test_an_implicit_selection_prefers_the_produced_capture():
 
 
 @pytest.mark.parametrize(
-    "kind,expression",
+    "kind,value",
     [
-        ("subject", "world.security.advisory['another']"),
-        ("exact_content", "ExactContent('Exact words')"),
-        ("literal", "'high'"),
+        ("subject", {"subject_kind": "security.advisory", "subject_id": "another"}),
+        ("exact_content", "Exact words"),
+        ("literal", "high"),
     ],
 )
-def test_source_candidate_preserves_value_kind_period_and_dispositions(kind, expression):
+def test_source_candidate_preserves_value_kind_period_and_dispositions(kind, value):
     from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_core.procedures.execution import _resolve_template
     from cruxible_core.procedures.source_candidates import bind_source_candidate
 
-    program = source_program(expression)
-    key = "security.advisory.severity"
-    structure = program.claim_types[key].structure.model_copy(
-        update={
-            "object_kind": kind,
-            "literal_schema": program.claim_types[key].structure.literal_schema
-            if kind == "literal"
-            else None,
-            "allowed_object_subject_kinds": ("security.advisory",) if kind == "subject" else (),
-        }
-    )
     claim_id = "CLM-" + "a" * 32
-    text = program.text.replace(
-        "role='observation',",
-        "role='observation',\n"
-        "            effective_period=EffectivePeriod("
-        "starts_at='2026-09-22T00:00:00Z', ends_at=None),\n"
-        f"            dispositions={{'{claim_id}': Disposition.NOT_TESTED}},",
+    resolved = dict(
+        tag="playbill-source-claim-candidate-v1",
+        subject_kind="security.advisory",
+        subject_id="osv-2026-0001",
+        predicate="security.advisory.severity",
+        object_kind=kind,
+        value=value,
+        role="observation",
+        rationale="Author supplied this observation.",
+        source_kind="self_source",
+        source_value="The advisory is high severity.",
+        source_alias=None,
+        effective_from="2026-09-22T00:00:00Z",
+        dispositions=[{"claim_id": claim_id, "disposition": "not_tested"}],
     )
-    program = program.model_copy(
-        update={
-            "text": text,
-            "claim_types": {
-                key: program.claim_types[key].model_copy(update={"structure": structure})
-            },
-        }
-    )
-    compiled = compile_source(
-        program,
-        name="example",
-        input=INPUT,
-        output=OUTPUT,
-        budget=_budget(),
-        hard_caps=_hard_caps(),
-        terminal_capability=2,
-    )
-    template = compiled.definition.nodes[-1].candidate_templates[0]
-    resolved = _resolve_template(template, input_payload={}, outputs={})
     item = bind_source_candidate(
         resolved,
         procedure_identity=ArtifactIdentity(kind="Procedure", name="example"),
@@ -376,42 +286,3 @@ def test_source_candidate_preserves_value_kind_period_and_dispositions(kind, exp
             provenance={},
             item_tokens=frozenset(),
         )
-
-
-@pytest.mark.parametrize("selector", ["all()", "all(limit=0)", "one(limit=1)"])
-def test_claim_selectors_refuse_unbounded_or_misleading_arguments(selector):
-    program = source_program().model_copy(
-        update={
-            "text": "def example(request, world):\n"
-            f"    selected = world.security.advisory['osv-2026-0001'].severity.{selector}\n"
-            "    return Output.value(value='done')\n"
-        }
-    )
-    with pytest.raises(SourceCompileError):
-        compile_source(
-            program,
-            name="example",
-            input=INPUT,
-            output=OUTPUT,
-            budget=_budget(),
-            hard_caps=_hard_caps(),
-        )
-
-
-def test_settle_change_set_compiles_to_a_settle_terminal_that_derives_settle_authority():
-    program = source_program()
-    settling = program.model_copy(
-        update={"text": program.text.replace("propose_change_set(", "settle_change_set(")}
-    )
-    compiled = compile_source(
-        settling,
-        name="example",
-        input=INPUT,
-        output=OUTPUT,
-        budget=_budget(),
-        hard_caps=_hard_caps(),
-    )
-    terminal = compiled.definition.nodes[-1]
-    assert terminal.kind == "settle_change_set"
-    assert terminal.claim_types[0].target.qualified == "ClaimType:security.advisory.severity"
-    assert compiled.definition.terminal_capability == 3

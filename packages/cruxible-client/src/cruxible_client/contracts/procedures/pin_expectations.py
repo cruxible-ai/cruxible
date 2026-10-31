@@ -16,7 +16,6 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProcedureDefinition,
     ProjectNode,
-    ProposeChangeSetNode,
     ReadNode,
     RepeatNode,
     SelectNode,
@@ -101,9 +100,6 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
                 f"{prefix} claim_type",
             )
             check(node.query, QUERY, f"{prefix} query")
-        elif isinstance(node, ProposeChangeSetNode):
-            for pin in node.claim_types:
-                check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
         elif isinstance(node, CallNode):
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
             for field, capture in node.captures.items():

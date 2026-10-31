@@ -301,33 +301,3 @@ def test_unrepresentable_union_and_bound_schemas_are_refused(schema):
         RecordConstructor(
             ContractSchema(fields={"value": PropertySchema(type="json", json_schema=schema)})
         )
-
-
-def test_source_assignability_reads_oneof_like_anyof():
-    from cruxible_client.contracts.procedures.source_compiler import _assignable
-
-    text = PropertySchema(type="json", json_schema=WORKSPACE_FILE_CONTENT["oneOf"][0])
-    union = PropertySchema(type="json", json_schema=WORKSPACE_FILE_CONTENT)
-    assert _assignable(text, union)
-    assert not _assignable(union, text)
-
-
-def test_source_assignability_refuses_an_overlapping_oneof_variant():
-    from cruxible_client.contracts.procedures.source_compiler import _assignable
-
-    overlapping = PropertySchema(
-        type="json",
-        json_schema={
-            "oneOf": [
-                {"type": "string", "enum": ["a", "b"]},
-                {"type": "string", "enum": ["b", "c"]},
-            ]
-        },
-    )
-    # "b" satisfies both variants, so it fails the oneOf; "a" satisfies one.
-    assert not _assignable(PropertySchema(type="string", enum=["b"]), overlapping)
-    assert _assignable(PropertySchema(type="string", enum=["a"]), overlapping)
-    # An open string might be "b": exclusivity is unproved, so it refuses.
-    assert not _assignable(PropertySchema(type="string"), overlapping)
-    with pytest.raises(ProcedureContractValidationError):
-        RecordConstructor(ContractSchema(fields={"value": overlapping}))(value="b")

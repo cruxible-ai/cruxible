@@ -31,10 +31,9 @@ A Procedure never reads the clock; time enters only through Triggers.
 
 ## 2. Author the Procedure
 
-Write it with the SDK, as a `Sequence` of typed steps or Python source with
-`@procedure` ([Procedure source
-reference](https://docs.cruxible.ai/procedure-source/)), and submit it like
-any definition. Give a Procedure that may one day settle a settle terminal
+Write it as a typed `ProcedureSpec` (or with the SDK's `Sequence` builder over
+it: typed references, typed predicates, typed guard actions), and submit it
+like any definition. Give a Procedure that may one day settle a settle terminal
 from the start: while its Line is capped at `propose`, it proposes.
 
 ```bash

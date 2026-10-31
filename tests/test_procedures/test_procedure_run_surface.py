@@ -40,9 +40,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
     HaltNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -59,7 +57,9 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceipt,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.repairs import HandEditRepair
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Presence
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
     CadenceSchedule,
@@ -1166,7 +1166,10 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
                 "spec": {
                     "tag": "cruxible-transform-filter-spec-v1",
                     "input": "$steps.query.result.rows",
-                    "where": "present($item.fields.bindings)",
+                    "where": {
+                        "op": "present",
+                        "of": {"$ref": "item", "path": ["fields", "bindings"]},
+                    },
                 },
                 "as": "filtered",
                 "next": "aggregate",
@@ -1187,10 +1190,8 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         ),
         GuardNode(
             node_id="gate",
-            predicate=GuardPredicate(
-                left=PredicateOperand(kind="step", alias="counted", path=("result",)),
-                operator="gt",
-                right=PredicateOperand(kind="literal", value=0),
+            predicate=Comparison(
+                op="gt", left=step_ref("counted", "result"), right=LiteralOperand(literal=0)
             ),
             on_true="project",
             refusal_code="query.empty",
@@ -1360,11 +1361,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
         1,
         GuardNode(
             node_id="gate",
-            predicate=GuardPredicate(
-                left=PredicateOperand(kind="exists", alias="query"),
-                operator="eq",
-                right=PredicateOperand(kind="literal", value=True),
-            ),
+            predicate=Presence(op="present", of=step_ref("query")),
             on_true="project",
             refusal_code="query.empty",
             message="The query returned no result.",
@@ -1412,13 +1409,9 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     refusing_nodes = list(unsupported.definition.nodes)
     gate = refusing_nodes[1]
     assert isinstance(gate, GuardNode)
-    assert gate.predicate.right is not None
+    assert isinstance(gate.predicate, Presence)
     refusing_nodes[1] = gate.model_copy(
-        update={
-            "predicate": gate.predicate.model_copy(
-                update={"right": gate.predicate.right.model_copy(update={"value": False})}
-            )
-        }
+        update={"predicate": gate.predicate.model_copy(update={"op": "absent"})}
     )
     refusing_definition = unsupported.definition.model_copy(update={"nodes": tuple(refusing_nodes)})
     refusing = unsupported.model_copy(
@@ -1459,13 +1452,13 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     halting_nodes = list(unsupported.definition.nodes)
     halting_gate = halting_nodes[1]
     assert isinstance(halting_gate, GuardNode)
-    assert halting_gate.predicate.right is not None
+    assert isinstance(halting_gate.predicate, Presence)
     halting_nodes[1] = halting_gate.model_copy(
         update={
-            "predicate": halting_gate.predicate.model_copy(
-                update={"right": halting_gate.predicate.right.model_copy(update={"value": False})}
-            ),
+            "predicate": halting_gate.predicate.model_copy(update={"op": "absent"}),
             "on_false": "stop",
+            "refusal_code": None,
+            "message": None,
         }
     )
     halting_nodes.insert(2, HaltNode(node_id="stop", reason="No matching rows."))

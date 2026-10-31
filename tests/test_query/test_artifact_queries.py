@@ -288,7 +288,9 @@ def test_procedure_selection_retains_versions_and_uses_name_scope(tmp_path):
 
     def procedure(name):
         example = procedure_example()
-        return example.model_copy(update={"definition": {**example.definition, "name": name}})
+        return example.model_copy(
+            update={"spec": example.spec.model_copy(update={"procedure": name})}
+        )
 
     accept_input(instance, owner, procedure("security.observe"))
     original = run(instance, query)

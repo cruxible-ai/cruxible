@@ -43,16 +43,13 @@ from cruxible_client.contracts.procedures.nodes import (
     AuthorityVerb,
     CallNode,
     CaptureEgressNode,
-    ComparisonOperator,
     EffectiveAuthority,
     EgressNode,
     ExtractNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
-    PredicateOperand,
     PredicateScalar,
     ProcedureNode,
     ProcedureTransformSpec,
@@ -69,6 +66,7 @@ from cruxible_client.contracts.procedures.nodes import (
     authority_for_rung,
     derived_terminal_capability,
     is_terminal_node,
+    predicate_step_aliases,
     refuse_retired_kinds,
     required_authority,
 )
@@ -77,7 +75,6 @@ from cruxible_client.contracts.procedures.slots import (
     ProcedureSlot,
     validate_procedure_slots,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
 
 
 class ProcedureBudget(_StrictProcedureModel):
@@ -159,7 +156,6 @@ class ProcedureDefinition(_StrictProcedureModel):
     hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
-    source: ProcedureSourceProgram | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -216,15 +212,6 @@ class ProcedureDefinition(_StrictProcedureModel):
             raise ValueError("Procedure node ids must be unique")
         if len(set(aliases)) != len(aliases):
             raise ValueError("Procedure output aliases must be unique")
-        # Source-v2 returns through explicit terminal nodes, never one global
-        # alias; source-v1 retains its display-only alias.
-        if (
-            self.source is not None
-            and getattr(self.source, "syntax_rules", self.source.rules)
-            == "cruxible.procedure-source.v2"
-            and self.returns is not None
-        ):
-            raise ValueError("Source-v2 uses explicit return paths, not a return alias")
         used = {slot for _occurrence, slot in self.slot_nodes()}
         if used != set(self.slots):
             undeclared = sorted(used - set(self.slots))
@@ -343,17 +330,13 @@ REFERENCE_ROLES = {
     "capture_contract": "capture-contract",
     "captures": "capture-contract",
     "claim_type": "claim-type",
-    "claim_types": "claim-type",
     "procedure": "procedure",
     "effect_policy": "effect-policy",
 }
 
 
 def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ...]:
-    """Every dependency reference nested in a Procedure model, with its field's role.
-
-    Retained source is provenance, not a graph field, and is not traversed.
-    """
+    """Every dependency reference nested in a Procedure model, with its field's role."""
 
     found: list[tuple[str, ArtifactNameRef]] = []
 
@@ -363,8 +346,7 @@ def iter_role_references(value: object) -> tuple[tuple[str, ArtifactNameRef], ..
             return
         if isinstance(item, BaseModel):
             for field_name in item.__class__.model_fields:
-                if field_name != "source":
-                    visit(getattr(item, field_name), field_name)
+                visit(getattr(item, field_name), field_name)
             return
         if isinstance(item, tuple | list):
             for member in item:
@@ -390,16 +372,13 @@ __all__ = [
     "AuthorityVerb",
     "CallNode",
     "CaptureEgressNode",
-    "ComparisonOperator",
     "EffectiveAuthority",
     "EgressNode",
     "ExtractNode",
     "GuardNode",
-    "GuardPredicate",
     "HaltNode",
     "InboxEgressNode",
     "InvokeNode",
-    "PredicateOperand",
     "PredicateScalar",
     "ProcedureBudget",
     "ProcedureDefinition",
@@ -427,5 +406,6 @@ __all__ = [
     "REFERENCE_ROLES",
     "iter_references",
     "iter_role_references",
+    "predicate_step_aliases",
     "required_authority",
 ]

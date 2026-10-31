@@ -50,6 +50,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from tests.core_support._identity_support import accept_tree
 from tests.support.operation_world import author, contract_files, operation_build
+from tests.support.procedures import refs
 from tests.test_procedures.test_procedure_measurement_readings import _actor, _world
 from tests.test_procedures.test_procedure_source_runs import (
     RELATIVE_PATH,
@@ -190,16 +191,22 @@ def _slotted_world(tmp_path, *, landed=False):
     )
     declaration = next(m for m in measured.definition.measurements if m.name == "rows-present")
     spec = ProcedureSpec.model_validate(
-        {
-            "procedure": "test.measured-slot",
-            "input": {"value": "integer"},
-            "output": {"value": "integer"},
-            "slots": {"compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "compute", "input": {"value": "$input.value"}}],
-            "returns": "result",
-            "measurements": [declaration.model_dump(mode="json")],
-            "budget": {"provider_calls": 1},
-        }
+        refs(
+            {
+                "procedure": "test.measured-slot",
+                "input": {"value": "integer"},
+                "output": {"value": "integer"},
+                "slots": {
+                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
+                },
+                "steps": [
+                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                ],
+                "returns": "result",
+                "measurements": [declaration.model_dump(mode="json")],
+                "budget": {"provider_calls": 1},
+            }
+        )
     )
     source_bindings: dict[str, str] = {}
     if landed:
@@ -225,35 +232,37 @@ def _slotted_world(tmp_path, *, landed=False):
             name="slotted-measurement-source-builds",
         )
         spec = ProcedureSpec.model_validate(
-            {
-                **spec.model_dump(mode="json"),
-                "slots": {
-                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
-                    "fetch": {
-                        "in": "workspace.file.request@1",
-                        "out": "workspace.file.result@1",
-                        "effect": "pure",
+            refs(
+                {
+                    **spec.model_dump(mode="json"),
+                    "slots": {
+                        "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"},
+                        "fetch": {
+                            "in": "workspace.file.request@1",
+                            "out": "workspace.file.result@1",
+                            "effect": "pure",
+                        },
                     },
-                },
-                "acquisition_defaults": {
-                    "captured.capture": AcquisitionDefault().model_dump(mode="json")
-                },
-                "steps": [
-                    {
-                        "call": "captured",
-                        "id": "read",
-                        "captures": {"capture": contract.identity.name},
-                        "slot": "fetch",
-                        "input": _source_request(instance, root).model_dump(mode="json"),
+                    "acquisition_defaults": {
+                        "captured.capture": AcquisitionDefault().model_dump(mode="json")
                     },
-                    {
-                        "call": "result",
-                        "slot": "compute",
-                        "input": {"value": "$captured.content.json.value"},
-                    },
-                ],
-                "budget": {"provider_calls": 2, "capture_bytes": 65536},
-            }
+                    "steps": [
+                        {
+                            "call": "captured",
+                            "id": "read",
+                            "captures": {"capture": contract.identity.name},
+                            "slot": "fetch",
+                            "input": _source_request(instance, root).model_dump(mode="json"),
+                        },
+                        {
+                            "call": "result",
+                            "slot": "compute",
+                            "input": {"value": "$captured.content.json.value"},
+                        },
+                    ],
+                    "budget": {"provider_calls": 2, "capture_bytes": 65536},
+                }
+            )
         )
 
     from cruxible_client.contracts.authoring.inputs import LineInput, ProcedureInput

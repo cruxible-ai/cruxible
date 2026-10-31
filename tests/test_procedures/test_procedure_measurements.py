@@ -31,15 +31,15 @@ from cruxible_client.contracts.procedures.measurements import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ReadNode,
 )
+from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Comparison, LiteralOperand, Predicate
 from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
@@ -113,12 +113,8 @@ def _declaration(
     )
 
 
-def _predicate(alias: str) -> GuardPredicate:
-    return GuardPredicate(
-        left=PredicateOperand(kind="step", alias=alias),
-        operator="eq",
-        right=PredicateOperand(kind="literal", value=True),
-    )
+def _predicate(alias: str) -> Predicate:
+    return Comparison(op="eq", left=step_ref(alias), right=LiteralOperand(literal=True))
 
 
 def _definition(
@@ -141,8 +137,6 @@ def _definition(
                 predicate=_predicate("rows"),
                 on_true="hot",
                 on_false="cold",
-                refusal_code="outcome.branch",
-                message="Choose one measured arm.",
             ),
             ProjectNode(
                 node_id="hot",
@@ -199,7 +193,7 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:548e549dfb7589cb21ef67b6ab1217cc5f4c0fb0fe3575ebb2e41f3a4984926d"
+        "sha256:59820660f3b4d1b312b47f0add35458eb4b3c74f685173614bac4070adac3ce5"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}

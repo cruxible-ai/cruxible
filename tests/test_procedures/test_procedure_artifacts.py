@@ -31,9 +31,7 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     GuardNode,
-    GuardPredicate,
     HaltNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -41,6 +39,8 @@ from cruxible_client.contracts.procedures.models import (
     ProposeChangeSetNode,
     ReadNode,
 )
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand
 from tests.support.procedures import named, procedure_artifact
 
 
@@ -112,15 +112,11 @@ def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinition:
     )
     gate = GuardNode(
         node_id="gate",
-        predicate=GuardPredicate(
-            left=PredicateOperand(kind="count", alias="rows"),
-            operator="gt",
-            right=PredicateOperand(kind="literal", value=0),
+        predicate=Comparison(
+            op="gt", left=CountOperand(count=step_ref("rows")), right=LiteralOperand(literal=0)
         ),
         on_true="result",
         on_false="stop",
-        refusal_code="rows.empty",
-        message="No rows are available.",
     )
     result = ProjectNode(
         node_id="result",
@@ -140,11 +136,11 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 7
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:e0153780cfe32fdb46637123c24f4342afd0be003351174beca842db5c3c3f9f"
+        "sha256:80ef842fe7bd3f72f1584080fecd3e5c5c4f85ee6fab8075dfeb0e07f7967821"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (
-        "sha256:f1145190135161a7149f7f69930c232649ae7d679cb6e23e9f9aa964179acae9"
+        "sha256:075e717cf4925fda7191eec28629e681efa409985a2ee956cfefb4a4c0630828"
     )
 
     content = render_procedure(procedure)
@@ -283,7 +279,6 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
         "kind": "propose_change_set",
         "node_id": "propose",
         "candidate_templates": [{"artifact_kind": "Claim", "input": "$steps.result"}],
-        "claim_types": [],
         "result": "$steps.result",
     }
     with pytest.raises(ValidationError, match="extra_forbidden"):

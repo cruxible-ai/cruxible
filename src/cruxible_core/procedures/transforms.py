@@ -227,7 +227,7 @@ def apply_closed_transform(
         kept: list[Record] = []
         unknown = False
         for record in source.records:
-            truth = _truth(spec.where, record, parameters)  # type: ignore[arg-type]
+            truth = _truth(spec.where, record, parameters)
             if truth == "true":
                 kept.append(record)
             elif truth == "unknown":
@@ -398,7 +398,7 @@ def _derive(
             fields[name] = _present(value, f"/{name}")
     record: Record = {"record": "/", "key": {}, "fields": fields}
     for case in spec.cases:
-        truth = _truth(case.when, record, parameters)  # type: ignore[arg-type]
+        truth = _truth(case.when, record, parameters)
         if truth == "true":
             return normalize_canonical(
                 scalar_value(_present(case.value, "/derive"), complete)

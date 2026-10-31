@@ -13,7 +13,19 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, NoReturn, Protocol, cast
 
 from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
-from cruxible_client.contracts.shapes import Contract, ContractRef
+from cruxible_client.contracts.refs import Ref
+from cruxible_client.contracts.shapes import (
+    AllOf,
+    AnyOf,
+    Contract,
+    ContractRef,
+    CountOperand,
+    LiteralOperand,
+    Membership,
+    Not,
+    Predicate,
+    Presence,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -80,11 +92,9 @@ from cruxible_client.contracts.procedures.models import (
     CaptureEgressNode,
     ExtractNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
     InboxEgressNode,
     InvokeNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -101,6 +111,7 @@ from cruxible_client.contracts.procedures.models import (
     is_terminal_node,
     iter_references,
     iter_role_references,
+    predicate_step_aliases,
 )
 from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
@@ -3365,7 +3376,7 @@ class ProcedureExecutor:
             state.control = (
                 state.control
                 | _node_policy_tokens(node, self.references)
-                | state.alias_tokens(frozenset(node.predicate.step_aliases()))
+                | state.alias_tokens(frozenset(predicate_step_aliases(node.predicate)))
             )
             self._append_event(
                 admission,
@@ -6156,22 +6167,28 @@ def _node_reads(node: object) -> tuple[Read, ...]:
     return tuple(reads)
 
 
-def _predicate_reads(predicate: GuardPredicate) -> tuple[Read, ...]:
-    """The reads a guard predicate's step operands make; a count reads no field."""
+def _predicate_reads(predicate: Predicate) -> tuple[Read, ...]:
+    """The reads a run predicate's step references make; a count reads no field."""
 
     found: list[Read] = []
-    pending = [predicate]
+    pending: list[Predicate] = [predicate]
     while pending:
         item = pending.pop()
-        for operand in (item.left, item.right):
-            if operand is None or operand.alias is None:
-                continue
-            reads_content = operand.kind in {"step", "exists"}
-            found.append((operand.alias, tuple(operand.path) if reads_content else None))
-        pending.extend(item.all_of or ())
-        pending.extend(item.any_of or ())
-        if item.not_of is not None:
-            pending.append(item.not_of)
+        if isinstance(item, AllOf | AnyOf):
+            pending.extend(item.of)
+            continue
+        if isinstance(item, Not):
+            pending.append(item.of)
+            continue
+        if isinstance(item, Presence):
+            operands: tuple[object, ...] = (item.of,)
+        else:
+            operands = (item.left, item.right)
+        for operand in operands:
+            if isinstance(operand, CountOperand) and operand.count.step is not None:
+                found.append((operand.count.step, None))
+            elif isinstance(operand, Ref) and operand.step is not None:
+                found.append((operand.step, tuple(operand.path)))
     return tuple(found)
 
 
@@ -6877,46 +6894,55 @@ def _check_return_budget(
         )
 
 
+_NOT_RESOLVED = object()
+
+
+def _ref_value(
+    ref: Ref,
+    *,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+    parameters: CanonicalValue,
+) -> object:
+    """The run value a reference names, or ``_NOT_RESOLVED`` when it names none."""
+
+    if ref.root == "input":
+        current: object = input_payload
+    elif ref.root == "param":
+        current = parameters if isinstance(parameters, dict) else {}
+    elif ref.root == "step":
+        if ref.step not in outputs:
+            return _NOT_RESOLVED
+        current = outputs[str(ref.step)]
+    else:
+        return _NOT_RESOLVED
+    for member in ref.path:
+        if isinstance(current, dict) and member in current:
+            current = current[member]
+        elif isinstance(current, list) and member.isdigit() and int(member) < len(current):
+            current = current[int(member)]
+        else:
+            return _NOT_RESOLVED
+    return current
+
+
 def _operand_value(
-    operand: PredicateOperand,
+    operand: object,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     parameters: CanonicalValue,
 ) -> CanonicalValue:
-    if operand.kind == "literal":
-        return normalize_canonical(operand.value)
-    if operand.kind == "parameter":
-        if not isinstance(parameters, dict) or operand.parameter_name not in parameters:
-            raise ExecutionError("guard parameter is absent")
-        return normalize_canonical(parameters[operand.parameter_name])
-    if operand.kind in {"input", "exists"} and operand.input_name is not None:
-        if not isinstance(input_payload, dict) or operand.input_name not in input_payload:
-            return False if operand.kind == "exists" else _missing_operand(operand.input_name)
-        value = _resolve_path(
-            input_payload[operand.input_name],
-            operand.path,
-            reference=operand.input_name,
-        )
-        return True if operand.kind == "exists" else normalize_canonical(value)
-    if operand.alias is None or operand.alias not in outputs:
-        return False if operand.kind == "exists" else _missing_operand(str(operand.alias))
-    value = outputs[operand.alias]
-    if operand.path:
-        value = normalize_canonical(
-            _resolve_path(value, operand.path, reference=f"$steps.{operand.alias}")
-        )
-    if operand.kind == "exists":
-        return True
-    if operand.kind == "count":
-        return _item_count(value)
-    if operand.kind == "truncated":
-        return bool(isinstance(value, dict) and value.get("truncated") is True)
+    if isinstance(operand, LiteralOperand):
+        return normalize_canonical(operand.literal)
+    ref = operand.count if isinstance(operand, CountOperand) else operand
+    assert isinstance(ref, Ref)
+    value = _ref_value(ref, input_payload=input_payload, outputs=outputs, parameters=parameters)
+    if value is _NOT_RESOLVED:
+        raise ExecutionError(f"guard operand {ref.render()!r} is absent")
+    if isinstance(operand, CountOperand):
+        return _item_count(normalize_canonical(value))
     return normalize_canonical(value)
-
-
-def _missing_operand(name: str) -> CanonicalValue:
-    raise ExecutionError(f"guard operand {name!r} is absent")
 
 
 def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool:
@@ -6934,64 +6960,65 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
         comparable_right = right
     else:
         raise ExecutionError("ordered guard operands must share an int or string type")
-    if operator in {"gt", "after"}:
+    if operator == "gt":
         return comparable_left > comparable_right  # type: ignore[operator]
-    if operator in {"gte", "on_or_after"}:
+    if operator == "ge":
         return comparable_left >= comparable_right  # type: ignore[operator]
-    if operator in {"lt", "before"}:
+    if operator == "lt":
         return comparable_left < comparable_right  # type: ignore[operator]
-    if operator in {"lte", "on_or_before"}:
+    if operator == "le":
         return comparable_left <= comparable_right  # type: ignore[operator]
     raise ExecutionError(f"unknown guard operator {operator!r}")
 
 
 def _evaluate_predicate(
-    predicate: GuardPredicate,
+    predicate: Predicate,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     parameters: CanonicalValue,
 ) -> tuple[bool, CanonicalValue]:
-    if predicate.left is not None and predicate.right is not None and predicate.operator:
-        left = _operand_value(
-            predicate.left,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
-        right = _operand_value(
-            predicate.right,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
-        verdict = _compare(left, predicate.operator, right)
+    """A run predicate's two-valued verdict and its operand trace.
+
+    A guard reads run values, not field results: a reference that resolves to
+    nothing refuses (``present``/``absent`` test exactly that).
+    """
+
+    values = {"input_payload": input_payload, "outputs": outputs, "parameters": parameters}
+    if isinstance(predicate, Presence):
+        found = _ref_value(predicate.of, **values) is not _NOT_RESOLVED  # type: ignore[arg-type]
+        verdict = found == (predicate.op == "present")
         return verdict, normalize_canonical(
-            {"left": left, "operator": predicate.operator, "right": right}
+            {"operator": predicate.op, "ref": predicate.of.render(), "present": found}
         )
-    if predicate.not_of is not None:
-        child, trace = _evaluate_predicate(
-            predicate.not_of,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
-        )
+    if isinstance(predicate, Not):
+        child, trace = _evaluate_predicate(predicate.of, **values)  # type: ignore[arg-type]
         return not child, {"not": trace}
-    children = predicate.all_of if predicate.all_of is not None else predicate.any_of or ()
-    results = [
-        _evaluate_predicate(
-            child,
-            input_payload=input_payload,
-            outputs=outputs,
-            parameters=parameters,
+    if isinstance(predicate, AllOf | AnyOf):
+        results = [
+            _evaluate_predicate(child, **values)  # type: ignore[arg-type]
+            for child in predicate.of
+        ]
+        verdicts = [item[0] for item in results]
+        every = isinstance(predicate, AllOf)
+        return (all(verdicts) if every else any(verdicts)), normalize_canonical(
+            {"all" if every else "any": [item[1] for item in results]}
         )
-        for child in children
-    ]
-    verdicts = [item[0] for item in results]
-    verdict = all(verdicts) if predicate.all_of is not None else any(verdicts)
-    return verdict, normalize_canonical(
-        {"all" if predicate.all_of is not None else "any": [item[1] for item in results]}
-    )
+    left = _operand_value(predicate.left, **values)  # type: ignore[arg-type]
+    if isinstance(predicate, Membership):
+        if isinstance(predicate.right, Ref):
+            members = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+            if not isinstance(members, list):
+                raise ExecutionError("a membership guard reads a list")
+        else:
+            members = [normalize_canonical(member) for member in predicate.right]
+        inside = left in members
+        return inside == (predicate.op == "in"), normalize_canonical(
+            {"left": left, "operator": predicate.op, "right": members}
+        )
+    right = _operand_value(predicate.right, **values)  # type: ignore[arg-type]
+    verdict = _compare(left, predicate.op, right)
+    return verdict, normalize_canonical({"left": left, "operator": predicate.op, "right": right})
 
 
 __all__ = [

@@ -39,6 +39,11 @@ SPLIT_COMPONENT_NAMES = {
     # naming artifact rather than a moved schema.
     "SubjectClaimObject-Input",
     "SubjectClaimObject-Output",
+    # The authored Procedure value template is recursive (a template holds
+    # templates); FastAPI names the request and response copies apart though
+    # both spellings are byte-identical, a naming artifact like the pair above.
+    "Template-Input",
+    "Template-Output",
 }
 STANDARD_ERROR_STATUSES = {"400", "401", "403", "404", "409", "422", "500"}
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}

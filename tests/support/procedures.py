@@ -13,6 +13,7 @@ A fixture may still spell a dependency as an exact pin (``role``, ``target``,
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
 from typing import Any
@@ -256,8 +257,65 @@ def accepted_procedure(
     return bind_fixture(accepted, pins=pins, extra_pins=extra_pins)
 
 
+def ref(text: str) -> dict[str, Any]:
+    """A typed reference (``{"$ref": ...}``) spelled the way the stored graph spells it.
+
+    Tests write ``ref("$steps.rows.result")``; the authored form is the typed
+    object, never the string.
+    """
+
+    from cruxible_client.contracts.refs import ref_from_graph_text
+
+    found = ref_from_graph_text(text)
+    if found is None:
+        raise ValueError(f"{text!r} is not a reference")
+    return found.model_dump(mode="json", by_alias=True)
+
+
+_SHORT_STEP_REF = re.compile(r"^\$[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*$")
+
+
+def refs(value: Any) -> Any:
+    """``value`` with every ``$input``/``$steps``/``$item``/``$params`` string as a typed ref.
+
+    A test may also spell a step reference ``$<step>.<path>``: it becomes the
+    typed step reference. The authored form has no strings; this is only how
+    tests write it briefly.
+    """
+
+    if isinstance(value, str) and value.startswith(("$input", "$steps.", "$item", "$params.")):
+        return ref(value)
+    if isinstance(value, str) and _SHORT_STEP_REF.fullmatch(value):
+        return ref("$steps." + value[1:])
+    if isinstance(value, dict):
+        return {key: refs(member) for key, member in value.items()}
+    if isinstance(value, list | tuple):
+        return [refs(member) for member in value]
+    return value
+
+
+def spec_input(spec: Mapping[str, Any]) -> Any:
+    """The one Procedure authoring input for a spec (``{kind: procedure, **spec}``)."""
+
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput
+
+    return ProcedureInput.model_validate({"kind": "procedure", **spec})
+
+
+def spec_payload(spec: Mapping[str, Any]) -> Any:
+    """The lowered authoring payload a spec submits through every surface."""
+
+    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+
+    return lower_authoring_input(spec_input(spec))
+
+
 __all__ = [
     "PERMISSIVE_CONTRACT",
+    "ref",
+    "refs",
+    "spec_input",
+    "spec_payload",
     "accepted_artifact",
     "accepted_procedure",
     "bind_fixture",

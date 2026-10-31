@@ -118,10 +118,14 @@ def _author_line(http, instance_id, reviewer, *, spec, line, bindings, parameter
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.lowering import lower_authoring
     from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.support.procedures import refs
 
     instance = get_playbill_manager().get(instance_id)
     for kind, payload in (
-        ("procedure", ProcedureInput(kind="procedure", spec=ProcedureSpec.model_validate(spec))),
+        (
+            "procedure",
+            ProcedureInput(kind="procedure", spec=ProcedureSpec.model_validate(refs(spec))),
+        ),
         (
             "line",
             LineInput.model_validate(
@@ -169,7 +173,13 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
             "input": {"n": "integer"},
             "output": {"n": "integer"},
             "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
+            "steps": [
+                {
+                    "call": "result",
+                    "slot": "increment",
+                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                }
+            ],
             "returns": "result",
             "budget": {"provider_calls": 1},
         },

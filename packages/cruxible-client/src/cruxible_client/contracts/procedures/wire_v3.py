@@ -13,7 +13,6 @@ from pydantic_core import PydanticUndefined
 
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
-    PredicateOperand,
     ProcedureDefinition,
     ProcedureNode,
     RepeatBodyNode,
@@ -30,8 +29,6 @@ def compact_procedure(value: Any) -> Any:
 
     if isinstance(value, QueryDefinition):
         return query_definition_wire(value)
-    if isinstance(value, PredicateOperand) and value.kind == "literal":
-        return value.value
     if isinstance(value, BaseModel):
         dumped = value.model_dump(mode="json", by_alias=True)
         result: dict[str, Any] = {}
@@ -46,7 +43,7 @@ def compact_procedure(value: Any) -> Any:
                 continue
             default = field.get_default(call_default_factory=True)
             if (
-                name not in {"kind", "tag", "artifact_format"}
+                name not in {"kind", "tag", "op", "artifact_format"}
                 and not (isinstance(value, PropertySchema) and name == "type")
                 and default is not PydanticUndefined
                 and member == default
@@ -104,10 +101,6 @@ def _expand_node(node: dict[str, Any]) -> dict[str, Any]:
         "select",
     }:
         node.setdefault("as", node["node_id"])
-    if "predicate" in node:
-        node["predicate"] = _expand_predicate(node["predicate"])
-    if "until" in node:
-        node["until"] = _expand_predicate(node["until"])
     if node["kind"] == "repeat":
         body = []
         for raw in node["body"]:
@@ -118,16 +111,3 @@ def _expand_node(node: dict[str, Any]) -> dict[str, Any]:
             body.append(item)
         node["body"] = body
     return node
-
-
-def _expand_predicate(predicate: dict[str, Any]) -> dict[str, Any]:
-    predicate = dict(predicate)
-    for key in ("left", "right"):
-        if key in predicate and not isinstance(predicate[key], dict):
-            predicate[key] = {"kind": "literal", "value": predicate[key]}
-    for key in ("all_of", "any_of"):
-        if key in predicate:
-            predicate[key] = [_expand_predicate(child) for child in predicate[key]]
-    if "not_of" in predicate:
-        predicate["not_of"] = _expand_predicate(predicate["not_of"])
-    return predicate

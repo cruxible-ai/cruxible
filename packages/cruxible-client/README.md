@@ -2,10 +2,9 @@
 
 `cruxible-client` is the Python client for a Cruxible daemon; `pip install
 cruxible` installs it together with the daemon, CLI and MCP server. This is an
-API reference. The [source authoring reference](../../docs/procedure-source.md)
-specifies authoring Procedures as Python source (`@procedure`,
-`ProcedureSource`), contract-derived records, typed query and run results, and
-child calls. Names and typed handles are authoring inputs; exact versions and
+API reference. A Procedure is authored in one typed form, the `ProcedureSpec`;
+`Sequence` is a thin typed builder over it. The reference also covers
+contract-derived records, typed query and run results, and child calls. Names and typed handles are authoring inputs; exact versions and
 hashes resolve in the daemon.
 
 Coverage: the public `Cruxible` operations, returned authoring and run handles,
@@ -1215,14 +1214,13 @@ Discovery's implementation rows carry `newest` and `newest_builds` for this choi
 ```text
 procedure(
     *,
-    definition: ProcedureInput
-        | ProcedureSequence | ProcedureSource,
+    definition: ProcedureInput | ProcedureSequence,
 ) -> ProcedureDraft
 ```
 
-Builds a ProcedureDraft from a raw `ProcedureInput`, a `Sequence` (built
-structurally first), a `ProcedureSource` (`@procedure`, built against
-`cx.world()`). Provider slots may stay open until a run or Line binds them.
+Builds a ProcedureDraft from a `ProcedureInput` (`{kind: procedure, spec}`, the
+one typed `ProcedureSpec`) or a `Sequence` (which builds that same spec). A
+Procedure declares each slot's signature; a Line binds it.
 
 **Conditions and effects:** Current definitions use named graph format 7.
 A Procedure can select Providers explicitly or declare interface-typed slots. How an accepted Procedure runs (directly, only as a Line, or not at all)
@@ -1362,7 +1360,7 @@ be used by sibling Claims without pretending they already exist in accepted stat
 | `signed_attestation` | Stages supplied signed bytes | Does not re-sign or accept them. |
 | `attestation` | Reads/prepares the exact Claim, signs locally, then stages | Explicit signer; no implicit approval of the containing changeset. |
 | `capture_contract`, `resolution_contract`, `acquisition_policy` | Stage typed definitions | Existing artifact contracts and normal admission apply. |
-| `procedure`, `query_definition`, `procedure_mandate` | Stage the shared authoring inputs; `procedure` also takes a `ProcedureSource` | Same validation as the corresponding individual draft. |
+| `procedure`, `query_definition`, `procedure_mandate` | Stage the shared authoring inputs; `procedure` also takes a `Sequence` | Same validation as the corresponding individual draft. |
 | `line` | Stages a Line naming its Procedure and acquisition policy | Runs on `cx.line(name).run()`; its Triggers act only once it is enabled; omitted budgets inherit Procedure hard caps; admission still checks live authority. |
 | `trigger` | Stages a Trigger: one schedule aimed at one Line or internal action | A Line takes any schedule that supplies its input; an internal action takes a cadence, cron or generation-accepted schedule. Cron is always evaluated in UTC. |
 | `prepare` | Creates/preflights one durable intent | Atomic decision; malformed member refuses the set. |
@@ -3496,93 +3494,56 @@ path_for_procedure(procedure_identity: str) -> Path
 
 ## Procedure composition and execution
 
-Import steps from `cruxible_client.authoring.procedures`. Sequence is an
-immutable step list; `.bind(**providers)` returns a new one. (A Blueprint is
-something else: an accepted definition with open provider slots, authored as a
-`ProcedureInput` or from an `@procedure` source with `slots=`.) Each step’s `name`
-is its output alias and provider binding key; `node_id` optionally preserves a
-different stable graph identity. Edges use node identities. Steps fall through
-in order unless a forward `next`/Guard branch is supplied. Terminals have no
-successor. Every consumed alias must exist on every path reaching its consumer.
+A Procedure is authored in one typed form, the `ProcedureSpec`
+(`cruxible_client.contracts.procedures.authored`): JSON over MCP and HTTP, YAML
+on the CLI, and the same model in Python. Every reference is a typed `Ref`
+(`{"$ref": "input" | "param" | "step" | "item", "step"?, "path"?}`), never a
+`$...` string; a guard and a repeat's `until` are the same typed closed
+`Predicate` the closed transforms use (`eq`/`ne`/`lt`/`le`/`gt`/`ge`,
+`in`/`not_in`, `present`/`absent`, `all_of`/`any_of`/`not`, and `count` of a
+list); a guard's arms are typed actions: `{"abort": {code, message}}`,
+`{"halt": reason, "message"?, "id"?}` or `{"goto": step}`. Every stored graph
+node has a typed step, so `get` renders an accepted Procedure in exactly this
+form.
 
-Sequence supports exactly these 11 step kinds:
-
-| Graph kind | Sequence step | Served lane / requirements |
+| Step | Graph kind | Notes |
 |---|---|---|
-| `state_tap` | `StateTap` | Direct or Line; named query binds at admission, before provider outputs exist |
-| `source` | `Source` | Direct or Line; bound provider/interface, CaptureContract and acquisition policy |
-| `call` | `Call` | Direct or Line; bound provider/interface and applicable effect policy/authority |
-| `transform` | `Transform` | Direct or Line; closed transform spec and matching Contracts |
-| `project` | `Project` | Direct or Line; explicit fields satisfy output Contract |
-| `guard` | `Guard` | Direct or Line; forward branches, false defaults to `$abort` |
-| `halt` | `Halt` | Direct or Line; ends without a successful value |
-| `emit_capture` | `EmitCapture` | Line only; registers evidence and ends the path |
-| `post_inbox` | `PostInbox` | Line only; observe authority, bounded `max_items`, ends the path |
-| `propose_change_set` | `ProposeChangeSet` | Line only; covering mandate/authority, submits without accepting |
-| `settle_change_set` | `SettleChangeSet` | Line only; effective authority and one covering settle mandate with its declared fallback |
+| `read` (`query`) / `read` (`claim_type`) | `read` | Runs to the end under the read ceiling |
+| `call` | `call` | Through a declared slot; `captures` makes it acquire |
+| `extract` | `extract` | One Capture's records, typed by a row Contract |
+| `transform` | `transform` | shape, filter, join, aggregate, dedupe, union, derive |
+| `project` | `project` | `fields` or a `literal` record; `leaf: true` returns this branch's value |
+| `guard` | `guard` | Typed predicate, typed `then`/`else` actions |
+| `repeat` | `repeat` | Bounded body of typed calls and closed transforms |
+| `invoke` | `invoke` | Value `{succeeded, status, receipt, value}` |
+| `select` | `select` | Joins mutually exclusive producers |
+| `inbox` | `post_inbox` | Line only; observe authority |
+| `propose` / `settle` | `propose_change_set` / `settle_change_set` | Line only |
+| `emit` | `emit_capture` | Line only |
+| `halt` | `halt` | Ends a path without a result |
 
-The remaining graph kinds have no Sequence step:
+`Sequence` (`cruxible_client.authoring.procedures`) builds that spec directly:
+each value step returns a `Handle`, and `handle["field"]` is the typed `Ref` to
+one of its fields, checked against the fields the step is known to produce
+(its declared output, a query read's view, or a supplied slot Contract).
+`eq`, `gt`, `present`, `all_of`, `count`, ... build typed predicates, and
+`abort`, `halt` and `goto` build guard actions. `spec()` is the spec;
+`preview()` lowers it locally through the same shared lowering (structural
+only: it does not verify runtime values, availability or authority); `build()`
+returns `ProcedureInput(kind="procedure", spec=...)` or raises
+`ProcedureCompositionError` carrying the preview.
 
-| Graph kind absent from Sequence | Raw graph model | Served lane / requirements |
-|---|---|---|
-| `state_claim` | `ClaimTapNode` | Direct or Line; exact ClaimType and named Subject, bounded selection |
-| `repeat` | `RepeatNode` | Transform-only body: direct or Line; provider-bearing body: Line only; bounded attempts |
-| `select` | `SelectNode` | Direct or Line; join mutually exclusive producers |
-| `constant` | `ConstantNode` | Direct or Line; literal record, dollar-prefixed strings remain data |
-| `return` | `ReturnNode` | Direct or Line; explicit typed successful leaf |
-| `invoke` | `InvokeNode` | Direct or Line subject to the child's closure and terminal authority |
-| `exhaust_tap` | `ExhaustTapNode` | No lane yet; fresh authoring refuses `cruxible.procedure.node_not_served` |
-
-For the six served kinds absent from Sequence, use the raw typed
-`ProcedureInput` from `cruxible_client.authoring.inputs`: supply graph-format-6
-node records in `definition.nodes`, declare `contracts`, then call
-`cx.procedure(definition=input).prepare()` or `.submit()`. The corresponding
-node models in `cruxible_client.contracts.procedures.models` specify each
-record's fields; the daemon resolves authoring references and validates the
-resulting `ProcedureDefinition` through the same compiler. Use symbolic
-`accepted` / `candidate` references and `carried_contract` references in fresh
-inputs; exact artifact pins and digests belong to accepted graphs. The tagless
-wire fallback is that same `ProcedureInput` JSON via `authoring compile` or
-`authoring submit --dry-run`. This adds no execution implementation.
-
-Sequence's global `returns` alias and a returning value-producing leaf remain
-available, but there is no explicit `Return` step. These six missing step
-classes are planned for the kit-authoring phase; they are not Sequence support
-today. `exhaust_tap` has no runnable fallback, including on a Line; retained
-artifacts still read and verify. Open provider slots belong to a Blueprint,
-which must be instantiated before running.
-
-Sequence Contracts must be owner-carried Contract definitions; accepted references
-are refused by this frontend. Previous()
-denotes the preceding value-producing output, or invocation input when first.
-Output(alias, path) selects a particular earlier output. Source.request and
-Call.input default to Previous(); Project.fields is explicit. Calls use the
-selected interface's input and output schemas. Whole-output Call auto-wiring
-compares the upstream schema with the discovered interface input schema; field
-mappings/adapters are explicit. Owned Contracts cover Procedure input/output
-and Project/Transform outputs.
-
-Preview is structural only. Its ready_for_prepare does not verify runtime
-values, installed deployment availability, effective authority, or all accepted
-references. `build()` raises ProcedureCompositionError containing the preview
-when diagnostics remain. Unbound providers are errors, not hidden defaults; a
-Sequence cannot leave a slot open (`provider_unbound`).
-
-Every definition is graph format 6.
+The `@procedure` Python-source form is retired: a `source_request` (or a raw
+graph `definition`) refuses `procedure_authoring_form_retired`, naming the spec.
 
 | Run surface | Availability |
 |---|---|
-| Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, select, constant, return, halt, source and call; transform-only repeat; invoke subject to child closure/authority |
+| Direct run (`Procedure.run`) | read, extract, transform, project, guard, select, halt and call; transform-only repeat; invoke subject to child closure/authority |
 | Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
-| No lane yet | exhaust_tap is retained but fresh authoring refuses `cruxible.procedure.node_not_served`; a Line cannot enable it |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.
 
-The tables above distinguish graph capabilities from Sequence support.
-Python source compiles through `@procedure` / `ProcedureSource` in
-`cruxible_client.authoring.source`, with its own supported subset. StateTap
-binds at admission; Source requests can depend on prior runtime outputs.
 Graph legality does not promise availability in every run lane.
 
 `Procedure.run` admits a new invocation. Read its retained status by run ID via
@@ -3727,7 +3688,7 @@ Import: `cruxible_client.authoring.procedures.Guard`. [Source](src/cruxible_clie
 | `name` | `str` | `Required` |
 | `next` | `str \| None` | `None` |
 | `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
-| `predicate` | `GuardPredicate` | `Required` |
+| `predicate` | `Predicate` | `Required` |
 | `on_true` | `str \| None` | `None` |
 | `on_false` | `str` | `'$abort'` |
 | `refusal_code` | `str` | `'guard_refused'` |
@@ -3858,27 +3819,14 @@ Import: `cruxible_client.authoring.procedures.ProcedurePreview`. [Source](src/cr
 |---|---|---|
 | `name` | `str` | `Required` |
 | `ready_for_prepare` | `bool` | `Required` |
-| `contracts` | `tuple[CarriedContractInput, ...]` | `Required` |
-| `contract_in` | `ArtifactPin \| ProcedurePinSlotRef \| dict[str, Any]` | `Required` |
-| `contract_out` | `ArtifactPin \| ProcedurePinSlotRef \| dict[str, Any]` | `Required` |
-| `authority` | `AuthorityVerb` | `Required` |
-| `acquisition_policy` | `str \| None` | `Required` |
-| `nodes` | `tuple[ProcedureNode \| dict[str, Any], ...]` | `Required` |
+| `spec` | `ProcedureSpec` | `Required`; the one authored form the builder states |
+| `authority` | `AuthorityVerb \| None` | `None` |
+| `nodes` | `tuple[dict[str, Any], ...]` | `()`; the lowered graph nodes |
 | `edges` | `dict[str, dict[str, str]]` | factory |
-| `providers` | `dict[str, ProviderBinding]` | factory |
 | `terminals` | `tuple[str, ...]` | `()` |
-| `returns` | `str \| None` | `Required` |
-| `budget` | `ProcedureBudget` | `Required` |
-| `hard_caps` | `ProcedureHardCaps` | `Required` |
+| `returns` | `str \| None` | `None` |
 | `errors` | `tuple[CompositionDiagnostic, ...]` | `()` |
-| `source` | `ProcedureSourceProgram \| None` | `None` |
-| `source_map` | `tuple[SourceMapEntry, ...]` | `()` |
-| `state_dependencies` | `tuple[ProcedureStateDependency, ...]` | `()` |
-| `binding_requirements` | `tuple[ProcedureBindingRequirement, ...]` | `()` |
-| `branch_values` | `tuple[ProcedureBranchValue, ...]` | `()` |
-| `return_paths` | `tuple[ProcedureReturnPath, ...]` | `()` |
-| `children` | `tuple[ProcedureChildCall, ...]` | `()` |
-| `pending_checks` | `tuple[str, ...]` | `('Resolve accepted references at the intent base and verify provider interfaces.', 'Validate runtime values against contracts; preview does not execute any path.', 'Check authority, installation availability and effective policy budgets at admission.')` |
+| `pending_checks` | `tuple[str, ...]` | the checks preview leaves to prepare and admission |
 
 <a id="api-compositiondiagnostic"></a>
 
@@ -3891,9 +3839,6 @@ Import: `cruxible_client.authoring.procedures.CompositionDiagnostic`. [Source](s
 | `step` | `str \| None` | `None` |
 | `code` | `str` | `Required` |
 | `message` | `str` | `Required` |
-| `span` | `SourceSpan \| None` | `None` |
-| `related_spans` | `tuple[SourceSpan, ...]` | `()` |
-| `hint` | `str \| None` | `None` |
 
 <a id="api-procedure"></a>
 
@@ -3934,8 +3879,7 @@ input contract. Pass it as `Procedure.run(input=record)`; successful
 guards result access, and `.children` returns authorized child run handles.
 `cx.get("query:NAME")` shows a named query's parameters, and
 `cx.query(name=NAME, params=..., receipt="full")` returns its result with the
-replay receipt. See the [source authoring reference](../../docs/procedure-source.md)
-for the exhaustive source syntax, arguments, validation, and execution boundaries.
+replay receipt.
 
 ### `Procedure.run`
 
@@ -4507,7 +4451,7 @@ Wall-clock budget must be nonzero. Omitted optional result/item limits do not di
 
 Import: `cruxible_client.ProcedureDefinition`. [Source](src/cruxible_client/contracts/procedures/models.py)
 
-The one Procedure graph format (7), which `Sequence` and `@procedure` sources also emit. Every dependency field names a governed identity; an execution plan resolves each to its exact pin at the run's accepted coordinate. `slots` declares each provider-calling node's signature `{in, out, effect}` by name; the Procedure never names a provider, and a Line binds every slot to one exact build and operation when it is accepted.
+The one Procedure graph format (7), the stored form a `ProcedureSpec` lowers to. Every dependency field names a governed identity; an execution plan resolves each to its exact pin at the run's accepted coordinate. `slots` declares each provider-calling node's signature `{in, out, effect}` by name; the Procedure never names a provider, and a Line binds every slot to one exact build and operation when it is accepted.
 
 | Field | Type | Default / validation |
 |---|---|---|
@@ -4525,7 +4469,6 @@ The one Procedure graph format (7), which `Sequence` and `@procedure` sources al
 | `hard_caps` | `ProcedureHardCaps` | `Required` |
 | `terminal_capability` | `Literal[1, 2, 3]` | `Required`; authoring derives it from the terminals and invoked children |
 | `annotations` | `object` | `Field(default_factory=dict)` |
-| `source` | `ProcedureSourceProgram \| None` | `None`; the retained `@procedure` source, when the graph was compiled from one |
 
 <a id="api-procedurehardcapsv3"></a>
 
@@ -6800,22 +6743,6 @@ kit_status(instance_id: str) -> KitStatus
 
 HTTP: `GET f'/api/v1/{instance_id}/kits'`.
 
-<a id="api-cruxibleclient-preview-procedure-source"></a>
-
-### `CruxibleClient.preview_procedure_source`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-preview_procedure_source(
-    instance_id: str,
-    *,
-    request: ProcedureSourcePreviewRequest,
-) -> ProcedureSourcePreview
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/procedures/source/preview'`.
-
 <a id="api-cruxibleclient-query"></a>
 
 ### `CruxibleClient.query`
@@ -6984,36 +6911,6 @@ include constructor/validator definitions for request and response contracts.
 | `WorldClaimType` | `cruxible_client.authoring.world` · [Source](src/cruxible_client/authoring/world.py) |
 | `WorldStructureError` | `cruxible_client.authoring.world` · [Source](src/cruxible_client/authoring/world.py) |
 | `WorldSubject` | `cruxible_client.authoring.world` · [Source](src/cruxible_client/authoring/world.py) |
-
-### Module `cruxible_client.authoring.source`
-
-[Source](src/cruxible_client/authoring/source.py)
-
-Python source authoring of Procedures; the
-[source authoring reference](../../docs/procedure-source.md) specifies it in
-full.
-
-#### `procedure`
-
-```text
-procedure(*, name: 'str', input: 'CarriedContractInput', output: 'CarriedContractInput', budget: 'ProcedureBudget', hard_caps: 'ProcedureHardCaps', activation_policy: "Literal['drain', 'abort', 'snapshot', 'epoch-check']" = 'snapshot', acquisition_policy: 'str | None' = None, description: 'str | None' = None, slots: 'Mapping[str, str] | None' = None) -> 'Callable[[Callable[..., Any]], ProcedureSource]'
-```
-
-#### `ProcedureSource`
-
-The decorated result: `bind(**bindings) -> ProcedureSource`,
-`preview(*, world=None) -> ProcedurePreview`, and
-`build(*, world=None) -> ProcedureInput`, with the readable
-properties `name`, `source`, `filename`, `contract_in`, `contract_out`,
-`budget`, `hard_caps`, `description`, `bindings`, `slots`, `open_slots`,
-`activation_policy` and `acquisition_policy`.
-
-#### Source intrinsics
-
-`query`, `source`, `call`, `require`, `invoke`, `emit_capture`,
-`claim_candidate`, `propose_change_set`, `settle_change_set` and `halt` are
-recognized inside a decorated body and compiled into graph nodes; calling one
-as ordinary Python raises.
 
 ### Module `cruxible_client.authoring.attestations`
 
@@ -7988,7 +7885,7 @@ definitions singular.
 
 **`contracts.procedures.measurements`** — [ProcedureMeasurementExpectation](src/cruxible_client/contracts/procedures/measurements.py), [AcceptedQueryProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ClaimAttestationProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ClaimStatementProcedureMeasurement](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementSituationShape](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementReviewTrigger](src/cruxible_client/contracts/procedures/measurements.py), [ProcedureMeasurementDeclaration](src/cruxible_client/contracts/procedures/measurements.py).
 
-**`contracts.procedures.models`** — [ProcedurePinSlot](src/cruxible_client/contracts/procedures/models.py), [ProcedurePinSlotRef](src/cruxible_client/contracts/procedures/models.py), [ProcedureBudget](src/cruxible_client/contracts/procedures/models.py), [ProcedureHardCaps](src/cruxible_client/contracts/procedures/models.py), [PredicateOperand](src/cruxible_client/contracts/procedures/models.py), [GuardPredicate](src/cruxible_client/contracts/procedures/models.py), [StateTapNode](src/cruxible_client/contracts/procedures/models.py), [SourceNode](src/cruxible_client/contracts/procedures/models.py), [ExhaustTapNode](src/cruxible_client/contracts/procedures/models.py), [CallNode](src/cruxible_client/contracts/procedures/models.py), [TransformAdapterSpec](src/cruxible_client/contracts/procedures/models.py), [TransformShapeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformFilterItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformDedupeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformJoinItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformAggregateItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformNode](src/cruxible_client/contracts/procedures/models.py), [GuardNode](src/cruxible_client/contracts/procedures/models.py), [ProjectNode](src/cruxible_client/contracts/procedures/models.py), [RepeatBodyNode](src/cruxible_client/contracts/procedures/models.py), [RepeatNode](src/cruxible_client/contracts/procedures/models.py), [CaptureEgressNode](src/cruxible_client/contracts/procedures/models.py), [InboxEgressNode](src/cruxible_client/contracts/procedures/models.py), [ProposalItemsFanOut](src/cruxible_client/contracts/procedures/models.py), [ProposeChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [SettleChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [HaltNode](src/cruxible_client/contracts/procedures/models.py), [SelectNode](src/cruxible_client/contracts/procedures/models.py), [ReturnNode](src/cruxible_client/contracts/procedures/models.py), [ConstantNode](src/cruxible_client/contracts/procedures/models.py), [ClaimTapNode](src/cruxible_client/contracts/procedures/models.py), [InvokeNode](src/cruxible_client/contracts/procedures/models.py), [ProcedureDefinition](src/cruxible_client/contracts/procedures/models.py).
+**`contracts.procedures.models`** — [ProcedurePinSlot](src/cruxible_client/contracts/procedures/models.py), [ProcedurePinSlotRef](src/cruxible_client/contracts/procedures/models.py), [ProcedureBudget](src/cruxible_client/contracts/procedures/models.py), [ProcedureHardCaps](src/cruxible_client/contracts/procedures/models.py), [StateTapNode](src/cruxible_client/contracts/procedures/models.py), [SourceNode](src/cruxible_client/contracts/procedures/models.py), [ExhaustTapNode](src/cruxible_client/contracts/procedures/models.py), [CallNode](src/cruxible_client/contracts/procedures/models.py), [TransformAdapterSpec](src/cruxible_client/contracts/procedures/models.py), [TransformShapeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformFilterItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformDedupeItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformJoinItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformAggregateItemsSpec](src/cruxible_client/contracts/procedures/models.py), [TransformNode](src/cruxible_client/contracts/procedures/models.py), [GuardNode](src/cruxible_client/contracts/procedures/models.py), [ProjectNode](src/cruxible_client/contracts/procedures/models.py), [RepeatBodyNode](src/cruxible_client/contracts/procedures/models.py), [RepeatNode](src/cruxible_client/contracts/procedures/models.py), [CaptureEgressNode](src/cruxible_client/contracts/procedures/models.py), [InboxEgressNode](src/cruxible_client/contracts/procedures/models.py), [ProposalItemsFanOut](src/cruxible_client/contracts/procedures/models.py), [ProposeChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [SettleChangeSetNode](src/cruxible_client/contracts/procedures/models.py), [HaltNode](src/cruxible_client/contracts/procedures/models.py), [SelectNode](src/cruxible_client/contracts/procedures/models.py), [ReturnNode](src/cruxible_client/contracts/procedures/models.py), [ConstantNode](src/cruxible_client/contracts/procedures/models.py), [ClaimTapNode](src/cruxible_client/contracts/procedures/models.py), [InvokeNode](src/cruxible_client/contracts/procedures/models.py), [ProcedureDefinition](src/cruxible_client/contracts/procedures/models.py).
 
 **`contracts.procedures.pin_expectations`** — [PinExpectation](src/cruxible_client/contracts/procedures/pin_expectations.py).
 
@@ -7999,10 +7896,6 @@ definitions singular.
 **`contracts.procedures.results`** — [ProcedureJournalCoordinate](src/cruxible_client/contracts/procedures/results.py), [ProcedureBudgetRefusalDetail](src/cruxible_client/contracts/procedures/results.py), [ProcedureAdmissionRefusal](src/cruxible_client/contracts/procedures/results.py), [ProcedureNodeRefusal](src/cruxible_client/contracts/procedures/results.py), [ProcedureOperationalFailure](src/cruxible_client/contracts/procedures/results.py), [ProcedureInternalFailure](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunAttribution](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunAttributionWithheld](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptWithheld](src/cruxible_client/contracts/procedures/results.py), [ProcedureChildInvocation](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptV2](src/cruxible_client/contracts/procedures/results.py), [ProcedureBudgetExceededDetail](src/cruxible_client/contracts/procedures/results.py), [ProcedureBudgetExhausted](src/cruxible_client/contracts/procedures/results.py), [ProcedureHaltTerminal](src/cruxible_client/contracts/procedures/results.py), [ProcedureBudgetBoundaryObservation](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunBudgetDeclaredV1](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunBudgetObserved](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunBudgetV1](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptV3](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunNodePinSet](src/cruxible_client/contracts/procedures/results.py), [ProcedureReplayInputProjection](src/cruxible_client/contracts/procedures/results.py), [ProcedureProviderBindingV1](src/cruxible_client/contracts/procedures/results.py), [ProviderBucketClassificationPlan](src/cruxible_client/contracts/procedures/results.py), [ProcedureProviderBinding](src/cruxible_client/contracts/procedures/results.py), [ProcedureProviderBindingV3](src/cruxible_client/contracts/procedures/results.py), [ProcedureSelectionDecision](src/cruxible_client/contracts/procedures/results.py), [ProcedureAdmissionMaterialMember](src/cruxible_client/contracts/procedures/results.py), [ProcedureAdmissionMaterialManifest](src/cruxible_client/contracts/procedures/results.py), [ProcedureAcquisitionPlan](src/cruxible_client/contracts/procedures/results.py), [ProcedureSourceObservation](src/cruxible_client/contracts/procedures/results.py), [ProcedureSourceCaptureAssociation](src/cruxible_client/contracts/procedures/results.py), [ProcedureTerminalEgressChild](src/cruxible_client/contracts/procedures/results.py), [InboxPostTruncation](src/cruxible_client/contracts/procedures/results.py), [ProcedureTerminalEgress](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunBudgetDeclared](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunBudget](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptV4](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptV5](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceipt](src/cruxible_client/contracts/procedures/results.py), [ProcedureRunReceiptV7](src/cruxible_client/contracts/procedures/results.py).
 
 **`contracts.procedures.source_compiler`** — [Value](src/cruxible_client/contracts/procedures/source_compiler.py), [Observation](src/cruxible_client/contracts/procedures/source_compiler.py), [Invocation](src/cruxible_client/contracts/procedures/source_compiler.py), [InvocationTerminal](src/cruxible_client/contracts/procedures/source_compiler.py), [Subject](src/cruxible_client/contracts/procedures/source_compiler.py), [ClaimSelection](src/cruxible_client/contracts/procedures/source_compiler.py), [ClaimValue](src/cruxible_client/contracts/procedures/source_compiler.py), [ClaimCandidate](src/cruxible_client/contracts/procedures/source_compiler.py), [Constructor](src/cruxible_client/contracts/procedures/source_compiler.py), [Namespace](src/cruxible_client/contracts/procedures/source_compiler.py), [SourceCompileError](src/cruxible_client/contracts/procedures/source_compiler.py), [CompiledSource](src/cruxible_client/contracts/procedures/source_compiler.py).
-
-**`contracts.procedures.source_program`** — [SourceSpan](src/cruxible_client/contracts/procedures/source_program.py), [SourceContract](src/cruxible_client/contracts/procedures/source_program.py), [SourceProviderBinding](src/cruxible_client/contracts/procedures/source_program.py), [SourceSlotBinding](src/cruxible_client/contracts/procedures/source_program.py), [SourceQueryBinding](src/cruxible_client/contracts/procedures/source_program.py), [SourceProcedureBinding](src/cruxible_client/contracts/procedures/source_program.py), [SourceClaimType](src/cruxible_client/contracts/procedures/source_program.py), [ProcedureSourceProgram](src/cruxible_client/contracts/procedures/source_program.py), [SourceMapEntry](src/cruxible_client/contracts/procedures/source_program.py), [SourceDiagnostic](src/cruxible_client/contracts/procedures/source_program.py).
-
-**`contracts.procedures.source_requests`** — [SourceProviderSelection](src/cruxible_client/contracts/procedures/source_requests.py), [SourceSlotSelection](src/cruxible_client/contracts/procedures/source_requests.py), [SourceQuerySelection](src/cruxible_client/contracts/procedures/source_requests.py), [SourceProcedureSelection](src/cruxible_client/contracts/procedures/source_requests.py), [ProcedureSourceRequest](src/cruxible_client/contracts/procedures/source_requests.py), [ProcedureSourcePreviewRequest](src/cruxible_client/contracts/procedures/source_requests.py), [ProcedureSourcePreview](src/cruxible_client/contracts/procedures/source_requests.py).
 
 **`contracts.procedures.windows`** — [CaptureEventSelector](src/cruxible_client/contracts/procedures/windows.py), [TriggerEventReference](src/cruxible_client/contracts/procedures/windows.py), [FixedWindow](src/cruxible_client/contracts/procedures/windows.py), [CaptureEventWindow](src/cruxible_client/contracts/procedures/windows.py), [BoundObservationWindow](src/cruxible_client/contracts/procedures/windows.py), [LineTriggerBinding](src/cruxible_client/contracts/procedures/windows.py).
 

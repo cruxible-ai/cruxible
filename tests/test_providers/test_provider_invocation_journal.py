@@ -18,8 +18,6 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    GuardPredicate,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -53,6 +51,8 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.provider_operations import ProcedureSlot, operation_signature_digest
 from cruxible_client.contracts.providers import AcceptedProvider, provider_digest, provider_path
+from cruxible_client.contracts.refs import step_ref
+from cruxible_client.contracts.shapes import Presence
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.indexes.resident import close_idle_connections
@@ -257,11 +257,7 @@ def _accepted_one_provider(
                     as_=node.as_,
                 ),
             ),
-            until=GuardPredicate(
-                left=PredicateOperand(kind="exists", alias=node.as_),
-                operator="eq",
-                right=PredicateOperand(kind="literal", value=True),
-            ),
+            until=Presence(op="present", of=step_ref(node.as_)),
             as_="repeat_result",
         )
         returns = graph_node.as_

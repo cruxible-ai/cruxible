@@ -17,6 +17,7 @@ from cruxible_client.contracts.shapes import (
     Not,
     RecordArm,
     RefusalType,
+    as_predicate,
     assignable,
     cast_record,
     check_record,
@@ -27,7 +28,6 @@ from cruxible_client.contracts.shapes import (
     evaluate_contract_law,
     evaluate_predicate,
     parse_contract,
-    parse_predicate,
     parse_type,
     records,
     render_contract,
@@ -191,53 +191,74 @@ def test_records_reads_the_record_arm_only() -> None:
     assert records([RecordArm(record=row), bad]) == [row]
 
 
+def _f(name: str) -> dict[str, object]:
+    """The current record's field ``name``: a typed item reference."""
+
+    return {"$ref": "item", "path": ["fields", name]}
+
+
+def _cmp(op: str, left: object, right: object) -> object:
+    def operand(value: object) -> object:
+        return value if isinstance(value, dict) else {"literal": value}
+
+    return as_predicate({"op": op, "left": operand(left), "right": operand(right)})
+
+
 def test_three_valued_predicates_over_an_invalid_field() -> None:
     contract = validate_contract(ROW)
     invalid = check_record({"epss": "0.5", "status": "bogus"}, contract, record="/rows/0")
-    fixed = parse_predicate('eq($item.fields.status, "fixed")')
+    fixed = _cmp("eq", _f("status"), "fixed")
     assert evaluate_predicate(fixed, fields=invalid) == "unknown"
     assert evaluate_predicate(Not(of=fixed), fields=invalid) == "unknown"
     valid = check_record({"epss": "0.5", "status": "fixed"}, contract, record="/rows/1")
     assert evaluate_predicate(fixed, fields=valid) == "true"
     assert evaluate_predicate(
-        parse_predicate("not(present($item.fields.percentile))"), fields=valid
+        as_predicate({"op": "not", "of": {"op": "present", "of": _f("percentile")}}), fields=valid
     ) == ("true")
-    assert (
-        evaluate_predicate(parse_predicate('lt($item.fields.epss, "0.7")'), fields=valid) == "true"
-    )
-    both = parse_predicate('all_of(eq($item.fields.status, "fixed"), lt($item.fields.epss, "0.7"))')
+    assert evaluate_predicate(_cmp("lt", _f("epss"), "0.7"), fields=valid) == "true"
+    both = as_predicate({"op": "all_of", "of": [fixed, _cmp("lt", _f("epss"), "0.7")]})
     assert evaluate_predicate(both, fields=invalid) == "unknown"
     assert evaluate_predicate(both, fields=valid) == "true"
-    falsified = parse_predicate(
-        'all_of(eq($item.fields.status, "fixed"), lt($item.fields.epss, "0.1"))'
-    )
+    falsified = as_predicate({"op": "all_of", "of": [fixed, _cmp("lt", _f("epss"), "0.1")]})
     assert evaluate_predicate(falsified, fields=invalid) == "false"
-    either = parse_predicate(
-        'any_of(eq($item.fields.status, "fixed"), ge($item.fields.epss, "0.5"))'
-    )
+    either = as_predicate({"op": "any_of", "of": [fixed, _cmp("ge", _f("epss"), "0.5")]})
     assert evaluate_predicate(either, fields=invalid) == "true"
-    member = parse_predicate("in($item.fields.status, $parameters.wanted)")
+    member = as_predicate(
+        {"op": "in", "left": _f("status"), "right": {"$ref": "param", "path": ["wanted"]}}
+    )
     assert evaluate_predicate(member, fields=valid, parameters={"wanted": ["fixed"]}) == "true"
 
 
 def test_absent_required_fields_are_unknown() -> None:
     contract = validate_contract(ROW)
     missing = check_record({"epss": "0.5"}, contract, record="/rows/0")
-    present = parse_predicate("present($item.fields.status)")
+    present = as_predicate({"op": "present", "of": _f("status")})
     assert evaluate_predicate(present, fields=missing) == "unknown"
 
 
 @pytest.mark.parametrize(
-    "text",
+    "value",
     [
-        "loop($item.fields.status)",
-        'concat($item.fields.status, "x")',
-        "eq($item.status, 1)",
+        'eq($item.fields.status, "fixed")',  # expression strings are not a predicate form
+        {"op": "loop", "of": {"$ref": "item", "path": ["fields", "status"]}},
+        {"op": "eq", "left": "$item.fields.status", "right": {"literal": 1}},
+        {"op": "eq", "left": {"literal": 1.5}, "right": {"literal": 1}},
     ],
 )
-def test_predicates_outside_the_closed_grammar_are_refused(text: str) -> None:
+def test_predicates_outside_the_closed_grammar_are_refused(value: object) -> None:
     with pytest.raises((ContractFormatError, ValueError)):
-        parse_predicate(text)
+        as_predicate(value)  # type: ignore[arg-type]
+
+
+def test_a_record_predicate_reads_only_its_record_fields_and_parameters() -> None:
+    from cruxible_client.contracts.shapes import predicate_context_problem
+
+    record = as_predicate({"op": "present", "of": _f("status")})
+    assert predicate_context_problem(record, "record") is None
+    run = _cmp("gt", {"$ref": "step", "step": "rows", "path": ["count"]}, 0)
+    assert "record's fields" in str(predicate_context_problem(run, "record"))
+    assert predicate_context_problem(run, "run") is None
+    assert "current item" in str(predicate_context_problem(record, "run"))
 
 
 # -- F1: the acceptance law validates every pinned occurrence, not only the first --------
@@ -501,7 +522,7 @@ def test_eq_is_not_defeated_by_an_unsupported_ordering_operator() -> None:
         contract,
         record="/rows/0",
     )
-    predicate = parse_predicate("eq($item.fields.d1, $item.fields.d2)")
+    predicate = _cmp("eq", _f("d1"), _f("d2"))
     assert evaluate_predicate(predicate, fields=record) == "true"
 
 
@@ -510,5 +531,5 @@ def test_decimal_comparison_with_nan_does_not_raise() -> None:
         {"name": "security.decimal-row", "version": 1, "fields": {"x": "decimal"}}
     )
     record = check_record({"x": "0.5"}, contract, record="/rows/0")
-    predicate = parse_predicate('eq($item.fields.x, "NaN")')
+    predicate = _cmp("eq", _f("x"), "NaN")
     assert evaluate_predicate(predicate, fields=record) == "false"

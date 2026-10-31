@@ -1,14 +1,58 @@
 {
-  "activation_policy": "abort",
-  "contracts": [
+  "activation": "abort",
+  "budget": {
+    "capture_bytes": 0,
+    "items": 100,
+    "provider_calls": 0,
+    "wall_clock": "PT1S"
+  },
+  "caps": {
+    "capture_bytes": 0,
+    "items": 200,
+    "provider_calls": 0,
+    "repeat_attempts": 1,
+    "wall_clock": "PT2S"
+  },
+  "description": "Read governed work-item state through the accepted query.",
+  "input": {},
+  "input_contract": "empty-input",
+  "kind": "procedure",
+  "output": {
+    "rows": {
+      "item_fields": {
+        "item_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "type": "list"
+    }
+  },
+  "output_contract": "work-item-query-result",
+  "procedure": "project.work_item.digest",
+  "returns": "result",
+  "steps": [
     {
-      "allow_extra": false,
-      "fields": {},
-      "name": "empty-input"
+      "id": "read",
+      "query": "project.work_items",
+      "read": "query"
     },
     {
-      "allow_extra": false,
+      "contract": "work-item-query-result",
       "fields": {
+        "rows": {
+          "$ref": "step",
+          "path": [
+            "result",
+            "rows"
+          ],
+          "step": "query"
+        }
+      },
+      "id": "shape",
+      "output": {
         "rows": {
           "item_fields": {
             "item_id": {
@@ -21,73 +65,7 @@
           "type": "list"
         }
       },
-      "name": "work-item-query-result"
+      "project": "result"
     }
-  ],
-  "definition": {
-    "annotations": {},
-    "budget": {
-      "max_capture_bytes": 0,
-      "max_items": 100,
-      "max_provider_calls": 0,
-      "wall_clock": {
-        "microseconds": 1000000
-      }
-    },
-    "contract_in": {
-      "kind": "carried_contract",
-      "name": "empty-input",
-      "role": "contract-in"
-    },
-    "contract_out": {
-      "kind": "carried_contract",
-      "name": "work-item-query-result",
-      "role": "contract-out"
-    },
-    "description": "Read governed work-item state through the accepted query.",
-    "hard_caps": {
-      "max_capture_bytes": 0,
-      "max_items": 200,
-      "max_provider_calls": 0,
-      "max_repeat_attempts": 1,
-      "max_wall_clock": {
-        "microseconds": 2000000
-      }
-    },
-    "measurements": [],
-    "name": "project.work_item.digest",
-    "nodes": [
-      {
-        "as": "query",
-        "kind": "read",
-        "next": "shape",
-        "node_id": "read",
-        "parameters": {},
-        "query": {
-          "kind": "accepted",
-          "role": "query",
-          "target": "QueryDefinition:project.work_items"
-        }
-      },
-      {
-        "as": "result",
-        "contract_out": {
-          "kind": "carried_contract",
-          "name": "work-item-query-result",
-          "role": "contract-out"
-        },
-        "fields": {
-          "rows": "$steps.query.result.rows"
-        },
-        "kind": "project",
-        "next": null,
-        "node_id": "shape"
-      }
-    ],
-    "parameter_contract": null,
-    "returns": "result",
-    "terminal_capability": 1
-  },
-  "kind": "procedure",
-  "retire": false
+  ]
 }

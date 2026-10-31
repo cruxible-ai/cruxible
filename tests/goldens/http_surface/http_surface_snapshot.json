@@ -210,9 +210,6 @@
   "/api/v1/{instance_id}/procedure-runs/{run_id}": {
     "GET": "ProcedureRunState"
   },
-  "/api/v1/{instance_id}/procedures/source/preview": {
-    "POST": "ProcedureSourcePreview"
-  },
   "/api/v1/{instance_id}/procedures/{name}/measurements": {
     "POST": "ProcedureMeasureResult"
   },

@@ -16,8 +16,18 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
             "returns": {"from": "last"},
             "steps": [
                 {"project": "first", "fields": {"value": literal}},
-                {"guard": 'first.value != ""', "else": "halt(empty)"},
-                {"project": "last", "fields": {"value": "$first.value"}},
+                {
+                    "guard": {
+                        "op": "ne",
+                        "left": {"$ref": "step", "step": "first", "path": ["value"]},
+                        "right": {"literal": ""},
+                    },
+                    "else": {"halt": "empty"},
+                },
+                {
+                    "project": "last",
+                    "fields": {"value": {"$ref": "step", "step": "first", "path": ["value"]}},
+                },
             ],
         }
     )
@@ -27,8 +37,11 @@ def test_procedure_get_text_keeps_every_authored_step(capsys):
     assert literal in shown
     assert '"project": "first"' in shown
     assert '"project": "last"' in shown
-    assert '"value": "$first.value"' in shown
-    assert '"else": "halt(empty)"' in shown
+    # Review rendering: every typed reference reads as its concise $... text.
+    assert '"value": "$steps.first.value"' in shown
+    assert '"left": "$steps.first.value"' in shown
+    assert '"$ref"' not in shown
+    assert '"halt": "empty"' in shown
     assert '"from": "last"' in shown
 
 

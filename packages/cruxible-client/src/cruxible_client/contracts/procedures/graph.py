@@ -30,6 +30,7 @@ from cruxible_client.contracts.procedures.models import (
     SelectNode,
     TransformNode,
     is_terminal_node,
+    predicate_step_aliases,
 )
 
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -202,7 +203,7 @@ def _validate_node_references(
     available: frozenset[str],
 ) -> None:
     if isinstance(node, GuardNode):
-        missing = set(node.predicate.step_aliases()) - available
+        missing = set(predicate_step_aliases(node.predicate)) - available
         if missing:
             raise ProcedureGraphFormatError(
                 f"R15: guard {node.node_id!r} references aliases not produced on every "
@@ -230,7 +231,7 @@ def _validate_node_references(
             )
         body_available.add(body.as_)
     body_aliases = {body.as_ for body in node.body}
-    missing = set(node.until.step_aliases()) - body_aliases
+    missing = set(predicate_step_aliases(node.until)) - body_aliases
     if missing:
         raise ProcedureGraphFormatError(
             f"repeat {node.node_id!r} predicate references aliases outside its body: "
@@ -450,7 +451,7 @@ def _procedure_node_digests(
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-local-v8",
+            "cruxible-procedure-node-local-v9",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -459,7 +460,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-subtree-v8",
+            "cruxible-procedure-node-subtree-v9",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -480,7 +481,7 @@ def compute_procedure_definition_digest(definition: ProcedureDefinition) -> Arti
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-definition-v8",
+        "cruxible-procedure-definition-v9",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

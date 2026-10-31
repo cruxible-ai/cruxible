@@ -1,4 +1,4 @@
-"""Authored Procedure refusals and kit lowering-equivalence corpus."""
+"""The one typed Procedure authoring form: refusals, rendering and the kit corpus."""
 
 import json
 from pathlib import Path
@@ -21,7 +21,9 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProcedureDefinition
+from tests.support.procedures import ref
 
 
 def _artifact(definition):
@@ -30,15 +32,30 @@ def _artifact(definition):
     return procedure_artifact(definition, activation_policy="drain")
 
 
+def _stored(lowered, *, name=None, activation="snapshot"):
+    definition = ProcedureDefinition.model_validate(lowered.definition)
+    return ProcedureArtifact(
+        identity={"kind": "Procedure", "name": name or definition.name},
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        owned_contracts=lowered.owned_contracts,
+        activation_policy=activation,
+    )
+
+
 def spec(**changes):
     data = dict(
         procedure="test.authored",
         input={"value": "integer", "flag": "bool"},
         returns="result",
-        steps=[{"project": "result", "fields": {"value": "$input.value"}}],
+        steps=[{"project": "result", "fields": {"value": ref("$input.value")}}],
     )
     data.update(changes)
     return ProcedureSpec.model_validate(data)
+
+
+def _gt(left, right):
+    return {"op": "gt", "left": left, "right": right}
 
 
 def test_typed_extra_forbidden_and_no_numeric_coercion():
@@ -54,53 +71,128 @@ def test_typed_extra_forbidden_and_no_numeric_coercion():
 
 
 @pytest.mark.parametrize(
-    ("expression", "code"),
+    ("predicate", "code"),
     [
-        ("input.value >> 0", "procedure_expression_invalid"),
-        ("input.vlaue > 0", "procedure_ref_unknown"),
-        ("missing.value > 0", "procedure_ref_unknown"),
-        ('input.value == "0"', "procedure_operand_type_mismatch"),
-        ("input.flag > false", "procedure_operand_type_mismatch"),
-        ("input.value", "procedure_operand_type_mismatch"),
-        ("param.missing > 0", "procedure_ref_unknown"),
+        (_gt(ref("$input.vlaue"), {"literal": 0}), "procedure_ref_unknown"),
+        (_gt(ref("$steps.missing.value"), {"literal": 0}), "procedure_ref_unknown"),
+        (
+            {"op": "eq", "left": ref("$input.value"), "right": {"literal": "0"}},
+            "procedure_operand_type_mismatch",
+        ),
+        (_gt(ref("$input.flag"), {"literal": False}), "procedure_operand_type_mismatch"),
+        (_gt(ref("$params.missing"), {"literal": 0}), "procedure_ref_unknown"),
     ],
 )
-def test_refusal_table(expression, code):
+def test_refusal_table(predicate, code):
     authored = spec(
         steps=[
-            {"guard": expression, "else": "halt(stop)"},
-            {"project": "result", "fields": {"value": "$input.value"}},
+            {"guard": predicate, "else": {"halt": "stop"}},
+            {"project": "result", "fields": {"value": ref("$input.value")}},
         ]
     )
     with pytest.raises(ProcedureSpecError) as caught:
         lower_procedure_spec(authored)
     assert caught.value.code == "cruxible.authoring." + code
     assert caught.value.field_path == "$.steps[0].guard"
-    if code == "procedure_expression_invalid":
-        assert "column" in str(caught.value)
-    if "vlaue" in expression:
+    if "vlaue" in json.dumps(predicate):
         assert "value" in str(caught.value) and "Did you mean" in str(caught.value)
 
 
 @pytest.mark.parametrize("verb", ["guard", "repeat"])
-def test_guard_and_until_limit_length_and_report_nested_expression_paths(verb):
+def test_guard_and_until_take_the_typed_predicate_never_an_expression_string(verb):
     from cruxible_client.contracts.procedures.authored import GuardStep, RepeatStep
-    from cruxible_client.contracts.procedures.expressions import MAX_EXPRESSION_LENGTH
 
     model = GuardStep if verb == "guard" else RepeatStep
     field = "guard" if verb == "guard" else "until"
-    data = {} if verb == "guard" else {"repeat": "loop", "max_attempts": 1, "body": []}
-    with pytest.raises(ValidationError) as caught:
-        model.model_validate({**data, field: " " * (MAX_EXPRESSION_LENGTH + 1)})
-    assert caught.value.errors()[0]["type"] == "string_too_long"
-    assert caught.value.errors()[0]["loc"] == (field,)
+    data = (
+        {}
+        if verb == "guard"
+        else {
+            "repeat": "loop",
+            "max_attempts": 1,
+            "body": [{"transform": "rows", "kind": "dedupe", "spec": {"input": [], "keys": ["a"]}}],
+        }
+    )
+    with pytest.raises(ValidationError, match="expression strings are not accepted"):
+        model.model_validate({**data, field: "input.value > 0"})
+    with pytest.raises(ValidationError):
+        model.model_validate({**data, field: {"op": "gt", "left": "input.value", "right": 0}})
+    # A guard reads run values: never the current item.
+    with pytest.raises(ValidationError, match="current item"):
+        model.model_validate(
+            {**data, field: {"op": "present", "of": {"$ref": "item", "path": ["fields", "x"]}}}
+        )
+    typed = model.model_validate({**data, field: _gt(ref("$input.value"), {"literal": 0})})
+    assert getattr(typed, field).op == "gt"
 
-    authored = spec(steps=[{**data, field: "not " * 2000 + "true"}])
-    with pytest.raises(ProcedureSpecError) as refusal:
-        lower_procedure_spec(authored)
-    assert refusal.value.code == "cruxible.authoring.procedure_expression_invalid"
-    assert refusal.value.field_path == "$.steps[0]." + field
-    assert "column" in str(refusal.value)
+
+def test_branch_actions_are_a_typed_union():
+    from cruxible_client.contracts.procedures.authored import (
+        AbortAction,
+        GotoAction,
+        GuardStep,
+        HaltAction,
+    )
+
+    predicate = _gt(ref("$input.value"), {"literal": 0})
+    default = GuardStep.model_validate({"guard": predicate})
+    assert isinstance(default.else_, AbortAction)
+    assert default.else_.abort.code == "guard_refused"
+    for arm, expected in (
+        ({"abort": {"code": "empty", "message": "Nothing"}}, AbortAction),
+        ({"halt": "empty", "message": "Nothing remains"}, HaltAction),
+        ({"goto": "result"}, GotoAction),
+    ):
+        step = GuardStep.model_validate({"guard": predicate, "then": arm, "else": arm})
+        assert isinstance(step.then, expected) and isinstance(step.else_, expected)
+    with pytest.raises(ValidationError):
+        GuardStep.model_validate({"guard": predicate, "else": 'halt(empty, "Nothing")'})
+    with pytest.raises(ValidationError):
+        GuardStep.model_validate({"guard": predicate, "else": {"stop": "x"}})
+
+
+def test_abort_arms_lower_to_one_guard_diagnostic():
+    abort = {"abort": {"code": "empty", "message": "Nothing"}}
+    lowered = lower_procedure_spec(
+        spec(
+            steps=[
+                {"guard": _gt(ref("$input.value"), {"literal": 0}), "else": abort},
+                {"project": "result", "fields": {"value": ref("$input.value")}},
+            ]
+        )
+    )
+    guard = lowered.definition["nodes"][0]
+    assert (guard["on_false"], guard["refusal_code"], guard["message"]) == (
+        "$abort",
+        "empty",
+        "Nothing",
+    )
+    other = {"abort": {"code": "other", "message": "Else"}}
+    with pytest.raises(ProcedureSpecError, match="one diagnostic"):
+        lower_procedure_spec(
+            spec(
+                steps=[
+                    {
+                        "guard": _gt(ref("$input.value"), {"literal": 0}),
+                        "then": abort,
+                        "else": other,
+                    },
+                    {"project": "result", "fields": {"value": ref("$input.value")}},
+                ]
+            )
+        )
+
+
+def test_the_explicit_escape_hatch_and_string_references_are_gone():
+    with pytest.raises(ValidationError, match="retired step 'explicit'"):
+        spec(steps=[{"explicit": {"kind": "halt", "node_id": "stop"}}])
+    # A literal never names a reference: a reference is a typed Ref.
+    with pytest.raises(ProcedureSpecError) as caught:
+        lower_procedure_spec(spec(steps=[{"project": "result", "fields": {"value": "$input"}}]))
+    assert caught.value.code == "cruxible.authoring.procedure_literal_reserved"
+    assert caught.value.field_path == "$.steps[0].fields.value"
+    with pytest.raises(ValidationError, match="retained source"):
+        spec(source={"text": "def f(): ..."})
 
 
 def test_shared_authoring_envelope():
@@ -121,6 +213,21 @@ def test_shared_authoring_envelope():
     assert payload.definition["procedure_spec"]["procedure"] == authored.procedure
 
 
+@pytest.mark.parametrize(
+    ("definition", "form"),
+    [
+        ({"name": "x", "source_request": {"text": "def f(): ..."}}, "source_request"),
+        ({"name": "x", "nodes": []}, "a graph definition"),
+    ],
+)
+def test_retired_authoring_forms_refuse_typed_naming_the_spec(definition, form):
+    with pytest.raises(ValidationError) as caught:
+        ProcedureInput.model_validate({"kind": "procedure", "definition": definition})
+    (error,) = caught.value.errors()
+    assert error["type"] == "procedure_authoring_form_retired"
+    assert "ProcedureSpec" in error["msg"] and form in error["msg"]
+
+
 def test_authored_spec_keeps_a_typed_schema_in_both_wire_modes():
     request = ProcedureSpec.model_json_schema(mode="validation")
     response = ProcedureSpec.model_json_schema(mode="serialization")
@@ -128,6 +235,8 @@ def test_authored_spec_keeps_a_typed_schema_in_both_wire_modes():
     assert request["additionalProperties"] is False
     assert {"procedure", "input", "steps"} <= set(request["properties"])
     assert request["properties"]["steps"]["type"] == "array"
+    assert "Ref" in request["$defs"]
+    assert request["$defs"]["Ref"]["required"] == ["$ref"]
 
 
 CORPUS = json.loads(
@@ -152,6 +261,8 @@ def _corpus_resolver(original):
     def resolve(kind, value):
         if kind == "slot":
             return value
+        if kind == "query":
+            return None
         signature = original.definition.slots[value.slot]
         entry = by_request[signature.in_.name]
         acquiring = bool(getattr(value, "captures", None))
@@ -166,33 +277,27 @@ def _corpus_resolver(original):
 
 
 @pytest.mark.parametrize("filename", sorted(CORPUS))
-def test_every_kit_procedure_lowers_to_stored_bytes(filename):
+def test_every_kit_procedure_renders_typed_and_lowers_to_stored_bytes(filename):
     original = ProcedureArtifact.model_validate(CORPUS[filename])
     authored = decompile_procedure(original)
+    rendered = json.dumps(authored.model_dump(mode="json", by_alias=True))
+    assert '"$steps.' not in rendered and '"$input' not in rendered  # every reference is typed
     lowered = lower_procedure_spec(authored, resolve=_corpus_resolver(original))
-    definition = ProcedureDefinition.model_validate(lowered.definition)
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-
-    actual = ProcedureArtifact(
-        identity=original.identity,
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=lower_authoring_input(lowered).owned_contracts,
-        activation_policy=lowered.activation_policy,
-    )
+    actual = _stored(lowered, activation=lowered.activation_policy)
     # The stored expectation was migrated structurally from independent fields,
     # never generated by the decompiler or the authored lowerer under test.
     assert actual.definition_digest == original.definition_digest
     assert render_procedure(actual) == render_procedure(original)
-    rendered = render_procedure(actual)
-    parsed = parse_procedure(rendered, path="procedures/" + original.identity.name + ".json")
-    assert render_procedure(parsed) == rendered
-    assert ProcedureArtifact.model_validate(json.loads(rendered)) == parsed
+    rendered_bytes = render_procedure(actual)
+    parsed = parse_procedure(rendered_bytes, path="procedures/" + original.identity.name + ".json")
+    assert render_procedure(parsed) == rendered_bytes
+    assert ProcedureArtifact.model_validate(json.loads(rendered_bytes)) == parsed
     assert procedure_artifact_digest(parsed) == procedure_artifact_digest(actual)
 
 
 def _inventory_import_worked_example():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
+    scope = {"scope": ref("$input.scope")}
     authored = spec(
         procedure="security.inventory-import",
         description=original.definition.description,
@@ -231,54 +336,36 @@ def _inventory_import_worked_example():
                     "relative_path": "inventory.json",
                 },
             },
-            {
-                "read": "held",
-                "query": "security.inventory_index",
-                "params": {"scope": "$input.scope"},
-            },
-            {
-                "read": "runs",
-                "query": "security.inventory_runs",
-                "params": {"scope": "$input.scope"},
-            },
-            {
-                "read": "patches",
-                "query": "security.inventory_patches",
-                "params": {"scope": "$input.scope"},
-            },
+            {"read": "held", "query": "security.inventory_index", "params": scope},
+            {"read": "runs", "query": "security.inventory_runs", "params": scope},
+            {"read": "patches", "query": "security.inventory_patches", "params": scope},
             {
                 "call": "parse",
                 "slot": "parse",
                 "input": {
-                    "inventory_text": "$inventory.content.text",
-                    "held": "$held.result.rows",
-                    "runs": "$runs.result.rows",
-                    "patches": "$patches.result.rows",
+                    "inventory_text": ref("$steps.inventory.content.text"),
+                    "held": ref("$steps.held.result.rows"),
+                    "runs": ref("$steps.runs.result.rows"),
+                    "patches": ref("$steps.patches.result.rows"),
                     "truncated": {
-                        "held": "$held.truncated",
-                        "runs": "$runs.truncated",
-                        "patches": "$patches.truncated",
+                        "held": ref("$steps.held.truncated"),
+                        "runs": ref("$steps.runs.truncated"),
+                        "patches": ref("$steps.patches.truncated"),
                     },
-                    "scope": "$input.scope",
+                    "scope": ref("$input.scope"),
                 },
             },
             {
-                "guard": "parse.mine > 0",
+                "guard": _gt(ref("$steps.parse.mine"), {"literal": 0}),
                 "id": "mine",
-                "else": "halt(other_scope)",
-                "else_id": "other",
-                "refusal_code": "other_scope",
-                "message": "The landed inventory is another scope's.",
+                "else": {"halt": "other_scope", "id": "other"},
             },
             {
-                "guard": "parse.proposes > 0",
+                "guard": _gt(ref("$steps.parse.proposes"), {"literal": 0}),
                 "id": "changed",
-                "else": "halt(no_change)",
-                "else_id": "nochange",
-                "refusal_code": "no_change",
-                "message": "The scan changes nothing inventory holds.",
+                "else": {"halt": "no_change", "id": "nochange"},
             },
-            {"propose": "$parse.items"},
+            {"propose": ref("$steps.parse.items")},
         ],
     )
 
@@ -286,59 +373,24 @@ def _inventory_import_worked_example():
 
 
 def test_handwritten_inventory_import_matches_the_stored_definition_digest():
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-
     original, authored, resolve = _inventory_import_worked_example()
     lowered = lower_procedure_spec(authored, resolve=resolve)
     contracts = {
         contract.identity.name: contract.contract_schema for contract in original.owned_contracts
     }
-    for contract in lowered.contracts:
-        assert (
-            ContractSchema(
-                fields=contract.fields,
-                description=contract.description,
-                allow_extra=contract.allow_extra,
-            )
-            == contracts[contract.name]
-        )
+    for contract in lowered.owned_contracts:
+        assert contract.contract_schema == contracts[contract.identity.name]
     actual = ProcedureDefinition.model_validate(lowered.definition)
-    # Independent handwritten steps, literal signatures and diagnostics. Neither
-    # decompile nor a graph normalizer constructs the authored side.
+    # Independent handwritten steps and literal signatures. Neither decompile
+    # nor a graph normalizer constructs the authored side.
     assert compute_procedure_definition_digest(actual).tagged == original.definition_digest
 
 
-def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values():
+def test_inventory_import_worked_example_has_eleven_nodes():
     _original, authored, resolve = _inventory_import_worked_example()
-    # K1's provider build will consume the new tap view. Keep its lowering check
-    # separate from equality with the stored provider's row/truncation arguments.
-    call_index = next(
-        i for i, step in enumerate(authored.steps) if getattr(step, "call", None) == "parse"
-    )
-    authored = authored.model_copy(
-        update={
-            "steps": tuple(
-                step.model_copy(
-                    update={
-                        "input": {
-                            "inventory_text": "$inventory.content.text",
-                            "scope": "$input.scope",
-                            "held": "$held",
-                            "runs": "$runs",
-                            "patches": "$patches",
-                        }
-                    }
-                )
-                if i == call_index
-                else step
-                for i, step in enumerate(authored.steps)
-            )
-        }
-    )
     payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
     assert payload.definition["procedure_spec"]["procedure"] == "security.inventory-import"
     lowered = lower_procedure_spec(authored, resolve=resolve)
-    assert len(lowered.definition["nodes"]) == 11
     assert [node["kind"] for node in lowered.definition["nodes"]] == [
         "call",
         "read",
@@ -353,35 +405,27 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
         "halt",
     ]
     lowered_call = lowered.definition["nodes"][4]
-    assert lowered_call["input"]["held"] == {
-        "rows": "$steps.held.result.rows",
-        "truncated": "$steps.held.truncated",
-    }
+    assert lowered_call["input"]["held"] == "$steps.held.result.rows"
     assert "items" not in lowered.definition["nodes"][5]["fields"]
     assert lowered.definition["nodes"][8]["result"] == "$steps.summary"
-    assert lowered.definition["nodes"][6]["refusal_code"] == "other_scope"
+    assert lowered.definition["nodes"][6]["on_false"] == "other"
+    assert "refusal_code" not in lowered.definition["nodes"][6]
     assert lowered.definition["budget"]["max_capture_bytes"] == 1048576
 
 
-def test_stored_v3_keeps_template_data_and_literal_null():
+def test_stored_v3_keeps_template_data():
     original = ProcedureArtifact.model_validate(CORPUS["security.credential-acquire.json"])
-    from cruxible_client.contracts.procedures.models import (
-        GuardNode,
-        GuardPredicate,
-        HaltNode,
-        PredicateOperand,
-    )
+    from cruxible_client.contracts.procedures.models import GuardNode, HaltNode
     from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
+    from cruxible_client.contracts.shapes import Comparison, LiteralOperand
 
+    literal = Comparison(
+        op="eq", left=LiteralOperand(literal=True), right=LiteralOperand(literal=True)
+    )
     with pytest.raises(ValidationError, match="abort requires"):
-        GuardNode(
-            node_id="gate",
-            predicate=GuardPredicate(
-                left=PredicateOperand(kind="literal", value=True),
-                operator="eq",
-                right=PredicateOperand(kind="literal", value=True),
-            ),
-        )
+        GuardNode(node_id="gate", predicate=literal)
+    with pytest.raises(ValidationError, match="belong only to an abort arm"):
+        GuardNode(node_id="gate", predicate=literal, on_false="stop", refusal_code="x", message="y")
     halt = HaltNode(node_id="stop", reason="done", message="Nothing remains")
     assert compact_procedure(halt) == {
         "kind": "halt",
@@ -389,14 +433,11 @@ def test_stored_v3_keeps_template_data_and_literal_null():
         "reason": "done",
         "message": "Nothing remains",
     }
-    scalar = compact_procedure(
-        GuardPredicate(
-            left=PredicateOperand(kind="literal", value=None),
-            operator="eq",
-            right=PredicateOperand(kind="literal", value=None),
-        )
-    )
-    assert scalar == {"left": None, "operator": "eq", "right": None}
+    assert compact_procedure(literal) == {
+        "op": "eq",
+        "left": {"literal": True},
+        "right": {"literal": True},
+    }
     project = next(node for node in original.definition.nodes if node.kind == "project")
     data = {"tag": "my-data", "node_id": "my-id", "value": None, "default": False}
     compact = compact_procedure(project.model_copy(update={"fields": data}))
@@ -433,35 +474,33 @@ def test_decompile_shows_budget_durations_compactly_without_moving_stored_bytes(
 
 
 def test_decompile_inventory_recognizes_return_and_halt_patterns():
+    from cruxible_client.contracts.procedures.authored import HaltAction
+
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
     authored = decompile_procedure(original)
     assert len(authored.steps) == 8
     assert authored.returns.id == "summary"
-    assert authored.steps[5].else_ == "halt(other_scope)"
-    assert authored.steps[6].else_ == "halt(no_change)"
+    assert authored.steps[5].else_ == HaltAction(halt="other_scope", id="other")
+    assert authored.steps[6].else_ == HaltAction(halt="no_change", id="nochange")
 
 
 @pytest.mark.parametrize("node_kind", ["guard", "repeat"])
 @pytest.mark.parametrize("predicate_shape", ["empty_path", "single_all", "single_any"])
-def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predicate_shape):
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-    from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
+def test_every_predicate_shape_renders_typed_and_lowers_back(node_kind, predicate_shape):
+    from cruxible_client.contracts.refs import step_ref
+    from cruxible_client.contracts.shapes import AllOf, AnyOf, Presence
     from tests.test_procedures.test_procedure_artifacts import _definition
     from tests.test_procedures.test_procedure_execution import _repeat_transform_procedure
 
-    leaf = GuardPredicate(
-        left=PredicateOperand(
-            kind="step",
-            alias="rows" if node_kind == "guard" else "shaped",
-            path=() if predicate_shape == "empty_path" else ("flag",),
-        ),
-        operator="eq",
-        right=PredicateOperand(kind="literal", value=True),
+    alias, member = ("rows", "completed") if node_kind == "guard" else ("shaped", "flag")
+    leaf = Presence(
+        op="present",
+        of=step_ref(alias) if predicate_shape == "empty_path" else step_ref(alias, member),
     )
     predicate = (
         leaf
         if predicate_shape == "empty_path"
-        else GuardPredicate(**{"all_of" if predicate_shape == "single_all" else "any_of": (leaf,)})
+        else (AllOf if predicate_shape == "single_all" else AnyOf)(of=(leaf,))
     )
     if node_kind == "repeat":
         from cruxible_core.procedures.reference_binding import authored_procedure
@@ -487,42 +526,18 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
         original = _artifact(definition)
     original = original.model_copy(update={"definition": definition})
     authored = decompile_procedure(original)
-    explicit = next(step.explicit for step in authored.steps if hasattr(step, "explicit"))
-    assert explicit == next(node for node in definition.nodes if node.kind == node_kind)
+    typed = next(
+        step for step in authored.steps if hasattr(step, "guard") or hasattr(step, "until")
+    )
+    assert (typed.guard if node_kind == "guard" else typed.until) == predicate
     if node_kind == "guard":
-        assert any(getattr(step, "halt", None) == "no" for step in authored.steps)
+        assert typed.else_.halt == "no"
 
     lowered = lower_procedure_spec(authored)
     actual = ProcedureDefinition.model_validate(lowered.definition)
     assert compute_procedure_definition_digest(actual) == compute_procedure_definition_digest(
         definition
     )
-
-
-def test_decompile_recognizes_the_generated_tap_view_and_lowers_it_back():
-    original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
-    call = next(
-        node for node in original.definition.nodes if node.kind == "call" and not node.acquires
-    )
-    view = {"rows": "$steps.held.result.rows", "truncated": "$steps.held.truncated"}
-    definition = original.definition.model_copy(
-        update={
-            "nodes": tuple(
-                node.model_copy(update={"input": {**call.input, "held": view}})
-                if node is call
-                else node
-                for node in original.definition.nodes
-            )
-        }
-    )
-    authored = decompile_procedure(original.model_copy(update={"definition": definition}))
-    authored_call = next(step for step in authored.steps if getattr(step, "call", None) == call.as_)
-    assert authored_call.input["held"] == "$held"
-    lowered = lower_procedure_spec(authored)
-    lowered_call = next(
-        node for node in lowered.definition["nodes"] if node["node_id"] == call.node_id
-    )
-    assert lowered_call["input"]["held"] == view
 
 
 def test_field_descriptors_forbid_unknown_fields_and_coercion():
@@ -546,10 +561,10 @@ def test_authored_spec_prepares_through_existing_graph_laws(tmp_path):
         steps=[
             {
                 "id": "positive",
-                "guard": "input.value > 0",
-                "else": 'halt(empty, "Nothing remains")',
+                "guard": _gt(ref("$input.value"), {"literal": 0}),
+                "else": {"halt": "empty", "message": "Nothing remains"},
             },
-            {"project": "result", "fields": {"value": "$input.value"}},
+            {"project": "result", "fields": {"value": ref("$input.value")}},
         ]
     )
     result = coordinator.compile(
@@ -568,7 +583,7 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
 
     coordinator, actor = _coordinator(tmp_path)
     authored = spec(
-        steps=[{"project": "result", "fields": {"value": "$input.value"}, "next": "result"}]
+        steps=[{"project": "result", "fields": {"value": ref("$input.value")}, "next": "result"}]
     )
     result = coordinator.compile(
         actor=actor,
@@ -655,40 +670,35 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
     assert candidate in refusal.message
 
 
-def test_template_prefixes_are_step_names_and_explicit_input_alias_survives():
+def test_reference_roots_are_typed_so_step_names_never_shadow_the_input():
     authored = spec(
         steps=[
-            {"project": "inputly", "fields": {"value": "$input.value"}},
-            {"project": "result", "fields": {"value": "$inputly.value"}},
+            {"project": "input", "fields": {"value": ref("$input.value")}},
+            {"project": "result", "fields": {"value": ref("$steps.input.value")}},
         ]
     )
     lowered = lower_procedure_spec(authored)
-    assert lowered.definition["nodes"][1]["fields"]["value"] == "$steps.inputly.value"
-    authored = spec(
-        steps=[
-            {"project": "input", "fields": {"value": "$input.value"}},
-            {"project": "result", "fields": {"value": "$steps.input.value"}},
-        ]
-    )
-    lowered = lower_procedure_spec(authored)
+    assert lowered.definition["nodes"][0]["fields"]["value"] == "$input.value"
     assert lowered.definition["nodes"][1]["fields"]["value"] == "$steps.input.value"
 
 
-def test_spec_dump_preserves_else_with_and_without_aliases():
+def test_spec_dump_preserves_actions_with_and_without_aliases():
     authored = spec(
         steps=[
-            {"guard": "input.value > 0", "else": "halt(empty)"},
-            {"project": "result", "fields": {"value": "$input.value"}},
+            {"guard": _gt(ref("$input.value"), {"literal": 0}), "else": {"halt": "empty"}},
+            {"project": "result", "fields": {"value": ref("$input.value")}},
         ]
     )
-    for by_alias in (True, False):
-        assert (
-            ProcedureSpec.model_validate(authored.model_dump(mode="json", by_alias=by_alias))
-            == authored
-        )
+    # The wire spells a reference's root ``$ref`` and the false arm ``else``.
+    wire = authored.model_dump(mode="json", by_alias=True)
+    assert wire["steps"][0]["else"] == {"halt": "empty"}
+    assert ProcedureSpec.model_validate(wire) == authored
+    assert ProcedureSpec.model_validate(authored.model_dump(mode="json")) == authored
 
 
 def test_decompile_does_not_fold_a_halt_with_a_shared_explicit_edge():
+    from cruxible_client.contracts.procedures.authored import GotoAction
+    from cruxible_client.contracts.procedures.graph import analyze_procedure
     from tests.test_procedures.test_procedure_artifacts import _layout_definition
 
     definition = _layout_definition(halt_before_return=False)
@@ -706,12 +716,10 @@ def test_decompile_does_not_fold_a_halt_with_a_shared_explicit_edge():
     )
     original = _artifact(definition)
     authored = decompile_procedure(original)
-    # Format 6 excludes guard halts from implicit fallthrough. This explicit
-    # edge deliberately shares the halt with the guard's false arm.
+    # Guard halts are excluded from implicit fallthrough. This explicit edge
+    # deliberately shares the halt with the guard's false arm.
     assert any(getattr(step, "halt", None) is not None for step in authored.steps)
-    assert any(getattr(step, "else_", None) == "stop" for step in authored.steps)
-    from cruxible_client.contracts.procedures.graph import analyze_procedure
-
+    assert any(getattr(step, "else_", None) == GotoAction(goto="stop") for step in authored.steps)
     assert analyze_procedure(original.definition).edges["result"] == {"next": "stop"}
     content = render_procedure(original)
     assert json.loads(content)["definition"]["nodes"][2]["next"] == "stop"
@@ -719,14 +727,22 @@ def test_decompile_does_not_fold_a_halt_with_a_shared_explicit_edge():
     assert (
         analyze_procedure(restored.definition).edges == analyze_procedure(original.definition).edges
     )
+    relowered = ProcedureDefinition.model_validate(lower_procedure_spec(authored).definition)
+    assert compute_procedure_definition_digest(relowered) == compute_procedure_definition_digest(
+        original.definition
+    )
 
 
 def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
     long_id = "a" * 128
     authored = spec(
         steps=[
-            {"id": long_id, "guard": "input.value > 0", "else": "halt(empty)"},
-            {"project": "result", "fields": {"value": "$input.value"}},
+            {
+                "id": long_id,
+                "guard": _gt(ref("$input.value"), {"literal": 0}),
+                "else": {"halt": "empty"},
+            },
+            {"project": "result", "fields": {"value": ref("$input.value")}},
             {"halt": "other", "id": long_id[:123] + "_halt"},
         ]
     )
@@ -759,32 +775,167 @@ def test_v3_retains_the_transform_spec_union_discriminator():
     )
 
 
-def test_literal_null_operands_round_trip():
-    from cruxible_client.contracts.procedures.models import GuardPredicate, PredicateOperand
-    from tests.support.procedures import procedure_artifact
-    from tests.test_procedures.test_procedure_artifacts import _layout_definition
-
-    definition = _layout_definition(halt_before_return=False)
-    predicate = GuardPredicate(
-        left=PredicateOperand(kind="literal", value=None),
-        operator="eq",
-        right=PredicateOperand(kind="literal", value=None),
-    )
-    definition = definition.model_copy(
-        update={
-            "nodes": tuple(
-                node.model_copy(update={"predicate": predicate}) if node.kind == "guard" else node
-                for node in definition.nodes
-            )
-        }
-    )
-    current = procedure_artifact(definition)
-    assert (
-        parse_procedure(
-            render_procedure(current), path="procedures/" + current.identity.name + ".json"
+def test_every_transform_kind_renders_typed_and_lowers_back():
+    record = {"$ref": "item", "path": ["fields", "keep"]}
+    steps = [
+        {
+            "project": "rows",
+            "literal": {"items": [{"id": "a", "keep": True}]},
+            "output": {"items": {"type": "list", "item_fields": {"id": {"type": "string"}}}},
+        },
+        {
+            "transform": "shaped",
+            "kind": "shape",
+            "spec": {
+                "input": ref("$steps.rows.items"),
+                "fields": {
+                    "id": {"from": {"$ref": "item", "path": ["fields", "id"]}},
+                    "keep": {"from": record, "as": "bool"},
+                    "label": {"value": "fixed"},
+                },
+            },
+        },
+        {
+            "transform": "kept",
+            "kind": "filter",
+            "spec": {
+                "input": ref("$steps.shaped"),
+                "where": {"op": "eq", "left": record, "right": {"literal": True}},
+            },
+        },
+        {
+            "transform": "deduped",
+            "kind": "dedupe",
+            "spec": {"input": ref("$steps.kept"), "keys": ["id"]},
+        },
+        {
+            "transform": "joined",
+            "kind": "join",
+            "spec": {
+                "left": ref("$steps.deduped"),
+                "right": [{"id": "a", "rank": 1}],
+                "left_field": "id",
+                "right_field": "id",
+                "mode": "anti",
+            },
+        },
+        {
+            "transform": "both",
+            "kind": "union",
+            "spec": {"inputs": [ref("$steps.kept"), ref("$steps.joined")]},
+        },
+        {
+            "transform": "any_kept",
+            "kind": "aggregate",
+            "spec": {
+                "input": ref("$steps.both"),
+                "op": "any",
+                "where": {"op": "present", "of": record},
+            },
+        },
+        {
+            "transform": "label",
+            "kind": "derive",
+            "spec": {
+                "input": {"keep": ref("$steps.any_kept.result")},
+                "cases": [
+                    {
+                        "when": {"op": "eq", "left": record, "right": {"literal": True}},
+                        "value": "kept",
+                    }
+                ],
+                "else": "dropped",
+            },
+        },
+        {"project": "result", "fields": {"value": ref("$steps.label.result")}},
+    ]
+    authored = spec(input={}, output={"value": "string"}, steps=steps)
+    lowered = lower_procedure_spec(authored)
+    stored = _stored(lowered)
+    rendered = decompile_procedure(stored)
+    assert '"$steps.' not in json.dumps(rendered.model_dump(mode="json", by_alias=True))
+    relowered = lower_procedure_spec(rendered)
+    assert relowered.definition == lowered.definition
+    with pytest.raises(ValidationError, match="record predicate"):
+        spec(
+            steps=[
+                {
+                    "transform": "kept",
+                    "kind": "filter",
+                    "spec": {"input": [], "where": {"op": "present", "of": ref("$steps.rows")}},
+                }
+            ]
         )
-        == current
+
+
+def test_repeat_bodies_are_typed_calls_and_transforms():
+    authored = spec(
+        input={},
+        output={"value": "string"},
+        slots={
+            "compute": {
+                "in": "test.compute-input@1",
+                "out": "test.compute-output@1",
+                "effect": "pure",
+            }
+        },
+        caps={"repeat_attempts": 3, "provider_calls": 3},
+        budget={"provider_calls": 3},
+        steps=[
+            {
+                "repeat": "loop",
+                "max_attempts": 3,
+                "body": [
+                    {"call": "fetched", "id": "fetch", "slot": "compute", "input": {"n": 1}},
+                    {
+                        "transform": "unique",
+                        "kind": "dedupe",
+                        "spec": {"input": ref("$steps.fetched.rows"), "keys": ["id"]},
+                    },
+                ],
+                "until": {
+                    "op": "gt",
+                    "left": {"count": ref("$steps.unique")},
+                    "right": {"literal": 0},
+                },
+            },
+            {"project": "result", "fields": {"value": "done"}},
+        ],
     )
+    lowered = lower_procedure_spec(authored)
+    repeat = lowered.definition["nodes"][0]
+    assert [item["operation"] for item in repeat["body"]] == ["call", "transform"]
+    assert repeat["body"][0]["node_id"] == "fetch" and repeat["body"][0]["as"] == "fetched"
+    assert repeat["until"]["left"] == {"count": {"$ref": "step", "step": "unique"}}
+    relowered = lower_procedure_spec(decompile_procedure(_stored(lowered)))
+    assert relowered.definition == lowered.definition
+
+
+def test_leaf_projects_and_literal_records_are_typed_steps():
+    authored = spec(
+        input={"positive": "bool"},
+        output={"label": "string"},
+        returns=None,
+        steps=[
+            {
+                "guard": {"op": "eq", "left": ref("$input.positive"), "right": {"literal": True}},
+                "else": {"goto": "no"},
+            },
+            {
+                "project": "yes",
+                "literal": {"label": "ready"},
+                "output": {"label": "string"},
+                "leaf": True,
+            },
+            {"project": "no", "fields": {"label": "halted"}, "leaf": True},
+        ],
+    )
+    lowered = lower_procedure_spec(authored)
+    assert lowered.definition["returns"] is None
+    stored = _stored(lowered)
+    assert [node.leaf for node in stored.definition.nodes if node.kind == "project"] == [True, True]
+    relowered = lower_procedure_spec(decompile_procedure(stored))
+    assert relowered.definition == lowered.definition
 
 
 @pytest.mark.parametrize("change", ["guard_diagnostics", "halt_message"])
@@ -814,19 +965,36 @@ def test_omitted_guard_diagnostics_and_halt_messages_round_trip(change):
     )
 
 
-def test_parameter_operands_and_reserved_looking_step_ids_have_distinct_scopes():
+def test_parameter_and_step_references_have_distinct_typed_roots():
     authored = spec(
         params={"limit": "integer"},
         steps=[
-            {"project": "params", "fields": {"value": "$input.value"}},
-            {"guard": "params.value >= param.limit", "else": "halt(below_limit)"},
-            {"project": "result", "fields": {"value": "$params.value"}},
+            {"project": "params", "fields": {"value": ref("$input.value")}},
+            {
+                "guard": {
+                    "op": "ge",
+                    "left": ref("$steps.params.value"),
+                    "right": ref("$params.limit"),
+                },
+                "else": {"halt": "below_limit"},
+            },
+            {"project": "result", "fields": {"value": ref("$steps.params.value")}},
         ],
     )
     lowered = lower_procedure_spec(authored)
     assert lowered.definition["nodes"][2]["fields"]["value"] == "$steps.params.value"
-    assert lowered.definition["nodes"][1]["predicate"]["left"]["alias"] == "params"
-    assert lowered.definition["nodes"][1]["predicate"]["right"]["parameter_name"] == "limit"
+    predicate = lowered.definition["nodes"][1]["predicate"]
+    assert predicate["left"] == {"$ref": "step", "step": "params", "path": ["value"]}
+    assert predicate["right"] == {"$ref": "param", "path": ["limit"]}
+    # A value template does not read a parameter: guards and transforms do.
+    with pytest.raises(ProcedureSpecError) as caught:
+        lower_procedure_spec(
+            spec(
+                params={"limit": "integer"},
+                steps=[{"project": "result", "fields": {"value": ref("$params.limit")}}],
+            )
+        )
+    assert caught.value.code == "cruxible.authoring.procedure_ref_unsupported"
 
 
 def test_parameter_name_can_match_a_collection_step_alias():
@@ -837,10 +1005,10 @@ def test_parameter_name_can_match_a_collection_step_alias():
             {
                 "read": "limit",
                 "claim_type": "catalog.entry.value",
-                "subject": "$input.subject",
+                "subject": ref("$input.subject"),
                 "all": 10,
             },
-            {"guard": "param.limit > 0", "else": "halt(empty)"},
+            {"guard": _gt(ref("$params.limit"), {"literal": 0}), "else": {"halt": "empty"}},
             {"project": "result", "fields": {"ok": True}},
         ],
     )
@@ -851,7 +1019,10 @@ def test_parameter_name_can_match_a_collection_step_alias():
             "subject_kind": "catalog.entry",
         },
     )
-    assert lowered.definition["nodes"][1]["predicate"]["left"]["parameter_name"] == "limit"
+    assert lowered.definition["nodes"][1]["predicate"]["left"] == {
+        "$ref": "param",
+        "path": ["limit"],
+    }
     assert lowered.definition["nodes"][0]["cardinality"] == "all"
 
 
@@ -904,7 +1075,7 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
                 {
                     "call": "result",
                     "slot": "compute",
-                    "input": {"value": "$input.value"},
+                    "input": {"value": ref("$input.value")},
                 }
             ],
             "returns": "result",
@@ -916,15 +1087,7 @@ def test_handwritten_slotted_procedure_round_trips_without_provider_selection():
     assert definition.slots["compute"].in_.spelling == "test.compute-input@1"
     assert definition.slots["compute"].out.spelling == "test.compute-output@1"
     assert definition.slots["compute"].effect == "pure"
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-
-    original = ProcedureArtifact(
-        identity={"kind": "Procedure", "name": definition.name},
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest(definition).tagged,
-        owned_contracts=lower_authoring_input(lowered).owned_contracts,
-        activation_policy="snapshot",
-    )
+    original = _stored(lowered)
     restored = decompile_procedure(original)
     assert restored.slots == authored.slots
     assert restored.steps[0].slot == "compute"

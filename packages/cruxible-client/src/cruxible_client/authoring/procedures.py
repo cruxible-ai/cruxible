@@ -1,49 +1,77 @@
-"""Sequence-style authoring that lowers to the existing ProcedureInput contract.
+"""A thin typed builder over the one Procedure authoring form, :class:`ProcedureSpec`.
 
-Templates are built from typed models, never hand-written tags: the proposal
-items (``ProcedureKeyedClaimProposalItem``, ``ProcedureSubjectProposalItem``,
-``ProcedureClaimRetirementItem``), their statement (``ProcedureClaimStatement``
-with ``SubjectKeyReference`` and ``LiteralClaimObject``) and the
-``workspace.file`` request (``WorkspaceFileSourceRequestV2``) each emit their
-frozen format tag, and ``Item(path)`` names the current row's field.
+``Sequence`` appends typed spec steps and returns a handle per output step.
+A handle is a real object: ``handle["field"]`` is the typed :class:`Ref` to one
+of its output fields, checked against the fields the step is known to produce
+(its declared output, a query read's view, or a supplied slot Contract); an
+unknown field refuses at the line that names it. The builder never assembles
+a graph: :meth:`Sequence.spec` is the spec every surface submits, and
+:meth:`Sequence.preview` lowers it locally with the same shared lowering.
 
-Preview is a local structural check, never an admission or an execution. Accepted
-references are resolved by the daemon at prepare; private stand-ins below let the
-shared graph validator check topology without pretending to resolve those refs.
+Preview is a local structural check, never an admission or an execution.
+Accepted references are resolved by the daemon at prepare.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-from dataclasses import field as dataclass_field
-from typing import Any, Literal, TypeAlias
+from collections.abc import Mapping
+from dataclasses import dataclass
+from difflib import get_close_matches
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, JsonValue, field_validator
+from pydantic import BaseModel, Field
 
-from cruxible_client.contracts.artifacts import (
-    ArtifactNameRef,
-    ArtifactPin,
-    parse_artifact_identity,
-)
-from cruxible_client.contracts.authoring.inputs import (
-    AcceptedReferenceInput,
-    CarriedContractInput,
-    ProcedureInput,
-    lower_authoring_input,
-)
-from cruxible_client.contracts.canonical import normalize_canonical
-from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import ProcedureInput
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.authored import (
+    AbortAction,
+    AbortDetail,
+    AggregateSpec,
+    BranchAction,
+    CallStep,
+    DedupeSpec,
+    DeriveCaseSpec,
+    DeriveSpec,
+    EmitStep,
+    ExtractStep,
+    FieldType,
+    FilterSpec,
+    GotoAction,
+    GuardStep,
+    HaltAction,
+    HaltStep,
+    InboxStep,
+    InvokeStep,
+    JoinSpec,
+    ProcedureLimits,
     ProcedureSpec,
     ProcedureSpecError,
+    ProjectStep,
+    ProposeStep,
+    ReadStep,
+    RepeatBody,
+    RepeatCall,
+    RepeatStep,
+    RepeatTransform,
+    ReturnFields,
+    ReturnFrom,
+    SelectStep,
+    SettleStep,
+    ShapeFieldSpec,
+    ShapeSpec,
+    Step,
+    Template,
+    TransformSpec,
+    TransformStep,
+    UnionSpec,
+    extract_view_fields,
     lower_procedure_spec,
 )
-from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.procedures.contracts import validate_contract_schema
+from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     analyze_procedure,
@@ -52,34 +80,28 @@ from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
     TERMINAL_NODE_KINDS,
     AuthorityVerb,
-    GuardPredicate,
-    ProcedureBudget,
     ProcedureDefinition,
-    ProcedureHardCaps,
-    ProcedureNode,
-    ProcedureTransformSpec,
     TransformKind,
     derived_terminal_capability,
 )
-from cruxible_client.contracts.procedures.proposal_items import (
-    ProcedureClaimRetirementItem,
-    ProcedureClaimStatement,
-    ProcedureKeyedClaimProposalItem,
-    ProcedureSubjectProposalItem,
-    SubjectKeyClaimObject,
-)
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
-from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSourceProgram,
-    SourceBinding,
-    SourceMapEntry,
-    SourceSpan,
-)
+from cruxible_client.contracts.procedures.views import query_view_schema
 from cruxible_client.contracts.records import RecordConstructor
-from cruxible_client.contracts.subject_kinds import SubjectKeyReference
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
-
-Contract: TypeAlias = CarriedContractInput
+from cruxible_client.contracts.refs import Ref, item_ref, make_ref
+from cruxible_client.contracts.shapes import (
+    AllOf,
+    AnyOf,
+    Comparison,
+    ComparisonOp,
+    Contract,
+    CountOperand,
+    LiteralOperand,
+    Membership,
+    Not,
+    Operand,
+    Predicate,
+    Presence,
+)
 
 
 def procedure_record_constructor(
@@ -101,233 +123,142 @@ def procedure_record_constructor(
     raise ValueError("Procedure contract is absent from its exact owner closure")
 
 
-@dataclass(frozen=True)
-class Output:
-    """An explicit reference to an earlier step, optionally selecting a field."""
-
-    step: str
-    path: str = ""
+# -- typed references and predicates ------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Previous:
-    """The preceding output (or invocation input at the start of a sequence)."""
+class Handle:
+    """One value the run holds: the Procedure input, its parameters, or a step's output.
 
-    path: str = ""
-
-
-def Item(path: str = "") -> str:  # noqa: N802 - reads as a reference, like Output and Previous
-    """The current record inside a closed transform or a fan-out item template, or its field.
-
-    Lowers to ``"$item.<path>"``, the reference a transform or fan-out resolves per
-    row. It is a plain string, so it fits any typed builder field below:
-    ``ProcedureKeyedClaimProposalItem(statement=ProcedureClaimStatement(
-    subject=SubjectKeyReference(subject_kind="catalog.part", key=Item("part_id")),
-    ...), rationale=Item("why"))``.
+    ``handle["field"]`` (or :meth:`ref`) is the typed :class:`Ref` to a member.
+    When the handle's fields are known, a name it does not have refuses.
     """
 
-    return "$item" + (f".{path}" if path else "")
+    root: Literal["input", "param", "step", "item"]
+    step: str | None = None
+    fields: tuple[str, ...] | None = None
+
+    def ref(self, *path: str) -> Ref:
+        if path and self.fields is not None and path[0] not in self.fields:
+            near = get_close_matches(path[0], self.fields, n=3)
+            raise KeyError(
+                f"{self._label()} has no field {path[0]!r}"
+                + (f"; did you mean {', '.join(near)}?" if near else f"; fields: {self.fields}")
+            )
+        return make_ref(self.root, *path, step=self.step)
+
+    def __getitem__(self, field: str) -> Ref:
+        return self.ref(field)
+
+    @property
+    def whole(self) -> Ref:
+        """The whole value (the step's entire output)."""
+
+        return make_ref(self.root, step=self.step)
+
+    def _label(self) -> str:
+        return f"step {self.step!r}" if self.step is not None else f"the Procedure {self.root}"
 
 
-@dataclass(frozen=True)
-class Step:
-    """Name is the output alias and binding key; edges target the node identity.
+def item(*path: str) -> Ref:
+    """The current record (or element) inside a ``for_each``, a transform, or a fan-out."""
 
-    Preserve an existing graph's distinct node identity with ``node_id`` when
-    adopting the builder, without renaming outputs or changing its bindings.
-    """
-
-    name: str
-    next: str | None = None
-    node_id: str | None = dataclass_field(default=None, kw_only=True)
+    return item_ref(*path)
 
 
-@dataclass(frozen=True)
-class Read(Step):
-    """A read of accepted state through a named Query; it runs to the end."""
+def field(name: str) -> Ref:
+    """The current record's field ``name`` (``$item.fields.<name>``), in a transform."""
 
-    query: str = ""
-    parameters: object = None
+    return item_ref("fields", name)
 
 
-@dataclass(frozen=True, kw_only=True)
-class Call(Step):
-    """A typed call through ``slot``; a Line binds the slot to an exact operation.
-
-    ``captures`` names, for each ``capture<K>`` field of the slot's out
-    Contract, the CaptureContract its bytes are committed as; a call with
-    captures acquires.
-    """
-
-    input: object = Previous()
-    slot: str
-    effect_policy: str | None = None
-    captures: dict[str, str] = dataclass_field(default_factory=dict)
+def _operand(value: object) -> Operand:
+    if isinstance(value, Ref | LiteralOperand | CountOperand):
+        return value
+    if isinstance(value, bool | int | str):
+        return LiteralOperand(literal=value)
+    raise TypeError(f"a predicate operand is a Ref, count(...) or a literal, not {value!r}")
 
 
-@dataclass(frozen=True, kw_only=True)
-class Extract(Step):
-    """Read one Capture's records, typed: ``capture`` is ``Output(<call>, <capture field>)``.
-
-    ``row`` pins the Contract whose fields the step reads (``{name, version,
-    digest}``); ``fields``, ``key`` and ``header`` map each name to where it
-    is read (``{"at": ..., "parse": ..., "presence": ...}``).
-    """
-
-    capture: object
-    records: str
-    row: dict[str, object]
-    fields: dict[str, dict[str, object]]
-    key: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
-    header: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
-    complete_when: dict[str, object] | None = None
-    duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
-    only_keys: object = None
+def _compare(op: ComparisonOp, left: object, right: object) -> Comparison:
+    return Comparison(op=op, left=_operand(left), right=_operand(right))
 
 
-@dataclass(frozen=True, kw_only=True)
-class Transform(Step):
-    """A closed transform: its records are typed as they flow; it names no Contracts."""
-
-    transform_kind: TransformKind
-    spec: ProcedureTransformSpec
+def eq(left: object, right: object) -> Comparison:
+    return _compare("eq", left, right)
 
 
-@dataclass(frozen=True, kw_only=True)
-class Project(Step):
-    fields: object
-    contract_out: Contract
+def ne(left: object, right: object) -> Comparison:
+    return _compare("ne", left, right)
 
 
-@dataclass(frozen=True, kw_only=True)
-class Guard(Step):
-    predicate: GuardPredicate
-    on_true: str | None = None
-    on_false: str = "$abort"
-    refusal_code: str = "guard_refused"
-    message: str = "Procedure guard refused."
+def lt(left: object, right: object) -> Comparison:
+    return _compare("lt", left, right)
 
 
-@dataclass(frozen=True)
-class EmitCapture(Step):
-    """Emit evidence as a Capture; ``result`` is the Procedure's typed return value."""
-
-    capture_contract: str = ""
-    input: object = Previous()
-    result: object = Previous()
+def le(left: object, right: object) -> Comparison:
+    return _compare("le", left, right)
 
 
-@dataclass(frozen=True, kw_only=True)
-class PostInbox(Step):
-    """Post typed items to the Line inbox, for intelligence to decide.
-
-    Every item is a record of ``contract`` (an accepted Contract, ``name@N``,
-    pinned to its digest). ``for_each`` names a list the run produced
-    (``"$steps.<alias>.records"``): each element posts one item whose
-    ``fields`` read it with ``Item(...)``; without it, ``fields`` make one item.
-    ``dedupe_key`` names the fields that are an item's inbox identity. Posting
-    is inert (it never touches accepted state) and needs observe authority; a
-    Procedure posts only when a Line runs it. ``max_items`` caps what one run
-    posts (the core default when absent); items past it are not posted and the
-    run reports the cut.
-    """
-
-    contract: str
-    fields: dict[str, object]
-    for_each: object = None
-    dedupe_key: tuple[str, ...] = ()
-    max_items: int | None = None
+def gt(left: object, right: object) -> Comparison:
+    return _compare("gt", left, right)
 
 
-@dataclass(frozen=True, kw_only=True)
-class ProposeChangeSet(Step):
-    """Propose the candidate Claims; ``result`` is the Procedure's typed return value.
-
-    ``candidate_templates`` is a fixed tuple of item templates, or
-    ``{"items": "$steps.<alias>.items"}`` to propose one Claim per element.
-    """
-
-    candidate_templates: tuple[object, ...] | dict[str, object]
-    result: object = Previous()
+def ge(left: object, right: object) -> Comparison:
+    return _compare("ge", left, right)
 
 
-@dataclass(frozen=True, kw_only=True)
-class SettleChangeSet(Step):
-    """Settle the candidate Claims under the one covering settle mandate, or fall back."""
-
-    candidate_templates: tuple[object, ...] | dict[str, object]
-    result: object = Previous()
+def is_in(left: object, members: tuple[str | int | bool, ...] | Ref) -> Membership:
+    return Membership(op="in", left=_operand(left), right=members)
 
 
-@dataclass(frozen=True)
-class Halt(Step):
-    reason: str | None = None
+def not_in(left: object, members: tuple[str | int | bool, ...] | Ref) -> Membership:
+    return Membership(op="not_in", left=_operand(left), right=members)
 
 
-_KINDS = {
-    Read: "read",
-    Call: "call",
-    Extract: "extract",
-    Transform: "transform",
-    Project: "project",
-    Guard: "guard",
-    EmitCapture: "emit_capture",
-    PostInbox: "post_inbox",
-    ProposeChangeSet: "propose_change_set",
-    SettleChangeSet: "settle_change_set",
-    Halt: "halt",
-}
+def present(ref: Ref) -> Presence:
+    return Presence(op="present", of=ref)
+
+
+def absent(ref: Ref) -> Presence:
+    return Presence(op="absent", of=ref)
+
+
+def all_of(*parts: Predicate) -> AllOf:
+    return AllOf(of=parts)
+
+
+def any_of(*parts: Predicate) -> AnyOf:
+    return AnyOf(of=parts)
+
+
+def not_(part: Predicate) -> Not:
+    return Not(of=part)
+
+
+def count(ref: Ref) -> CountOperand:
+    return CountOperand(count=ref)
+
+
+def abort(code: str, message: str) -> AbortAction:
+    return AbortAction(abort=AbortDetail(code=code, message=message))
+
+
+def halt(reason: str | None, *, message: str | None = None, id: str | None = None) -> HaltAction:
+    return HaltAction(halt=reason, message=message, id=id)
+
+
+def goto(step: str) -> GotoAction:
+    return GotoAction(goto=step)
+
+
+# -- the builder ---------------------------------------------------------------------
 
 
 class CompositionDiagnostic(BaseModel):
     step: str | None = None
     code: str
     message: str
-    span: SourceSpan | None = None
-    related_spans: tuple[SourceSpan, ...] = ()
-    hint: str | None = None
-
-
-class ProcedureStateDependency(BaseModel):
-    node_id: str
-    kind: Literal["claim", "query"]
-    selection: ArtifactPin | ArtifactNameRef
-    cardinality: Literal["one", "all", "query"]
-    limit: int | None = None
-    admitted_context: bool = True
-    subject_kind: str | None = None
-    selector: JsonValue = None
-
-    _canonical_selector = field_validator("selector", mode="before")(normalize_canonical)
-
-
-class ProcedureBindingRequirement(BaseModel):
-    slot: str
-    resolved: SourceBinding | None = None
-
-
-class ProcedureBranchValue(BaseModel):
-    node_id: str
-    kind: Literal["guard", "select"]
-    producers: tuple[str, ...] = ()
-    predicate: GuardPredicate | None = None
-    contract: ArtifactPin | ArtifactNameRef | None = None
-    successors: dict[str, str] = Field(default_factory=dict)
-
-
-class ProcedureReturnPath(BaseModel):
-    node_id: str
-    kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
-    contract: ArtifactPin | ArtifactNameRef
-    # The authority the path's terminal needs; a pure or halting path needs none.
-    required_authority: AuthorityVerb | None
-
-
-class ProcedureChildCall(BaseModel):
-    node_id: str
-    procedure: ArtifactPin | ArtifactNameRef
-    inherits_authority: bool = True
-    shares_budget: bool = True
 
 
 class ProcedurePreview(BaseModel):
@@ -335,26 +266,14 @@ class ProcedurePreview(BaseModel):
 
     name: str
     ready_for_prepare: bool
-    contracts: tuple[CarriedContractInput, ...]
-    contract_in: ArtifactPin | ArtifactNameRef | dict[str, Any]
-    contract_out: ArtifactPin | ArtifactNameRef | dict[str, Any]
+    spec: ProcedureSpec
     # The most this Procedure's terminals can do: observe, propose or settle.
-    authority: AuthorityVerb
-    nodes: tuple[ProcedureNode | dict[str, Any], ...]
+    authority: AuthorityVerb | None = None
+    nodes: tuple[dict[str, Any], ...] = ()
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
-    slots: dict[str, ProcedureSlot] = Field(default_factory=dict)
     terminals: tuple[str, ...] = ()
-    returns: str | None
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
+    returns: str | None = None
     errors: tuple[CompositionDiagnostic, ...] = ()
-    source: ProcedureSourceProgram | None = None
-    source_map: tuple[SourceMapEntry, ...] = ()
-    state_dependencies: tuple[ProcedureStateDependency, ...] = ()
-    binding_requirements: tuple[ProcedureBindingRequirement, ...] = ()
-    branch_values: tuple[ProcedureBranchValue, ...] = ()
-    return_paths: tuple[ProcedureReturnPath, ...] = ()
-    children: tuple[ProcedureChildCall, ...] = ()
     pending_checks: tuple[str, ...] = (
         "Resolve accepted references and pin slot Contracts at the intent base.",
         "Validate runtime values against contracts; preview does not execute any path.",
@@ -368,318 +287,463 @@ class ProcedureCompositionError(ValueError):
         super().__init__("; ".join(f"{d.step or 'sequence'}: {d.message}" for d in preview.errors))
 
 
-def _accepted(name: str, kind: str, role: str) -> dict[str, str]:
-    target = name if name.startswith(kind + ":") else kind + ":" + name
-    parse_artifact_identity(target)
-    return AcceptedReferenceInput(kind="accepted", target=target, role=role).model_dump()
+def _contract_fields(contract: Contract | None) -> tuple[str, ...] | None:
+    return None if contract is None else tuple(contract.fields)
 
 
-def _template(value: object, previous: str | None) -> Any:
-    if isinstance(value, (Previous, Output)):
-        base = (
-            ("$input" if previous is None else f"$steps.{previous}")
-            if isinstance(value, Previous)
-            else f"$steps.{value.step}"
-        )
-        return base + ("." + value.path if value.path else "")
-    if isinstance(value, BaseModel):
-        return _template(value.model_dump(mode="json", by_alias=True), previous)
-    if isinstance(value, dict):
-        return {k: _template(v, previous) for k, v in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [_template(v, previous) for v in value]
-    return value
-
-
-def _named(value: Any) -> Any:
-    """The authoring references as graph names, for local shape validation only."""
-    if isinstance(value, dict):
-        if value.get("kind") in {"accepted", "carried_contract"}:
-            target = value.get("target", "Contract:" + value.get("name", ""))
-            return {"target": parse_artifact_identity(target).model_dump(mode="json")}
-        return {k: _named(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_named(v) for v in value]
-    return value
-
-
-def _schema(contract: CarriedContractInput) -> ContractSchema:
-    return ContractSchema(fields=contract.fields, allow_extra=contract.allow_extra)
-
-
-@dataclass(frozen=True)
 class Sequence:
-    """Compose forward steps; guards may name explicit forward branch targets.
+    """Build one ProcedureSpec, step by step, with typed handles and predicates.
 
-    Call steps name a slot of ``slots``; a Line binds each slot to an
-    exact operation. ``preview()`` is local; ``build()`` produces the shared
-    ProcedureInput consumed by every surface.
+    ``slots`` declares each slot's ``{in, out, effect}`` signature; a Line binds
+    it. ``contracts`` optionally supplies accepted Contracts by ``name@N`` (a
+    slot's out Contract) so call handles check their field names; without one,
+    a call's fields are checked at prepare.
     """
 
-    steps: tuple[Step, ...] | list[Step]
-    name: str
-    contract_in: Contract
-    contract_out: Contract
-    budget: ProcedureBudget
-    hard_caps: ProcedureHardCaps
-    returns: str | None = None
-    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
-    description: str | None = None
-    slots: dict[str, ProcedureSlot] = dataclass_field(default_factory=dict)
+    def __init__(
+        self,
+        procedure: str,
+        *,
+        input: Mapping[str, FieldType],
+        params: Mapping[str, FieldType] | None = None,
+        output: Mapping[str, FieldType] | None = None,
+        slots: Mapping[str, ProcedureSlot | Mapping[str, object]] | None = None,
+        contracts: Mapping[str, Contract] | None = None,
+        description: str | None = None,
+        activation: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
+        budget: ProcedureLimits | None = None,
+        caps: ProcedureLimits | None = None,
+    ) -> None:
+        self.procedure = procedure
+        self._input = dict(input)
+        self._params = dict(params or {})
+        self._output = None if output is None else dict(output)
+        self._slots = {
+            name: ProcedureSlot.model_validate(slot) for name, slot in (slots or {}).items()
+        }
+        self._contracts = dict(contracts or {})
+        self._description = description
+        self._activation = activation
+        self._budget = budget
+        self._caps = caps
+        self._steps: list[Step] = []
+        self._returns: str | ReturnFrom | ReturnFields | None = None
+        self.input = Handle("input", fields=tuple(self._input))
+        self.params = Handle("param", fields=tuple(self._params))
 
-    def _compile(self) -> tuple[ProcedureInput, ProcedurePreview]:
-        contracts: dict[str, CarriedContractInput] = {}
-        errors: list[CompositionDiagnostic] = []
-        nodes: list[dict[str, Any]] = []
-        previous: str | None = None
-        output_contracts: dict[str, ContractSchema | None] = {}
+    # -- steps that produce a value -------------------------------------------------
 
-        def error(step: str | None, code: str, message: str) -> None:
-            errors.append(CompositionDiagnostic(step=step, code=code, message=message))
+    def _add(self, step: Step, name: str, fields: tuple[str, ...] | None) -> Handle:
+        self._steps.append(step)
+        return Handle("step", step=name, fields=fields)
 
-        def contract_ref(contract: Contract, role: str) -> dict[str, Any]:
-            if isinstance(contract, CarriedContractInput):
-                if contract.name in contracts and contracts[contract.name] != contract:
-                    error(
-                        None, "contract_conflict", f"Conflicting definitions for {contract.name!r}"
-                    )
-                contracts[contract.name] = contract
-                return {"kind": "carried_contract", "name": contract.name, "role": role}
-            raise TypeError(
-                "Procedure Contracts must be owner-carried; "
-                "standalone accepted Contract references do not exist"
+    def read(
+        self,
+        name: str,
+        *,
+        query: str,
+        params: Mapping[str, Template] | None = None,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Read accepted state through a named Query; it runs to the end."""
+
+        step = ReadStep(read=name, query=query, params=dict(params or {}), id=id, next=next)
+        return self._add(step, name, tuple(query_view_schema().fields))
+
+    def read_claims(
+        self,
+        name: str,
+        *,
+        claim_type: str,
+        subject: Template,
+        subject_kind: str | None = None,
+        all: int | None = None,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Read one ClaimType's Claims about a Subject (``all``: at most that many)."""
+
+        step = ReadStep(
+            read=name,
+            claim_type=claim_type,
+            subject=subject,
+            subject_kind=subject_kind,
+            all=all,
+            id=id,
+            next=next,
+        )
+        return self._add(step, name, None)
+
+    def call(
+        self,
+        name: str,
+        *,
+        slot: str,
+        input: Template,
+        captures: Mapping[str, str] | None = None,
+        effect_policy: str | None = None,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Call ``slot``; a Line binds it. ``captures`` names each capture field's
+        CaptureContract (a call with captures acquires)."""
+
+        step = CallStep(
+            call=name,
+            slot=slot,
+            input=input,
+            captures=dict(captures or {}),
+            effect_policy=effect_policy,
+            id=id,
+            next=next,
+        )
+        signature = self._slots.get(slot)
+        out = None if signature is None else self._contracts.get(signature.out.spelling)
+        return self._add(step, name, _contract_fields(out))
+
+    def extract(
+        self,
+        name: str,
+        *,
+        capture: Ref,
+        records: str,
+        row: str,
+        fields: Mapping[str, ExtractField | Mapping[str, object]],
+        key: Mapping[str, ExtractField | Mapping[str, object]] | None = None,
+        header: Mapping[str, ExtractField | Mapping[str, object]] | None = None,
+        complete_when: CompleteWhen | None = None,
+        duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key",
+        only_keys: Template = None,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Read one Capture's records, typed by the ``row`` Contract (``name@N``)."""
+
+        step = ExtractStep.model_validate(
+            dict(
+                extract=name,
+                capture=capture,
+                records=records,
+                row=row,
+                fields=dict(fields),
+                key=dict(key or {}),
+                header=dict(header or {}),
+                complete_when=complete_when,
+                duplicates=duplicates,
+                only_keys=only_keys,
+                id=id,
+                next=next,
             )
+        )
+        return self._add(step, name, tuple(extract_view_fields(None)))
 
-        root_in = contract_ref(self.contract_in, "contract-in")
-        root_out = contract_ref(self.contract_out, "contract-out")
-        for step in self.steps:
-            kind = _KINDS.get(type(step))
-            if kind is None:
-                raise TypeError(f"Unsupported sequence step: {type(step).__name__}")
-            node: dict[str, Any] = {
-                "kind": kind,
-                "node_id": step.name if step.node_id is None else step.node_id,
-            }
-            for field in fields(step):
-                if field.name in {"name", "node_id", "next"}:
-                    continue
-                value = getattr(step, field.name)
-                if field.name in {"contract_in", "contract_out"}:
-                    node[field.name] = contract_ref(value, field.name.replace("_", "-"))
-                elif field.name == "capture_contract":
-                    node[field.name] = _accepted(value, "CaptureContract", "capture-contract")
-                elif field.name == "captures":
-                    if value:
-                        node[field.name] = {
-                            name: _accepted(contract, "CaptureContract", "capture-contract")
-                            for name, contract in sorted(value.items())
-                        }
-                elif field.name == "query":
-                    node[field.name] = _accepted(value, "QueryDefinition", "query")
-                elif field.name == "effect_policy":
-                    if value is not None:
-                        node[field.name] = _accepted(value, "EffectPolicy", "effect-policy")
-                elif field.name == "slot":
-                    node["slot"] = value
-                else:
-                    node[field.name] = _template(value, previous)
-            if isinstance(step, Read) and step.parameters is None:
-                node["parameters"] = {}
-            if isinstance(step, PostInbox):
-                if step.max_items is None:
-                    del node["max_items"]  # absent takes the core default cap
-                if step.for_each is None:
-                    del node["for_each"]
-                if not step.dedupe_key:
-                    del node["dedupe_key"]
-            if isinstance(step, Call) and step.slot not in self.slots:
-                error(
-                    step.name,
-                    "slot_undeclared",
-                    f"Declare slot {step.slot!r} in slots with its {{in, out, effect}} signature.",
-                )
-            if isinstance(
-                step, (Guard, EmitCapture, PostInbox, ProposeChangeSet, SettleChangeSet, Halt)
-            ):
-                if step.next is not None:
-                    error(
-                        step.name,
-                        "invalid_next",
-                        "Use guard arms; terminal steps have no successor.",
-                    )
-            else:
-                node["as"] = step.name
-                if step.next is not None:
-                    node["next"] = step.next
-            for field_name in ("input", "fields", "spec"):
-                if field_name not in node:
-                    continue
-                schema_ref = getattr(
-                    step, "contract_out" if field_name == "fields" else "contract_in", None
-                )
-                if isinstance(schema_ref, CarriedContractInput) and not _has_reference(
-                    node[field_name]
-                ):
-                    try:
-                        value = node[field_name]
-                        if field_name == "spec":
-                            value = {k: v for k, v in value.items() if k != "tag"}
-                        validate_contract_schema(_schema(schema_ref), value)
-                    except ValueError as exc:
-                        error(step.name, "contract_value_invalid", str(exc))
-            nodes.append(node)
-            if "as" in node:
-                previous = step.name
-                carried = getattr(step, "contract_out", None)
-                output_contracts[step.name] = (
-                    _schema(carried) if isinstance(carried, CarriedContractInput) else None
-                )
-        returns = self.returns or previous or "result"
-        returned_contract = output_contracts.get(returns)
-        if returned_contract is not None and returned_contract != _schema(self.contract_out):
-            error(
-                returns,
-                "return_contract_mismatch",
-                "The returned output schema differs from the Procedure output contract.",
+    def project(
+        self,
+        name: str,
+        *,
+        fields: Mapping[str, Template] | Ref | None = None,
+        literal: object = None,
+        output: Mapping[str, FieldType] | None = None,
+        contract: str | None = None,
+        leaf: bool = False,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """A typed record from run values (``fields``) or exact data (``literal``)."""
+
+        step = ProjectStep.model_validate(
+            dict(
+                project=name,
+                fields=dict(fields) if isinstance(fields, Mapping) else fields,
+                literal=literal,
+                output=None if output is None else dict(output),
+                contract=contract,
+                leaf=leaf,
+                id=id,
+                next=next,
             )
-        definition: dict[str, Any] = dict(
-            name=self.name,
-            description=self.description,
-            contract_in=root_in,
-            contract_out=root_out,
-            nodes=nodes,
-            returns=returns,
-            budget=self.budget.model_dump(mode="json"),
-            hard_caps=self.hard_caps.model_dump(mode="json"),
-            terminal_capability=derived_terminal_capability(nodes),
         )
-        if self.slots:
-            definition["slots"] = {
-                name: slot.model_dump(mode="json", by_alias=True)
-                for name, slot in sorted(self.slots.items())
-            }
-        edges: dict[str, dict[str, str]] = {}
-        try:
-            checked = ProcedureDefinition.model_validate(_named(definition))
-            edges = analyze_procedure(checked).edges
-        except (ValueError, ProcedureGraphFormatError) as exc:
-            error(None, "graph_invalid", str(exc))
-        input_ = ProcedureInput(
-            kind="procedure",
-            definition=definition,
-            activation_policy=self.activation_policy,
-            contracts=tuple(contracts[name] for name in sorted(contracts)),
+        known = (
+            tuple(output)
+            if output is not None
+            else tuple(fields)
+            if isinstance(fields, Mapping)
+            else None
         )
-        lower_authoring_input(input_)  # Same pure payload lowering used by SDK/CLI/HTTP.
-        if not errors:
-            authored = _authored_input(input_)
-            assert authored.spec is not None
-            try:
-                lower_procedure_spec(authored.spec)
-            except ProcedureSpecError as exc:
-                index = exc.field_path.partition("$.steps[")[2].partition("]")[0]
-                authored_step = (
-                    authored.spec.steps[int(index)]
-                    if index.isdigit() and int(index) < len(authored.spec.steps)
-                    else None
-                )
-                error(
-                    getattr(authored_step, "id", None),
-                    exc.code.removeprefix("cruxible.authoring."),
-                    str(exc),
-                )
-        visible_nodes = tuple(nodes)
-        preview = ProcedurePreview(
-            name=self.name,
-            ready_for_prepare=not errors,
-            contracts=input_.contracts,
-            contract_in=root_in,
-            contract_out=root_out,
-            authority=RUNG_AUTHORITY[derived_terminal_capability(nodes)],
-            slots=dict(self.slots),
-            nodes=visible_nodes,
-            edges=edges,
-            terminals=tuple(
-                n["node_id"]
-                for n in nodes
-                if n["kind"] in TERMINAL_NODE_KINDS or not edges.get(n["node_id"])
-            ),
-            returns=returns,
-            budget=self.budget,
-            hard_caps=self.hard_caps,
-            errors=tuple(errors),
+        return self._add(step, name, known)
+
+    def transform(
+        self,
+        name: str,
+        *,
+        kind: TransformKind,
+        spec: TransformSpec,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """A closed transform; its records are typed as they flow."""
+
+        step = TransformStep(transform=name, kind=kind, spec=spec, id=id, next=next)
+        return self._add(step, name, None)
+
+    def invoke(
+        self,
+        procedure: str,
+        *,
+        input: Template,
+        as_: str,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Invoke an accepted Procedure under this run's limits and authority."""
+
+        step = InvokeStep.model_validate(
+            {"invoke": procedure, "input": input, "as": as_, "id": id, "next": next}
         )
-        return input_, preview
+        return self._add(step, as_, None)
+
+    def select(
+        self,
+        name: str,
+        *,
+        sources: tuple[str, ...],
+        output: Mapping[str, FieldType] | None = None,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Join mutually exclusive branch producers into one value."""
+
+        step = SelectStep(
+            select=name,
+            sources=sources,
+            output=None if output is None else dict(output),
+            id=id,
+            next=next,
+        )
+        return self._add(step, name, None if output is None else tuple(output))
+
+    def repeat(
+        self,
+        name: str,
+        *,
+        max_attempts: int,
+        body: tuple[RepeatBody, ...],
+        until: Predicate,
+        id: str | None = None,
+        next: str | None = None,
+    ) -> Handle:
+        """Run ``body`` (calls and closed transforms) until ``until`` holds, bounded."""
+
+        step = RepeatStep(
+            repeat=name, max_attempts=max_attempts, body=body, until=until, id=id, next=next
+        )
+        return self._add(step, name, None)
+
+    # -- control and terminals ---------------------------------------------------------
+
+    def guard(
+        self,
+        predicate: Predicate,
+        *,
+        then: BranchAction | None = None,
+        else_: BranchAction | None = None,
+        id: str | None = None,
+    ) -> None:
+        """Branch: ``then`` (default: continue), ``else`` (default: abort guard_refused)."""
+
+        data: dict[str, Any] = {"guard": predicate, "then": then, "id": id}
+        if else_ is not None:
+            data["else"] = else_
+        self._steps.append(GuardStep.model_validate(data))
+
+    def halt(
+        self, reason: str | None, *, message: str | None = None, id: str | None = None
+    ) -> None:
+        self._steps.append(HaltStep(halt=reason, message=message, id=id))
+
+    def inbox(
+        self,
+        contract: str,
+        *,
+        fields: Mapping[str, Template],
+        for_each: Ref | None = None,
+        dedupe_key: tuple[str, ...] = (),
+        max_items: int | None = None,
+        id: str | None = None,
+    ) -> None:
+        """Post typed items (records of ``contract``, ``name@N``) to the Line inbox."""
+
+        self._steps.append(
+            InboxStep(
+                inbox=contract,
+                fields=dict(fields),
+                for_each=for_each,
+                dedupe_key=dedupe_key,
+                max_items=max_items,
+                id=id,
+            )
+        )
+
+    def propose(
+        self,
+        candidates: Ref | tuple[Template, ...],
+        *,
+        result: Template = None,
+        id: str | None = None,
+    ) -> None:
+        """Propose Claims: fixed item templates, or one item per element of a list."""
+
+        self._steps.append(ProposeStep(propose=candidates, result=result, id=id))
+
+    def settle(
+        self,
+        candidates: Ref | tuple[Template, ...],
+        *,
+        result: Template = None,
+        id: str | None = None,
+    ) -> None:
+        """Settle Claims under the one covering settle grant, or fall back."""
+
+        self._steps.append(SettleStep(settle=candidates, result=result, id=id))
+
+    def emit(
+        self,
+        capture_contract: str,
+        *,
+        input: Template,
+        result: Template,
+        id: str | None = None,
+    ) -> None:
+        """Emit evidence as a Capture; ``result`` is the Procedure's typed return value."""
+
+        self._steps.append(EmitStep(emit=capture_contract, input=input, result=result, id=id))
+
+    def returns(self, value: str | Handle | ReturnFrom | ReturnFields) -> None:
+        """What the Procedure returns: a step (or its handle), or a return projection."""
+
+        self._returns = value.step if isinstance(value, Handle) else value
+
+    # -- the spec ----------------------------------------------------------------------
+
+    def spec(self) -> ProcedureSpec:
+        """The one authoring form this builder states (validated)."""
+
+        data: dict[str, Any] = dict(
+            procedure=self.procedure,
+            description=self._description,
+            input=self._input,
+            params=self._params,
+            output=self._output,
+            slots=self._slots,
+            activation=self._activation,
+            steps=tuple(self._steps),
+            returns=self._returns,
+        )
+        if self._budget is not None:
+            data["budget"] = self._budget
+        if self._caps is not None:
+            data["caps"] = self._caps
+        return ProcedureSpec.model_validate(data)
 
     def preview(self) -> ProcedurePreview:
-        return self._compile()[1]
+        """Lower the spec locally (the shared lowering) and inspect its graph."""
+
+        spec = self.spec()
+        errors: list[CompositionDiagnostic] = []
+        nodes: tuple[dict[str, Any], ...] = ()
+        edges: dict[str, dict[str, str]] = {}
+        returns: str | None = None
+        authority: AuthorityVerb | None = None
+        try:
+            lowered = lower_procedure_spec(spec)
+            definition = dict(lowered.definition)
+            nodes = tuple(definition["nodes"])
+            returns = definition.get("returns")
+            authority = RUNG_AUTHORITY[derived_terminal_capability(nodes)]
+            checked = ProcedureDefinition.model_validate(definition)
+            edges = analyze_procedure(checked).edges
+        except ProcedureSpecError as exc:
+            index = exc.field_path.partition("$.steps[")[2].partition("]")[0]
+            step = (
+                spec.steps[int(index)] if index.isdigit() and int(index) < len(spec.steps) else None
+            )
+            errors.append(
+                CompositionDiagnostic(
+                    step=getattr(step, "id", None),
+                    code=exc.code.removeprefix("cruxible.authoring."),
+                    message=str(exc),
+                )
+            )
+        except (ValueError, ProcedureGraphFormatError) as exc:
+            errors.append(CompositionDiagnostic(code="graph_invalid", message=str(exc)))
+        return ProcedurePreview(
+            name=self.procedure,
+            ready_for_prepare=not errors,
+            spec=spec,
+            authority=authority,
+            nodes=nodes,
+            edges=edges,
+            terminals=tuple(
+                str(node["node_id"])
+                for node in nodes
+                if node["kind"] in TERMINAL_NODE_KINDS
+                or node.get("leaf") is True
+                or not edges.get(str(node["node_id"]))
+            ),
+            returns=returns,
+            errors=tuple(errors),
+        )
 
     def build(self) -> ProcedureInput:
-        input_, preview = self._compile()
+        """The authoring input every surface submits: ``{kind: procedure, spec}``."""
+
+        preview = self.preview()
         if preview.errors:
             raise ProcedureCompositionError(preview)
-        return _authored_input(input_)
-
-
-def _authored_input(input_: ProcedureInput) -> ProcedureInput:
-    """One conversion shared by preview validation and the submitted input."""
-    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
-    from cruxible_client.contracts.procedures.decompile import decompile_procedure
-
-    definition = ProcedureDefinition.model_validate(_named(input_.definition))
-    owner = ProcedureArtifact.model_construct(
-        definition=definition,
-        owned_contracts=tuple(
-            ProcedureOwnedContract(
-                identity=parse_artifact_identity("Contract:" + c.name),
-                schema=_schema(c),
-            )
-            for c in input_.contracts
-        ),
-        activation_policy=input_.activation_policy,
-        acquisition_defaults=input_.acquisition_defaults,
-    )
-    return ProcedureInput(kind="procedure", spec=decompile_procedure(owner))
-
-
-def _has_reference(value: object) -> bool:
-    if isinstance(value, str):
-        return value.startswith(("$input", "$steps", "$params", "$item"))
-    if isinstance(value, dict):
-        return any(_has_reference(v) for v in value.values())
-    if isinstance(value, (tuple, list)):
-        return any(_has_reference(v) for v in value)
-    return False
+        return ProcedureInput(kind="procedure", spec=preview.spec)
 
 
 __all__ = [
-    "Call",
+    "AggregateSpec",
     "CompositionDiagnostic",
-    "Contract",
-    "EmitCapture",
-    "Extract",
-    "Guard",
-    "Halt",
-    "Item",
-    "LiteralClaimObject",
-    "Output",
-    "PostInbox",
-    "Previous",
-    "ProcedureClaimRetirementItem",
-    "ProcedureClaimStatement",
+    "DedupeSpec",
+    "DeriveCaseSpec",
+    "DeriveSpec",
+    "FilterSpec",
+    "Handle",
+    "JoinSpec",
     "ProcedureCompositionError",
-    "ProcedureKeyedClaimProposalItem",
+    "ProcedureLimits",
     "ProcedurePreview",
-    "ProcedureSubjectProposalItem",
-    "Project",
-    "ProposeChangeSet",
-    "SettleChangeSet",
-    "Sequence",
     "ProcedureSpec",
+    "Ref",
+    "RepeatCall",
+    "RepeatTransform",
+    "ReturnFields",
+    "ReturnFrom",
+    "Sequence",
+    "ShapeFieldSpec",
+    "ShapeSpec",
+    "UnionSpec",
+    "abort",
+    "absent",
+    "all_of",
+    "any_of",
+    "count",
+    "eq",
+    "field",
+    "ge",
+    "goto",
+    "gt",
+    "halt",
+    "is_in",
+    "item",
+    "le",
     "lower_procedure_spec",
-    "Read",
-    "SubjectKeyClaimObject",
-    "SubjectKeyReference",
-    "Transform",
-    "WorkspaceFileSourceRequestV2",
+    "lt",
+    "ne",
+    "not_",
+    "not_in",
+    "present",
 ]

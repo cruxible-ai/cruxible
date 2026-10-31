@@ -63,7 +63,7 @@ def nested_world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-u
     instance, owner = initialize_local(tmp_path)
     child, parent = blueprints()
     accept_blueprint(instance, owner, child)
-    accept_blueprint(instance, owner, parent, child="child")
+    accept_blueprint(instance, owner, parent)
     accepted = _accepted_procedure(
         instance, name="parent", coordinate=instance.accepted_coordinate()
     )

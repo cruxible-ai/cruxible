@@ -209,27 +209,28 @@ def _install(world: Any, project: Path, *, control_domain: str = "operator") -> 
     assert result.registered, result
 
 
-def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[Any, ...]]:
+def _graph(world: Any, *, provider: str | None) -> Any:
     """One open operation slot; provider selection belongs to a consumer Line."""
-    from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
     from tests.support.provider_installation import LOCAL_CALL_IN, LOCAL_CALL_OUT
 
-    authored = lower_procedure_spec(
-        ProcedureSpec.model_validate(
-            {
-                "procedure": PROCEDURE if provider is not None else BLUEPRINT,
-                "input": {"n": "integer"},
-                "output": {"n": "integer"},
-                "slots": {
-                    "increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}
-                },
-                "steps": [{"call": "result", "slot": "increment", "input": {"n": "$input.n"}}],
-                "returns": "result",
-                "budget": {"wall_clock": "PT30S", "provider_calls": 1},
-            }
-        )
+    return ProcedureSpec.model_validate(
+        {
+            "procedure": PROCEDURE if provider is not None else BLUEPRINT,
+            "input": {"n": "integer"},
+            "output": {"n": "integer"},
+            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+            "steps": [
+                {
+                    "call": "result",
+                    "slot": "increment",
+                    "input": {"n": {"$ref": "input", "path": ["n"]}},
+                }
+            ],
+            "returns": "result",
+            "budget": {"wall_clock": "PT30S", "provider_calls": 1},
+        }
     )
-    return authored.definition, authored.contracts
 
 
 def _author(world: Any, *, procedure: bool = True) -> None:
@@ -255,9 +256,8 @@ def _author(world: Any, *, procedure: bool = True) -> None:
     world.approve(proposed.admission.proposal_id)
     draft = world.pb.changes(rationale="Ship open increment Procedures.")
     for selected in ("kit-call", None) if procedure else (None,):
-        definition, contracts = _graph(world, provider=selected)
         draft.procedure(
-            definition=ProcedureInput(kind="procedure", definition=definition, contracts=contracts)
+            definition=ProcedureInput(kind="procedure", spec=_graph(world, provider=selected))
         )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics

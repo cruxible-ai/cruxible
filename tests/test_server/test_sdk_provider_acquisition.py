@@ -527,9 +527,7 @@ def test_sdk_source_retains_and_reads_acquisition(
 def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     playbill_http, tmp_path, monkeypatch, defaulted
 ):
-    from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+    from cruxible_client.authoring.inputs import ProcedureInput
 
     http, instance_id, reviewer = playbill_http
     manager = get_playbill_manager()
@@ -570,49 +568,30 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    example = procedure_example()
-
-    def carried(role):
-        return {"kind": "carried_contract", "name": "size", "role": role}
-
-    raw = {
-        **example.definition,
-        "returns": "result",
-        "contract_out": carried("contract-out"),
-        "slots": {
-            "invoke": {
-                "in": f"{call_input.name}@{call_input.version}",
-                "out": f"{call_output.name}@{call_output.version}",
-                "effect": "external_read",
-            }
-        },
-        "nodes": [
-            {
-                "kind": "call",
-                "node_id": "invoke",
-                "as": "result",
-                "input": {"size": 1},
-                "slot": "invoke",
-            }
-        ],
-    }
-    raw["budget"] = {
-        **raw["budget"],
-        "max_items": None,
-        "max_provider_calls": 1,
-        "max_capture_bytes": 65536,
-    }
-    raw["hard_caps"] = {**raw["hard_caps"], "max_provider_calls": 2, "max_capture_bytes": 131072}
-    authored = example.model_copy(
-        update={
-            "definition": raw,
-            "contracts": (
-                next(item for item in example.contracts if item.name == "empty-input"),
-                CarriedContractInput(
-                    name="size",
-                    fields={"size": PropertySchema(type="int")},
-                ),
-            ),
+    authored = ProcedureInput.model_validate(
+        {
+            "kind": "procedure",
+            "procedure": "replace-me",
+            "input": {},
+            "output": {"size": "int"},
+            "input_contract": "empty-input",
+            "output_contract": "size",
+            "slots": {
+                "invoke": {
+                    "in": f"{call_input.name}@{call_input.version}",
+                    "out": f"{call_output.name}@{call_output.version}",
+                    "effect": "external_read",
+                }
+            },
+            "steps": [{"call": "result", "id": "invoke", "slot": "invoke", "input": {"size": 1}}],
+            "returns": "result",
+            "budget": {"wall_clock": "PT10M", "provider_calls": 1, "capture_bytes": 65536},
+            "caps": {
+                "wall_clock": "PT30M",
+                "provider_calls": 2,
+                "capture_bytes": 131072,
+                "items": 200,
+            },
         }
     )
     intent = pb.procedure(definition=authored).prepare()

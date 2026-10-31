@@ -405,24 +405,25 @@ def test_each_v3_tag_has_one_named_law_object():
 
 
 def test_authored_procedure_lowers_directly_to_the_named_graph():
-    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
     from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
     from cruxible_client.contracts.procedures.models import ProcedureDefinition
+    from tests.support.procedures import ref
 
     authored = ProcedureSpec(
         procedure="test.native",
         input={"value": "integer"},
         returns="result",
-        steps=({"project": "result", "fields": {"value": "$input.value"}},),
+        steps=({"project": "result", "fields": {"value": ref("$input.value")}},),
     )
     lowered = lower_procedure_spec(authored)
     definition = ProcedureDefinition.model_validate(lowered.definition)
     assert definition.graph_format == 7
     assert definition.contract_in.target.name == "test.native-input"
-    payload = lower_authoring_input(lowered)
-    assert payload.definition == lowered.definition
-    assert "artifact_digest" not in json.dumps(payload.definition)
-    assert "role" not in json.dumps(payload.definition)
+    payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
+    assert payload.definition["procedure_spec"] == authored.model_dump(mode="json", by_alias=True)
+    assert "artifact_digest" not in json.dumps(lowered.definition)
+    assert "role" not in json.dumps(lowered.definition)
 
 
 def test_named_v3_wire_omits_pin_tags_defaults_and_duplicate_node_ids():
@@ -455,6 +456,7 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
     from cruxible_core.authoring.store import AuthoringIntentStore
     from cruxible_core.proposals.proposals import AuthenticatedActor
     from tests.core_support._support import initialize_local
+    from tests.support.procedures import ref
 
     instance, _ = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator(
@@ -465,7 +467,7 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
         procedure="test.writer",
         input={"value": "integer"},
         returns="result",
-        steps=({"project": "result", "fields": {"value": "$input.value"}},),
+        steps=({"project": "result", "fields": {"value": ref("$input.value")}},),
     )
     query = QueryDefinitionSpec(
         identity=ArtifactIdentity(kind="QueryDefinition", name="test.writer"),
@@ -500,21 +502,6 @@ def test_authoring_chooses_the_named_format_for_every_kind(tmp_path):
         assert "pins" not in body
 
 
-def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
-
-    from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
-    from cruxible_client.contracts.procedures.wire_v3 import compact_procedure
-    from cruxible_client.contracts.query.definitions import render_query_definition
-    from tests.test_query.test_query_definitions import active_work_query
-
-    query = active_work_query()
-    binding = SourceQueryBinding(name=query.identity.name, definition=query)
-    wire = compact_procedure(binding)
-    assert wire["definition"] == json.loads(render_query_definition(query))
-    assert "result_cardinality" not in wire["definition"]
-    assert SourceQueryBinding.model_validate(wire) == binding
-
-
 @pytest.mark.parametrize(
     "literal",
     [
@@ -523,7 +510,7 @@ def test_retained_query_bindings_use_the_same_compact_v3_query_wire():
     ],
 )
 def test_named_authoring_keeps_legacy_reference_spellings_opaque_in_templates(literal):
-    from cruxible_client.contracts.authoring.inputs import lower_authoring_input
+    from cruxible_client.contracts.authoring.inputs import ProcedureInput, lower_authoring_input
     from cruxible_client.contracts.procedures.authored import ProcedureSpec, lower_procedure_spec
 
     authored = ProcedureSpec(
@@ -533,9 +520,9 @@ def test_named_authoring_keeps_legacy_reference_spellings_opaque_in_templates(li
         steps=({"project": "result", "fields": {"data": literal}},),
     )
     lowered = lower_procedure_spec(authored)
-    payload = lower_authoring_input(lowered)
-    assert payload.definition["nodes"][0]["fields"]["data"] == literal
-    assert payload.definition == lowered.definition
+    assert lowered.definition["nodes"][0]["fields"]["data"] == literal
+    payload = lower_authoring_input(ProcedureInput(kind="procedure", spec=authored))
+    assert payload.definition["procedure_spec"]["steps"][0]["fields"]["data"] == literal
 
 
 def test_named_query_read_validation_preserves_native_owner_and_rejects_old_pins():

@@ -128,7 +128,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
     instance, owner = initialize_local(tmp_path)
     child_blueprint, parent_blueprint = blueprints()
     accept_blueprint(instance, owner, child_blueprint)
-    accept_blueprint(instance, owner, parent_blueprint, child="child")
+    accept_blueprint(instance, owner, parent_blueprint)
     old_child, old_parent = _accepted(instance, "child"), _accepted(instance, "parent")
 
     # New identities, so nothing is a successor: `grand` (run by the Line) invokes

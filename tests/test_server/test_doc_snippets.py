@@ -412,18 +412,14 @@ PAGES: dict[str, WorldBuilder] = {
 
 #: (doc, block line) -> why that block is not run.
 NOT_RUN: dict[tuple[str, int], str] = {
-    ("lines-and-automation.md", 60): (
-        "the Procedure's shape: its contracts and budget are elided (PATH, SUMMARY, budget=...)"
+    ("lines-and-automation.md", 62): (
+        "the Procedure's shape: its slot, CaptureContract and row Contract are not accepted "
+        "in the page world"
     ),
 }
 
 #: docs whose python blocks are all fragments of a larger program.
-NOT_RUN_DOCS: dict[str, str] = {
-    "procedure-source.md": (
-        "Procedure source reference: fragments and @procedure bodies compiled by the "
-        "source compiler, never run as Python against an instance"
-    ),
-}
+NOT_RUN_DOCS: dict[str, str] = {}
 
 
 def test_a_commented_value_or_error_is_checked() -> None:

@@ -7,11 +7,10 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import Cruxible
 from cruxible_client.authoring.examples import procedure_example
-from cruxible_client.authoring.inputs import AuthoringInputError, QueryDefinitionInput
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
+from cruxible_client.authoring.inputs import ProcedureInput, QueryDefinitionInput
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.get_reads import GetProcedureCard
-from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
+from cruxible_client.contracts.procedures.authored import ReadStep
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import QueryBudgets, QueryEntry
 from cruxible_client.transport.http import CruxibleClient
@@ -30,21 +29,10 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
 
     definition = procedure_example()
     if state_tap:
-        nodes = definition.definition["nodes"]
-        assert isinstance(nodes, list)
-        nodes.insert(
-            0,
-            {
-                "kind": "read",
-                "node_id": "read",
-                "query": {
-                    "kind": "accepted",
-                    "role": "query",
-                    "target": "QueryDefinition:inventory",
-                },
-                "parameters": {},
-                "as": "inventory",
-            },
+        steps = list(definition.spec.steps)
+        steps.insert(0, ReadStep(read="inventory", query="inventory"))
+        definition = definition.model_copy(
+            update={"spec": definition.spec.model_copy(update={"steps": tuple(steps)})}
         )
         # The builder must resolve at preparation, not fetch or guess a pin.
         draft = pb.procedure(definition=definition)
@@ -105,70 +93,14 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     assert run.receipt is not None
 
 
-@pytest.mark.parametrize("duplicate", [False, True])
-def test_sdk_reports_missing_or_duplicate_carried_contracts(duplicate: bool) -> None:
+def test_sdk_program_identity_follows_the_authored_spec() -> None:
     definition = procedure_example()
-    contracts = definition.contracts
-    invalid = definition.model_copy(
-        update={"contracts": (*contracts, contracts[0]) if duplicate else contracts[1:]}
-    )
-    with pytest.raises(AuthoringInputError) as error:
-        Cruxible.procedure(object(), definition=invalid)
-    assert error.value.code == (
-        "cruxible.authoring.carried_contract_duplicate"
-        if duplicate
-        else "cruxible.authoring.carried_contract_unresolved"
-    )
-
-
-def test_sdk_program_identity_includes_carried_schemas() -> None:
-    definition = procedure_example()
-    contract = definition.contracts[0]
     revised = definition.model_copy(
-        update={
-            "contracts": (
-                contract.model_copy(update={"allow_extra": True}),
-                *definition.contracts[1:],
-            )
-        }
+        update={"spec": definition.spec.model_copy(update={"description": "Revised."})}
     )
     first = Cruxible.procedure(object(), definition=definition)
     second = Cruxible.procedure(object(), definition=revised)
     assert first.program_stamp != second.program_stamp
-
-
-def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
-    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
-) -> None:
-    http, instance_id, _reviewer_key = playbill_http
-    transport = CruxibleClient(base_url="http://cruxible")
-    transport._client = http  # type: ignore[assignment]
-    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
-    definition = procedure_example()
-    draft = pb.procedure(definition=definition)
-    assert isinstance(draft.payload, ProcedureAuthoringPayload)
-    contract = next(
-        item for item in draft.payload.owned_contracts if item.identity.name == "empty-input"
-    )
-    pin = ArtifactPin(
-        role="contract-in",
-        target=ArtifactIdentity(kind="Contract", name="empty-input"),
-        artifact_digest=procedure_owned_contract_digest(contract).tagged,
-    )
-    invalid = definition.model_copy(
-        update={
-            "definition": {
-                **definition.definition,
-                "contract_in": pin.model_dump(mode="json"),
-            }
-        }
-    )
-    intent = pb.procedure(definition=invalid).prepare()
-    assert intent.refused
-    assert any(
-        item.code == "cruxible.authoring.caller_artifact_digest_forbidden"
-        for item in intent.diagnostics
-    )
 
 
 @pytest.mark.parametrize("successor", [None, "explicit", "fallthrough"])
@@ -190,24 +122,24 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     pb.refresh()
 
     definition = procedure_example()
-    nodes = definition.definition["nodes"]
-    assert isinstance(nodes, list)
-    terminal = {
-        "kind": "emit_capture",
-        "node_id": "emit",
-        "capture_contract": {
-            "kind": "accepted",
-            "role": "capture-contract",
-            "target": contract.identity.qualified,
-        },
-        "input": "$steps." + str(definition.definition["returns"]),
-        "result": "$steps." + str(definition.definition["returns"]),
+    result = {"$ref": "step", "step": str(definition.spec.returns)}
+    steps: list[dict[str, object]] = [
+        step.model_dump(mode="json", by_alias=True) for step in definition.spec.steps
+    ]
+    terminal: dict[str, object] = {
+        "emit": contract.identity.name,
+        "id": "emit",
+        "input": result,
+        "result": result,
     }
-    nodes.append(terminal)
+    steps.append(terminal)
     if successor is not None:
-        nodes.append({"kind": "halt", "node_id": "after"})
+        steps.append({"halt": None, "id": "after"})
         if successor == "explicit":
             terminal["next"] = "after"
+    definition = ProcedureInput.model_validate(
+        {**definition.spec.model_dump(mode="json", by_alias=True), "steps": steps}
+    )
     intent = pb.procedure(definition=definition).prepare()
     if successor is None:
         assert not intent.refused, intent.diagnostics

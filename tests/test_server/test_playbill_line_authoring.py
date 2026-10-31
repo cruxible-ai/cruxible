@@ -115,9 +115,12 @@ def test_example_templates_agree_on_names_and_caps() -> None:
     assert isinstance(procedure, ProcedureInput)
     assert isinstance(mandate, ProcedureMandateInput)
     assert isinstance(line, LineInput)
-    assert procedure.definition["name"] == line.procedure_name
+    assert procedure.spec.procedure == line.procedure_name
     assert mandate.line_name == line.name
-    caps = ProcedureHardCaps.model_validate(procedure.definition["hard_caps"])
+    from cruxible_client.contracts.procedures.authored import lower_procedure_spec
+
+    lowered = lower_procedure_spec(procedure.spec).definition
+    caps = ProcedureHardCaps.model_validate(lowered["hard_caps"])
     assert mandate.resource_ceiling == caps
 
 
@@ -168,9 +171,21 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
     mandate = authoring_example("procedure-mandate")
     assert isinstance(procedure, ProcedureInput)
     assert isinstance(mandate, ProcedureMandateInput)
-    proposer = procedure.model_copy(
-        update={
-            "definition": {**procedure.definition, "name": "proposer", "terminal_capability": 2}
+    # A Procedure's capability is what its terminals can do: this one can propose
+    # (on a branch its runs never take) and otherwise returns its count.
+    proposer = ProcedureInput.model_validate(
+        {
+            **procedure.spec.model_dump(mode="json", by_alias=True),
+            "procedure": "proposer",
+            "returns": None,
+            "steps": [
+                {
+                    "guard": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
+                    "else": {"goto": "offer"},
+                },
+                {"project": "result", "fields": {"count": 0}, "leaf": True},
+                {"propose": [{"artifact_kind": "Claim"}], "id": "offer", "result": {"count": 0}},
+            ],
         }
     )
     change_set = ChangeSetInput(

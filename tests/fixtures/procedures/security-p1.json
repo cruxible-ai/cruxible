@@ -92,7 +92,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:fd34acb5204419f925e44ce2483c9db396438de875c9cf2366658ec7c00aed4a",
+    "definition_digest": "sha256:d45933c0c28557af9c6c38d05c19a54cee4a6fedb4221a93d871c4bf98a21f99",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -236,38 +236,38 @@
         {
           "id": "allowed",
           "kind": "guard",
-          "message": "The body is not the credential-state allow-list.",
           "on_false": "post",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "posted"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "eq",
-            "right": 0
-          },
-          "refusal_code": "secret_shape"
+            "op": "eq",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The read changes no held key state.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -323,7 +323,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:274155e14eeea601a56d1ecd1b8caed3b9227bca4f073259d5e7a179dd7c45ff",
+    "definition_digest": "sha256:af24ba55bc8d7d65dd41b5c34d1906ea83d4f3e033a5205aa2d4df4c92d53d7e",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -612,20 +612,20 @@
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The CVE record changes no assessment.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "decide",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "decide"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -668,7 +668,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:b51a3aeed736af964d94446d95e94fc9c6be0591924183706d63227541494700",
+    "definition_digest": "sha256:ee421df10b0fea862c189094f8dcd070a4e8f7b8bd27878eb0729c2be159aab5",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -804,20 +804,20 @@
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The EPSS file changes no watched Claim.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -860,7 +860,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:5b866a1dfc63b572066ed1a5a3d739d272157b17a71aabb149e1cd336bc738fc",
+    "definition_digest": "sha256:baad15d4e0853d0fc2ad8218629a416215fb7fdd04acd58cc17b74b3559b0e11",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -995,7 +995,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:672986252809e0d67aaa33738c136d978f82d85946bf774b98359db7bd1c43a2",
+    "definition_digest": "sha256:4e1c3c836c76a5e2fbc7ad213cf8e89daaa6aa1d1314b07c1da3bee63613aa14",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -1171,20 +1171,20 @@
         {
           "id": "posted",
           "kind": "guard",
-          "message": "Every hardening answer is none: nothing to post.",
           "on_false": "quiet",
           "predicate": {
             "left": {
-              "alias": "classify",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "posted"
-              ]
+              ],
+              "step": "classify"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "nothing_to_post"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "contract": {
@@ -1221,7 +1221,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8246d10818a75f5d954d59ee488d25a39637550b017e99cecd9b1070374bc881",
+    "definition_digest": "sha256:d23ed323dd440b1e3acff30461ba3f3ff60dce8099e03ab607aa6ea2149db28f",
     "identity": {
       "kind": "Procedure",
       "name": "security.harden"
@@ -1378,7 +1378,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:660b6e18028827eec6271c3d8c449ea532d35e3a454a05aa793ad4d0575ee97e",
+    "definition_digest": "sha256:c574ad9dd99a05d42ff041c8a68b678e9634da03ed62223a380a4ddb606c6e90",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1566,38 +1566,38 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed inventory is another scope's.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "mine"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "other_scope"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The scan changes nothing inventory holds.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "proposes"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -1608,14 +1608,14 @@
           "result": "$steps.summary"
         },
         {
-          "id": "nochange",
-          "kind": "halt",
-          "reason": "no_change"
-        },
-        {
           "id": "other",
           "kind": "halt",
           "reason": "other_scope"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
         }
       ],
       "returns": "summary",
@@ -1645,7 +1645,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:7e661882efbee56edbcca9cf2d098bd70c64e3192acbd647abb9f4866972812a",
+    "definition_digest": "sha256:b9863286318d1f82fa28e3450ef9c627dcb850d3c2b5693478f976a9b41e256f",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1845,20 +1845,20 @@
         {
           "id": "posted",
           "kind": "guard",
-          "message": "No newly listed CVE matches unwatched or unassessed inventory.",
           "on_false": "quiet",
           "predicate": {
             "left": {
-              "alias": "match",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "posted"
-              ]
+              ],
+              "step": "match"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "nothing_to_post"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "contract": {
@@ -1906,7 +1906,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:b4c30f8600386dbdaf75bb04230643efc84b18571e401cabde70c451ca795457",
+    "definition_digest": "sha256:8284e00f5beacc0498df52f7e99cc20f0cd8279c89bac9099802f946f5270006",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -2073,20 +2073,20 @@
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The catalog changes no watched Claim.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -2129,7 +2129,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:4d71db5657bc4278c13f40a94b4e3dc7540688da830ff2c187089a48a444d82c",
+    "definition_digest": "sha256:8f79a653edffaa847435d06bf565c6393611586cacad98e46d62381065130322",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -2261,7 +2261,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:0128d897f4e42162f868512ac9be60b12fbc78da77c530998c861eff8ed323e6",
+    "definition_digest": "sha256:86373708fc26f17c883a7c919b48ac42eb33cbf224e8349328bbc88a8515268d",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -2409,56 +2409,56 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed log read is another incident's.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "mine"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "other_incident"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "recordable",
           "kind": "guard",
-          "message": "The read is incomplete, or its audit is not stated: posted.",
           "on_false": "post",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "recordable"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "read_not_recordable"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The audit already holds this read.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -2482,14 +2482,14 @@
           "max_items": 10
         },
         {
-          "id": "nochange",
-          "kind": "halt",
-          "reason": "no_change"
-        },
-        {
           "id": "other",
           "kind": "halt",
           "reason": "other_incident"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
         }
       ],
       "returns": "summary",
@@ -2519,7 +2519,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:34a6635416fe1b939f04a8131c11c55855415f379dd13495562df0eb87ab1a52",
+    "definition_digest": "sha256:5e6d9157259d5a10e0bb95a86dafa673464eb7a60783bb2f5daf52a3c5dbae89",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -2635,23 +2635,23 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed release is another project's.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "registry",
-              "kind": "step",
+              "$ref": "step",
+              "path": [
+                "project"
+              ],
+              "step": "registry"
+            },
+            "op": "eq",
+            "right": {
+              "$ref": "input",
               "path": [
                 "project"
               ]
-            },
-            "operator": "eq",
-            "right": {
-              "input_name": "project",
-              "kind": "input"
             }
-          },
-          "refusal_code": "other_source"
+          }
         },
         {
           "id": "coverage",
@@ -2752,7 +2752,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:a6542387d774ca5c52f4b243355dd4abb44a2518bf71eacb1d1aa9204185ce43",
+    "definition_digest": "sha256:6a524882f2a866fb96aae36a40b2e41743898acc8c829ffc698fa53c4dc7f924",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -2871,23 +2871,23 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed snapshot is another source's.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "snapshot",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "locator"
-              ]
+              ],
+              "step": "snapshot"
             },
-            "operator": "eq",
+            "op": "eq",
             "right": {
-              "input_name": "source",
-              "kind": "input"
+              "$ref": "input",
+              "path": [
+                "source"
+              ]
             }
-          },
-          "refusal_code": "other_source"
+          }
         },
         {
           "id": "coverage",
@@ -3020,7 +3020,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:214afd4ac1668d05bb90288e1ef0f7e9d424a7790c7b502adefe8dd5238c9239",
+    "definition_digest": "sha256:a81903fb4a71c633d34c1f37b21a6e0f84ace75d8e9deb47dc5791558dacde1d",
     "identity": {
       "kind": "Procedure",
       "name": "security.repo-parse"
@@ -3195,7 +3195,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:2bc7acf29b86314bf08ce3d8cf224ae78440c658aabfc33456fd0395ad6d7667",
+    "definition_digest": "sha256:185ad74a54ca2352faa9f411c6a2f75be6584324219d6375b726483515e3dae1",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -3414,20 +3414,20 @@
         {
           "id": "posted",
           "kind": "guard",
-          "message": "Nothing to post: no question is found or unknown (every answer rests on evidence of none), or the incident is closed.",
           "on_false": "quiet",
           "predicate": {
             "left": {
-              "alias": "classify",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "posted"
-              ]
+              ],
+              "step": "classify"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "nothing_to_post"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "contract": {
@@ -3464,7 +3464,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:9d8956806cefd78befd7a66469bff0334a4824e5613504f075c77845c5191128",
+    "definition_digest": "sha256:04ee3622f02921991197e7e063bbec30bdba3058ad0ffba15d229f019a8d0c3a",
     "identity": {
       "kind": "Procedure",
       "name": "security.respond"
@@ -3628,7 +3628,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:297e4f76fa221c6812821c02b985cb342e2f8684267473359efcc97f52b6c999",
+    "definition_digest": "sha256:33fb2be99a6c4a22c0a1d1d4a1f73f743039ae96d88c9605576f083fc8720e5d",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -3781,38 +3781,38 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed SARIF log has no run of the Line's repository.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "mine"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "wrong_repo"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "posted",
           "kind": "guard",
-          "message": "The scan has no location gap and no regression.",
           "on_false": "quiet",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "posted"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "nothing_to_post"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "contract": {
@@ -3828,14 +3828,14 @@
           "max_items": 1000
         },
         {
-          "id": "quiet",
-          "kind": "halt",
-          "reason": "nothing_to_post"
-        },
-        {
           "id": "other",
           "kind": "halt",
           "reason": "wrong_repo"
+        },
+        {
+          "id": "quiet",
+          "kind": "halt",
+          "reason": "nothing_to_post"
         }
       ],
       "returns": "summary",
@@ -3865,7 +3865,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:02ad2adcb3456d9db2e7f0720391db0936d5dd008af7cf847ffa892828f0671f",
+    "definition_digest": "sha256:8810bed61b5520eb34ba48bdcf5e0749d268e72ce45688c13f2223abca08239d",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-attention"
@@ -4057,38 +4057,38 @@
         {
           "id": "mine",
           "kind": "guard",
-          "message": "The landed SARIF log has no run of the Line's repository.",
           "on_false": "other",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "mine"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "wrong_repo"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The scan reports nothing the held findings lack.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -4099,14 +4099,14 @@
           "result": "$steps.summary"
         },
         {
-          "id": "nochange",
-          "kind": "halt",
-          "reason": "no_change"
-        },
-        {
           "id": "other",
           "kind": "halt",
           "reason": "wrong_repo"
+        },
+        {
+          "id": "nochange",
+          "kind": "halt",
+          "reason": "no_change"
         }
       ],
       "returns": "summary",
@@ -4136,7 +4136,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:d20f993cabc94d9b5c10e5511721338145daa95035b58f9fa5bbb2b36a68c215",
+    "definition_digest": "sha256:7ac54b88e3ef764ae35835273b3b8fb5c548cffccde9d671dc528f289a5d55cb",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-import"
@@ -4305,7 +4305,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:7f9110a1a49bcf47ae9b8d792fef9b07f25e035c0071f62486842f804ab6522f",
+    "definition_digest": "sha256:61211f7c006e249eb21dcd0d99ae157f13f68e68c192cd6892c07450c6e794a8",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -4444,20 +4444,20 @@
         {
           "id": "changed",
           "kind": "guard",
-          "message": "The SBOM adds nothing inventory lacks.",
           "on_false": "nochange",
           "predicate": {
             "left": {
-              "alias": "parse",
-              "kind": "step",
+              "$ref": "step",
               "path": [
                 "changed"
-              ]
+              ],
+              "step": "parse"
             },
-            "operator": "gt",
-            "right": 0
-          },
-          "refusal_code": "no_change"
+            "op": "gt",
+            "right": {
+              "literal": 0
+            }
+          }
         },
         {
           "candidate_templates": {
@@ -4500,7 +4500,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:4d6a7735638dfccb4e22adae58238439350e297136d6597af3d67782017e471c",
+    "definition_digest": "sha256:a06da03dc606492661cc5d8ee27915e8d5a05c03ce529bad55a2b70d09c232d6",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

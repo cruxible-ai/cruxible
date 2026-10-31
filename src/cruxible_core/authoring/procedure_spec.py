@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
     CallStep,
@@ -104,6 +103,11 @@ def resolve_procedure_spec(
             return value if isinstance(value, Contract) else None
 
         def resolve(kind: str, name: Any) -> Any:
+            if kind == "query":
+                return source(
+                    "QueryDefinition:" + name.query.removeprefix("QueryDefinition:"),
+                    step_paths[id(name)] + ".query",
+                )
             if kind == "procedure_output":
                 child = source(
                     "Procedure:" + name.invoke.removeprefix("Procedure:"),
@@ -116,7 +120,7 @@ def resolve_procedure_spec(
                     if c.identity == pin.target
                 )
             if kind == "claim":
-                from cruxible_client.contracts.procedures.source_views import claim_view_schema
+                from cruxible_client.contracts.procedures.views import claim_view_schema
 
                 claim_type = source(
                     "ClaimType:" + name.claim_type.removeprefix("ClaimType:"),
@@ -224,4 +228,4 @@ def resolve_procedure_spec(
                 "output": output_fields,
             }
 
-        return lower_authoring_input(lower_procedure_spec(spec, resolve=resolve))
+        return lower_procedure_spec(spec, resolve=resolve)

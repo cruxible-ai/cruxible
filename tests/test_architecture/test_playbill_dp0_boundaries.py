@@ -406,7 +406,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "get_claim_backings",
         "query",
         "procedure_readiness",
-        "preview_procedure_source",
         "run_procedure",
         "get_procedure_run",
         "enable_line",

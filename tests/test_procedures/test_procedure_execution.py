@@ -59,9 +59,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     GuardNode,
-    GuardPredicate,
     HaltNode,
-    PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
@@ -87,11 +85,13 @@ from cruxible_client.contracts.query.results import (
     QueryRowBinding,
     QueryTruncation,
 )
+from cruxible_client.contracts.refs import step_ref
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReference,
     InvestigationBinding,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.shapes import Comparison, CountOperand, LiteralOperand, Presence
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -243,14 +243,10 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     query = _pin("query", "QueryDefinition", "accepted-items")
-    predicate = GuardPredicate(
-        left=PredicateOperand(
-            kind="step",
-            alias="rows",
-            path=("result", "truncation", "returned_result_count"),
-        ),
-        operator="gt",
-        right=PredicateOperand(kind="literal", value=100 if false_branch else 0),
+    predicate = Comparison(
+        op="gt",
+        left=step_ref("rows", *("result", "truncation", "returned_result_count")),
+        right=LiteralOperand(literal=100 if false_branch else 0),
     )
     definition = ProcedureDefinition(
         name="state-procedure",
@@ -398,11 +394,7 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
                         as_="shaped",
                     ),
                 ),
-                until=GuardPredicate(
-                    left=PredicateOperand(kind="exists", alias="shaped"),
-                    operator="eq",
-                    right=PredicateOperand(kind="literal", value=True),
-                ),
+                until=Presence(op="present", of=step_ref("shaped")),
                 as_="repeated",
             ),
         ),
@@ -443,7 +435,11 @@ def _guarded_filter_procedure(
                             {"id": "one", "keep": True},
                             {"id": "two", "keep": False},
                         ],
-                        "where": "eq($item.fields.keep, true)",
+                        "where": {
+                            "op": "eq",
+                            "left": {"$ref": "item", "path": ["fields", "keep"]},
+                            "right": {"literal": True},
+                        },
                     },
                     "as": "filtered",
                     "next": "gate",
@@ -451,15 +447,13 @@ def _guarded_filter_procedure(
             ),
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="count", alias="filtered"),
-                    operator=operator,  # type: ignore[arg-type]
-                    right=PredicateOperand(kind="literal", value=0),
+                predicate=Comparison(
+                    op=operator,
+                    left=CountOperand(count=step_ref("filtered")),
+                    right=LiteralOperand(literal=0),
                 ),
                 on_true="aggregate",
                 on_false="stop",
-                refusal_code="guard.no_filtered_items",
-                message="No filtered items are available.",
             ),
             TransformNode.model_validate(
                 {
@@ -521,15 +515,11 @@ def _guarded_scalar_procedure(
             ),
             GuardNode(
                 node_id="gate",
-                predicate=GuardPredicate(
-                    left=PredicateOperand(kind="step", alias=alias, path=path),
-                    operator="gt",
-                    right=PredicateOperand(kind="literal", value=0),
+                predicate=Comparison(
+                    op="gt", left=step_ref(alias, *path), right=LiteralOperand(literal=0)
                 ),
                 on_true="emit",
                 on_false="stop",
-                refusal_code="guard.nonpositive_summary",
-                message="The summary count is not positive.",
             ),
             ProjectNode(
                 node_id="emit",

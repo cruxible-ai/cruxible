@@ -1218,12 +1218,8 @@ def parse_projection_tree(
                     analyze_procedure,
                     compute_procedure_node_digests,
                 )
-                from cruxible_client.contracts.procedures.source_compiler import (
-                    verify_source_graph,
-                )
 
                 procedure = parse_procedure(content, path=path)
-                verify_source_graph(procedure)
                 identity = procedure.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
