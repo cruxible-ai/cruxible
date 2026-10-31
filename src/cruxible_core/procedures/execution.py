@@ -186,7 +186,7 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
     disallowed_origin,
 )
-from cruxible_core.procedures.completeness import Completeness, CompletenessProbe
+from cruxible_core.procedures.completeness import Completeness, CompletenessProbe, Read
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
@@ -2118,6 +2118,9 @@ class _RunState:
     capture_contracts: dict[str, str] = dataclass_field(default_factory=dict)
     #: Which aliases hold incomplete values, and the control lineage's state.
     completeness: Completeness = dataclass_field(default_factory=Completeness)
+    #: Whether the value this run returns is complete, data and control lineage
+    #: both; a parent's invoke reads it from the child's completion record.
+    return_complete: bool = True
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2512,6 +2515,12 @@ class ProcedureExecutor:
                         if token.digest in state.facts
                     },
                     "terminal_capture": state.terminal_capture,
+                    # Recorded only when incomplete, so complete runs keep their bytes.
+                    **(
+                        {"return_complete": False}
+                        if status == "succeeded" and not state.return_complete
+                        else {}
+                    ),
                 }
                 if isinstance(accepted.procedure.definition, ProcedureDefinition)
                 or admission.parent_binding is not None
@@ -3136,6 +3145,7 @@ class ProcedureExecutor:
                         state.return_tokens = (
                             state.alias_tokens(frozenset({node.as_})) | state.control
                         )
+                        state.return_complete = state.completeness.at_sink(_node_reads(node))
                     elif isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
                         result = _resolve_node_template(
                             node.result,
@@ -3146,6 +3156,9 @@ class ProcedureExecutor:
                         )
                         state.return_tokens = _base_tokens(
                             node, state, node.result, self.references
+                        )
+                        state.return_complete = state.completeness.at_sink(
+                            _referenced_reads(node.result)
                         )
                         if state.terminal_capture is not None:
                             state.return_tokens |= frozenset(
@@ -3158,14 +3171,13 @@ class ProcedureExecutor:
                         state.return_tokens = (
                             state.alias_tokens(frozenset({definition.returns})) | state.control
                         )
+                        state.return_complete = state.completeness.at_sink(
+                            ((definition.returns, ()),)
+                        )
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise ExecutionError("Procedure return alias was not produced") from exc
                 if self.completeness_probe is not None and not is_terminal_node(node):
-                    returned = definition.returns
-                    self.completeness_probe(
-                        node.node_id,
-                        state.completeness.at_sink(() if returned is None else (returned,)),
-                    )
+                    self.completeness_probe(node.node_id, state.return_complete)
                 return_contract = self._pin(
                     definition.contract_out,
                     label="Procedure contract_out",
@@ -4011,6 +4023,7 @@ class ProcedureExecutor:
             node.as_,
             outcome.complete and state.completeness.complete((node.capture_alias,)),
         )
+        state.completeness.drop(node.as_, outcome.dropped_rows())
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=_node_policy_tokens(node, self.references)
             | state.control
@@ -4061,7 +4074,11 @@ class ProcedureExecutor:
             ) from exc
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
-        state.completeness.mark(node.as_, complete and state.completeness.complete(aliases))
+        state.completeness.mark(
+            node.as_,
+            complete
+            and state.completeness.reads_complete(_referenced_reads(node.spec), records_kept=True),
+        )
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=_node_policy_tokens(node, self.references)
             | state.control
@@ -4069,32 +4086,49 @@ class ProcedureExecutor:
         )
 
     def _track_completeness(self, node: object, state: _RunState) -> None:
-        """Carry the completeness law past one node (extract and closed transforms set theirs)."""
+        """Carry the completeness law past one node.
+
+        ``extract``, the closed transforms, ``invoke`` and ``repeat`` set their
+        own outputs' completeness as they run; every other node's output is the
+        AND of what it reads, and a ``call`` is also incomplete when its bound
+        operation declares ``may_truncate``.
+        """
 
         tracker = state.completeness
         if isinstance(node, GuardNode):
-            tracker.guard(node.predicate.step_aliases())
+            tracker.guard(_predicate_reads(node.predicate))
             return
-        if isinstance(node, ExtractNode) or (
+        if isinstance(node, ExtractNode | InvokeNode | RepeatNode) or (
             isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS
         ):
             return
-        aliases: frozenset[str] = frozenset()
         if isinstance(node, SelectNode):
-            aliases = frozenset(alias for alias in node.sources if alias in state.outputs)
+            reads: tuple[Read, ...] = tuple(
+                (alias, ()) for alias in node.sources if alias in state.outputs
+            )
         else:
-            for _field, template in reference_templates(node):  # type: ignore[arg-type]
-                aliases |= _referenced_aliases(template)
+            reads = _node_reads(node)
         if is_terminal_node(node):
             if self.completeness_probe is not None:
-                self.completeness_probe(node.node_id, tracker.at_sink(aliases))  # type: ignore[attr-defined]
+                self.completeness_probe(node.node_id, tracker.at_sink(reads))  # type: ignore[attr-defined]
             return
         alias = getattr(node, "as_", None)
         if isinstance(alias, str) and alias in state.outputs:
-            if isinstance(node, ReadNode) or (isinstance(node, CallNode) and node.acquires):
+            if isinstance(node, ReadNode):
+                # A read completed within its ceiling, or the node refused.
                 tracker.mark(alias, True)
+            elif isinstance(node, CallNode):
+                tracker.mark(
+                    alias, tracker.reads_complete(reads) and not self._truncates(node.slot)
+                )
             else:
-                tracker.mark(alias, tracker.complete(aliases))
+                tracker.mark(alias, tracker.reads_complete(reads))
+
+    def _truncates(self, slot: str | None) -> bool:
+        """Whether the operation bound to ``slot`` declares that it may truncate."""
+
+        binding = self.slot_bindings.get(slot or "")
+        return binding is not None and bool(getattr(binding.operation, "may_truncate", False))
 
     def _occurrence_matches_slot(
         self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
@@ -4382,6 +4416,9 @@ class ProcedureExecutor:
             raise ExecutionError("nested execution has no durable completion")
         if final.get("status") != result.status or final.get("output") != result.output:
             raise ExecutionError("nested completion differs from returned result")
+        # The child's completion records an incomplete return (data or control
+        # lineage); the invoke's output is that AND the inputs it passed.
+        child_complete = final.get("return_complete", True) is not False
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
@@ -4431,6 +4468,10 @@ class ProcedureExecutor:
                     raise ExecutionError("nested capture has no retained dependency binding")
                 outcome["terminal"] = {"capture": {"capture_digest": capture}}
         state.outputs[node.as_] = normalize_canonical(outcome)
+        state.completeness.mark(
+            node.as_,
+            child_complete and state.completeness.reads_complete(_referenced_reads(node.input)),
+        )
         self._append_event(
             admission,
             records,
@@ -5550,9 +5591,13 @@ class ProcedureExecutor:
         started_ns: int,
     ) -> None:
         attempts: list[CanonicalValue] = []
+        # Repeat is the AND over the attempts used: every body output of every
+        # attempt, each the AND of what it read (and a truncating call is not).
+        attempts_complete = True
         for attempt in range(1, node.max_attempts + 1):
             local_outputs: dict[str, CanonicalValue] = {}
             local_provenance: dict[str, AliasProvenanceV1] = {}
+            local_incomplete: set[str] = set()
             for body in node.body:
                 self._run_repeat_body(
                     body,
@@ -5563,6 +5608,15 @@ class ProcedureExecutor:
                     local_provenance=local_provenance,
                     records=records,
                 )
+                body_complete = all(
+                    alias not in local_incomplete
+                    if alias in local_outputs and alias != body.as_
+                    else state.completeness.reads_complete(((alias, path),))
+                    for alias, path in _referenced_reads(body.spec)
+                ) and not (body.operation == "call" and self._truncates(body.slot))
+                if not body_complete:
+                    local_incomplete.add(body.as_)
+                    attempts_complete = False
                 self._check_budget(
                     admission,
                     state,
@@ -5605,6 +5659,7 @@ class ProcedureExecutor:
                 state.outputs[node.as_] = normalize_canonical(
                     {"attempts": attempts, "final": local_outputs}
                 )
+                state.completeness.mark(node.as_, attempts_complete)
                 repeated_tokens = frozenset(
                     token for provenance in local_provenance.values() for token in provenance.whole
                 )
@@ -6016,6 +6071,60 @@ def _referenced_aliases(value: object) -> frozenset[str]:
 
     visit(value)
     return frozenset(found)
+
+
+def _referenced_reads(value: object) -> tuple[Read, ...]:
+    """Every ``(alias, path)`` a declared template reads, for the completeness law."""
+
+    found: dict[Read, None] = {}
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                alias, *path = item[len(_STEP_PREFIX) :].split(".")
+                found[(alias, tuple(path))] = None
+            return
+        if isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+            return
+        if isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+            return
+        if isinstance(item, BaseModel):
+            visit(item.model_dump(mode="python", exclude={"tag"}))
+
+    visit(value)
+    return tuple(found)
+
+
+def _node_reads(node: object) -> tuple[Read, ...]:
+    """Every read a node's resolved fields make."""
+
+    reads: dict[Read, None] = {}
+    for _field, template in reference_templates(node):  # type: ignore[arg-type]
+        reads.update(dict.fromkeys(_referenced_reads(template)))
+    return tuple(reads)
+
+
+def _predicate_reads(predicate: GuardPredicate) -> tuple[Read, ...]:
+    """The reads a guard predicate's step operands make; a count reads no field."""
+
+    found: list[Read] = []
+    pending = [predicate]
+    while pending:
+        item = pending.pop()
+        for operand in (item.left, item.right):
+            if operand is None or operand.alias is None:
+                continue
+            reads_content = operand.kind in {"step", "exists"}
+            found.append((operand.alias, tuple(operand.path) if reads_content else None))
+        pending.extend(item.all_of or ())
+        pending.extend(item.any_of or ())
+        if item.not_of is not None:
+            pending.append(item.not_of)
+    return tuple(found)
 
 
 def _template_alias(value: object) -> str | None:

@@ -867,6 +867,22 @@ class ExtractOutcome:
 
         return self.complete_when_held and self.invalid_records == 0 and self.duplicates == 0
 
+    def dropped_rows(self) -> dict[int, frozenset[str]]:
+        """Each ``rows`` entry that leaves out an invalid field: index -> those fields.
+
+        ``rows`` holds present values only, so the completeness law needs to
+        know which reads through it would meet an invalid field as absence.
+        """
+
+        if not self.invalid_fields:
+            return {}
+        records = (item for item in self.held if isinstance(item, _Record))
+        return {
+            index: frozenset(name for name, result in item.fields.items() if result[0] == "invalid")
+            for index, item in enumerate(records)
+            if any(result[0] == "invalid" for result in item.fields.values())
+        }
+
     def value(self) -> dict[str, object]:
         """The node's value: results, their record arms, rows, header and completeness."""
 
