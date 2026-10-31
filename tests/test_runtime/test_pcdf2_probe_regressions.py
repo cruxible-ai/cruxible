@@ -19,7 +19,7 @@ from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationPreflightV1,
     ClaimTypeMigrationRequest,
-    ClaimTypeMigrationResultV3,
+    ClaimTypeMigrationResult,
     service_migrate_claim_type,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -43,7 +43,7 @@ def _migration(
     claim_id: str,
     *,
     successor: ClaimTypeInputRecord | ClaimType | None = None,
-) -> ClaimTypeMigrationResultV3:
+) -> ClaimTypeMigrationResult:
     result = service_migrate_claim_type(
         instance,
         request=ClaimTypeMigrationRequest(
@@ -63,11 +63,11 @@ def _migration(
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
+    assert isinstance(result, ClaimTypeMigrationResult)
     return result
 
 
-def _accept(instance: PlaybillInstance, result: ClaimTypeMigrationResultV3) -> None:
+def _accept(instance: PlaybillInstance, result: ClaimTypeMigrationResult) -> None:
     proposal = result.proposal.proposal
     assert proposal.candidate is not None
     approval = _sign(
@@ -163,7 +163,7 @@ def test_probe_double_migration_rederives_an_existing_tombstone(tmp_path: Path) 
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(submitted, ClaimTypeMigrationResultV3)
+    assert isinstance(submitted, ClaimTypeMigrationResult)
     _accept(instance, submitted)
     tombstone = parse_claim(
         instance.tree_at(instance.accepted_coordinate().git_oid)[claim_path(claim_id)],

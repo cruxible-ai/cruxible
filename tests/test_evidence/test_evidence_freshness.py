@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
     DirectForeignSourceSelection,
@@ -23,8 +23,8 @@ from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
 from cruxible_client.contracts.claims import ClaimLawEvidence
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeMigrationRequestV1,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.contracts import CoverageAccessProfile
@@ -117,11 +117,14 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
     migration = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
             successor=successor,
             dependents=(
-                ClaimTypeDependentDispositionV1(
-                    claim_id=proposed.claim_identity.removeprefix("Claim:"),
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(
+                        kind="Claim", name=proposed.claim_identity.removeprefix("Claim:")
+                    ),
                     disposition="successor",
                 ),
             ),

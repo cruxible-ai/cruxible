@@ -20,7 +20,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     SelfSourceBody,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
@@ -113,10 +113,10 @@ def _selection_payload(
     anchor: bytes,
     citation_role: str,
     present_page: bool = True,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     start = page.index(anchor)
     end = start + len(anchor)
-    return ClaimAuthoringPayloadV1(
+    return ClaimAuthoringPayload(
         statement=_self_source_payload().statement,
         rationale="The page says so.",
         source=WorkingSelectionObservation(
@@ -150,7 +150,7 @@ def _world(tmp_path: Path) -> tuple[Any, AuthoringIntentCoordinator, Authenticat
 def _preflight_codes(
     coordinator: AuthoringIntentCoordinator,
     actor: AuthenticatedActor,
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
 ) -> tuple[str, list[str]]:
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     result = coordinator.preflight(intent.intent_id, actor=actor)

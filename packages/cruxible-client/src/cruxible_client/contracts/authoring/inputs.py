@@ -34,7 +34,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringTriggerSchedule,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
@@ -702,7 +701,7 @@ def _dispositions(
     )
 
 
-def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
+def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayload:
     if isinstance(value.source, WorkingSelectionInput):
         raise AuthoringInputError(
             "cruxible.authoring.working_selection_requires_bind",
@@ -744,7 +743,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
             "Self-source fixes its copy citation role server-side.",
             "Remove citation_role.",
         )
-    return ClaimAuthoringPayloadV1(
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=_subject_address(value.subject, field_path="input.subject"),
             predicate=value.predicate,
@@ -767,7 +766,7 @@ def lower_bound_claim_input(
     value: ClaimInput,
     *,
     observation: WorkingSelectionObservation,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     """Lower the only client-observed input form after bind constructs its observation."""
 
     if not isinstance(value.source, WorkingSelectionInput):
@@ -791,7 +790,7 @@ def lower_bound_claim_input(
             "A working selection requires evidence or copy intent.",
             "Set citation_role to evidence or copy.",
         )
-    return ClaimAuthoringPayloadV1(
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=_subject_address(value.subject, field_path="input.subject"),
             predicate=value.predicate,

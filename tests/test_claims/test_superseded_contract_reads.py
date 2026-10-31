@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
     WorkingSelectionObservation,
@@ -45,7 +45,7 @@ def _observe(world: Any, text: bytes, *, revises: str | None = None) -> str:
     """The identity-rule world's observation, spelled with today's ``revises`` field."""
 
     digest = "sha256:" + hashlib.sha256(text).hexdigest()
-    payload = ClaimAuthoringPayloadV1(
+    payload = ClaimAuthoringPayload(
         statement=_self_source_payload().statement,
         rationale="The repository snapshot says the work is ready.",
         source=WorkingSelectionObservation(

@@ -10,7 +10,7 @@ from cruxible_client.authoring.blocks import assert_independent_projection_evide
 from cruxible_client.authoring.inputs import ClaimInput, lower_bound_claim_input
 from cruxible_client.authoring.selectors import WorkspaceFiles, source_content_for_observation
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
     WorkingSelectionObservation,
@@ -114,7 +114,7 @@ def bind_working_selection_input(
     anchor: str,
     window_lines: int | None = None,
     occurrence: int | None = None,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     """Observe local bytes for a decision-only working_selection Claim input."""
 
     if window_lines is not None and window_lines < 0:
@@ -182,7 +182,7 @@ def bind_catalogued_selection_input(
     anchor: str,
     window_lines: int | None = None,
     occurrence: int | None = None,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     """Bind ``anchor`` in a catalogued workspace file, checking the stub's source name.
 
     The file catalog is the one mapping from a file to its logical source, so

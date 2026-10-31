@@ -58,7 +58,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": payload.model_dump(mode="json"),
         },
     )
@@ -67,7 +67,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
     compiled = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": payload.model_dump(mode="json"),
             "intent_id": intent_id,
         },
@@ -92,9 +92,18 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     client, instance_id, _private_key = playbill_http
     seen: list[tuple[str, object]] = []
 
-    def compile_stub(selected: str, *, payload: object, intent_id: str | None = None):
+    def compile_stub(
+        selected: str,
+        *,
+        payload: object,
+        intent_id: str | None = None,
+        reference_expectations: object = None,
+        program_stamp: object = None,
+    ):
         seen.append((selected, payload))
+        # An unstamped request asserts no references: both stay absent.
         assert intent_id is None
+        assert reference_expectations is None and program_stamp is None
         return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("example"),))
 
     def submit_stub(selected: str, intent_id: str, *, accept: str):
@@ -117,7 +126,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     )
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_authoring_submit", submit_stub)
     payload = {
-        "tag": "playbill-claim-authoring-payload-v1",
+        "tag": "cruxible-claim-authoring-payload-v4",
         "statement": {
             "tag": "playbill-authoring-claim-statement-v1",
             "subject": {
@@ -144,7 +153,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     compiled = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": payload,
             "intent_id": None,
         },
@@ -179,7 +188,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
 
     monkeypatch.setattr("cruxible_core.authoring.preflight.lower_authoring", refusing)
     payload = {
-        "tag": "playbill-claim-authoring-payload-v1",
+        "tag": "cruxible-claim-authoring-payload-v4",
         "statement": {
             "tag": "playbill-authoring-claim-statement-v1",
             "subject": {
@@ -203,7 +212,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": payload,
             "intent_id": None,
         },
@@ -352,7 +361,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": unsorted.model_dump(mode="json"),
             "intent_id": None,
         },
@@ -429,7 +438,7 @@ def test_http_migration_route_delegates_the_typed_request(
 
     def migrate_stub(selected: str, *, request: object):
         seen.append((selected, request))
-        return contracts.ClaimTypeMigrationResultV1(
+        return contracts.ClaimTypeMigrationResult(
             operation_digest="sha256:" + "1" * 64,
             semantic_delta=[],
             dependents=[],
@@ -446,7 +455,8 @@ def test_http_migration_route_delegates_the_typed_request(
     response = client.post(
         f"/api/v1/{instance_id}/claim-types/migrations",
         json={
-            "tag": "playbill-claim-type-migration-request-v1",
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
             "successor": {
                 "predicate": "project.work_item.status",
                 "allowed_subject_kinds": ["project.work_item"],
@@ -495,7 +505,7 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
     if operation == "migrate":
         path = f"/api/v1/{instance_id}/claim-types/migrations"
         request = {
-            "tag": "playbill-claim-type-migration-request-v2",
+            "tag": "playbill-claim-type-migration-request-v3",
             "mode": "preflight",
             "successor": claim_type_input,
         }
@@ -525,7 +535,7 @@ def test_http_migration_domain_refusal_is_a_bad_request(
     response = client.post(
         f"/api/v1/{instance_id}/claim-types/migrations",
         json={
-            "tag": "playbill-claim-type-migration-request-v2",
+            "tag": "playbill-claim-type-migration-request-v3",
             "mode": "preflight",
             "successor": claim_type_input_example().model_dump(mode="json"),
         },
@@ -618,7 +628,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
         )
         path = f"/api/v1/{instance_id}/claim-types/migrations"
         request = {
-            "tag": "playbill-claim-type-migration-request-v2",
+            "tag": "playbill-claim-type-migration-request-v3",
             "mode": "preflight",
             "successor": claim_type_input_example().model_dump(mode="json"),
         }
@@ -636,9 +646,9 @@ def test_http_refuses_digest_and_base_smuggling_in_request_models(
     response = client.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": {
-                "tag": "playbill-claim-authoring-payload-v1",
+                "tag": "cruxible-claim-authoring-payload-v4",
                 "claim_id": "CLM-" + "0" * 32,
                 "base": COORDINATE.model_dump(mode="json"),
             },
@@ -823,7 +833,7 @@ def test_http_submit_forwards_accept(playbill_http, monkeypatch, entrypoint, acc
     elif entrypoint == "compiled":
         function = "playbill_authoring_compile_and_submit"
         request = {
-            "tag": "playbill-authoring-intent-compile-request-v3",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": _claim_payload(),
             "reference_expectations": [],
             "program_stamp": _stamp().model_dump(mode="json"),

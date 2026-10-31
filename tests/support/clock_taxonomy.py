@@ -138,7 +138,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GenerationRecordFacts", "sequence"): "SETTLEMENT ORDER",
     # Canonical candidate timestamps are the author's assertion of when the
     # candidate was made; nothing checks them against a daemon clock.
-    ("AuthoringIntentV1", "canonical_timestamp"): "ASSERTION TIME",
+    ("AuthoringIntent", "canonical_timestamp"): "ASSERTION TIME",
     ("PreflightCertificate", "canonical_timestamp"): "ASSERTION TIME",
     ("SemanticCandidate", "timestamp"): "ASSERTION TIME",
     # The accepted record's own C_s instant, carried as a verified fact.
@@ -155,9 +155,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("AuditRunV1", "evaluation_time"): "EVALUATION INSTANT",
     ("AuthoringClaimStatement", "effective_from"): "VALIDITY WINDOW",
     ("AuthoringClaimStatement", "effective_until"): "VALIDITY WINDOW",
-    ("AuthoringIntentEventV1", "sequence"): "SETTLEMENT ORDER",
-    ("AuthoringIntentEventV2", "sequence"): "SETTLEMENT ORDER",
-    ("AuthoringIntentEventV3", "sequence"): "SETTLEMENT ORDER",
+    ("AuthoringIntentEvent", "sequence"): "SETTLEMENT ORDER",
     ("BlockObservationV1", "scan_generation"): "SETTLEMENT ORDER",
     ("CandidateStatus", "accepted_generation"): "SETTLEMENT ORDER",
     ("CaptureAcquisitionReceiptV1", "observed_at"): "EVALUATION INSTANT",
@@ -228,7 +226,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimStatement", "effective_from"): "VALIDITY WINDOW",
     ("ClaimStatement", "effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeDependentDisposition", "claim_effective_until"): "VALIDITY WINDOW",
-    ("ClaimTypeMigrationDispositionV3", "claim_effective_until"): "VALIDITY WINDOW",
+    ("ClaimTypeMigrationDisposition", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimTypeSuccessionDependent", "claim_effective_until"): "VALIDITY WINDOW",
     ("ClaimVerdictResult", "evaluation_time"): "EVALUATION INSTANT",
     ("ConsumptionAggregateV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
@@ -600,7 +598,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
 NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
     {
         # A retained source selection locating own words in a file, not a time.
-        ("ClaimAuthoringPayloadV1", "located_at"),
+        ("ClaimAuthoringPayload", "located_at"),
         ("AuthoringIntentCoordinator", "clock"),
         # Reads re-observations at the instant it is given; it holds no time.
         ("ClaimFactRowV1", "_reobserved"),

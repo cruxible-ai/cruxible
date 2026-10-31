@@ -172,7 +172,7 @@ def test_a_change_set_claim_names_its_subject_through_an_alias(
     from cruxible_client.contracts.authoring.models import (
         AuthoringClaimStatement,
         ChangeSetAuthoringPayload,
-        ClaimAuthoringPayloadV2,
+        ClaimAuthoringPayload,
         ClaimDependencyDrafts,
         SelfSourceBody,
     )
@@ -182,7 +182,7 @@ def test_a_change_set_claim_names_its_subject_through_an_alias(
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
     alias(instance, ALPHA, "a-one")
-    member = ClaimAuthoringPayloadV2(
+    member = ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(KIND, "a-one")),
             predicate=f"{KIND}.plain",
@@ -384,14 +384,14 @@ def _distinct_member(subject_id: str, other: str) -> Any:
 
     from cruxible_client.contracts.authoring.models import (
         AuthoringClaimStatement,
-        ClaimAuthoringPayloadV2,
+        ClaimAuthoringPayload,
         ClaimDependencyDrafts,
         SelfSourceBody,
     )
     from cruxible_client.contracts.claims import SubjectClaimObject
     from cruxible_client.contracts.semantic import SemanticAddress
 
-    return ClaimAuthoringPayloadV2(
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(KIND, subject_id)),
             predicate="semantic.distinct_from",
@@ -437,14 +437,14 @@ def _alias_member(subject_id: str, name: str) -> Any:
 
     from cruxible_client.contracts.authoring.models import (
         AuthoringClaimStatement,
-        ClaimAuthoringPayloadV2,
+        ClaimAuthoringPayload,
         ClaimDependencyDrafts,
         SelfSourceBody,
     )
     from cruxible_client.contracts.claims import LiteralClaimObject
     from cruxible_client.contracts.semantic import SemanticAddress
 
-    return ClaimAuthoringPayloadV2(
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(KIND, subject_id)),
             predicate="semantic.alias",

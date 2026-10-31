@@ -979,7 +979,7 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
     claim_index = next(
         index
         for index, member in enumerate(compiled.payload.members)
-        if member.model_dump(mode="json")["tag"].startswith("playbill-claim-authoring-payload-")
+        if member.model_dump(mode="json")["tag"].startswith("cruxible-claim-authoring-payload-")
     )
     # The Subject the set defines asserts no reference expectation: it did not
     # exist at the coordinate this ref names, and asserting it there would
@@ -1050,7 +1050,7 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
     claim = next(
         member.model_dump(mode="json")
         for member in compiled.payload.members
-        if member.model_dump(mode="json")["tag"].startswith("playbill-claim-authoring-payload-")
+        if member.model_dump(mode="json")["tag"].startswith("cruxible-claim-authoring-payload-")
     )
     # A literal ClaimType keeps an address-shaped string a literal, and the
     # pending ref answered that without reading a ClaimType that is not

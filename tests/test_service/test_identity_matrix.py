@@ -25,7 +25,7 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
 )
@@ -92,7 +92,7 @@ def _dry(instance: PlaybillInstance, change: dict[str, Any]) -> object:
 
 
 def _lowered(instance: PlaybillInstance, statement: AuthoringClaimStatement) -> object:
-    member = ClaimAuthoringPayloadV2(
+    member = ClaimAuthoringPayload(
         statement=statement,
         rationale="Matrix.",
         source=SelfSourceBody(content_base64=base64.b64encode(b"matrix").decode()),

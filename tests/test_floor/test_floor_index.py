@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -67,8 +68,8 @@ def migrate_claim_type(instance: PlaybillInstance, predicate: str, **update: Any
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
     from cruxible_core.claims.claim_type_migrations import (
-        ClaimTypeDependentDispositionV1,
-        ClaimTypeMigrationRequestV1,
+        ClaimTypeDependentDisposition,
+        ClaimTypeMigrationRequest,
         service_migrate_claim_type,
     )
 
@@ -101,10 +102,13 @@ def migrate_claim_type(instance: PlaybillInstance, predicate: str, **update: Any
         return
     migration = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
             successor=successor,
             dependents=tuple(
-                ClaimTypeDependentDispositionV1(claim_id=claim, disposition="successor")
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(kind="Claim", name=claim), disposition="successor"
+                )
                 for claim in claims
             ),
         ),

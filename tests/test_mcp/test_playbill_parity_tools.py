@@ -169,10 +169,9 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
             instance_id: str,
             *,
             request: dict[str, Any],
-        ) -> contracts.ClaimTypeMigrationResultV1:
+        ) -> contracts.ClaimTypeMigrationResult:
             calls.append(f"migrate:{request['tag']}")
-            return contracts.ClaimTypeMigrationResultV1(
-                tag="playbill-claim-type-migration-result-v1",
+            return contracts.ClaimTypeMigrationResult(
                 operation_digest="sha256:" + "6" * 64,
                 semantic_delta=[],
                 dependents=[],
@@ -186,7 +185,8 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
     migrated = handlers.handle_playbill_migrate_claim_type(
         "inst_test",
         {
-            "tag": "playbill-claim-type-migration-request-v1",
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
             "successor": claim_type_input_example().model_dump(mode="json"),
             "dependents": [],
         },
@@ -195,5 +195,5 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
     assert migrated.dependents == []
     assert calls == [
         "readmit:proposal-1",
-        "migrate:playbill-claim-type-migration-request-v1",
+        "migrate:playbill-claim-type-migration-request-v3",
     ]

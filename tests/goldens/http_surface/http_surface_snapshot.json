@@ -63,7 +63,7 @@
     "POST": "ClaimAttestationAppendResult"
   },
   "/api/v1/{instance_id}/claim-types/migrations": {
-    "POST": "ClaimTypeMigrationResultV1 | ClaimTypeMigrationPreflight | ClaimTypeMigrationResultV2 | ClaimTypeMigrationResult"
+    "POST": "ClaimTypeMigrationPreflight | ClaimTypeMigrationResult"
   },
   "/api/v1/{instance_id}/claim-types/proposals": {
     "POST": "ClaimTypeInputProposalResult"

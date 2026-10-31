@@ -138,7 +138,7 @@ class AuthenticatedActor(_StrictProposalModel):
 #: ===========================================  ==============
 #: ``SubjectAuthoringPayload``                         1,551
 #: ``ClaimTypeAuthoringPayload``                       4,027
-#: ``ClaimAuthoringPayloadV1`` (and insertion)           6,215
+#: ``ClaimAuthoringPayload`` (and insertion)           6,215
 #: ``ClaimRetirementMember``                           8,670
 #: ``ClaimTypeSuccessionMember`` dependent            10,230
 #: ===========================================  ==============

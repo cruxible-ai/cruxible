@@ -17,7 +17,7 @@ from cruxible_core.authoring.coordinator import (
     AuthoringIntentCoordinator,
     AuthoringProgramStampError,
 )
-from cruxible_core.authoring.store import AuthoringIntentEventV3
+from cruxible_core.authoring.store import AuthoringIntentEvent
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import (
@@ -81,8 +81,8 @@ def test_program_stamp_is_event_committed_and_identity_excluded(tmp_path: Path) 
     assert repeated == first == second
     assert len(first_events) == 2
     assert len(events) == 3
-    assert isinstance(events[1], AuthoringIntentEventV3)
-    assert isinstance(events[2], AuthoringIntentEventV3)
+    assert isinstance(events[1], AuthoringIntentEvent)
+    assert isinstance(events[2], AuthoringIntentEvent)
     assert events[1].program_stamp != events[2].program_stamp
     assert events[1].event_digest != events[2].event_digest
     assert first.intent_revision == 0

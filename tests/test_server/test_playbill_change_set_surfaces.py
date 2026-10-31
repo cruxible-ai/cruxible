@@ -137,14 +137,14 @@ def _add_parity_claim(draft: ChangeSetDraft) -> None:
 
 def _claim_member(members: list[dict[str, object]]) -> dict[str, object]:
     return next(
-        item for item in members if str(item["tag"]).startswith("playbill-claim-authoring-payload-")
+        item for item in members if str(item["tag"]).startswith("cruxible-claim-authoring-payload-")
     )
 
 
 def _normalized_member(member: dict[str, object]) -> dict[str, object]:
     """Strip exactly the two fields the V1/V2 Claim payload split introduces."""
 
-    if not str(member["tag"]).startswith("playbill-claim-authoring-payload-"):
+    if not str(member["tag"]).startswith("cruxible-claim-authoring-payload-"):
         return member
     return {key: value for key, value in member.items() if key not in {"tag", "dependency_drafts"}}
 
@@ -272,10 +272,9 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     assert next(iter(claim_identities)).startswith("ChangeSet:")
     assert claim_identities != identities
 
-    # The tagless and MCP payloads are the same bytes; the SDK's differs, and
-    # only in the Claim member's payload version.
+    # One payload grammar: the tagless, MCP and SDK payloads are the same bytes.
     assert _payload_digest(cli_claim_intent) == _payload_digest(mcp_claim_intent)
-    assert _payload_digest(sdk_claim_intent) != _payload_digest(cli_claim_intent)
+    assert _payload_digest(sdk_claim_intent) == _payload_digest(cli_claim_intent)
     tagless_members = cli_claim_intent["payload"]["members"]
     sdk_members = sdk_claim_intent["payload"]["members"]
     assert [_normalized_member(item) for item in tagless_members] == [
@@ -285,10 +284,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
         _claim_member(tagless_members)["tag"],
         _claim_member(sdk_members)["tag"],
     }
-    assert versions == {
-        "playbill-claim-authoring-payload-v1",
-        "playbill-claim-authoring-payload-v2",
-    }
+    assert versions == {"cruxible-claim-authoring-payload-v4"}
 
 
 def test_the_shipped_change_set_example_round_trips_and_creates_one_intent(

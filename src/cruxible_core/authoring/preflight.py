@@ -19,7 +19,6 @@ from cruxible_client.contracts.authoring.models import (
     MAX_DIAGNOSTICS,
     AuthoringDiagnostic,
     AuthoringIntent,
-    AuthoringIntentV1,
     AuthoringPayload,
     AuthoringReferenceExpectation,
     AuthoringReferenceSuccessor,
@@ -27,7 +26,7 @@ from cruxible_client.contracts.authoring.models import (
     BlockedCheck,
     CandidateStatus,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     ClaimRetirementMember,
     ClaimTypeSuccessionMember,
     DiagnosticFrontier,
@@ -297,11 +296,11 @@ def _slot_diagnostics(
 def _reference_diagnostics(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     base_tree: Mapping[str, bytes],
     evaluated_at: AcceptedProjectionCoordinate,
 ) -> tuple[AuthoringDiagnostic, ...]:
-    if not isinstance(intent, AuthoringIntent):
+    if intent.reference_expectations is None:
         return ()
     diagnostics: list[AuthoringDiagnostic] = list(
         _slot_diagnostics(
@@ -646,7 +645,7 @@ def _encoded_changes(
 
 def _authored_claims(
     payload: AuthoringPayload,
-) -> tuple[tuple[str, ClaimAuthoringPayloadV1], ...]:
+) -> tuple[tuple[str, ClaimAuthoringPayload], ...]:
     """Return every Claim this intent authors, with the payload path that names it.
 
     One intent is one changeset, so the two source-binding checks below run once
@@ -655,19 +654,19 @@ def _authored_claims(
     also exactly what `reference_expectations` already address.
     """
 
-    if isinstance(payload, ClaimAuthoringPayloadV1):
+    if isinstance(payload, ClaimAuthoringPayload):
         return (("", payload),)
     if isinstance(payload, ChangeSetAuthoringPayload):
         return tuple(
             (f"members[{index}].", member)
             for index, member in enumerate(payload.members)
-            if isinstance(member, ClaimAuthoringPayloadV1)
+            if isinstance(member, ClaimAuthoringPayload)
         )
     return ()
 
 
 def _claim_surface_diagnostics(
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
     *,
     prefix: str,
 ) -> tuple[AuthoringDiagnostic, ...]:
@@ -719,7 +718,7 @@ def _member_record_entries(member: object) -> int:
     readable here, before anything is staged.
 
     Every other kind is counted 1, which is a floor rather than a bound: a
-    `ClaimAuthoringPayloadV2` installs its dependency drafts as further entries.
+    `ClaimAuthoringPayload` installs its dependency drafts as further entries.
     The exact count is known only once lowering has run, and it is checked there
     against the same ceiling. This is the cheap pre-lowering filter; that is the
     bound.
@@ -801,7 +800,7 @@ def authoring_intent_id_for_proposal_ref(target_ref: str, *, actor_id: str) -> s
     return f"AIT-{target_ref.removeprefix(prefix)}"
 
 
-def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntentV1) -> bytes:
+def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntent) -> bytes:
     """Exact authored revision/minted identities, excluding computed status only."""
     return canonical_bytes(
         {
@@ -839,7 +838,7 @@ def _resolved_trigger_contracts(
 def compute_preflight(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor: AuthenticatedActor,
     prepared: PreparedEvaluationScope | None = None,
 ) -> ComputedPreflight:
@@ -1070,7 +1069,7 @@ def compute_preflight(
                         frozenset(
                             index
                             for index, member in enumerate(intent.payload.members)
-                            if isinstance(member, ClaimAuthoringPayloadV1)
+                            if isinstance(member, ClaimAuthoringPayload)
                         )
                         if isinstance(intent.payload, ChangeSetAuthoringPayload)
                         else frozenset()
@@ -1082,7 +1081,7 @@ def compute_preflight(
                             claim_members=claim_members,
                             singular_claim_path=(
                                 claim_path(intent.semantic_identity)
-                                if isinstance(intent.payload, ClaimAuthoringPayloadV1)
+                                if isinstance(intent.payload, ClaimAuthoringPayload)
                                 else None
                             ),
                         )
@@ -1299,7 +1298,7 @@ def compute_preflight(
 
 def _with_lowering_in_hand(
     authority: SubjectAssignmentAuthority | None,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     lowered: LoweredAuthoring | None,
 ) -> SubjectAssignmentAuthority:
     """The recorded creations, plus those the lowering being preflighted assigned.

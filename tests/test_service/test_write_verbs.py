@@ -12,7 +12,7 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
 )
@@ -151,7 +151,7 @@ def test_the_claim_law_names_the_enum_members_too(instance: PlaybillInstance) ->
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     payload = ChangeSetAuthoringPayload(
         members=(
-            ClaimAuthoringPayloadV2(
+            ClaimAuthoringPayload(
                 statement=AuthoringClaimStatement(
                     subject=SemanticAddress.whole_artifact(subject_path(KIND, "wi-1")),
                     predicate=f"{KIND}.status",

@@ -22,7 +22,6 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_CREATE_FINGERPRINT_DOMAIN,
     AUTHORING_PAYLOAD_DIGEST_DOMAIN,
     AuthoringIntent,
-    AuthoringIntentV1,
     AuthoringProgramStamp,
     CandidateStatus,
     ChangeSetAuthoringPayload,
@@ -35,9 +34,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.authoring.store import (
-    AuthoringIntentEventV1,
-    AuthoringIntentEventV2,
-    AuthoringIntentEventV3,
+    AuthoringIntentEvent,
     AuthoringIntentStore,
     AuthoringIntentStoreError,
     build_authoring_intent_event,
@@ -48,7 +45,7 @@ from tests.test_procedures.test_procedure_execution import _coordinate
 Presence = Literal["missing", "null", "content"]
 FIELD = "source_content_base64"
 CONTENT = base64.b64encode(b"status: ready").decode("ascii")
-EVENT_MODELS = {1: AuthoringIntentEventV1, 2: AuthoringIntentEventV2, 3: AuthoringIntentEventV3}
+EVENT_MODELS = {1: AuthoringIntentEvent, 2: AuthoringIntentEvent, 3: AuthoringIntentEvent}
 
 
 def _commit_raw_event(raw: dict[str, Any]) -> None:
@@ -105,7 +102,7 @@ def _wire_event(presence: Presence, version: int = 2) -> dict[str, Any]:
         ),
     }
     intent = (
-        AuthoringIntentV1.model_validate(fields)
+        AuthoringIntent.model_validate(fields)
         if version == 1
         else AuthoringIntent.model_validate({**fields, "reference_expectations": ()})
     )
@@ -227,7 +224,7 @@ def test_presence_compatibility_does_not_admit_tampered_history(
     else:
         raw["intent"]["payload"]["members"][0]["source"]["future_source_field"] = None
     with pytest.raises(ValidationError):
-        AuthoringIntentEventV2.model_validate(raw)
+        AuthoringIntentEvent.model_validate(raw)
 
     exhaust = tmp_path / "exhaust"
     directory = exhaust / "authoring-intents" / raw["intent"]["intent_id"] / "events"
@@ -247,4 +244,4 @@ def test_valid_payload_digest_cannot_hide_changed_event_content() -> None:
     _commit_raw_event(changed)
     changed["event_digest"] = raw["event_digest"]
     with pytest.raises(ValidationError, match="event digest does not reproduce"):
-        AuthoringIntentEventV2.model_validate(changed)
+        AuthoringIntentEvent.model_validate(changed)

@@ -3,12 +3,10 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntent,
     AuthoringIntentList,
-    AuthoringIntentV1,
     AuthoringIntentView,
     AuthoringSubmitResult,
 )
@@ -43,14 +41,20 @@ def test_all_response_wrappers_round_trip_the_selected_intent_version(
         restored_intent = (
             restored.intents[0] if isinstance(restored, AuthoringIntentList) else restored.intent
         )
-        assert type(restored_intent) is (AuthoringIntent if version == 2 else AuthoringIntentV1)
+        assert type(restored_intent) is AuthoringIntent
         assert restored_intent == intent
         if version == 2:
             assert nested["reference_expectations"] == [
                 item.model_dump(mode="json") for item in references
             ]
+            # Omitted and asserted expectations stay distinct: dropping them reads
+            # back as an intent that asserts none, never as this one.
             del nested["reference_expectations"]
-            with pytest.raises(ValidationError, match="reference_expectations"):
-                type(response).model_validate(wire)
+            trimmed = type(response).model_validate(wire)
+            trimmed_intent = (
+                trimmed.intents[0] if isinstance(trimmed, AuthoringIntentList) else trimmed.intent
+            )
+            assert trimmed_intent.reference_expectations is None
+            assert trimmed_intent != intent
         else:
             assert "reference_expectations" not in nested

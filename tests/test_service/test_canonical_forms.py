@@ -16,7 +16,7 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
     authoring_member_identity,
@@ -64,8 +64,8 @@ def stored(instance: PlaybillInstance, field: str, subject: str = "alpha") -> li
     )
 
 
-def _member(value: object, field: str = "code") -> ClaimAuthoringPayloadV2:
-    return ClaimAuthoringPayloadV2(
+def _member(value: object, field: str = "code") -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(KIND, "alpha")),
             predicate=f"{KIND}.{field}",

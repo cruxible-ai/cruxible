@@ -664,14 +664,14 @@ def test_a_preflight_certificate_from_before_the_record_ceiling_still_validates(
     )
 
 
-def test_an_authoring_intent_written_before_revises_is_refused_by_name(
+def test_an_authoring_intent_from_an_earlier_build_is_refused_with_its_repair(
     tmp_path: Path,
 ) -> None:
-    """A stored intent whose Claim still spells its revision `claim_ref` is named.
+    """A stored intent written by an earlier build (here, before `revises`) is refused.
 
     Intents are discarded at deploy rather than migrated, so these events no
-    longer read; what matters is that the refusal says why and what to do,
-    instead of reporting a malformed event.
+    longer read; what matters is that the refusal names the event format and
+    what to do, instead of reporting a malformed event.
     """
 
     records = _pre_hotfix_records()
@@ -686,17 +686,17 @@ def test_an_authoring_intent_written_before_revises_is_refused_by_name(
         (directory / name).write_text(str(content), encoding="utf-8")
 
     store = AuthoringIntentStore(exhaust)
-    with pytest.raises(AuthoringIntentStoreError, match="predates the `revises` field"):
+    with pytest.raises(AuthoringIntentStoreError, match="is not read by this build; discard"):
         store.get(intent_id, actor_id="owner")
 
 
-def test_an_authoring_intent_written_before_retires_is_refused_by_name(
+def test_an_authoring_intent_written_before_retires_is_refused_with_its_repair(
     tmp_path: Path,
 ) -> None:
-    """A stored change set whose retirement member still says `claim_ref` is named.
+    """A stored change set whose retirement member still says `claim_ref` is refused.
 
-    The retirement member's field became `retires`, parallel to `revises`; an
-    intent stored before that no longer reads, and the refusal says why.
+    Its event format is an earlier build's, so it no longer reads, and the
+    refusal names the format and the repair.
     """
 
     intent_id = "AIT-" + "2" * 32
@@ -724,7 +724,9 @@ def test_an_authoring_intent_written_before_retires_is_refused_by_name(
     (directory / "00000000000000000000.json").write_text(json.dumps(event), encoding="utf-8")
 
     store = AuthoringIntentStore(exhaust)
-    with pytest.raises(AuthoringIntentStoreError, match="predates the `retires` field"):
+    with pytest.raises(
+        AuthoringIntentStoreError, match="'playbill-authoring-intent-event-v1' is not read"
+    ):
         store.get(intent_id, actor_id="owner")
 
 

@@ -119,7 +119,7 @@ def test_input_create_binds_friendly_subject_to_the_stored_intent_base(
     assert view.intent.payload.statement.subject.artifact_path == (
         "subjects/project.work_item/wi-42.json"
     )
-    assert view.intent.payload.tag == "playbill-claim-authoring-payload-v1"
+    assert view.intent.payload.tag == "cruxible-claim-authoring-payload-v4"
     assert "digest" not in _claim_input().model_dump_json()
 
 
@@ -137,7 +137,7 @@ def test_existing_capture_input_lowers_to_the_v3_payload_without_digest_relay() 
 
     payload = lower_authoring_input(input_value)
 
-    assert payload.tag == "playbill-claim-authoring-payload-v3"
+    assert payload.tag == "cruxible-claim-authoring-payload-v4"
     assert payload.source.capture_digest == capture_digest  # type: ignore[union-attr]
 
 

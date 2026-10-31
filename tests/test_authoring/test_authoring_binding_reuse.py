@@ -321,7 +321,7 @@ def test_binding_keeps_a_singular_claims_rationale_in_both_commitments() -> None
     event = EVENT_MODELS[2].model_validate(raw)
 
     intent = event.intent
-    assert isinstance(intent.payload, models.ClaimAuthoringPayloadV1)
+    assert isinstance(intent.payload, models.ClaimAuthoringPayload)
     assert intent.payload_digest == models.authoring_payload_digest(payload)
     assert intent.create_fingerprint == models.authoring_create_fingerprint(
         instance_id=intent.instance_id, actor_id=intent.actor_id, payload=payload

@@ -393,7 +393,7 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     payload.write_text(
         json.dumps(
             {
-                "tag": "playbill-claim-type-migration-request-v2",
+                "tag": "playbill-claim-type-migration-request-v3",
                 "mode": "preflight",
                 "successor": claim_type_input_example().model_dump(mode="json"),
             }
@@ -476,7 +476,7 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
     payload.write_text(
         json.dumps(
             {
-                "tag": "playbill-claim-type-migration-request-v2",
+                "tag": "playbill-claim-type-migration-request-v3",
                 "mode": "submit",
                 "successor": claim_type_input_example().model_dump(mode="json"),
             }
@@ -490,10 +490,10 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
             instance_id: str,
             *,
             request: dict[str, object],
-        ) -> contracts.ClaimTypeMigrationResultV2:
+        ) -> contracts.ClaimTypeMigrationResult:
             assert instance_id == "inst_authoring"
             assert request["mode"] == "submit"
-            return contracts.ClaimTypeMigrationResultV2(
+            return contracts.ClaimTypeMigrationResult(
                 operation_digest="sha256:" + "6" * 64,
                 semantic_delta=[],
                 dependents=[],

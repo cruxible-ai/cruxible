@@ -21,7 +21,6 @@ from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
     ClaimDependencyDrafts,
     ExistingCaptureCitationSource,
     SelfSourceBody,
@@ -123,7 +122,7 @@ class _V7World(_World):
         payload_type = (
             ClaimAuthoringPayload
             if isinstance(source, ExistingCaptureCitationSource)
-            else ClaimAuthoringPayloadV1
+            else ClaimAuthoringPayload
         )
         extra = (
             {"dependency_drafts": ClaimDependencyDrafts()}

@@ -42,8 +42,8 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeMigrationRequestV1,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -134,10 +134,13 @@ def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
         )
     migration = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
             successor=successor,
             dependents=tuple(
-                ClaimTypeDependentDispositionV1(claim_id=claim, disposition="successor")
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(kind="Claim", name=claim), disposition="successor"
+                )
                 for claim in claims
             ),
         ),

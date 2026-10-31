@@ -17,7 +17,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionDependent,
@@ -50,7 +50,7 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationRequest,
-    ClaimTypeMigrationResultV3,
+    ClaimTypeMigrationResult,
     MigrationInputDisposition,
     service_migrate_claim_type,
 )
@@ -157,8 +157,8 @@ def _claim(
     revises: str | None = None,
     rationale: str = "The scanner observed this package in the advisory.",
     body: str = "package: demo-package\n",
-) -> ClaimAuthoringPayloadV1:
-    return ClaimAuthoringPayloadV1(
+) -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, subject_id)),
             predicate=PREDICATE,
@@ -607,7 +607,7 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
         values=(("wi-42", "demo-package"),),
     )
     actor = AuthenticatedActor(actor_id="owner")
-    other = ClaimAuthoringPayloadV1(
+    other = ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, "wi-2")),
             predicate="project.work_item.status",
@@ -1062,7 +1062,7 @@ def test_both_roads_build_the_same_succession_candidate(tmp_path: Path) -> None:
         ),
         actor=actor,
     )
-    assert isinstance(standalone, ClaimTypeMigrationResultV3)
+    assert isinstance(standalone, ClaimTypeMigrationResult)
     tree_oid = standalone.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     standalone_tree = instance.proposal_tree(tree_oid)
@@ -1136,7 +1136,7 @@ def _retiring_succession_world(
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
 
-    def _authored(subject_id: str) -> ClaimAuthoringPayloadV1:
+    def _authored(subject_id: str) -> ClaimAuthoringPayload:
         return _claim(subject_id=subject_id, value=LiteralClaimObject(value="demo-package"))
 
     intent = coordinator.create(

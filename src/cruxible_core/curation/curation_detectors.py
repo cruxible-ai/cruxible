@@ -11,7 +11,7 @@ from fractions import Fraction
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     ProcedureAuthoringPayload,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -877,7 +877,7 @@ def _admission_failures(
         payload = event.intent.payload
         authoring_subject: ArtifactIdentity | None
         authoring_direction: str
-        if isinstance(payload, ClaimAuthoringPayloadV1):
+        if isinstance(payload, ClaimAuthoringPayload):
             authoring_subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
             authoring_direction = "payload_side"
         elif isinstance(payload, ProcedureAuthoringPayload):

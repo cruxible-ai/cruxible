@@ -44,7 +44,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
-    AuthoringIntentV1,
+    AuthoringIntent,
     AuthoringNoneClaimObject,
     CandidateStatus,
     ChangeSetAuthoringPayload,
@@ -1297,7 +1297,7 @@ def _intent(
     instance_id: str,
     payload: ChangeSetAuthoringPayload,
     claim_identities: tuple[ChangeSetClaimIdentity, ...],
-) -> AuthoringIntentV1:
+) -> AuthoringIntent:
     membership_digest = typed_digest(
         Sha256Value,
         AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
@@ -1313,7 +1313,7 @@ def _intent(
         if isinstance(request, TerminalEgressRequestV2)
         else request.prepared_at
     )
-    return AuthoringIntentV1(
+    return AuthoringIntent(
         intent_id=_intent_id(request),
         instance_id=instance_id,
         actor_id=request.actor_context.actor_id,

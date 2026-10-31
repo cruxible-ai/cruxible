@@ -50,7 +50,7 @@ def _status() -> dict[str, Any]:
 
 def _claim_payload() -> dict[str, Any]:
     return {
-        "tag": "playbill-claim-authoring-payload-v1",
+        "tag": "cruxible-claim-authoring-payload-v4",
         "statement": {
             "tag": "playbill-authoring-claim-statement-v1",
             "subject": {
@@ -70,8 +70,6 @@ def _claim_payload() -> dict[str, Any]:
             "tag": "playbill-self-source-body-v1",
             "content_base64": "cmVhZHk=",
         },
-        "citation_role": None,
-        "revises": None,
         "existing_claim_dispositions": [],
     }
 
@@ -123,7 +121,7 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
     assert compiled.verdict == "refused"
     assert submitted.status.state == "draft"
     assert json.loads(captured[0].content) == {
-        "tag": "playbill-authoring-intent-compile-request-v1",
+        "tag": "cruxible-authoring-intent-compile-request-v4",
         "payload": payload,
         "intent_id": None,
     }

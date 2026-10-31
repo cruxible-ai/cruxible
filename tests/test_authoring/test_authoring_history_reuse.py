@@ -11,7 +11,7 @@ import pytest
 
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
-    AuthoringIntentV1,
+    AuthoringIntent,
     CandidateStatus,
     ChangeSetAuthoringPayload,
     SubjectAuthoringPayload,
@@ -23,7 +23,7 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_core.authoring import store as store_module
 from cruxible_core.authoring.store import (
-    AuthoringIntentEventAny,
+    AuthoringIntentEvent,
     AuthoringIntentStore,
     AuthoringIntentStoreError,
     build_authoring_intent_event,
@@ -46,7 +46,7 @@ def parsed(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
     calls: list[bytes] = []
     original = store_module._decode_authoring_intent_event
 
-    def count(raw: bytes) -> tuple[AuthoringIntentEventAny, bytes]:
+    def count(raw: bytes) -> tuple[AuthoringIntentEvent, bytes]:
         calls.append(raw)
         return original(raw)
 
@@ -58,7 +58,7 @@ def _operation(index: int) -> str:
     return "sha256:" + hashlib.sha256(f"history-operation-{index}".encode()).hexdigest()
 
 
-def _intent(*, token: str = "1", actor: str = "owner", value: str = "ready") -> AuthoringIntentV1:
+def _intent(*, token: str = "1", actor: str = "owner", value: str = "ready") -> AuthoringIntent:
     payload = _payload(value=value)
     payload = payload.model_copy(
         update={
@@ -67,7 +67,7 @@ def _intent(*, token: str = "1", actor: str = "owner", value: str = "ready") -> 
             )
         }
     )
-    return AuthoringIntentV1(
+    return AuthoringIntent(
         intent_id="AIT-" + token * 32,
         instance_id="history-reuse-fixture",
         actor_id=actor,
@@ -83,17 +83,17 @@ def _intent(*, token: str = "1", actor: str = "owner", value: str = "ready") -> 
     )
 
 
-def _event_path(store: AuthoringIntentStore, event: AuthoringIntentEventAny) -> Path:
+def _event_path(store: AuthoringIntentStore, event: AuthoringIntentEvent) -> Path:
     return store.root / event.intent.intent_id / "events" / f"{event.sequence:020d}.json"
 
 
 def _history(
     exhaust: Path, *, count: int = 3, token: str = "1", actor: str = "owner", value: str = "ready"
-) -> tuple[AuthoringIntentStore, tuple[AuthoringIntentEventAny, ...]]:
+) -> tuple[AuthoringIntentStore, tuple[AuthoringIntentEvent, ...]]:
     exhaust.mkdir(parents=True, exist_ok=True)
     store = AuthoringIntentStore(exhaust)
     intent = _intent(token=token, actor=actor, value=value)
-    events: list[AuthoringIntentEventAny] = []
+    events: list[AuthoringIntentEvent] = []
     for sequence in range(count):
         event = build_authoring_intent_event(
             sequence=sequence,
@@ -108,7 +108,7 @@ def _history(
     return store, tuple(events)
 
 
-def _get(store: AuthoringIntentStore, event: AuthoringIntentEventAny) -> AuthoringIntentV1:
+def _get(store: AuthoringIntentStore, event: AuthoringIntentEvent) -> AuthoringIntent:
     return store.get(event.intent.intent_id, actor_id=event.intent.actor_id)
 
 
@@ -293,7 +293,7 @@ def test_warm_retry_discovers_transition_durable_before_response_loss(
             transform=lambda intent: intent.model_copy(update={"intent_revision": 3}),
         )
 
-    def unexpected_transform(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+    def unexpected_transform(intent: AuthoringIntent) -> AuthoringIntent:
         pytest.fail("the durable transition must be discovered before retrying its transform")
 
     resumed = store.transition(
@@ -359,7 +359,7 @@ def test_returned_nested_containers_cannot_mutate_cached_history(
         returned = store.create(_intent(token="3"), operation_key=_operation(99))
     else:
 
-        def unexpected_transform(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+        def unexpected_transform(intent: AuthoringIntent) -> AuthoringIntent:
             pytest.fail("retry must return the recorded operation")
 
         returned = store.transition(
@@ -383,7 +383,7 @@ def test_failed_transform_cannot_mutate_memoized_predecessor(
     latest = events[-1]
     _get(store, latest)
 
-    def fail_after_mutation(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+    def fail_after_mutation(intent: AuthoringIntent) -> AuthoringIntent:
         intent.payload.statement.object.value["items"].clear()
         raise RuntimeError("synthetic transform failure")
 
@@ -493,10 +493,10 @@ def _change_set(rationale: str | None) -> ChangeSetAuthoringPayload:
     return ChangeSetAuthoringPayload(members=members, rationale=rationale)
 
 
-def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntentV1:
+def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntent:
     payload = _change_set(rationale)
     membership = authoring_change_set_membership(payload.members)
-    return AuthoringIntentV1(
+    return AuthoringIntent(
         intent_id="AIT-" + "4" * 32,
         instance_id="history-reuse-fixture",
         actor_id="owner",
@@ -520,10 +520,10 @@ def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntentV
 
 def _write_change_set_history(
     exhaust: Path, rationales: tuple[str | None, ...]
-) -> tuple[AuthoringIntentStore, tuple[AuthoringIntentEventAny, ...]]:
+) -> tuple[AuthoringIntentStore, tuple[AuthoringIntentEvent, ...]]:
     exhaust.mkdir(parents=True, exist_ok=True)
     store = AuthoringIntentStore(exhaust)
-    events: list[AuthoringIntentEventAny] = []
+    events: list[AuthoringIntentEvent] = []
     for sequence, rationale in enumerate(rationales):
         event = build_authoring_intent_event(
             sequence=sequence,

@@ -20,8 +20,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
     WorkingAnchorWindow,
@@ -160,7 +159,7 @@ def _payload(
     authoring: DirectClaimAuthoringV1,
     *,
     timestamp: str,
-) -> ClaimAuthoringPayloadV1 | ClaimAuthoringPayloadV2:
+) -> ClaimAuthoringPayload | ClaimAuthoringPayload:
     if authoring.retire:
         raise ValueError("retirement fixtures must use cruxible.claim.retire")
     if authoring.dependency_subject_shells or authoring.dependency_claim_types:
@@ -246,7 +245,7 @@ def _payload(
         "existing_claim_dispositions": _dispositions(instance, authoring),
     }
     if authoring.subject_shell is None and authoring.claim_type_artifact is None:
-        return ClaimAuthoringPayloadV1(**base)
+        return ClaimAuthoringPayload(**base)
     claim_type = authoring.claim_type_artifact
     if claim_type is not None:
         # The drafted type names the contract the bound Claim installs in the
@@ -281,7 +280,7 @@ def _payload(
         # A Claim draft never creates its Subject (core names new Subjects): the
         # fixture's Subject lands first, under a minted declaration of its kind.
         create_subjects(instance, (shell,), timestamp=timestamp)
-    return ClaimAuthoringPayloadV2(
+    return ClaimAuthoringPayload(
         **base,
         dependency_drafts=ClaimDependencyDrafts(
             subject=shell,

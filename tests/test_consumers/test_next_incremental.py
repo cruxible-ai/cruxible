@@ -48,7 +48,7 @@ from cruxible_client.contracts.accepted_attestations import (
     parse_accepted_attestation,
     render_accepted_attestation,
 )
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
     DirectForeignSourceSelection,
@@ -71,8 +71,8 @@ from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeMigrationRequestV1,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.consumers.next import facts, rows
@@ -671,11 +671,13 @@ def _claim_type(state: World) -> str | None:
         return None  # a change this ClaimType's format or policy cannot carry
     migration = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
             successor=successor,
             dependents=tuple(
-                ClaimTypeDependentDispositionV1(
-                    claim_id=claim.identity.name, disposition="successor"
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(kind="Claim", name=claim.identity.name),
+                    disposition="successor",
                 )
                 # Every Claim the ClaimType governs, retired ones too.
                 for claim in _claims(state)

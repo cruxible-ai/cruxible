@@ -117,7 +117,7 @@ from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
 )
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget
@@ -158,8 +158,8 @@ _client_cache_key: tuple[str | None, str | None, str | None, str | None] | None 
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
-_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequestAny] = TypeAdapter(
-    ClaimTypeMigrationRequestAny
+_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
+    ClaimTypeMigrationRequest
 )
 
 

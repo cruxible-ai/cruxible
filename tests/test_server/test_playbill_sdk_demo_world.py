@@ -703,7 +703,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     response = http.post(
         f"/api/v1/{instance_id}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v3",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": incomplete.payload.model_dump(mode="json"),
             "reference_expectations": [
                 item.model_dump(mode="json") for item in incomplete.reference_expectations

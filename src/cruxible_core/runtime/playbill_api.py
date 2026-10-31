@@ -124,7 +124,7 @@ from cruxible_client.contracts.write import (
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeMigrationRequestAny,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.adapter import WorkingSourceObservation
@@ -1631,7 +1631,7 @@ def playbill_propose_claim_type_input(
 def playbill_migrate_claim_type(
     instance_id: str,
     *,
-    request: ClaimTypeMigrationRequestAny,
+    request: ClaimTypeMigrationRequest,
 ) -> contracts.ClaimTypeMigrationResponse:
     check_permission("cruxible_propose", instance_id=instance_id)
     result = service_migrate_claim_type(
@@ -1974,8 +1974,8 @@ def playbill_authoring_compile_and_submit(
     instance_id: str,
     *,
     payload: AuthoringPayload,
-    reference_expectations: tuple[AuthoringExpectation, ...],
-    program_stamp: AuthoringProgramStamp,
+    reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
+    program_stamp: AuthoringProgramStamp | None = None,
     intent_id: str | None = None,
     accept: AuthoringAccept = "if_allowed",
 ) -> contracts.AuthoringSubmitResultRecord:

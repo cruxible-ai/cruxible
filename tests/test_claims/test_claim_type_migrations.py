@@ -47,17 +47,12 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeDependentDispositionV2,
     ClaimTypeMigrationDependentInvalid,
     ClaimTypeMigrationError,
     ClaimTypeMigrationIncomplete,
     ClaimTypeMigrationPreflightV1,
     ClaimTypeMigrationRequest,
-    ClaimTypeMigrationRequestV1,
-    ClaimTypeMigrationRequestV2,
-    ClaimTypeMigrationResultV2,
-    ClaimTypeMigrationResultV3,
+    ClaimTypeMigrationResult,
     _canonical_successor_bytes,
     service_migrate_claim_type,
 )
@@ -251,11 +246,12 @@ def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    request = ClaimTypeMigrationRequestV1(
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
         successor=_successor(instance),
         dependents=(
-            ClaimTypeDependentDispositionV1(
-                claim_id=claim_id,
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
                 disposition="successor",
             ),
         ),
@@ -308,11 +304,9 @@ def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
     assert claim.lifecycle.predecessor_digest is not None
 
 
-@pytest.mark.parametrize("request_version", ["v1", "v2"])
 @pytest.mark.parametrize("successor_state", ["live", "retired"])
 def test_migration_claim_successor_bytes_use_successor_claim_type_digest(
     tmp_path: Path,
-    request_version: str,
     successor_state: str,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
@@ -322,7 +316,7 @@ def test_migration_claim_successor_bytes_use_successor_claim_type_digest(
             owner,
             _decision_only_successor(instance, enum=["blocked", "ready"]),
             (
-                ClaimTypeDependentDispositionV2(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="retire",
                 ),
@@ -337,35 +331,20 @@ def test_migration_claim_successor_bytes_use_successor_claim_type_digest(
     base_successor = _successor(instance)
     successor = base_successor.model_copy(update={})
     actor = AuthenticatedActor(actor_id="owner")
-    if request_version == "v1":
-        result = service_migrate_claim_type(
-            instance,
-            request=ClaimTypeMigrationRequestV1(
-                successor=successor,
-                dependents=(
-                    ClaimTypeDependentDispositionV1(
-                        claim_id=claim_id,
-                        disposition="successor",
-                    ),
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
+            successor=successor,
+            dependents=(
+                ClaimTypeDependentDisposition(
+                    identity=current_claim.identity,
+                    disposition="successor",
                 ),
             ),
-            actor=actor,
-        )
-    else:
-        result = service_migrate_claim_type(
-            instance,
-            request=ClaimTypeMigrationRequestV2(
-                mode="submit",
-                successor=successor,
-                dependents=(
-                    ClaimTypeDependentDispositionV2(
-                        identity=current_claim.identity,
-                        disposition="successor",
-                    ),
-                ),
-            ),
-            actor=actor,
-        )
+        ),
+        actor=actor,
+    )
 
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
@@ -406,7 +385,8 @@ def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
     with pytest.raises(ClaimTypeMigrationError, match=claim_id):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV1(
+            request=ClaimTypeMigrationRequest(
+                mode="submit",
                 successor=_successor(instance),
                 dependents=(),
             ),
@@ -417,8 +397,6 @@ def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "model, values",
     [
-        (ClaimTypeDependentDispositionV1, {"claim_id": "claim"}),
-        (ClaimTypeDependentDispositionV2, {"identity": {"kind": "Claim", "name": "claim"}}),
         (ClaimTypeDependentDisposition, {"identity": {"kind": "Claim", "name": "claim"}}),
     ],
 )
@@ -463,7 +441,7 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
         ),
         actor=actor,
     )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
+    assert isinstance(result, ClaimTypeMigrationResult)
     assert result.dependents[0].disposition == "retire"
     assert result.warnings == ()
     proposal = result.proposal.proposal
@@ -529,34 +507,18 @@ def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Pat
         )
 
 
-@pytest.mark.parametrize("request_version", ["v1", "v2"])
-def test_legacy_migration_cannot_retire_a_live_claim_without_attribution(
-    tmp_path: Path,
-    request_version: str,
-) -> None:
+def test_a_migration_cannot_retire_a_live_claim_without_attribution(tmp_path: Path) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    identity = ArtifactIdentity(kind="Claim", name=claim_id)
-    if request_version == "v1":
-        request = ClaimTypeMigrationRequestV1(
-            successor=_successor(instance),
-            dependents=(
-                ClaimTypeDependentDispositionV1(
-                    claim_id=claim_id,
-                    disposition="retire",
-                ),
+    request = ClaimTypeMigrationRequest(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDisposition(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="retire",
             ),
-        )
-    else:
-        request = ClaimTypeMigrationRequestV2(
-            mode="submit",
-            successor=_successor(instance),
-            dependents=(
-                ClaimTypeDependentDispositionV2(
-                    identity=identity,
-                    disposition="retire",
-                ),
-            ),
-        )
+        ),
+    )
     with pytest.raises(ClaimTypeMigrationError, match="retirement_reason_required"):
         service_migrate_claim_type(
             instance,
@@ -598,7 +560,7 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
         request=request,
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
+    assert isinstance(result, ClaimTypeMigrationResult)
     candidate = result.proposal.proposal.candidate
     assert candidate is not None
     approval = _sign(
@@ -705,7 +667,7 @@ def test_migration_refuses_hand_authored_predecessor_artifact_pins(tmp_path: Pat
     with pytest.raises(ClaimTypeMigrationError, match="predecessor.*machine-owned"):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV2(mode="preflight", successor=successor),
+            request=ClaimTypeMigrationRequest(mode="preflight", successor=successor),
             actor=AuthenticatedActor(actor_id="owner"),
         )
 
@@ -733,7 +695,7 @@ def test_preflight_and_submit_refuse_the_same_unresolved_successor_pin(
     with pytest.raises(ClaimTypeMigrationIncomplete, match="unresolved_pin"):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV2(mode=mode, successor=successor),  # type: ignore[arg-type]
+            request=ClaimTypeMigrationRequest(mode=mode, successor=successor),  # type: ignore[arg-type]
             actor=AuthenticatedActor(actor_id="owner"),
         )
 
@@ -755,15 +717,15 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
         assert successor.pins == ()
         preflight = service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV2(mode="preflight", successor=successor),
+            request=ClaimTypeMigrationRequest(mode="preflight", successor=successor),
             actor=actor,
         )
         result = service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV2(mode="submit", successor=successor),
+            request=ClaimTypeMigrationRequest(mode="submit", successor=successor),
             actor=actor,
         )
-        assert isinstance(result, ClaimTypeMigrationResultV2)
+        assert isinstance(result, ClaimTypeMigrationResult)
         candidate = result.proposal.proposal.candidate
         assert candidate is not None
         approval = _sign(
@@ -803,7 +765,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"evidence_freshness": freshness}
     )
-    dependent = ClaimTypeDependentDispositionV2(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition="successor",
     )
@@ -811,7 +773,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
 
     preflight = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(
+        request=ClaimTypeMigrationRequest(
             mode="preflight",
             successor=successor,
             dependents=(dependent,),
@@ -820,7 +782,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     )
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=successor,
             dependents=(dependent,),
@@ -828,7 +790,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
         actor=actor,
     )
 
-    assert isinstance(result, ClaimTypeMigrationResultV2)
+    assert isinstance(result, ClaimTypeMigrationResult)
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     path = claim_type_path(_claim_type().predicate)
@@ -855,10 +817,10 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     )
     freshness_result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(mode="submit", successor=freshness_input),
+        request=ClaimTypeMigrationRequest(mode="submit", successor=freshness_input),
         actor=actor,
     )
-    assert isinstance(freshness_result, ClaimTypeMigrationResultV2)
+    assert isinstance(freshness_result, ClaimTypeMigrationResult)
     freshness_candidate = freshness_result.proposal.proposal.candidate
     assert freshness_candidate is not None
     freshness_approval = _sign(
@@ -899,10 +861,10 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     )
     policy_result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(mode="submit", successor=policy_input),
+        request=ClaimTypeMigrationRequest(mode="submit", successor=policy_input),
         actor=actor,
     )
-    assert isinstance(policy_result, ClaimTypeMigrationResultV2)
+    assert isinstance(policy_result, ClaimTypeMigrationResult)
     policy_candidate = policy_result.proposal.proposal.candidate
     assert policy_candidate is not None
     policy_approval = _sign(
@@ -940,7 +902,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     identity = ArtifactIdentity(kind="Claim", name=claim_id)
-    retire = ClaimTypeDependentDispositionV2(identity=identity, disposition="retire")
+    retire = ClaimTypeDependentDisposition(identity=identity, disposition="retire")
     freshness = ClaimEvidenceFreshness(
         stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
     )
@@ -959,17 +921,17 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"attestation_consequence_policy": _policy(2)}
     )
-    dependent = ClaimTypeDependentDispositionV2(identity=identity, disposition="successor")
+    dependent = ClaimTypeDependentDisposition(identity=identity, disposition="successor")
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=successor,
             dependents=(dependent,),
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(result, ClaimTypeMigrationResultV2)
+    assert isinstance(result, ClaimTypeMigrationResult)
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     candidate_tree = instance.proposal_tree(tree_oid)
@@ -1024,7 +986,7 @@ def test_already_broken_retired_claim_walks_two_policy_only_predecessors(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    dependent = ClaimTypeDependentDispositionV2(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition="retire",
     )
@@ -1053,7 +1015,7 @@ def test_retired_claim_rederives_on_freshness_migration(tmp_path: Path) -> None:
         instance,
         owner,
         _decision_only_successor(instance, enum=["blocked", "ready"]),
-        (ClaimTypeDependentDispositionV2(identity=identity, disposition="retire"),),
+        (ClaimTypeDependentDisposition(identity=identity, disposition="retire"),),
     )
     freshness = ClaimEvidenceFreshness(
         stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
@@ -1064,7 +1026,7 @@ def test_retired_claim_rederives_on_freshness_migration(tmp_path: Path) -> None:
         _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
             update={"evidence_freshness": freshness}
         ),
-        (ClaimTypeDependentDispositionV2(identity=identity, disposition="successor"),),
+        (ClaimTypeDependentDisposition(identity=identity, disposition="successor"),),
     )
     _assert_current_adjudication_evidence(instance, claim_id)
     _next(instance)
@@ -1074,7 +1036,7 @@ def test_already_broken_retired_claim_accepts_policy_plus_approval_widen(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    dependent = ClaimTypeDependentDispositionV2(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition="retire",
     )
@@ -1099,7 +1061,7 @@ def test_already_broken_retired_claim_accepts_policy_plus_approval_widen(
 
 def test_already_broken_retired_claim_refuses_schema_divergence(tmp_path: Path) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    dependent = ClaimTypeDependentDispositionV2(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition="retire",
     )
@@ -1123,7 +1085,7 @@ def test_already_broken_retired_claim_refuses_schema_change_then_revert(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    dependent = ClaimTypeDependentDispositionV2(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition="retire",
     )
@@ -1166,7 +1128,7 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
 
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(mode=mode, successor=successor),  # type: ignore[arg-type]
+        request=ClaimTypeMigrationRequest(mode=mode, successor=successor),  # type: ignore[arg-type]
         actor=AuthenticatedActor(actor_id="owner"),
     )
 

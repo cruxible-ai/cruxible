@@ -15,7 +15,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_core.claims.claim_type_migrations import ClaimTypeDependentDispositionV2
+from cruxible_core.claims.claim_type_migrations import ClaimTypeDependentDisposition
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery import query as playbill_query
@@ -46,7 +46,7 @@ def _retired_world(tmp_path: Path) -> Any:
         owner,
         _decision_only_successor(instance, enum=["blocked", "ready"]),
         (
-            ClaimTypeDependentDispositionV2(
+            ClaimTypeDependentDisposition(
                 identity=ArtifactIdentity(kind="Claim", name=claim_id),
                 disposition="retire",
             ),

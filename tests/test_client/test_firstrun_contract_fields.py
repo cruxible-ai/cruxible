@@ -12,7 +12,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     BlockSyncItem,
     BlockSyncReason,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
 )
@@ -94,8 +94,8 @@ def test_server_info_and_proposal_outcome_are_absent_by_default() -> None:
     assert contracts.PublicNameMap.model_validate(public_name_map().model_dump(mode="json"))
 
 
-def _payload(**extra: object) -> ClaimAuthoringPayloadV2:
-    return ClaimAuthoringPayloadV2(
+def _payload(**extra: object) -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact("subjects/acme/widget.json"),
             predicate="acme.price",

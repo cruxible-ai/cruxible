@@ -10,7 +10,7 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     SelfSourceBody,
     SubjectAuthoringPayload,
     authoring_payload_digest,
@@ -26,8 +26,8 @@ from tests.test_authoring.test_authoring_change_set_intents import _shell
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 
-def _payload(*, value: str = "ready") -> ClaimAuthoringPayloadV1:
-    return ClaimAuthoringPayloadV1(
+def _payload(*, value: str = "ready") -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact("subjects/work_item/wi-42.json"),
             predicate="work.status",

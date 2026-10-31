@@ -50,14 +50,12 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
-    AuthoringIntentV1,
+    AuthoringIntent,
     AuthoringNoneClaimObject,
     AuthoringReferenceExpectation,
     AuthoringSlotExpectation,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ExistingCaptureCitationSource,
@@ -2309,11 +2307,7 @@ class _Planner:
         }
         if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
             values["located_at"] = change.evidence.observation
-        member: ClaimAuthoringPayloadV1 = (
-            ClaimAuthoringPayload(**values)
-            if isinstance(source, ExistingCaptureCitationSource)
-            else ClaimAuthoringPayloadV2(**values)
-        )
+        member = ClaimAuthoringPayload(**values)
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
             if isinstance(source, SelfSourceBody)
@@ -2789,13 +2783,7 @@ class _Planner:
             effective_from=statement.effective_from,
             effective_until=statement.effective_until,
         )
-        # A cited Capture travels in the payload that carries existing Captures.
-        payload_type = (
-            ClaimAuthoringPayload
-            if isinstance(source, ExistingCaptureCitationSource)
-            else ClaimAuthoringPayloadV2
-        )
-        member = payload_type(
+        member = ClaimAuthoringPayload(
             statement=authored,
             rationale=self.request.because,
             source=source,
@@ -3310,8 +3298,8 @@ class _Lowered:
 
 
 def _with_dispositions(
-    member: ClaimAuthoringPayloadV1, claim_ids: Sequence[str]
-) -> ClaimAuthoringPayloadV1:
+    member: ClaimAuthoringPayload, claim_ids: Sequence[str]
+) -> ClaimAuthoringPayload:
     return member.model_copy(
         update={
             "existing_claim_dispositions": tuple(
@@ -3360,7 +3348,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
     minted: dict[str, str] = {}
     for identity in ordered:
         index, member = by_identity[identity]
-        if isinstance(member, ClaimAuthoringPayloadV1) and member.revises is None:
+        if isinstance(member, ClaimAuthoringPayload) and member.revises is None:
             minted[identity] = new_claim_id()
             claim_ids.append(minted[identity])
     siblings: dict[tuple[str, str], list[str]] = {}
@@ -3374,7 +3362,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
             pin = planned_by_index[index].pin
             if pin is not None:
                 pins[len(members)] = pin
-        if isinstance(member, ClaimAuthoringPayloadV1) and index is not None:
+        if isinstance(member, ClaimAuthoringPayload) and index is not None:
             planned = planned_by_index[index]
             assert planned.slot is not None
             earlier = siblings.setdefault(planned.slot, [])
@@ -3416,7 +3404,7 @@ def _pinned_claims(
         prefix = f"members[{position}]"
         if isinstance(member, ClaimRetirementMember):
             pins.append((f"{prefix}.retires", member.retires))
-        elif isinstance(member, ClaimAuthoringPayloadV1):
+        elif isinstance(member, ClaimAuthoringPayload):
             if member.revises is not None:
                 pins.append((f"{prefix}.revises", member.revises))
             for ordinal, item in enumerate(member.existing_claim_dispositions):
@@ -3520,14 +3508,14 @@ def _subjects_added(plan: _Plan) -> tuple[str, ...]:
     return tuple(f"{shell.subject_kind}/{shell.subject_id}" for shell in plan.subjects.values())
 
 
-def _minted_claims(intent: AuthoringIntentV1) -> dict[str, str]:
+def _minted_claims(intent: AuthoringIntent) -> dict[str, str]:
     return {item.member_identity: item.claim_id for item in intent.change_set_claim_identities}
 
 
 def _change_outcomes(
     plan: _Plan,
     lowered: _Lowered,
-    intent: AuthoringIntentV1 | None,
+    intent: AuthoringIntent | None,
     *,
     unchanged: Callable[[_Planned], bool] = lambda _item: False,
 ) -> tuple[ChangeOutcome, ...]:
@@ -3806,7 +3794,7 @@ def _planned_role(planned: _Planned) -> str | None:
     """The role of the Claim a set or add writes, from its member."""
 
     member = planned.member
-    return member.statement.role if isinstance(member, ClaimAuthoringPayloadV1) else None
+    return member.statement.role if isinstance(member, ClaimAuthoringPayload) else None
 
 
 def _admitted_roles(claim_type: ClaimType | None) -> tuple[str, ...]:
@@ -4372,7 +4360,7 @@ def _slot_moved(
 
 def _evaluated_head(
     instance: PlaybillInstance,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     fallback: AcceptedProjectionCoordinate,
 ) -> AcceptedProjectionCoordinate:
     """The head the submitted candidate was evaluated at: its preflight's coordinate."""

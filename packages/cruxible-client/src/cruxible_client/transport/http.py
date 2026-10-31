@@ -13,7 +13,6 @@ from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
     AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
-    AuthoringIntentCompileRequestV1,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
@@ -1330,23 +1329,20 @@ class CruxibleClient:
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
         program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.AuthoringPreflightResult:
-        request: AuthoringIntentCompileRequestV1 | AuthoringIntentCompileRequest
         if (reference_expectations is None) != (program_stamp is None):
             raise ValueError("reference_expectations and program_stamp travel together")
-        if reference_expectations is None:
-            request = AuthoringIntentCompileRequestV1.model_validate(
-                {"payload": dict(payload), "intent_id": intent_id}
-            )
-        else:
-            assert program_stamp is not None
-            request = AuthoringIntentCompileRequest.model_validate(
-                {
-                    "payload": dict(payload),
-                    "reference_expectations": [dict(item) for item in reference_expectations],
-                    "program_stamp": dict(program_stamp),
-                    "intent_id": intent_id,
-                }
-            )
+        request = AuthoringIntentCompileRequest.model_validate(
+            {
+                "payload": dict(payload),
+                "intent_id": intent_id,
+                **(
+                    {}
+                    if reference_expectations is None
+                    else {"reference_expectations": [dict(item) for item in reference_expectations]}
+                ),
+                **({} if program_stamp is None else {"program_stamp": dict(program_stamp)}),
+            }
+        )
         response = self._client.post(
             f"/api/v1/{instance_id}/authoring/compile",
             json=request.model_dump(mode="json"),

@@ -14,7 +14,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.authoring.store import AuthoringIntentEventV2, AuthoringIntentStore
+from cruxible_core.authoring.store import AuthoringIntentEvent, AuthoringIntentStore
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -160,7 +160,7 @@ def test_reference_assertions_are_event_committed_but_identity_excluded(tmp_path
     )
 
     assert len(stored) == 1
-    assert isinstance(stored[0], AuthoringIntentEventV2)
+    assert isinstance(stored[0], AuthoringIntentEvent)
     assert stored[0].event_digest.startswith("sha256:")
     assert reference_expectations_digest(expected).startswith("sha256:")
     assert view.intent.payload_digest == authoring_payload_digest(payload)

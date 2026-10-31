@@ -7,10 +7,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentCompileRequest,
-    AuthoringIntentCompileRequestV1,
-)
+from cruxible_client.contracts.authoring.models import AuthoringIntentCompileRequest
 from cruxible_core.server.routes import playbill as server_routes
 
 
@@ -28,10 +25,9 @@ def _request_shape(model: type[BaseModel]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("client_model", "server_model"),
     [
-        (AuthoringIntentCompileRequestV1, server_routes.AuthoringIntentCompileRequestV1),
         (AuthoringIntentCompileRequest, server_routes.AuthoringIntentCompileRequest),
     ],
-    ids=("compile-v1", "compile-v3"),
+    ids=("compile",),
 )
 def test_client_and_server_share_each_authoring_request_model(
     client_model: type[BaseModel],

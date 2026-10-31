@@ -18,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
     WorkingSelectionObservation,
@@ -75,10 +75,10 @@ def test_an_anchor_may_quote_a_url_and_no_other_selector_field_may() -> None:
         _reference({"working_selection": {"anchor": "x", "api_key": "y"}})
 
 
-def _advisory_payload(anchor: bytes, *, content: bytes = ADVISORY) -> ClaimAuthoringPayloadV1:
+def _advisory_payload(anchor: bytes, *, content: bytes = ADVISORY) -> ClaimAuthoringPayload:
     start = content.index(anchor)
     end = start + len(anchor)
-    return ClaimAuthoringPayloadV1(
+    return ClaimAuthoringPayload(
         statement=_self_source_payload().statement,
         rationale="The advisory record says so.",
         source=WorkingSelectionObservation(

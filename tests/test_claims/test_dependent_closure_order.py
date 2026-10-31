@@ -39,7 +39,7 @@ def _quadratic_closure_candidate(
     changed: Mapping[str, bytes],
     inventory: tuple[migrations.ClaimTypeMigrationInventoryItemV1, ...],
     dispositions: tuple[migrations.ClaimTypeDependentDisposition, ...],
-) -> tuple[dict[str, bytes], tuple[migrations.ClaimTypeMigrationDispositionV3, ...]]:
+) -> tuple[dict[str, bytes], tuple[migrations.ClaimTypeMigrationDisposition, ...]]:
     """The pre-fix loop, verbatim: the oracle the one-pass order must match.
 
     Settle the closure of several changed definitions as one generation.
@@ -70,7 +70,7 @@ def _quadratic_closure_candidate(
         if current is not None and current.artifact_digest != after.artifact_digest:
             replacements[current.artifact_digest] = after.artifact_digest
     writes: dict[str, bytes] = {}
-    normalized: dict[str, migrations.ClaimTypeMigrationDispositionV3] = {}
+    normalized: dict[str, migrations.ClaimTypeMigrationDisposition] = {}
     remaining = set(by_identity)
     while remaining:
         progressed = False
@@ -118,7 +118,7 @@ def _quadratic_closure_candidate(
                     f"{migrations.ClaimTypeMigrationIncomplete.code}: successor did not parse"
                 )
             replacements[current.artifact_digest] = successor_state.artifact_digest
-            normalized[identity] = migrations.ClaimTypeMigrationDispositionV3(
+            normalized[identity] = migrations.ClaimTypeMigrationDisposition(
                 identity=current.identity,
                 disposition=disposition,
                 claim_retirement_reason=entry.claim_retirement_reason,

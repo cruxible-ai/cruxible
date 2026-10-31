@@ -10,8 +10,6 @@ from pydantic import ValidationError
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_PAYLOAD_DIGEST_DOMAIN,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
     authoring_payload_digest,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -31,29 +29,18 @@ from tests.test_authoring.test_authoring_preflight import _self_source_payload, 
 from tests.test_client.test_doc_write_contracts import _observation
 from tests.test_procedures.test_procedure_execution import _coordinate
 
-PAYLOADS = (ClaimAuthoringPayloadV1, ClaimAuthoringPayloadV2, ClaimAuthoringPayload)
+PAYLOADS = (ClaimAuthoringPayload,)
 
 
-def _historical(model: type[ClaimAuthoringPayloadV1]) -> dict[str, Any]:
+def _historical(model: type[ClaimAuthoringPayload]) -> dict[str, Any]:
     raw = _working_payload(occurrence_count=1).model_dump(mode="json")
     raw.pop("located_at", None)
     raw["source"]["selector"].pop("section", None)
-    if model is not ClaimAuthoringPayloadV1:
-        raw["tag"] = (
-            "playbill-claim-authoring-payload-v2"
-            if model is ClaimAuthoringPayloadV2
-            else "playbill-claim-authoring-payload-v3"
-        )
-        raw["dependency_drafts"] = {
-            "tag": "playbill-claim-dependency-drafts-v1",
-            "subject": None,
-            "claim_type": None,
-        }
     return raw
 
 
 @pytest.mark.parametrize("model", PAYLOADS)
-def test_old_payload_bytes_and_digest_are_unchanged(model: type[ClaimAuthoringPayloadV1]) -> None:
+def test_old_payload_bytes_and_digest_are_unchanged(model: type[ClaimAuthoringPayload]) -> None:
     raw = _historical(model)
     preimage = {key: value for key, value in raw.items() if key != "tag"}
     historical_digest = typed_digest(Sha256Value, AUTHORING_PAYLOAD_DIGEST_DOMAIN, preimage).tagged
@@ -67,7 +54,7 @@ def test_old_payload_bytes_and_digest_are_unchanged(model: type[ClaimAuthoringPa
 @pytest.mark.parametrize("location", ["absent", "null", "present"])
 @pytest.mark.parametrize("section", ["absent", "null", "present"])
 def test_presence_and_values_survive_round_trip(
-    model: type[ClaimAuthoringPayloadV1],
+    model: type[ClaimAuthoringPayload],
     location: str,
     section: str,
 ) -> None:
@@ -100,17 +87,14 @@ def test_missing_null_and_present_are_distinct_commitments() -> None:
     ]
     assert (
         len(
-            {
-                authoring_payload_digest(ClaimAuthoringPayloadV1.model_validate(wire))
-                for wire in wires
-            }
+            {authoring_payload_digest(ClaimAuthoringPayload.model_validate(wire)) for wire in wires}
         )
         == 3
     )
     tampered = copy.deepcopy(wires[-1])
     tampered["located_at"]["selected_bytes_digest"] = "sha256:" + "0" * 64
     with pytest.raises(ValidationError, match="does not reproduce"):
-        ClaimAuthoringPayloadV1.model_validate(tampered)
+        ClaimAuthoringPayload.model_validate(tampered)
 
 
 def test_section_label_accepted_by_existing_registry_capture_and_verifier(tmp_path: Path) -> None:

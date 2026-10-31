@@ -25,7 +25,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactRef,
 )
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
     WorkingSelectionObservation,
@@ -337,7 +337,7 @@ class _World:
         """Author one observation Claim from a working selection; returns its id."""
 
         digest = "sha256:" + hashlib.sha256(text).hexdigest()
-        payload = ClaimAuthoringPayloadV1(
+        payload = ClaimAuthoringPayload(
             statement=_self_source_payload().statement,
             rationale="The repository snapshot says the work is ready.",
             source=WorkingSelectionObservation(

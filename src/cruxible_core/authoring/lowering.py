@@ -38,16 +38,13 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
     AuthoringClaimStatement,
     AuthoringExactContentObject,
-    AuthoringIntentV1,
+    AuthoringIntent,
     AuthoringNoneClaimObject,
     AuthoringTriggerSchedule,
     CaptureContractAuthoringPayload,
     CaptureLandingByNameSchedule,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
-    ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionDependent,
@@ -687,7 +684,7 @@ def _exact_object(
     )
 
 
-_PayloadV1T = TypeVar("_PayloadV1T", bound=ClaimAuthoringPayloadV1)
+_ClaimPayloadT = TypeVar("_ClaimPayloadT", bound=ClaimAuthoringPayload)
 
 
 def _live_subject_in(tree: Mapping[str, bytes], path: str) -> bool:
@@ -710,8 +707,8 @@ def _with_aliases_resolved(
     instance: PlaybillInstance,
     base: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
-    payload: _PayloadV1T,
-) -> _PayloadV1T:
+    payload: _ClaimPayloadT,
+) -> _ClaimPayloadT:
     """Resolve a Subject the Claim names through its aliases (``semantic.alias``).
 
     A statement subject or Subject-valued object whose path is not in the tree
@@ -765,10 +762,7 @@ def _with_aliases_resolved(
         return SemanticAddress.whole_artifact(resolution.path)
 
     statement = payload.statement
-    drafted = (
-        isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload)
-        and payload.dependency_drafts.subject is not None
-    )
+    drafted = payload.dependency_drafts.subject is not None
     # A Subject the Claim drafts in the same change is named exactly, never by alias.
     subject = statement.subject if drafted else resolved(statement.subject, "statement.subject")
     value = statement.object
@@ -792,8 +786,8 @@ def claim_aliases_resolved(
     instance: PlaybillInstance,
     base: AcceptedProjectionCoordinate,
     tree: Mapping[str, bytes],
-    payload: _PayloadV1T,
-) -> _PayloadV1T:
+    payload: _ClaimPayloadT,
+) -> _ClaimPayloadT:
     """The Claim payload with the Subjects it names resolved through their aliases.
 
     The same resolution lowering applies, for a caller that must locate the
@@ -910,9 +904,9 @@ def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | 
         return SemanticAddress.subject_key(kind, key_reference_mapping(declared, given))
 
     def canonical(member: object) -> object:
-        if not isinstance(member, ClaimAuthoringPayloadV1):
+        if not isinstance(member, ClaimAuthoringPayload):
             return member
-        member = cast(ClaimAuthoringPayloadV1, _with_landed_addresses(member, mapped_reference))
+        member = cast(ClaimAuthoringPayload, _with_landed_addresses(member, mapped_reference))
         value = member.statement.object
         if not isinstance(value, LiteralClaimObject):
             return member
@@ -1122,7 +1116,7 @@ class _Rebound:
 def _rebound_backing(
     store: CaptureObjectStoreProtocol,
     *,
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
     statement: ClaimStatement,
     predecessor: ClaimArtifact | None,
     citations: tuple[ClaimCitation, ...],
@@ -1204,7 +1198,7 @@ def _refuse_unassigned_subject(kind: str, subject_id: str, *, element: str) -> N
 
 
 def _install_claim_dependencies(
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
     *,
     base_tree: Mapping[str, bytes],
 ) -> tuple[MutableMapping[str, bytes], set[str]]:
@@ -1221,7 +1215,7 @@ def _install_claim_dependencies(
 
     candidate_tree = fork_tree(base_tree)
     changed_paths: set[str] = set()
-    if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload):
+    if payload.dependency_drafts.empty:
         return candidate_tree, changed_paths
 
     drafts = payload.dependency_drafts
@@ -1320,7 +1314,7 @@ def _install_claim_dependencies(
 def _refuse_citation_into_projection_window(
     instance: PlaybillInstance,
     *,
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
     envelope: CaptureEnvelopeAny,
     memo: VerifiedCaptureMemo | None = None,
 ) -> None:
@@ -1467,11 +1461,11 @@ def _claim_pin(*, role: str, target: ArtifactIdentity, artifact_digest: str) -> 
 def _lower_claim(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
-    payload: ClaimAuthoringPayloadV1 | None = None,
+    payload: ClaimAuthoringPayload | None = None,
     claim_identity: str | None = None,
     claim_index: _ClaimPredicateIndex | None = None,
     derivation_procedure: ArtifactPin | None = None,
@@ -1497,9 +1491,9 @@ def _lower_claim(
     """
 
     authored = intent.payload if payload is None else payload
-    assert isinstance(authored, ClaimAuthoringPayloadV1)
+    assert isinstance(authored, ClaimAuthoringPayload)
     payload = authored
-    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayload) else None
+    derivation = payload.derivation
     if payload.statement.role == "derivation" or derivation is not None:
         if (
             derivation is None
@@ -1868,16 +1862,13 @@ def _lower_claim(
         citation_role = payload.citation_role
         citation_origin = "independent"
 
-    capture_digest_value = (
-        payload.source.capture_digest
-        if isinstance(payload.source, ExistingCaptureCitationSource)
-        else built_capture.capture_digest
-    )
-    capture_envelope = (
-        envelope
-        if isinstance(payload.source, ExistingCaptureCitationSource)
-        else built_capture.envelope
-    )
+    if isinstance(payload.source, ExistingCaptureCitationSource):
+        capture_digest_value = payload.source.capture_digest
+        capture_envelope = envelope
+    else:
+        assert built_capture is not None
+        capture_digest_value = built_capture.capture_digest
+        capture_envelope = built_capture.envelope
 
     _refuse_citation_into_projection_window(
         instance,
@@ -2593,7 +2584,7 @@ def _refuse_unserved_procedure(definition: dict[str, object]) -> None:
 def _lower_procedure(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
     accepted_reference_tree: Mapping[str, bytes] | None = None,
@@ -4054,7 +4045,7 @@ def members_identity_overlay(
             )
         elif isinstance(member, ClaimRetirementMember):
             removed.add(member.retires)
-        elif isinstance(member, ClaimAuthoringPayloadV1):
+        elif isinstance(member, ClaimAuthoringPayload):
             if member.revises is not None:
                 removed.add(member.revises)
             statement = member.statement
@@ -4410,7 +4401,7 @@ def _subject_key_addresses(
 ) -> tuple[tuple[str, SemanticAddress], ...]:
     """The Subjects a Claim member names by key (``subject-key-v1``), by field."""
 
-    if not isinstance(member, ClaimAuthoringPayloadV1):
+    if not isinstance(member, ClaimAuthoringPayload):
         return ()
     statement = member.statement
     found: list[tuple[str, SemanticAddress]] = []
@@ -4423,8 +4414,8 @@ def _subject_key_addresses(
 
 
 def _with_keys_landed(
-    payload: _PayloadV1T, key_paths: Mapping[tuple[str, str], str]
-) -> _PayloadV1T:
+    payload: _ClaimPayloadT, key_paths: Mapping[tuple[str, str], str]
+) -> _ClaimPayloadT:
     """The Claim with each Subject it names by key named by the path that key resolved to."""
 
     def landed(address: SemanticAddress) -> SemanticAddress:
@@ -4473,7 +4464,7 @@ def _key_reference_paths(
     text_references = [
         (index, field, address)
         for index, member in enumerate(members)
-        if isinstance(member, ClaimAuthoringPayloadV1)
+        if isinstance(member, ClaimAuthoringPayload)
         for field, address in (
             ("statement.subject", member.statement.subject),
             *(
@@ -4693,7 +4684,7 @@ def _with_landed_addresses(
     member: AuthoringChangeSetMember,
     landed: Callable[[SemanticAddress], SemanticAddress],
 ) -> AuthoringChangeSetMember:
-    if not isinstance(member, ClaimAuthoringPayloadV1):
+    if not isinstance(member, ClaimAuthoringPayload):
         return member
     statement = member.statement
     subject = landed(statement.subject)
@@ -4777,7 +4768,7 @@ def _recheck_key_references_lowered(
         return
     lowered: list[AuthoringChangeSetMember] = []
     for member in members:
-        if isinstance(member, ClaimAuthoringPayloadV1):
+        if isinstance(member, ClaimAuthoringPayload):
             path = claim_path(claim_identities[authoring_member_identity(member)])
             content = staged_tree.get(path)
             if content is not None:
@@ -4805,11 +4796,11 @@ def _recheck_key_references_lowered(
 
 
 def _naming_creations(
-    payload: ClaimAuthoringPayloadV1,
+    payload: ClaimAuthoringPayload,
     creations: Mapping[str, _Creation],
     *,
     element: str,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     """The Claim with each Subject it names by creation member named by its Subject's path.
 
     A ``subject-creation-v1`` address names the Subject one creation member of
@@ -4865,7 +4856,7 @@ def _stage_subject_creation(
     *,
     member: SubjectCreationAuthoringPayload,
     creation: _Creation,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
@@ -4945,25 +4936,23 @@ def _stage_subject_creation(
             object=LiteralClaimObject(value=value),
             role=role,
         )
-        # The author's own words lower as a write's ``--because`` does (payload v2),
-        # so the key Claim is self-asserted evidence its ClaimType admits.
-        payload: ClaimAuthoringPayloadV1 = (
+        # The author's own words lower as a write's ``--because`` does, so the
+        # key Claim is self-asserted evidence its ClaimType admits.
+        payload = (
             ClaimAuthoringPayload(
                 statement=statement,
                 rationale=rationale,
                 source=member.source,
                 citation_role=member.citation_role,
-                dependency_drafts=ClaimDependencyDrafts(),
             )
             if member.source is not None and not isinstance(member.source, SelfSourceBody)
-            else ClaimAuthoringPayloadV2(
+            else ClaimAuthoringPayload(
                 statement=statement,
                 rationale=rationale,
                 source=member.source
                 or SelfSourceBody(
                     content_base64=base64.b64encode(rationale.encode("utf-8")).decode("ascii")
                 ),
-                dependency_drafts=ClaimDependencyDrafts(),
             )
         )
         lowered = _lower_claim(
@@ -5030,7 +5019,7 @@ def _member_stage(member: AuthoringChangeSetMember) -> str:
         return "query"
     if isinstance(member, SubjectCreationAuthoringPayload):
         return "subject_creation"
-    if isinstance(member, ClaimAuthoringPayloadV1):
+    if isinstance(member, ClaimAuthoringPayload):
         return "claim"
     if isinstance(member, ClaimTypeSuccessionMember):
         return "claim_type_succession"
@@ -5135,7 +5124,7 @@ def _member_primary_path(
     if isinstance(member, SubjectCreationAuthoringPayload):
         assert creations is not None
         return creations[member.member_identity].path
-    if isinstance(member, ClaimAuthoringPayloadV1):
+    if isinstance(member, ClaimAuthoringPayload):
         return claim_path(claim_identities[authoring_member_identity(member)])
     if isinstance(member, ClaimTypeSuccessionMember):
         return claim_type_path(member.predicate)
@@ -5248,7 +5237,7 @@ CHANGE_SET_SINGLETON_ONLY_MEMBERS: tuple[ChangeSetSingletonOnlyMember, ...] = (
 def _lower_change_set(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
@@ -5285,7 +5274,7 @@ def _lower_change_set(
     sibling_member_by_claim_id = {
         claim_identities[authoring_member_identity(member)]: index
         for index, member in enumerate(payload.members)
-        if isinstance(member, ClaimAuthoringPayloadV1)
+        if isinstance(member, ClaimAuthoringPayload)
     }
     owner_by_path: dict[str, int] = {}
     primary_paths: list[str] = []
@@ -5447,7 +5436,7 @@ def _stage_change_set_member(
     instance: PlaybillInstance,
     *,
     member: AuthoringChangeSetMember,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
@@ -5480,7 +5469,7 @@ def _stage_change_set_member(
             derivation_procedure=derivation_procedure,
             captures=captures,
         )
-    if isinstance(member, ClaimAuthoringPayloadV1):
+    if isinstance(member, ClaimAuthoringPayload):
         claim_id = claim_identities[authoring_member_identity(member)]
         lowered = _lower_claim(
             instance,
@@ -5654,7 +5643,7 @@ def _resolve_re_author_siblings(
                 )
             sibling = members[sibling_index]
             # Only Claim members are in the map above, so the sibling is one.
-            assert isinstance(sibling, ClaimAuthoringPayloadV1)
+            assert isinstance(sibling, ClaimAuthoringPayload)
             if sibling.statement.predicate != member.predicate:
                 _refuse(
                     "cruxible.authoring.claim_type_succession_re_author_invalid",
@@ -5779,7 +5768,7 @@ def _stage_claim_type_succession(
     instance: PlaybillInstance,
     *,
     member: ClaimTypeSuccessionMember,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
@@ -5922,7 +5911,7 @@ def _stage_claim_type_succession(
             continue
         sibling_index = re_author_siblings[dependent.identity.qualified]
         sibling = members[sibling_index]
-        assert isinstance(sibling, ClaimAuthoringPayloadV1)
+        assert isinstance(sibling, ClaimAuthoringPayload)
         claim_id = claim_identities[authoring_member_identity(sibling)]
         try:
             lowered = _lower_claim(
@@ -6145,7 +6134,7 @@ def _encoded_members(members: tuple[tuple[str, bytes], ...]) -> list[dict[str, o
 def lower_authoring(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol | None = None,
@@ -6206,7 +6195,7 @@ def assigned_creations(
 
 
 def _refuse_subject_collisions(
-    instance: PlaybillInstance, *, intent: AuthoringIntentV1, lowered: LoweredAuthoring
+    instance: PlaybillInstance, *, intent: AuthoringIntent, lowered: LoweredAuthoring
 ) -> None:
     """Refuse early a new Subject that collides with a live Subject of its kind.
 
@@ -6289,7 +6278,7 @@ def _refuse_subject_collisions(
 def _lower_authoring(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor_id: str,
     derivation_procedure: ArtifactPin | None = None,
     captures: ProducerReceiptResolverProtocol | None = None,
@@ -6313,7 +6302,7 @@ def _lower_authoring(
     base_tree = instance.immutable_tree_at(base.git_oid)
     if captures is None:
         captures = instance.capture_verification_context()
-    if isinstance(intent.payload, ClaimAuthoringPayloadV1):
+    if isinstance(intent.payload, ClaimAuthoringPayload):
         return _lower_claim(
             instance,
             intent=intent,

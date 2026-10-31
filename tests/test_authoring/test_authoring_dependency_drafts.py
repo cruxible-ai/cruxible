@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     authoring_payload_digest,
 )
@@ -46,12 +46,12 @@ def _dependency_claim_type():
     )
 
 
-def _payload(*, subject: bool = True, claim_type: bool = True) -> ClaimAuthoringPayloadV2:
+def _payload(*, subject: bool = True, claim_type: bool = True) -> ClaimAuthoringPayload:
     base = _self_source_payload()
-    return ClaimAuthoringPayloadV2.model_validate(
+    return ClaimAuthoringPayload.model_validate(
         {
             **base.model_dump(mode="json"),
-            "tag": "playbill-claim-authoring-payload-v2",
+            "tag": "cruxible-claim-authoring-payload-v4",
             "dependency_drafts": ClaimDependencyDrafts(
                 subject=_subject() if subject else None,
                 claim_type=_dependency_claim_type() if claim_type else None,
@@ -95,17 +95,19 @@ def test_cold_claim_dependency_closure_is_one_candidate(tmp_path: Path) -> None:
     assert submitted.status.candidate_digest is not None
 
 
-def test_empty_v2_dependency_closure_is_identity_distinct_from_v1() -> None:
-    v1 = _self_source_payload()
-    v2 = ClaimAuthoringPayloadV2.model_validate(
+def test_an_empty_dependency_closure_has_one_spelling() -> None:
+    """Stating no drafts and stating empty drafts are one payload, one identity."""
+
+    bare = _self_source_payload()
+    drafted = ClaimAuthoringPayload.model_validate(
         {
-            **v1.model_dump(mode="json"),
-            "tag": "playbill-claim-authoring-payload-v2",
+            **bare.model_dump(mode="json"),
             "dependency_drafts": ClaimDependencyDrafts().model_dump(mode="json"),
         }
     )
 
-    assert authoring_payload_digest(v1) != authoring_payload_digest(v2)
+    assert "dependency_drafts" not in drafted.model_dump(mode="json")
+    assert authoring_payload_digest(bare) == authoring_payload_digest(drafted)
 
 
 def test_missing_cold_dependencies_refuse_with_specific_repairs(tmp_path: Path) -> None:

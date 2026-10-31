@@ -12,10 +12,16 @@ from cruxible_client import CruxibleClient
 
 def _result() -> dict[str, Any]:
     return {
-        "tag": "playbill-claim-type-migration-result-v1",
+        "tag": "playbill-claim-type-migration-result-v3",
         "operation_digest": "sha256:" + "1" * 64,
         "semantic_delta": [],
-        "dependents": [{"claim_id": "CLM-" + "2" * 32, "disposition": "retire"}],
+        "dependents": [
+            {
+                "identity": {"kind": "Claim", "name": "CLM-" + "2" * 32},
+                "disposition": "retire",
+                "claim_retirement_reason": "was-rescinded",
+            }
+        ],
         "proposal": {
             "tag": "playbill-proposal-inspection-v1",
             "proposal": {},
@@ -42,7 +48,8 @@ def test_client_posts_the_frozen_migration_request_unchanged() -> None:
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
     request = {
-        "tag": "playbill-claim-type-migration-request-v1",
+        "tag": "playbill-claim-type-migration-request-v3",
+        "mode": "submit",
         "successor": {"predicate": "project.work_item.status"},
         "dependents": [],
     }
@@ -83,7 +90,8 @@ def test_client_preserves_migration_lint_without_changing_candidate_fields() -> 
     result = client.migrate_claim_type(
         "inst",
         request={
-            "tag": "playbill-claim-type-migration-request-v1",
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
             "successor": {"predicate": "project.work_item.status"},
             "dependents": [],
         },

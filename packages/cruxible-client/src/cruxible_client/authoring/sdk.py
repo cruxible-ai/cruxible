@@ -120,8 +120,6 @@ from cruxible_client.contracts.authoring.models import (
     CaptureContractAuthoringPayload,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
@@ -709,9 +707,7 @@ class ClaimTypeDraft:
 class _IntentDraft:
     _playbill: Cruxible = field(repr=False, compare=False)
     payload: (
-        ClaimAuthoringPayloadV1
-        | ClaimAuthoringPayloadV2
-        | ClaimAuthoringPayload
+        ClaimAuthoringPayload
         | ProcedureAuthoringPayload
         | SubjectAuthoringPayload
         | ChangeSetAuthoringPayload
@@ -989,7 +985,7 @@ class ChangeSetDraft:
             claim_type_definition=claim_type_definition,
             staged_claim_types=self._staged_claim_types(),
         )
-        assert isinstance(draft.payload, ClaimAuthoringPayloadV1)
+        assert isinstance(draft.payload, ClaimAuthoringPayload)
         self._members.append(
             _ChangeSetMember(
                 payload=draft.payload,
@@ -3805,11 +3801,7 @@ class Cruxible:
                 ),
             ),
         )
-        payload = (
-            ClaimAuthoringPayload(**payload_values)
-            if isinstance(source, ExistingCaptureCitationSource)
-            else ClaimAuthoringPayloadV2(**payload_values)
-        )
+        payload = ClaimAuthoringPayload(**payload_values)
         expectations: list[AuthoringReferenceExpectation | None] = [
             None
             if isinstance(subject, SubjectKeyReference)

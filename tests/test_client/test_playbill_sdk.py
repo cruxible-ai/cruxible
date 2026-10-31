@@ -36,7 +36,6 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV2,
     WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import foreign_source_capture_contract
@@ -759,7 +758,7 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
 
     assert not intent.refused
     assert client.compiled is not None
-    payload = ClaimAuthoringPayloadV2.model_validate(client.compiled["payload"])
+    payload = ClaimAuthoringPayload.model_validate(client.compiled["payload"])
     assert payload.dependency_drafts.subject == subject.shell
     assert payload.dependency_drafts.claim_type == claim_type.definition
     assert client.compiled["reference_expectations"] == []
@@ -1525,7 +1524,7 @@ def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
     claim = next(
         member
         for member in compiled.payload.members
-        if member.model_dump(mode="json")["tag"].startswith("playbill-claim-authoring-payload-")
+        if member.model_dump(mode="json")["tag"].startswith("cruxible-claim-authoring-payload-")
     )
 
     assert isinstance(claim.statement.object, SubjectClaimObject)

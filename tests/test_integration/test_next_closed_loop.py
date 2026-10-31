@@ -11,7 +11,7 @@ from typing import Any, get_args
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
@@ -55,8 +55,8 @@ from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeMigrationRequestV1,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.contracts import (
@@ -578,11 +578,14 @@ def _freshness_world(root: Path, *, stale_after: int = 10_000_000):  # type: ign
     )
     migration = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequest(
+            mode="submit",
             successor=successor,
             dependents=(
-                ClaimTypeDependentDispositionV1(
-                    claim_id=proposed.claim_identity.removeprefix("Claim:"),
+                ClaimTypeDependentDisposition(
+                    identity=ArtifactIdentity(
+                        kind="Claim", name=proposed.claim_identity.removeprefix("Claim:")
+                    ),
                     disposition="successor",
                 ),
             ),

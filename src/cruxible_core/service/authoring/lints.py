@@ -8,7 +8,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayload,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV2,
     ClaimTypeAuthoringPayload,
     ClaimTypeSuccessionMember,
     SubjectKindAuthoringPayload,
@@ -48,7 +47,7 @@ def lint_authoring_payload(
             warnings.extend(lint_description(member.claim_type.description))
         elif isinstance(member, ClaimTypeSuccessionMember):
             claim_type = member.successor
-        elif isinstance(member, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload):
+        elif isinstance(member, ClaimAuthoringPayload):
             claim_type = member.dependency_drafts.claim_type
             if isinstance(member.source, WorkingSelectionObservation):
                 source_ids = (member.source.source_id,)

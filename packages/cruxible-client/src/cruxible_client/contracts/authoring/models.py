@@ -113,8 +113,8 @@ _SUBJECT_KIND_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,
 _GIT_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPOSITORY_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
-AUTHORING_PAYLOAD_DIGEST_DOMAIN = "playbill-authoring-payload-v1"
-AUTHORING_CREATE_FINGERPRINT_DOMAIN = "playbill-authoring-create-fingerprint-v1"
+AUTHORING_PAYLOAD_DIGEST_DOMAIN = "cruxible-authoring-payload-v2"
+AUTHORING_CREATE_FINGERPRINT_DOMAIN = "cruxible-authoring-create-fingerprint-v2"
 AUTHORING_RESOLVED_DIGEST_DOMAIN = "playbill-authoring-resolved-v1"
 AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN = "playbill-authoring-candidate-tree-v1"
 AUTHORING_FRONTIER_DIGEST_DOMAIN = "playbill-authoring-frontier-v1"
@@ -130,7 +130,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:9816258c0dd8069f8ec29fd5de1b9bf946c2cba0e728a89f13275b5c29e5defe"
+    "sha256:a5ccf8545ecc0402e37c58cfa4cd1b096f11521c349c491aa2f0a709715b171b"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -661,30 +661,82 @@ class ExistingCaptureCitationSource(_StrictAuthoringModel):
         return _sha256(value, label="existing Capture digest")
 
 
-ClaimAuthoringSourceV1 = Annotated[
-    WorkingSelectionObservation | SelfSourceBody,
-    Field(discriminator="tag"),
-]
-
 ClaimAuthoringSource = Annotated[
     WorkingSelectionObservation | SelfSourceBody | ExistingCaptureCitationSource,
     Field(discriminator="tag"),
 ]
 
 
-class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
-    tag: Literal["playbill-claim-authoring-payload-v1"] = "playbill-claim-authoring-payload-v1"
+class ClaimDependencyDrafts(_StrictAuthoringModel):
+    tag: Literal["playbill-claim-dependency-drafts-v1"] = "playbill-claim-dependency-drafts-v1"
+    subject: SubjectShell | None = None
+    claim_type: ClaimType | None = None
+
+    @property
+    def empty(self) -> bool:
+        return self.subject is None and self.claim_type is None
+
+
+def _replaced_citations(value: tuple[str, ...]) -> tuple[str, ...]:
+    for item in value:
+        Sha256Value.from_tagged(item)
+    if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+        raise ValueError("replaced citations must be sorted and unique")
+    return value
+
+
+class ClaimDerivationBinding(_StrictAuthoringModel):
+    """Backend-bound reducer and exact admitted inputs, never author-supplied hashes."""
+
+    procedure: ArtifactPin
+    inputs: tuple[ArtifactPin, ...]
+
+    @model_validator(mode="after")
+    def _kinds(self) -> "ClaimDerivationBinding":
+        if self.procedure.target.kind != "Procedure" or not self.inputs:
+            raise ValueError("a derivation needs its Procedure and nonempty Claim inputs")
+        if any(pin.target.kind != "Claim" for pin in self.inputs):
+            raise ValueError("derivation inputs must name Claims")
+        if len({p.target.qualified for p in self.inputs}) != len(self.inputs):
+            raise ValueError("derivation inputs must be unique by identity")
+        return self
+
+
+class ClaimAuthoringPayload(_StrictAuthoringModel):
+    """One authored Claim: its statement, source and every optional binding.
+
+    ``located_at`` keeps absent and explicit null apart: they are different
+    statements of where the author found the text. Every other optional member
+    is omitted when unset, so it has one spelling.
+    """
+
+    tag: Literal["cruxible-claim-authoring-payload-v4"] = "cruxible-claim-authoring-payload-v4"
     statement: AuthoringClaimStatement
     rationale: str
-    source: ClaimAuthoringSourceV1
-    citation_role: Literal["evidence", "copy"] | None = None
-    revises: str | None = None
+    source: ClaimAuthoringSource
+    citation_role: Literal["evidence", "copy"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    revises: str | None = Field(default=None, exclude_if=lambda value: value is None)
     existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()
     located_at: WorkingSelectionObservation | None = None
+    #: The Subject and ClaimType this Claim needs, created with it. Omitted when none.
+    dependency_drafts: ClaimDependencyDrafts = Field(
+        default_factory=ClaimDependencyDrafts, exclude_if=lambda value: value.empty
+    )
+    derivation: ClaimDerivationBinding | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: A re-bind: the citation ids (of the Claim ``revises`` names) this
+    #: revision drops, each replaced by the new source's citation; the statement
+    #: is unchanged. Omitted unless set.
+    replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    _replaces = field_validator("replaces_citations")(_replaced_citations)
 
     @model_serializer(mode="wrap")
     def _preserve_location_presence(self, handler: Any) -> dict[str, object]:
-        # Missing and explicit-null are distinct historical digest preimages.
+        # Missing and explicit-null are distinct preimages.
         payload = cast(dict[str, object], handler(self))
         if "located_at" not in self.model_fields_set:
             payload.pop("located_at", None)
@@ -716,7 +768,7 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _source_role(self) -> "ClaimAuthoringPayloadV1":
+    def _source_role(self) -> "ClaimAuthoringPayload":
         if isinstance(
             self.source,
             WorkingSelectionObservation | ExistingCaptureCitationSource,
@@ -725,76 +777,10 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
                 raise ValueError("Flow A and existing Captures require an explicit citation_role")
         elif self.citation_role is not None:
             raise ValueError("Flow B self-source fixes its citation role server-side")
-        return self
-
-
-class ClaimDependencyDrafts(_StrictAuthoringModel):
-    tag: Literal["playbill-claim-dependency-drafts-v1"] = "playbill-claim-dependency-drafts-v1"
-    subject: SubjectShell | None = None
-    claim_type: ClaimType | None = None
-
-
-def _replaced_citations(value: tuple[str, ...]) -> tuple[str, ...]:
-    for item in value:
-        Sha256Value.from_tagged(item)
-    if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-        raise ValueError("replaced citations must be sorted and unique")
-    return value
-
-
-def _rebind_revises(payload: ClaimAuthoringPayloadV1, replaces: tuple[str, ...]) -> None:
-    if replaces and payload.revises is None:
-        raise ValueError("replacing citations re-binds a live Claim, so it names what it revises")
-
-
-class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
-    tag: Literal["playbill-claim-authoring-payload-v2"] = "playbill-claim-authoring-payload-v2"  # type: ignore[assignment]
-    dependency_drafts: ClaimDependencyDrafts
-    #: A re-bind: the citation ids (of the Claim ``revises`` names) this
-    #: revision drops, each replaced by the new source's citation; the statement
-    #: is unchanged. Absent unless set, so every other payload's digest holds.
-    replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
-
-    _replaces = field_validator("replaces_citations")(_replaced_citations)
-
-    @model_validator(mode="after")
-    def _rebind_shape(self) -> "ClaimAuthoringPayloadV2":
-        _rebind_revises(self, self.replaces_citations)
-        return self
-
-
-class ClaimDerivationBinding(_StrictAuthoringModel):
-    """Backend-bound reducer and exact admitted inputs, never author-supplied hashes."""
-
-    procedure: ArtifactPin
-    inputs: tuple[ArtifactPin, ...]
-
-    @model_validator(mode="after")
-    def _kinds(self) -> "ClaimDerivationBinding":
-        if self.procedure.target.kind != "Procedure" or not self.inputs:
-            raise ValueError("a derivation needs its Procedure and nonempty Claim inputs")
-        if any(pin.target.kind != "Claim" for pin in self.inputs):
-            raise ValueError("derivation inputs must name Claims")
-        if len({p.target.qualified for p in self.inputs}) != len(self.inputs):
-            raise ValueError("derivation inputs must be unique by identity")
-        return self
-
-
-class ClaimAuthoringPayload(ClaimAuthoringPayloadV1):
-    tag: Literal["playbill-claim-authoring-payload-v3"] = "playbill-claim-authoring-payload-v3"  # type: ignore[assignment]
-    source: ClaimAuthoringSource  # type: ignore[assignment]
-    dependency_drafts: ClaimDependencyDrafts
-    derivation: ClaimDerivationBinding | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    #: As on the v2 payload: the citations a re-bind replaces.
-    replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
-
-    _replaces = field_validator("replaces_citations")(_replaced_citations)
-
-    @model_validator(mode="after")
-    def _rebind_shape(self) -> "ClaimAuthoringPayload":
-        _rebind_revises(self, self.replaces_citations)
+        if self.replaces_citations and self.revises is None:
+            raise ValueError(
+                "replacing citations re-binds a live Claim, so it names what it revises"
+            )
         return self
 
 
@@ -1383,7 +1369,7 @@ class ClaimRetirementMember(_StrictAuthoringModel):
     would only name the same inventory twice.
 
     `retires` is the bare Claim ID, named and spelled exactly as
-    `ClaimAuthoringPayloadV1.revises` is. Tolerating a `Claim:` prefix here would
+    `ClaimAuthoringPayload.revises` is. Tolerating a `Claim:` prefix here would
     give two spellings of one retirement the same member identity but different
     payload digests, so create-dedup would miss and two live intents could carry
     one semantic identity.
@@ -1426,9 +1412,7 @@ class ClaimRetirementMember(_StrictAuthoringModel):
 
 
 AuthoringChangeSetMember: TypeAlias = Annotated[
-    ClaimAuthoringPayloadV1
-    | ClaimAuthoringPayloadV2
-    | ClaimAuthoringPayload
+    ClaimAuthoringPayload
     | ClaimTypeAuthoringPayload
     | ClaimTypeSuccessionMember
     | ClaimRetirementMember
@@ -1450,7 +1434,7 @@ AuthoringChangeSetMember: TypeAlias = Annotated[
 ]
 
 
-def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
+def authoring_claim_member_identity(payload: ClaimAuthoringPayload) -> str:
     """Name one authored Claim member before the daemon has minted its Claim ID.
 
     A revision names its lineage. A new Claim has no ID until create mints one,
@@ -1482,7 +1466,7 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
         return payload.resolution_contract.identity.qualified
     if isinstance(payload, AttestationAuthoringPayload):
         return attestation_identity(payload.attestation).qualified
-    if isinstance(payload, ClaimAuthoringPayloadV1):
+    if isinstance(payload, ClaimAuthoringPayload):
         return authoring_claim_member_identity(payload)
     if isinstance(payload, ClaimTypeAuthoringPayload):
         return f"ClaimType:{payload.claim_type.predicate}"
@@ -1590,9 +1574,7 @@ class ChangeSetAuthoringPayload(_StrictAuthoringModel):
 
 
 AuthoringPayload = Annotated[
-    ClaimAuthoringPayloadV1
-    | ClaimAuthoringPayloadV2
-    | ClaimAuthoringPayload
+    ClaimAuthoringPayload
     | ProcedureAuthoringPayload
     | ResolutionContractAuthoringPayload
     | AttestationAuthoringPayload
@@ -1955,8 +1937,15 @@ class ChangeSetClaimIdentity(_StrictAuthoringModel):
         return value
 
 
-class AuthoringIntentV1(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-v1"] = "playbill-authoring-intent-v1"
+class AuthoringIntent(_StrictAuthoringModel):
+    """One AuthoringIntent's state.
+
+    ``reference_expectations`` are coordinate assertions that never enter
+    authoring identity: omitted when the author asserted none, present (and
+    possibly empty) when asserted. The two stay distinct.
+    """
+
+    tag: Literal["cruxible-authoring-intent-v3"] = "cruxible-authoring-intent-v3"
     intent_id: str
     instance_id: str
     actor_id: str
@@ -1970,6 +1959,17 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     last_preflight: PreflightResult | None = None
     candidate_status: CandidateStatus
     change_set_claim_identities: tuple[ChangeSetClaimIdentity, ...] = ()
+    reference_expectations: tuple[AuthoringExpectation, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("reference_expectations")
+    @classmethod
+    def _reference_expectations(
+        cls,
+        value: tuple[AuthoringExpectation, ...] | None,
+    ) -> tuple[AuthoringExpectation, ...] | None:
+        return None if value is None else canonical_reference_expectations(value)
 
     @field_validator("intent_id")
     @classmethod
@@ -1989,12 +1989,12 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         return validate_candidate_timestamp(value)
 
     @model_validator(mode="after")
-    def _validated_binding(self, info: ValidationInfo) -> "AuthoringIntentV1":
+    def _validated_binding(self, info: ValidationInfo) -> "AuthoringIntent":
         # Pydantic detects context parameters by required argument count.
         # Keep the directly callable binding helper's no-context form too.
         return self._binding(info)
 
-    def _binding(self, info: ValidationInfo | None = None) -> "AuthoringIntentV1":
+    def _binding(self, info: ValidationInfo | None = None) -> "AuthoringIntent":
         context = None if info is None else info.context
         # One ephemeral normalized snapshot feeds both frozen preimages. Never
         # cache it on the model: frozen payloads contain mutable nested values.
@@ -2034,7 +2034,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         )
         if self.create_fingerprint != expected_fingerprint:
             raise ValueError("AuthoringIntent create fingerprint does not reproduce")
-        if isinstance(self.payload, ClaimAuthoringPayloadV1):
+        if isinstance(self.payload, ClaimAuthoringPayload):
             claim_path(self.semantic_identity)
             if self.change_set_claim_identities:
                 raise ValueError("a singular Claim intent owns no change-set Claim identities")
@@ -2085,7 +2085,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         claim_members = {
             identity: member
             for identity, member in zip(member_identities, payload.members, strict=True)
-            if isinstance(member, ClaimAuthoringPayloadV1)
+            if isinstance(member, ClaimAuthoringPayload)
         }
         minted = self.change_set_claim_identities
         identities = tuple(item.member_identity for item in minted)
@@ -2098,61 +2098,50 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 raise ValueError("a revising Claim member keeps the lineage it names")
 
 
-class AuthoringIntent(AuthoringIntentV1):
-    """V1 intent state plus coordinate assertions that never enter authoring identity."""
-
-    tag: Literal["playbill-authoring-intent-v2"] = "playbill-authoring-intent-v2"  # type: ignore[assignment]
-    reference_expectations: tuple[AuthoringExpectation, ...]
-
-    @field_validator("reference_expectations")
-    @classmethod
-    def _reference_expectations(
-        cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
-
-
-# Response wrappers must retain the fields selected by the nested intent tag.
-_AuthoringIntentResponse: TypeAlias = Annotated[
-    AuthoringIntentV1 | AuthoringIntent, Field(discriminator="tag")
-]
-
-
 class AuthoringIntentView(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
-    intent: _AuthoringIntentResponse
+    intent: AuthoringIntent
 
 
 class AuthoringIntentList(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-list-v1"] = "playbill-authoring-intent-list-v1"
-    intents: tuple[_AuthoringIntentResponse, ...]
-
-
-class AuthoringIntentCompileRequestV1(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
-        "playbill-authoring-intent-compile-request-v1"
-    )
-    payload: AuthoringPayload
-    intent_id: str | None = None
+    intents: tuple[AuthoringIntent, ...]
 
 
 class AuthoringIntentCompileRequest(_StrictAuthoringModel):
-    tag: Literal["playbill-authoring-intent-compile-request-v3"] = (
-        "playbill-authoring-intent-compile-request-v3"
+    """Compile a payload, optionally asserting references and stamping its program.
+
+    ``reference_expectations`` is omitted when the author asserts none and
+    present (possibly empty) when asserted; ``program_stamp`` is absent unless
+    the SDK program that built the payload is named, and a stamped request
+    always asserts its references.
+    """
+
+    tag: Literal["cruxible-authoring-intent-compile-request-v4"] = (
+        "cruxible-authoring-intent-compile-request-v4"
     )
     payload: AuthoringPayload
-    reference_expectations: tuple[AuthoringExpectation, ...]
-    program_stamp: AuthoringProgramStamp
+    reference_expectations: tuple[AuthoringExpectation, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    program_stamp: AuthoringProgramStamp | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     intent_id: str | None = None
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectation, ...],
-    ) -> tuple[AuthoringExpectation, ...]:
-        return canonical_reference_expectations(value)
+        value: tuple[AuthoringExpectation, ...] | None,
+    ) -> tuple[AuthoringExpectation, ...] | None:
+        return None if value is None else canonical_reference_expectations(value)
+
+    @model_validator(mode="after")
+    def _stamped_requests_assert_references(self) -> "AuthoringIntentCompileRequest":
+        if self.program_stamp is not None and self.reference_expectations is None:
+            raise ValueError("a stamped compile request asserts its reference expectations")
+        return self
 
 
 class AuthoringCompileSubmitRequest(AuthoringIntentCompileRequest):
@@ -2190,7 +2179,7 @@ class AuthoringSubmitMember(_StrictAuthoringModel):
 
 class AuthoringSubmitResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
-    intent: _AuthoringIntentResponse
+    intent: AuthoringIntent
     status: CandidateStatus
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # A `revises` submit amends one Claim identity in place rather than adding a
@@ -2489,11 +2478,9 @@ __all__ = [
     "AuthoringExactContentObject",
     "AuthoringNoneClaimObject",
     "AuthoringIntentCompileRequest",
-    "AuthoringIntentCompileRequestV1",
     "AuthoringIntentList",
     "AuthoringIntentPreflightRequest",
     "AuthoringIntentSubmitRequest",
-    "AuthoringIntentV1",
     "AuthoringIntent",
     "AuthoringIntentView",
     "AuthoringPayload",
@@ -2510,8 +2497,6 @@ __all__ = [
     "BlockedCheck",
     "CandidateStatusState",
     "CandidateStatus",
-    "ClaimAuthoringPayloadV1",
-    "ClaimAuthoringPayloadV2",
     "ClaimAuthoringPayload",
     "ChangeSetAuthoringPayload",
     "ChangeSetClaimIdentity",

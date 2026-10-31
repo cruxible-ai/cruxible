@@ -13,7 +13,6 @@ from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
     AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
-    AuthoringIntentCompileRequestV1,
 )
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
@@ -70,7 +69,7 @@ from cruxible_client.contracts.write import (
     WriteOutcome,
     WriteRequest,
 )
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
@@ -736,7 +735,7 @@ def propose_claim_type(
 )
 def migrate_claim_type(
     instance_id: str,
-    req: ClaimTypeMigrationRequestAny,
+    req: ClaimTypeMigrationRequest,
 ) -> contracts.ClaimTypeMigrationResponse:
     return playbill_api.playbill_migrate_claim_type(
         resolve_server_instance_id(instance_id),
@@ -830,11 +829,7 @@ def list_pending_authoring_intents(
 )
 def compile_authoring(
     instance_id: str,
-    req: (
-        AuthoringIntentCompileRequestV1
-        | AuthoringIntentCompileRequest
-        | AuthoringInputCompileRequest
-    ),
+    req: AuthoringIntentCompileRequest | AuthoringInputCompileRequest,
 ) -> contracts.AuthoringPreflightResult:
     if isinstance(req, AuthoringInputCompileRequest):
         return playbill_api.playbill_authoring_compile_input(
@@ -842,18 +837,12 @@ def compile_authoring(
             input=req.input,
             intent_id=req.intent_id,
         )
-    if isinstance(req, AuthoringIntentCompileRequest):
-        return playbill_api.playbill_authoring_compile(
-            resolve_server_instance_id(instance_id),
-            payload=req.payload,
-            intent_id=req.intent_id,
-            reference_expectations=req.reference_expectations,
-            program_stamp=req.program_stamp,
-        )
     return playbill_api.playbill_authoring_compile(
         resolve_server_instance_id(instance_id),
         payload=req.payload,
         intent_id=req.intent_id,
+        reference_expectations=req.reference_expectations,
+        program_stamp=req.program_stamp,
     )
 
 

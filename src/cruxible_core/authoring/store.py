@@ -16,7 +16,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -31,7 +31,6 @@ from pydantic import (
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_INTENT_ID_RE,
     AuthoringIntent,
-    AuthoringIntentV1,
     AuthoringPayload,
     AuthoringProgramStamp,
     CandidateStatus,
@@ -49,9 +48,7 @@ from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.storage.preview_fence import is_previewing
 
-AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
-AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
-AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
+AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "cruxible-authoring-intent-event-v4"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
 
 # Local instances keep an authoring intent only while it is in progress; a
@@ -73,7 +70,7 @@ def authoring_intent_retention() -> Literal["off", "durable"]:
     return cast(Literal["off", "durable"], value)
 
 
-def _intent_is_pending(intent: AuthoringIntentV1) -> bool:
+def _intent_is_pending(intent: AuthoringIntent) -> bool:
     return intent.candidate_status.state not in _TERMINAL_STATES
 
 
@@ -94,33 +91,21 @@ class _StrictStoreModel(BaseModel):
         return value
 
 
-class AuthoringIntentEventV1(_StrictStoreModel):
-    tag: Literal["playbill-authoring-intent-event-v1"] = "playbill-authoring-intent-event-v1"
-    sequence: int = Field(ge=0)
-    previous_event_digest: str | None
-    operation_key: str
-    intent: AuthoringIntentV1
-    event_digest: str
+class AuthoringIntentEvent(_StrictStoreModel):
+    """One appended state of an AuthoringIntent.
 
-    @field_validator("previous_event_digest", "operation_key", "event_digest")
-    @classmethod
-    def _digests(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
-        return value
+    ``program_stamp`` is present exactly when the event records the SDK program
+    that produced the intent's payload, and omitted otherwise.
+    """
 
-    @model_validator(mode="after")
-    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV1":
-        _verify_authoring_event_digest(self, info.context)
-        return self
-
-
-class AuthoringIntentEventV2(_StrictStoreModel):
-    tag: Literal["playbill-authoring-intent-event-v2"] = "playbill-authoring-intent-event-v2"
+    tag: Literal["cruxible-authoring-intent-event-v4"] = "cruxible-authoring-intent-event-v4"
     sequence: int = Field(ge=0)
     previous_event_digest: str | None
     operation_key: str
     intent: AuthoringIntent
+    program_stamp: AuthoringProgramStamp | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     event_digest: str
 
     @field_validator("previous_event_digest", "operation_key", "event_digest")
@@ -131,36 +116,9 @@ class AuthoringIntentEventV2(_StrictStoreModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV2":
+    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEvent":
         _verify_authoring_event_digest(self, info.context)
         return self
-
-
-class AuthoringIntentEventV3(_StrictStoreModel):
-    tag: Literal["playbill-authoring-intent-event-v3"] = "playbill-authoring-intent-event-v3"
-    sequence: int = Field(ge=0)
-    previous_event_digest: str | None
-    operation_key: str
-    intent: AuthoringIntent
-    program_stamp: AuthoringProgramStamp
-    event_digest: str
-
-    @field_validator("previous_event_digest", "operation_key", "event_digest")
-    @classmethod
-    def _digests(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _reproduces(self, info: ValidationInfo) -> "AuthoringIntentEventV3":
-        _verify_authoring_event_digest(self, info.context)
-        return self
-
-
-AuthoringIntentEventAny: TypeAlias = (
-    AuthoringIntentEventV1 | AuthoringIntentEventV2 | AuthoringIntentEventV3
-)
 
 
 class _EventDecodeContext(_AuthoringIntentDecodeContext):
@@ -171,7 +129,7 @@ class _EventDecodeContext(_AuthoringIntentDecodeContext):
         self.rendered: bytes | None = None
 
 
-def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: object) -> None:
+def _verify_authoring_event_digest(event: AuthoringIntentEvent, context: object) -> None:
     if type(context) is not _EventDecodeContext:
         if event.event_digest != authoring_intent_event_digest(event):
             raise ValueError("AuthoringIntent event digest does not reproduce")
@@ -205,7 +163,7 @@ def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: obje
     expected = (
         "sha256:"
         + hashlib.sha256(
-            canonical_json({"tag": _authoring_event_digest_domain(event), **preimage}).encode(
+            canonical_json({"tag": AUTHORING_INTENT_EVENT_DIGEST_DOMAIN, **preimage}).encode(
                 "utf-8"
             )
         ).hexdigest()
@@ -221,7 +179,7 @@ def _verify_authoring_event_digest(event: AuthoringIntentEventAny, context: obje
 class _ValidatedEvent:
     raw_digest: bytes
     raw_size: int
-    event: AuthoringIntentEventAny
+    event: AuthoringIntentEvent
 
 
 @dataclass(frozen=True)
@@ -266,7 +224,7 @@ def _reset_authoring_history_memo() -> None:
         _FINGERPRINT_MEMO.clear()
 
 
-def _fingerprint_state(intent: AuthoringIntentV1) -> _FingerprintState:
+def _fingerprint_state(intent: AuthoringIntent) -> _FingerprintState:
     return _FingerprintState(
         actor_id=intent.actor_id,
         fingerprint=intent.create_fingerprint,
@@ -316,23 +274,11 @@ def _history_memo_put(directory: Path, events: tuple[_ValidatedEvent, ...]) -> N
             _HISTORY_MEMO_BYTES -= sum(item.raw_size for item in evicted)
 
 
-def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
+def authoring_intent_event_digest(event: AuthoringIntentEvent) -> str:
     payload = event.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("event_digest")
-    return typed_digest(
-        Sha256Value,
-        _authoring_event_digest_domain(event),
-        payload,
-    ).tagged
-
-
-def _authoring_event_digest_domain(event: AuthoringIntentEventAny) -> str:
-    if isinstance(event, AuthoringIntentEventV3):
-        return AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN
-    if isinstance(event, AuthoringIntentEventV2):
-        return AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
-    return AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
+    return typed_digest(Sha256Value, AUTHORING_INTENT_EVENT_DIGEST_DOMAIN, payload).tagged
 
 
 def build_authoring_intent_event(
@@ -340,121 +286,49 @@ def build_authoring_intent_event(
     sequence: int,
     previous_event_digest: str | None,
     operation_key: str,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     program_stamp: AuthoringProgramStamp | None = None,
-) -> AuthoringIntentEventAny:
-    placeholder = "sha256:" + "0" * 64
-    if program_stamp is not None:
-        if not isinstance(intent, AuthoringIntent):
-            raise ValueError("program stamps require a v2 AuthoringIntent")
-        event_v3 = AuthoringIntentEventV3.model_construct(
-            tag="playbill-authoring-intent-event-v3",
-            sequence=sequence,
-            previous_event_digest=previous_event_digest,
-            operation_key=operation_key,
-            intent=intent,
-            program_stamp=program_stamp,
-            event_digest=placeholder,
-        )
-        return AuthoringIntentEventV3(
-            sequence=sequence,
-            previous_event_digest=previous_event_digest,
-            operation_key=operation_key,
-            intent=intent,
-            program_stamp=program_stamp,
-            event_digest=authoring_intent_event_digest(event_v3),
-        )
-    if isinstance(intent, AuthoringIntent):
-        event_v2 = AuthoringIntentEventV2.model_construct(
-            tag="playbill-authoring-intent-event-v2",
-            sequence=sequence,
-            previous_event_digest=previous_event_digest,
-            operation_key=operation_key,
-            intent=intent,
-            event_digest=placeholder,
-        )
-        return AuthoringIntentEventV2(
-            sequence=sequence,
-            previous_event_digest=previous_event_digest,
-            operation_key=operation_key,
-            intent=intent,
-            event_digest=authoring_intent_event_digest(event_v2),
-        )
-    event = AuthoringIntentEventV1.model_construct(
-        tag="playbill-authoring-intent-event-v1",
+) -> AuthoringIntentEvent:
+    placeholder = AuthoringIntentEvent.model_construct(
+        tag="cruxible-authoring-intent-event-v4",
         sequence=sequence,
         previous_event_digest=previous_event_digest,
         operation_key=operation_key,
         intent=intent,
-        event_digest=placeholder,
+        program_stamp=program_stamp,
+        event_digest="sha256:" + "0" * 64,
     )
-    return AuthoringIntentEventV1(
+    return AuthoringIntentEvent(
         sequence=sequence,
         previous_event_digest=previous_event_digest,
         operation_key=operation_key,
         intent=intent,
-        event_digest=authoring_intent_event_digest(event),
+        program_stamp=program_stamp,
+        event_digest=authoring_intent_event_digest(placeholder),
     )
-
-
-_RENAMED_CLAIM_REF_FIELDS = (
-    # (payload tag prefix, the field `claim_ref` became)
-    ("playbill-claim-authoring-payload-", "revises"),
-    ("playbill-claim-retirement-authoring-payload-", "retires"),
-)
-
-
-def _refuse_pre_revises_intent(event: dict[str, object]) -> None:
-    """Name an intent stored before `claim_ref` was renamed `revises` or `retires`.
-
-    A Claim member spelled its revision `claim_ref` before it was `revises`, and
-    a retirement member named the Claim it retires `claim_ref` before it was
-    `retires`. Such an intent no longer validates and no current build
-    reproduces its digests, so it can only be recreated.
-    """
-
-    intent = event.get("intent")
-    payload = intent.get("payload") if isinstance(intent, dict) else None
-    if not isinstance(intent, dict) or not isinstance(payload, dict):
-        return
-    members = payload.get("members")
-    for item in (payload, *(members if isinstance(members, list) else ())):
-        if not isinstance(item, dict) or "claim_ref" not in item:
-            continue
-        tag = str(item.get("tag", ""))
-        renamed = next(
-            (field for prefix, field in _RENAMED_CLAIM_REF_FIELDS if tag.startswith(prefix)), None
-        )
-        if renamed is None:
-            continue
-        intent_id = str(intent.get("intent_id"))
-        raise AuthoringIntentStoreError(
-            f"AuthoringIntent {intent_id!r} predates the `{renamed}` field and cannot be "
-            "read by this build; discard it (remove its entry under authoring-intents) and "
-            "author it again"
-        )
 
 
 def _authoring_event_input(
     raw: bytes,
-) -> tuple[type[AuthoringIntentEventAny], dict[str, object]]:
+) -> tuple[type[AuthoringIntentEvent], dict[str, object]]:
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         raise ValueError("AuthoringIntent event must be an object")
-    _refuse_pre_revises_intent(payload)
-    if payload.get("tag") == "playbill-authoring-intent-event-v2":
-        return AuthoringIntentEventV2, payload
-    if payload.get("tag") == "playbill-authoring-intent-event-v3":
-        return AuthoringIntentEventV3, payload
-    return AuthoringIntentEventV1, payload
+    tag = payload.get("tag")
+    if isinstance(tag, str) and tag != AuthoringIntentEvent.model_fields["tag"].default:
+        raise AuthoringIntentStoreError(
+            f"AuthoringIntent event format {payload.get('tag')!r} is not read by this build; "
+            "discard the intent (remove its entry under authoring-intents) and author it again"
+        )
+    return AuthoringIntentEvent, payload
 
 
-def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEventAny:
+def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEvent:
     model, payload = _authoring_event_input(raw)
     return model.model_validate(payload)
 
 
-def _decode_authoring_intent_event(raw: bytes) -> tuple[AuthoringIntentEventAny, bytes]:
+def _decode_authoring_intent_event(raw: bytes) -> tuple[AuthoringIntentEvent, bytes]:
     """Fully validate a fresh event and return its model-derived canonical bytes."""
 
     model, payload = _authoring_event_input(raw)
@@ -569,7 +443,7 @@ class AuthoringIntentStore:
     def mint_intent_id(self) -> str:
         return f"AIT-{self._token_factory()}"
 
-    def create(self, intent: AuthoringIntentV1, *, operation_key: str) -> AuthoringIntentV1:
+    def create(self, intent: AuthoringIntent, *, operation_key: str) -> AuthoringIntent:
         with self._locked():
             self._recover_creating_directories()
             existing = self._active_by_fingerprint(
@@ -643,7 +517,7 @@ class AuthoringIntentStore:
             label="AuthoringIntent",
         )
 
-    def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntentV1:
+    def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntent:
         intent_id = self.resolve_intent_id(intent_id)
         with self._locked():
             directory = self.root / intent_id
@@ -687,16 +561,16 @@ class AuthoringIntentStore:
                     found.append((directory.name, str(intent.get("actor_id")), digest))
         return tuple(found)
 
-    def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntentV1, ...]:
+    def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntent, ...]:
         with self._locked():
-            pending: list[AuthoringIntentV1] = []
+            pending: list[AuthoringIntent] = []
             for directory in self._intent_directories():
                 intent = self._validated_events(directory)[-1].intent
                 if intent.actor_id == actor_id and _intent_is_pending(intent):
                     pending.append(intent.model_copy(deep=True))
             return tuple(sorted(pending, key=lambda item: item.intent_id.encode("ascii")))
 
-    def events(self) -> tuple[AuthoringIntentEventAny, ...]:
+    def events(self) -> tuple[AuthoringIntentEvent, ...]:
         """Return every durable intent transition in canonical stream order.
 
         Curation consumes these records as immutable attempt evidence.  It does
@@ -723,7 +597,7 @@ class AuthoringIntentStore:
         intent_id: str,
         *,
         actor_id: str,
-    ) -> tuple[AuthoringIntentV1 | None, AuthoringIntentEventAny]:
+    ) -> tuple[AuthoringIntent | None, AuthoringIntentEvent]:
         """Return the exact predecessor and latest event for protocol retry checks."""
 
         with self._locked():
@@ -740,11 +614,11 @@ class AuthoringIntentStore:
         *,
         actor_id: str,
         operation_key: str,
-        transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
+        transform: Callable[[AuthoringIntent], AuthoringIntent],
         allow_rebase: bool = False,
         recover_creates: bool = True,
         program_stamp: AuthoringProgramStamp | None = None,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         """Append one idempotent state transition under the store-wide CAS lock.
 
         Recompilation of an already-published stream sets ``recover_creates``
@@ -770,7 +644,7 @@ class AuthoringIntentStore:
         actor_id: str,
         operation_key: str,
         status: CandidateStatus,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         """Record a finished candidate status, once, however many callers race.
 
         An intent another caller already finished with this same candidate is
@@ -802,11 +676,11 @@ class AuthoringIntentStore:
         *,
         actor_id: str,
         operation_key: str,
-        transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
+        transform: Callable[[AuthoringIntent], AuthoringIntent],
         allow_rebase: bool = False,
         recover_creates: bool = True,
         program_stamp: AuthoringProgramStamp | None = None,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         if recover_creates:
             self._recover_creating_directories()
         directory = self.root / intent_id
@@ -839,7 +713,7 @@ class AuthoringIntentStore:
         *,
         actor_id: str,
         program_stamp: AuthoringProgramStamp,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         current = self.get(intent_id, actor_id=actor_id)
         operation_key = authoring_program_stamp_operation_key(
             intent_id=intent_id,
@@ -859,8 +733,8 @@ class AuthoringIntentStore:
         fingerprint: str,
         *,
         actor_id: str,
-    ) -> AuthoringIntentV1 | None:
-        matches: list[AuthoringIntentV1] = []
+    ) -> AuthoringIntent | None:
+        matches: list[AuthoringIntent] = []
         for directory in self._intent_directories():
             state = self._validated_fingerprint_state(directory)
             if state.actor_id == actor_id and state.fingerprint == fingerprint and state.pending:
@@ -921,7 +795,7 @@ class AuthoringIntentStore:
                 continue
             self._finish(directory, final)
 
-    def _finish(self, directory: Path, event: AuthoringIntentEventAny) -> None:
+    def _finish(self, directory: Path, event: AuthoringIntentEvent) -> None:
         """Replace a finished intent's stream with its final event; the lock is held."""
 
         receipts = self.root / _FINISHED_RECEIPTS
@@ -948,7 +822,7 @@ class AuthoringIntentStore:
                 continue
         return tuple(path for _modified, path in sorted(found))
 
-    def _finished_receipt(self, intent_id: str) -> AuthoringIntentV1 | None:
+    def _finished_receipt(self, intent_id: str) -> AuthoringIntent | None:
         if self._retention != "off":
             return None
         path = self.root / _FINISHED_RECEIPTS / f"{intent_id}.json"
@@ -1032,7 +906,7 @@ class AuthoringIntentStore:
         # refusal even when an earlier event's bytes have changed too.
         return _fingerprint_state(self._validated_events(directory)[-1].intent)
 
-    def _validated_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
+    def _validated_events(self, directory: Path) -> tuple[AuthoringIntentEvent, ...]:
         """Private parsed events, reused only after checking exact persisted bytes.
 
         Every invocation still checks paths, content hashes and stream links.
@@ -1058,7 +932,7 @@ class AuthoringIntentStore:
             ): item.event.intent.payload
             for item in cached
         }
-        events: list[AuthoringIntentEventAny] = []
+        events: list[AuthoringIntentEvent] = []
         previous: str | None = None
         operation_keys: set[str] = set()
         for sequence, path in enumerate(paths):
@@ -1099,13 +973,13 @@ class AuthoringIntentStore:
         return tuple(events)
 
     @staticmethod
-    def _render_event(event: AuthoringIntentEventAny) -> bytes:
+    def _render_event(event: AuthoringIntentEvent) -> bytes:
         return canonical_bytes(event.model_dump(mode="json")) + b"\n"
 
     @staticmethod
     def _validate_transition(
-        current: AuthoringIntentV1,
-        updated: AuthoringIntentV1,
+        current: AuthoringIntent,
+        updated: AuthoringIntent,
         *,
         allow_rebase: bool = False,
     ) -> None:
@@ -1141,12 +1015,7 @@ class AuthoringIntentStore:
 
 __all__ = [
     "AUTHORING_INTENT_EVENT_DIGEST_DOMAIN",
-    "AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN",
-    "AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN",
-    "AuthoringIntentEventAny",
-    "AuthoringIntentEventV1",
-    "AuthoringIntentEventV2",
-    "AuthoringIntentEventV3",
+    "AuthoringIntentEvent",
     "AuthoringIntentStore",
     "AuthoringIntentStoreError",
     "authoring_intent_event_digest",

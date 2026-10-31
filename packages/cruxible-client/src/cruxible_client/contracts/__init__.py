@@ -1267,23 +1267,6 @@ class ClaimTypeInputProposalResult(BaseModel):
     lint: ClaimTypeProposalLint
 
 
-class ClaimTypeMigrationResultV1(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-type-migration-result-v1"] = (
-        "playbill-claim-type-migration-result-v1"
-    )
-    operation_digest: str
-    dependents: list[dict[str, Any]]
-    proposal: ProposalInspection
-    semantic_delta: list[SemanticFieldDelta]
-    warnings: list[dict[str, Any]] = []
-    lint: ClaimTypeProposalLint | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-
-
 class ClaimTypeMigrationPreflight(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1293,23 +1276,6 @@ class ClaimTypeMigrationPreflight(BaseModel):
     coordinate: AcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
-    semantic_delta: list[SemanticFieldDelta]
-    warnings: list[dict[str, Any]] = []
-    lint: ClaimTypeProposalLint | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-
-
-class ClaimTypeMigrationResultV2(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-type-migration-result-v2"] = (
-        "playbill-claim-type-migration-result-v2"
-    )
-    operation_digest: str
-    dependents: list[dict[str, Any]]
-    proposal: ProposalInspection
     semantic_delta: list[SemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: ClaimTypeProposalLint | None = Field(
@@ -1335,12 +1301,7 @@ class ClaimTypeMigrationResult(BaseModel):
     )
 
 
-ClaimTypeMigrationResponse: TypeAlias = (
-    ClaimTypeMigrationResultV1
-    | ClaimTypeMigrationPreflight
-    | ClaimTypeMigrationResultV2
-    | ClaimTypeMigrationResult
-)
+ClaimTypeMigrationResponse: TypeAlias = ClaimTypeMigrationPreflight | ClaimTypeMigrationResult
 
 
 class CaptureEvidenceAdmission(BaseModel):

@@ -171,7 +171,7 @@ from cruxible_client.kits import (
 )
 from cruxible_core.adapters.block_detach import detach_projection_pages
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _can_confirm,
@@ -297,8 +297,8 @@ def _read_since_access_profile(path: str) -> dict[str, Any]:
 
 
 _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
-_CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequestAny] = TypeAdapter(
-    ClaimTypeMigrationRequestAny
+_CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
+    ClaimTypeMigrationRequest
 )
 
 

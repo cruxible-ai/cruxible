@@ -23,7 +23,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExpectation,
     AuthoringIntent,
     AuthoringIntentList,
-    AuthoringIntentV1,
     AuthoringIntentView,
     AuthoringPayload,
     AuthoringProgramStamp,
@@ -35,7 +34,7 @@ from cruxible_client.contracts.authoring.models import (
     CandidateStatusState,
     ChangeSetAuthoringPayload,
     ChangeSetClaimIdentity,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     ExistingCaptureCitationSource,
     PreflightResult,
     ProcedureAuthoringPayload,
@@ -108,7 +107,7 @@ def _validate_program_stamp(program_stamp: AuthoringProgramStamp) -> None:
 
 
 def _rebase_operation_key(
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     *,
     actor_id: str,
     next_coordinate: AcceptedCoordinate,
@@ -166,7 +165,7 @@ class AuthoringIntentCoordinator:
         at = base_coordinate or AcceptedCoordinate.from_internal(
             self.instance.accepted_coordinate()
         )
-        if isinstance(payload, ClaimAuthoringPayloadV1) and isinstance(
+        if isinstance(payload, ClaimAuthoringPayload) and isinstance(
             payload.source,
             ExistingCaptureCitationSource,
         ):
@@ -182,7 +181,7 @@ class AuthoringIntentCoordinator:
             )
             supplied = reference_expectations or ()
             if not any(item.payload_path == "source" for item in supplied):
-                supplied = (*supplied, *generated)
+                supplied = (*supplied, *(generated or ()))
             reference_expectations = tuple(
                 sorted(
                     supplied,
@@ -225,8 +224,7 @@ class AuthoringIntentCoordinator:
             # end leaves this): that intent is over, so this one starts anew.
             stored = self.store.create(intent, operation_key=operation_key)
         if reference_expectations is not None and (
-            not isinstance(stored, AuthoringIntent)
-            or stored.reference_expectations != reference_expectations
+            stored.reference_expectations != reference_expectations
         ):
             stored = self._replace_reference_expectations(
                 stored,
@@ -255,7 +253,7 @@ class AuthoringIntentCoordinator:
         at: AcceptedCoordinate,
         reference_expectations: tuple[AuthoringExpectation, ...] | None,
         intent_id: str,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         """Build one draft intent in memory, minting its identities; nothing is stored."""
 
         payload = self._canonical_payload(payload, git_oid=at.git_oid)
@@ -281,15 +279,8 @@ class AuthoringIntentCoordinator:
             "candidate_status": status,
             "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
         }
-        return (
-            AuthoringIntentV1.model_validate(intent_values)
-            if reference_expectations is None
-            else AuthoringIntent.model_validate(
-                {
-                    **intent_values,
-                    "reference_expectations": reference_expectations,
-                }
-            )
+        return AuthoringIntent.model_validate(
+            {**intent_values, "reference_expectations": reference_expectations}
         )
 
     def preview(
@@ -299,7 +290,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayload,
         canonical_timestamp: str,
         reference_expectations: tuple[AuthoringExpectation, ...] | None = None,
-    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+    ) -> tuple[AuthoringIntent, ComputedPreflight]:
         """Preflight one payload exactly as submit would, and write nothing.
 
         This is a dry run: the draft is built in memory under a fresh intent ID
@@ -335,7 +326,7 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         input: AuthoringInput,
         canonical_timestamp: str,
-    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+    ) -> tuple[AuthoringIntent, ComputedPreflight]:
         """Preflight one tagless input as ``submit_input`` would, and save no intent.
 
         The input lowers and binds its existing-capture expectations exactly as
@@ -418,7 +409,7 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         prepared: PreparedEvaluationScope | None = None,
-    ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
+    ) -> tuple[ComputedPreflight, AuthoringIntent]:
         # This persists a preflight and lands its lowered evidence. Unlike an
         # in-memory preview, it must see those new bodies even inside a read.
         current = self.store.get(intent_id, actor_id=actor.actor_id)
@@ -446,7 +437,7 @@ class AuthoringIntentCoordinator:
             )
         operation_key = computed.result.certificate.certificate_digest
 
-        def bind_preflight(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+        def bind_preflight(intent: AuthoringIntent) -> AuthoringIntent:
             if intent.payload_digest != current.payload_digest:
                 raise ValueError("AuthoringIntent payload changed during preflight")
             return intent.model_copy(
@@ -464,7 +455,7 @@ class AuthoringIntentCoordinator:
         )
         return computed, updated
 
-    def _at_current_head(self, intent: AuthoringIntentV1) -> AuthoringIntentV1 | None:
+    def _at_current_head(self, intent: AuthoringIntent) -> AuthoringIntent | None:
         """The unsubmitted intent re-based on the accepted head, if its base is behind it.
 
         In memory only; ``_advance_base`` records it. A submitted intent keeps
@@ -494,14 +485,14 @@ class AuthoringIntentCoordinator:
 
     def _advance_base(
         self,
-        current: AuthoringIntentV1,
-        advanced: AuthoringIntentV1,
+        current: AuthoringIntent,
+        advanced: AuthoringIntent,
         *,
         actor: AuthenticatedActor,
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         """Record the move of one unchanged intent onto the head it re-checked clean at."""
 
-        def advance(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+        def advance(intent: AuthoringIntent) -> AuthoringIntent:
             if intent != current:
                 raise ValueError("AuthoringIntent changed while its base was advanced")
             return advanced
@@ -673,7 +664,7 @@ class AuthoringIntentCoordinator:
     ) -> tuple[AuthoringExpectation, ...] | None:
         """Assert the exact accepted contract behind a decision-input Capture ref."""
 
-        if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
+        if not isinstance(payload, ClaimAuthoringPayload) or not isinstance(
             payload.source,
             ExistingCaptureCitationSource,
         ):
@@ -702,7 +693,7 @@ class AuthoringIntentCoordinator:
     def _revision_marker(
         self,
         computed: ComputedPreflight,
-        preflighted: AuthoringIntentV1,
+        preflighted: AuthoringIntent,
     ) -> tuple[bool, int | None]:
         """Say whether this submit amends a Claim identity in place, and to which revision.
 
@@ -727,7 +718,7 @@ class AuthoringIntentCoordinator:
         # Procedure revision raised on the terminal success path, AFTER the submit
         # and the store transition had already landed: the write happened and the
         # call reported failure.
-        if not isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+        if not isinstance(preflighted.payload, ClaimAuthoringPayload):
             return False, None
         predecessor = lowered.resolved_authoring.get("predecessor_digest")
         if not isinstance(predecessor, str):
@@ -758,7 +749,7 @@ class AuthoringIntentCoordinator:
     def _submit_members(
         self,
         computed: ComputedPreflight,
-        preflighted: AuthoringIntentV1,
+        preflighted: AuthoringIntent,
     ) -> tuple[AuthoringSubmitMember, ...]:
         """Say what every submitted member became, one row per member.
 
@@ -771,7 +762,7 @@ class AuthoringIntentCoordinator:
         lowered = computed.lowered
         if lowered is None:
             return ()
-        if isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+        if isinstance(preflighted.payload, ClaimAuthoringPayload):
             artifact_digest = lowered.resolved_authoring.get("artifact_digest")
             if not isinstance(artifact_digest, str):
                 return ()
@@ -878,7 +869,7 @@ class AuthoringIntentCoordinator:
             if reduced.state == "accepted":
                 idempotent_existing = reduced.proposal_id is None
                 revision: int | None = None
-                if idempotent_existing and isinstance(current.payload, ClaimAuthoringPayloadV1):
+                if idempotent_existing and isinstance(current.payload, ClaimAuthoringPayload):
                     coordinate = self.instance.accepted_coordinate()
                     with self.instance.bind_accepted_projection(coordinate) as projection:
                         projected = projection.claim(f"Claim:{current.semantic_identity}")
@@ -934,7 +925,7 @@ class AuthoringIntentCoordinator:
                     },
                 ).tagged
 
-                def accept_existing(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+                def accept_existing(intent: AuthoringIntent) -> AuthoringIntent:
                     return intent.model_copy(update={"candidate_status": status})
 
                 accepted_intent = self.store.transition(
@@ -944,7 +935,7 @@ class AuthoringIntentCoordinator:
                     transform=accept_existing,
                 )
                 claim_revision = None
-                if isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+                if isinstance(preflighted.payload, ClaimAuthoringPayload):
                     with self.instance.bind_accepted_projection(
                         self.instance.accepted_coordinate()
                     ) as projection:
@@ -969,9 +960,9 @@ class AuthoringIntentCoordinator:
             # would admit the change over a slot it never saw. Only an intent
             # that pins a slot is held to that head; any other re-evaluates
             # and publishes at whatever head admission finds.
-            pins_slots = isinstance(preflighted, AuthoringIntent) and any(
+            pins_slots = any(
                 isinstance(item, AuthoringSlotExpectation)
-                for item in preflighted.reference_expectations
+                for item in preflighted.reference_expectations or ()
             )
 
             def at_certificate(
@@ -1062,7 +1053,7 @@ class AuthoringIntentCoordinator:
                 candidate_digest=result.candidate.candidate_digest,
             )
 
-            def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+            def bind_submit(intent: AuthoringIntent) -> AuthoringIntent:
                 if (
                     intent.last_preflight is None
                     or intent.last_preflight.certificate.certificate_digest
@@ -1133,11 +1124,9 @@ class AuthoringIntentCoordinator:
         )
         operation_key = typed_digest(
             Sha256Value,
-            (
-                "playbill-authoring-replace-payload-v1"
-                if expectations_digest is None
-                else "playbill-authoring-replace-payload-v2"
-            ),
+            # One retry domain: a replacement that asserts references names
+            # their digest, and one that asserts none omits it.
+            "cruxible-authoring-replace-payload-v3",
             {
                 "actor_id": actor.actor_id,
                 "intent_id": intent_id,
@@ -1150,15 +1139,15 @@ class AuthoringIntentCoordinator:
             },
         ).tagged
 
-        def replace(current: AuthoringIntentV1) -> AuthoringIntentV1:
+        def replace(current: AuthoringIntent) -> AuthoringIntent:
             if current.candidate_status.state not in {
                 "draft",
                 "preflight_refused",
                 "ready_to_submit",
             }:
                 raise ValueError("submitted AuthoringIntent payload is immutable")
-            if isinstance(current.payload, ClaimAuthoringPayloadV1) != isinstance(
-                payload, ClaimAuthoringPayloadV1
+            if isinstance(current.payload, ClaimAuthoringPayload) != isinstance(
+                payload, ClaimAuthoringPayload
             ):
                 raise ValueError("AuthoringIntent payload kind cannot change")
             if isinstance(current.payload, ChangeSetAuthoringPayload) or isinstance(
@@ -1172,7 +1161,7 @@ class AuthoringIntentCoordinator:
                     current.payload.members
                 ) != authoring_change_set_membership(payload.members):
                     raise ValueError("change-set replacement cannot change member identity")
-            elif not isinstance(payload, ClaimAuthoringPayloadV1):
+            elif not isinstance(payload, ClaimAuthoringPayload):
                 current_family = (
                     "Procedure"
                     if isinstance(
@@ -1190,7 +1179,7 @@ class AuthoringIntentCoordinator:
                     raise ValueError("AuthoringIntent payload kind cannot change")
             semantic_identity = (
                 current.semantic_identity
-                if isinstance(payload, ClaimAuthoringPayloadV1)
+                if isinstance(payload, ClaimAuthoringPayload)
                 else self._mint_semantic_identity(payload)
             )
             at = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
@@ -1216,7 +1205,6 @@ class AuthoringIntentCoordinator:
                 {
                     **current.model_dump(mode="json"),
                     **updates,
-                    "tag": "playbill-authoring-intent-v2",
                     "reference_expectations": [
                         item.model_dump(mode="json") for item in reference_expectations
                     ],
@@ -1239,11 +1227,11 @@ class AuthoringIntentCoordinator:
 
     def _replace_reference_expectations(
         self,
-        current: AuthoringIntentV1,
+        current: AuthoringIntent,
         *,
         actor: AuthenticatedActor,
         reference_expectations: tuple[AuthoringExpectation, ...],
-    ) -> AuthoringIntentV1:
+    ) -> AuthoringIntent:
         if current.candidate_status.state not in {
             "draft",
             "preflight_refused",
@@ -1261,15 +1249,12 @@ class AuthoringIntentCoordinator:
             },
         ).tagged
 
-        def replace(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            if isinstance(intent, AuthoringIntent) and (
-                intent.reference_expectations == reference_expectations
-            ):
+        def replace(intent: AuthoringIntent) -> AuthoringIntent:
+            if intent.reference_expectations == reference_expectations:
                 return intent
             return AuthoringIntent.model_validate(
                 {
                     **intent.model_dump(mode="json"),
-                    "tag": "playbill-authoring-intent-v2",
                     "reference_expectations": [
                         item.model_dump(mode="json") for item in reference_expectations
                     ],
@@ -1312,12 +1297,12 @@ class AuthoringIntentCoordinator:
                 claim_id=member.revises or self.claim_id_factory(),
             )
             for member in payload.members
-            if isinstance(member, ClaimAuthoringPayloadV1)
+            if isinstance(member, ClaimAuthoringPayload)
         )
         return tuple(sorted(minted, key=lambda item: item.member_identity.encode("utf-8")))
 
     def _mint_semantic_identity(self, payload: AuthoringPayload) -> str:
-        if isinstance(payload, ClaimAuthoringPayloadV1):
+        if isinstance(payload, ClaimAuthoringPayload):
             return payload.revises or self.claim_id_factory()
         if isinstance(payload, ChangeSetAuthoringPayload):
             digest = typed_digest(
@@ -1333,7 +1318,7 @@ class AuthoringIntentCoordinator:
             return f"ChangeSet:{digest}"
         return authoring_member_identity(payload)
 
-    def _refreshed(self, intent: AuthoringIntentV1) -> AuthoringIntentV1:
+    def _refreshed(self, intent: AuthoringIntent) -> AuthoringIntent:
         """The intent with its candidate status reduced against accepted state."""
 
         return intent.model_copy(update={"candidate_status": self._reduce_status(intent)})
@@ -1370,7 +1355,7 @@ class AuthoringIntentCoordinator:
             status=status.model_copy(update={"state": "terminal"}),
         )
 
-    def _end_if_closed(self, intent: AuthoringIntentV1) -> bool:
+    def _end_if_closed(self, intent: AuthoringIntent) -> bool:
         """Whether ``intent``'s proposal is closed, ending the intent if so (one keyed read)."""
 
         proposal_id = intent.candidate_status.proposal_id
@@ -1420,7 +1405,7 @@ class AuthoringIntentCoordinator:
                 status=reduced,
             )
 
-    def _reduce_status(self, intent: AuthoringIntentV1) -> CandidateStatus:
+    def _reduce_status(self, intent: AuthoringIntent) -> CandidateStatus:
         status = intent.candidate_status
         if status.proposal_id is None or status.candidate_digest is None:
             return status.model_copy(

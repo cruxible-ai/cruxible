@@ -28,7 +28,7 @@ from cruxible_client.contracts.authoring.inputs import (
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     SelfSourceBody,
     SubjectCreationAuthoringPayload,
@@ -101,7 +101,7 @@ def _subjects(computed: Any) -> list[str]:
 
 
 def _claim_about(subject: SemanticAddress, predicate: str, value: object) -> Any:
-    return ClaimAuthoringPayloadV2(
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=subject,
             predicate=predicate,
@@ -967,7 +967,7 @@ def test_a_batch_of_composite_creations_encodes_each_key_a_constant_number_of_ti
 def test_a_subject_valued_object_reference_is_checked_like_a_subject(
     instance: PlaybillInstance,
 ) -> None:
-    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV1
+    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayload
     from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
     from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
     from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
@@ -999,7 +999,7 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
     (alias,) = [
         member
         for member in change_set(_alias_member(DECISION, "original", "other name")).members
-        if isinstance(member, ClaimAuthoringPayloadV1)
+        if isinstance(member, ClaimAuthoringPayload)
     ]
     keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
     with instance.bind_accepted_projection(base) as projection:
@@ -1151,7 +1151,7 @@ def test_an_appended_intent_event_is_never_visible_partially(
 def test_a_qualified_alias_redirects_a_subject_valued_object_reference(
     instance: PlaybillInstance,
 ) -> None:
-    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV1
+    from cruxible_client.contracts.authoring.models import ClaimAuthoringPayload
     from cruxible_client.contracts.procedures.proposal_items import ProcedureKeyedClaimProposalItem
     from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
     from cruxible_core.procedures.proposal_delivery import ProposalDeliveryRefused, _SubjectKeys
@@ -1183,7 +1183,7 @@ def test_a_qualified_alias_redirects_a_subject_valued_object_reference(
     (alias,) = [
         member
         for member in change_set(_alias_member(DECISION, "original", "other name")).members
-        if isinstance(member, ClaimAuthoringPayloadV1)
+        if isinstance(member, ClaimAuthoringPayload)
     ]
     qualified = alias.model_copy(
         update={"statement": alias.statement.model_copy(update={"qualifier": "local-name"})}

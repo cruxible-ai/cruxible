@@ -174,7 +174,7 @@ def _compile(client: TestClient, headers: dict[str, str]) -> object:
     return client.post(
         f"/api/v1/{INSTANCE}/authoring/compile",
         json={
-            "tag": "playbill-authoring-intent-compile-request-v1",
+            "tag": "cruxible-authoring-intent-compile-request-v4",
             "payload": _self_source_payload().model_dump(mode="json"),
         },
         headers=headers,

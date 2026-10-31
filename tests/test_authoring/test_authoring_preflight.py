@@ -18,7 +18,7 @@ from cruxible_client.contracts.authoring.inputs import (
 from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     SelfSourceBody,
     WorkingAnchorWindow,
     WorkingDigestCoordinate,
@@ -153,8 +153,8 @@ def _coordinator(instance: PlaybillInstance) -> AuthoringIntentCoordinator:
     )
 
 
-def _self_source_payload() -> ClaimAuthoringPayloadV1:
-    return ClaimAuthoringPayloadV1(
+def _self_source_payload() -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(
                 subject_path(_subject().subject_kind, _subject().subject_id)
@@ -172,10 +172,10 @@ def _working_payload(
     *,
     occurrence_count: int,
     selected_occurrence: int | None = None,
-) -> ClaimAuthoringPayloadV1:
+) -> ClaimAuthoringPayload:
     selected = b"status: ready"
     digest = "sha256:" + hashlib.sha256(selected).hexdigest()
-    return ClaimAuthoringPayloadV1(
+    return ClaimAuthoringPayload(
         statement=_self_source_payload().statement,
         rationale="The repository snapshot says the work is ready.",
         source=WorkingSelectionObservation(
@@ -517,7 +517,7 @@ def test_a_claim_payload_has_no_insertion_target() -> None:
     """The publication road is cut: a Claim payload carrying a target does not parse."""
 
     with pytest.raises(ValueError, match="insertion_target"):
-        ClaimAuthoringPayloadV1.model_validate(
+        ClaimAuthoringPayload.model_validate(
             {**_self_source_payload().model_dump(mode="json"), "insertion_target": None}
         )
 
@@ -629,7 +629,7 @@ def _activate(
     assert activated.status == "accepted"
 
 
-def _successor_payload(claim_id: str, *, value: str) -> ClaimAuthoringPayloadV1:
+def _successor_payload(claim_id: str, *, value: str) -> ClaimAuthoringPayload:
     payload = _self_source_payload()
     return payload.model_copy(
         update={

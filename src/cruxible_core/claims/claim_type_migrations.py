@@ -79,36 +79,6 @@ MigrationInputDisposition: TypeAlias = Literal["successor", "retire"]
 MigrationResultDisposition: TypeAlias = Literal["successor", "retire"]
 
 
-class ClaimTypeDependentDispositionV1(_StrictMigrationModel):
-    claim_id: str
-    disposition: MigrationInputDisposition
-
-
-class ClaimTypeMigrationRequestV1(_StrictMigrationModel):
-    tag: Literal["playbill-claim-type-migration-request-v1"] = (
-        "playbill-claim-type-migration-request-v1"
-    )
-    successor: ClaimTypeInputRecord | ClaimType
-    dependents: tuple[ClaimTypeDependentDispositionV1, ...]
-
-    @field_validator("dependents")
-    @classmethod
-    def _dependents(
-        cls,
-        value: tuple[ClaimTypeDependentDispositionV1, ...],
-    ) -> tuple[ClaimTypeDependentDispositionV1, ...]:
-        ids = tuple(item.claim_id for item in value)
-        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
-            raise ValueError("migration dependents must be byte-sorted and unique")
-        return value
-
-
-class ClaimTypeDependentDispositionV2(_StrictMigrationModel):
-    identity: ArtifactIdentity
-    disposition: MigrationInputDisposition
-    successor: dict[str, object] | None = None
-
-
 class ClaimTypeDependentDisposition(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-dependent-disposition-v3"] = (
         "playbill-claim-type-dependent-disposition-v3"
@@ -124,26 +94,6 @@ class ClaimTypeDependentDisposition(_StrictMigrationModel):
     def _effective_until(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("claim_effective_until must be timezone-aware")
-        return value
-
-
-class ClaimTypeMigrationRequestV2(_StrictMigrationModel):
-    tag: Literal["playbill-claim-type-migration-request-v2"] = (
-        "playbill-claim-type-migration-request-v2"
-    )
-    mode: Literal["preflight", "submit"]
-    successor: ClaimTypeInputRecord | ClaimType
-    dependents: tuple[ClaimTypeDependentDispositionV2, ...] = ()
-
-    @field_validator("dependents")
-    @classmethod
-    def _dependents(
-        cls,
-        value: tuple[ClaimTypeDependentDispositionV2, ...],
-    ) -> tuple[ClaimTypeDependentDispositionV2, ...]:
-        identities = tuple(item.identity.qualified for item in value)
-        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("migration dependents must be UTF-8 byte-sorted and unique")
         return value
 
 
@@ -167,36 +117,11 @@ class ClaimTypeMigrationRequest(_StrictMigrationModel):
         return value
 
 
-ClaimTypeMigrationRequestAny: TypeAlias = (
-    ClaimTypeMigrationRequestV1 | ClaimTypeMigrationRequestV2 | ClaimTypeMigrationRequest
-)
-
-
-class ClaimTypeMigrationDispositionV1(_StrictMigrationModel):
-    claim_id: str
-    disposition: MigrationResultDisposition
-
-
 class ClaimTypeMigrationWarningV1(_StrictMigrationModel):
     code: Annotated[Literal["cruxible.claim_type.invalidation_deprecated"], CurrentCode]
     field_path: str
     repair_operation: Annotated[Literal["cruxible.claim_type.migrate"], CurrentCode] = (
         "cruxible.claim_type.migrate"
-    )
-
-
-class ClaimTypeMigrationResultV1(_StrictMigrationModel):
-    tag: Literal["playbill-claim-type-migration-result-v1"] = (
-        "playbill-claim-type-migration-result-v1"
-    )
-    operation_digest: str
-    semantic_delta: tuple[SemanticFieldDelta, ...]
-    dependents: tuple[ClaimTypeMigrationDispositionV1, ...]
-    proposal: ProposalInspection
-    warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
-    lint: ClaimTypeProposalLintV1 | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
     )
 
 
@@ -226,40 +151,20 @@ class ClaimTypeMigrationPreflightV1(_StrictMigrationModel):
     )
 
 
-class ClaimTypeMigrationDispositionV2(_StrictMigrationModel):
-    identity: ArtifactIdentity
-    disposition: MigrationResultDisposition
-
-
-class ClaimTypeMigrationResultV2(_StrictMigrationModel):
-    tag: Literal["playbill-claim-type-migration-result-v2"] = (
-        "playbill-claim-type-migration-result-v2"
-    )
-    operation_digest: str
-    semantic_delta: tuple[SemanticFieldDelta, ...]
-    dependents: tuple[ClaimTypeMigrationDispositionV2, ...]
-    proposal: ProposalInspection
-    warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
-    lint: ClaimTypeProposalLintV1 | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-
-
-class ClaimTypeMigrationDispositionV3(_StrictMigrationModel):
+class ClaimTypeMigrationDisposition(_StrictMigrationModel):
     identity: ArtifactIdentity
     disposition: MigrationResultDisposition
     claim_retirement_reason: ClaimRetirementReason | None = None
     claim_effective_until: datetime | None = None
 
 
-class ClaimTypeMigrationResultV3(_StrictMigrationModel):
+class ClaimTypeMigrationResult(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-migration-result-v3"] = (
         "playbill-claim-type-migration-result-v3"
     )
     operation_digest: str
     semantic_delta: tuple[SemanticFieldDelta, ...]
-    dependents: tuple[ClaimTypeMigrationDispositionV3, ...]
+    dependents: tuple[ClaimTypeMigrationDisposition, ...]
     proposal: ProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
@@ -268,12 +173,7 @@ class ClaimTypeMigrationResultV3(_StrictMigrationModel):
     )
 
 
-ClaimTypeMigrationResponse: TypeAlias = (
-    ClaimTypeMigrationResultV1
-    | ClaimTypeMigrationPreflightV1
-    | ClaimTypeMigrationResultV2
-    | ClaimTypeMigrationResultV3
-)
+ClaimTypeMigrationResponse: TypeAlias = ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResult
 
 
 class ClaimTypeMigrationError(FormatError):
@@ -299,39 +199,6 @@ def _current_generation_timestamp(instance: PlaybillInstance) -> str:
             f"{ClaimTypeMigrationError.code}: no accepted ClaimType can exist at genesis"
         )
     return record.candidate.timestamp
-
-
-def _normalized_dependents(
-    dependents: tuple[ClaimTypeDependentDispositionV1, ...],
-) -> tuple[ClaimTypeMigrationDispositionV1, ...]:
-    return tuple(
-        ClaimTypeMigrationDispositionV1(
-            claim_id=item.claim_id,
-            disposition=item.disposition,
-        )
-        for item in dependents
-    )
-
-
-def _operation_digest(
-    *,
-    actor_id: str,
-    coordinate: AcceptedCoordinate,
-    successor: ClaimType,
-    dependents: tuple[ClaimTypeMigrationDispositionV1, ...],
-) -> str:
-    return typed_digest(
-        Sha256Value,
-        CLAIM_TYPE_MIGRATION_DOMAIN,
-        {
-            "actor_id": actor_id,
-            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
-            "normalized_request": {
-                "successor": successor.model_dump(mode="json"),
-                "dependents": [item.model_dump(mode="json") for item in dependents],
-            },
-        },
-    ).tagged
 
 
 def _current_dependents(
@@ -723,27 +590,6 @@ def _canonical_successor_bytes(
     return candidate
 
 
-def _v2_operation_digest(
-    *,
-    actor_id: str,
-    coordinate: AcceptedCoordinate,
-    successor: ClaimType,
-    dependents: tuple[ClaimTypeMigrationDispositionV2, ...],
-) -> str:
-    return typed_digest(
-        Sha256Value,
-        CLAIM_TYPE_MIGRATION_DOMAIN,
-        {
-            "actor_id": actor_id,
-            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
-            "normalized_request": {
-                "successor": successor.model_dump(mode="json"),
-                "dependents": [item.model_dump(mode="json") for item in dependents],
-            },
-        },
-    ).tagged
-
-
 def _dependency_order(
     tree: Mapping[str, bytes],
     by_identity: Mapping[str, ClaimTypeMigrationInventoryItemV1],
@@ -793,72 +639,12 @@ def _dependency_order(
         )
 
 
-def _build_v2_candidate(
-    *,
-    tree: Mapping[str, bytes],
-    type_path: str,
-    successor: ClaimType,
-    inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
-    dispositions: tuple[ClaimTypeDependentDispositionV2, ...],
-) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV2, ...]]:
-    by_identity = {item.identity.qualified: item for item in inventory}
-    supplied = {item.identity.qualified: item for item in dispositions}
-    if set(by_identity) != set(supplied):
-        missing = sorted(set(by_identity) - set(supplied), key=lambda item: item.encode("utf-8"))
-        extra = sorted(set(supplied) - set(by_identity), key=lambda item: item.encode("utf-8"))
-        raise ClaimTypeMigrationDependentSetMismatch(
-            f"{ClaimTypeMigrationDependentSetMismatch.code}: missing={missing!r}; "
-            f"extra_or_stale={extra!r}"
-        )
-
-    candidate_tree = dict(tree)
-    candidate_tree[type_path] = render_claim_type(successor)
-    replacements = {
-        claim_type_digest(
-            parse_claim_type(tree[type_path], path=type_path)
-        ).tagged: claim_type_digest(successor).tagged
-    }
-    normalized: dict[str, ClaimTypeMigrationDispositionV2] = {}
-    for identity, current in _dependency_order(tree, by_identity):
-        row = by_identity[identity]
-        entry = supplied[identity]
-        disposition: MigrationResultDisposition = entry.disposition
-        if disposition not in row.permitted_dispositions:
-            raise ClaimTypeMigrationDependentInvalid(
-                f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
-                f"{disposition}"
-            )
-        content = _canonical_successor_bytes(
-            current=current,
-            content=tree[row.path],
-            disposition=disposition,
-            replacements=replacements,
-            supplied=entry.successor,
-            successor_type=successor,
-        )
-        candidate_tree[row.path] = content
-        successor_state = parse_dependency_artifact(row.path, content)
-        if successor_state is None:
-            raise ClaimTypeMigrationIncomplete(
-                f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
-            )
-        replacements[current.artifact_digest] = successor_state.artifact_digest
-        normalized[identity] = ClaimTypeMigrationDispositionV2(
-            identity=current.identity,
-            disposition=disposition,
-        )
-    return candidate_tree, tuple(
-        normalized[identity]
-        for identity in sorted(normalized, key=lambda item: item.encode("utf-8"))
-    )
-
-
-def _v3_operation_digest(
+def _operation_digest(
     *,
     actor_id: str,
     coordinate: AcceptedCoordinate,
     successor: ClaimType,
-    dependents: tuple[ClaimTypeMigrationDispositionV3, ...],
+    dependents: tuple[ClaimTypeMigrationDisposition, ...],
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -884,7 +670,7 @@ def build_claim_type_migration_candidate(
     authored_successors: Mapping[str, bytes] | None = None,
 ) -> tuple[
     dict[str, bytes],
-    tuple[ClaimTypeMigrationDispositionV3, ...],
+    tuple[ClaimTypeMigrationDisposition, ...],
     tuple[ClaimTypeMigrationWarningV1, ...],
 ]:
     """Build one exact ClaimType succession candidate over its whole closure.
@@ -924,7 +710,7 @@ def build_claim_type_migration_candidate(
             claim_type_digest(successor).tagged
         )
     }
-    normalized: dict[str, ClaimTypeMigrationDispositionV3] = {}
+    normalized: dict[str, ClaimTypeMigrationDisposition] = {}
     for identity, current in _dependency_order(tree, by_identity):
         row = by_identity[identity]
         entry = supplied[identity]
@@ -952,7 +738,7 @@ def build_claim_type_migration_candidate(
                 f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
             )
         replacements[current.artifact_digest] = successor_state.artifact_digest
-        normalized[identity] = ClaimTypeMigrationDispositionV3(
+        normalized[identity] = ClaimTypeMigrationDisposition(
             identity=current.identity,
             disposition=disposition,
             claim_retirement_reason=entry.claim_retirement_reason,
@@ -997,7 +783,7 @@ def build_dependent_closure_candidate(
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
     dispositions: tuple[ClaimTypeDependentDisposition, ...],
     move_graphs: bool = False,
-) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV3, ...]]:
+) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDisposition, ...]]:
     """Settle the closure of several changed definitions as one generation.
 
     The multi-root form of `build_claim_type_migration_candidate`, with the
@@ -1029,7 +815,7 @@ def build_dependent_closure_candidate(
         if current is not None and current.artifact_digest != after.artifact_digest:
             replacements[current.artifact_digest] = after.artifact_digest
     writes: dict[str, bytes] = {}
-    normalized: dict[str, ClaimTypeMigrationDispositionV3] = {}
+    normalized: dict[str, ClaimTypeMigrationDisposition] = {}
     # The definitions this set writes, overlaid by each settled dependent in
     # turn: maintained as it grows rather than merged again per dependent.
     overlay = dict(changed)
@@ -1071,7 +857,7 @@ def build_dependent_closure_candidate(
                 f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
             )
         replacements[current.artifact_digest] = successor_state.artifact_digest
-        normalized[identity] = ClaimTypeMigrationDispositionV3(
+        normalized[identity] = ClaimTypeMigrationDisposition(
             identity=current.identity,
             disposition=disposition,
             claim_retirement_reason=entry.claim_retirement_reason,
@@ -1107,197 +893,12 @@ def _final_claim_type(
     return parse_claim_type(content, path=type_path)
 
 
-def _service_migrate_claim_type_v1(
-    instance: PlaybillInstance,
-    *,
-    request: ClaimTypeMigrationRequestV1,
-    actor: AuthenticatedActor,
-) -> ClaimTypeMigrationResultV1:
-    """Build and submit one exact ClaimType + dependent-Claim migration candidate."""
-
-    current = instance.accepted_coordinate()
-    coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
-    delta = semantic_field_delta(
-        predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
-    )
-    lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-
-    inventory = claim_type_migration_inventory(tree, root=successor.identity, by_name=True)
-    if any(item.artifact_kind != "claim" for item in inventory):
-        kinds = tuple(sorted({item.artifact_kind for item in inventory}))
-        raise ClaimTypeMigrationDependentSetMismatch(
-            f"{ClaimTypeMigrationDependentSetMismatch.code}: v1 cannot disposition complete "
-            f"closure families {kinds!r}; use playbill-claim-type-migration-request-v2"
-        )
-
-    current_dependents = _current_dependents(tree, identity=successor.identity.qualified)
-    normalized = _normalized_dependents(request.dependents)
-    requested_ids = {item.claim_id for item in normalized}
-    current_ids = set(current_dependents)
-    missing = sorted(current_ids - requested_ids, key=lambda item: item.encode("ascii"))
-    extra = sorted(requested_ids - current_ids, key=lambda item: item.encode("ascii"))
-    if missing or extra:
-        raise ClaimTypeMigrationError(
-            f"{ClaimTypeMigrationError.code}: dependent set differs from the accepted "
-            f"coordinate; missing={missing!r}; extra_or_stale={extra!r}"
-        )
-
-    candidate_tree = dict(tree)
-    candidate_tree[type_path] = render_claim_type(successor)
-    for disposition in normalized:
-        path, claim = current_dependents[disposition.claim_id]
-        if claim.lifecycle.state == "live" and disposition.disposition == "retire":
-            raise ClaimTypeMigrationDependentInvalid(
-                "cruxible.claim.retirement_reason_required: use "
-                "playbill-claim-type-migration-request-v3"
-            )
-        candidate_tree[path] = render_claim(
-            _successor_claim(
-                claim,
-                successor_type=successor,
-                disposition=disposition.disposition,
-            )
-        )
-
-    operation_digest = _operation_digest(
-        actor_id=actor.actor_id,
-        coordinate=coordinate,
-        successor=successor,
-        dependents=normalized,
-    )
-    target_ref = (
-        f"refs/proposals/{actor.actor_id}/claim-type-migration-"
-        f"{operation_digest.removeprefix('sha256:')}"
-    )
-    proposal = instance.proposal_service().submit(
-        actor=actor,
-        request=ProposalAdmissionRequest(
-            target_ref=target_ref,
-            proposed_base_oid=current.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=_current_generation_timestamp(instance),
-    )
-    return ClaimTypeMigrationResultV1(
-        operation_digest=operation_digest,
-        semantic_delta=delta,
-        dependents=normalized,
-        proposal=ProposalInspection(
-            proposal=proposal,
-            workspace_advertisement=proposal.workspace_advertisement,
-            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        ),
-        warnings=(),
-        lint=lint if lint.warnings else None,
-    )
-
-
-def _service_migrate_claim_type_v2(
-    instance: PlaybillInstance,
-    *,
-    request: ClaimTypeMigrationRequestV2,
-    actor: AuthenticatedActor,
-) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResultV2:
-    current = instance.accepted_coordinate()
-    coordinate = AcceptedCoordinate.from_internal(current)
-    tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
-    delta = semantic_field_delta(
-        predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
-    )
-    lint = lint_claim_type_input(instance, request.successor, coordinate=current)
-    inventory = claim_type_migration_inventory(tree, root=successor.identity, by_name=True)
-    dispositions = request.dependents
-    if request.mode == "preflight" and not dispositions:
-        dispositions = tuple(
-            ClaimTypeDependentDispositionV2(identity=item.identity, disposition="successor")
-            for item in inventory
-        )
-    candidate_tree, normalized = _build_v2_candidate(
-        tree=tree,
-        type_path=type_path,
-        successor=successor,
-        inventory=inventory,
-        dispositions=dispositions,
-    )
-    timestamp = _current_generation_timestamp(instance)
-    validated = validate_proposal_tree(
-        candidate_tree,
-        limits=instance.proposal_service().receive_limits,
-        base_tree=tree,
-    )
-    evaluation = evaluate_proposal_tree(
-        base_tree=tree,
-        current_tree=tree,
-        proposed_tree=validated,
-        current=current,
-        bodies=instance.body_store(),
-        timestamp=timestamp,
-        rebased=False,
-        actor_id=actor.actor_id,
-        promotion_verifier=instance.proposal_service().promotion_verifier,
-        query_facts_provider=instance.proposal_service().query_facts_provider,
-        principal_registry_provider=instance.accepted_principal_registry,
-        accepted_referents_provider=instance.accepted_referent_coordinates,
-        historical_artifact_provider=instance.accepted_artifact_version,
-    )
-    if evaluation.candidate is None:
-        diagnostics = tuple(item.code for item in evaluation.diagnostics)
-        raise ClaimTypeMigrationIncomplete(
-            f"{ClaimTypeMigrationIncomplete.code}: candidate refused before admission; "
-            f"diagnostics={diagnostics!r}"
-        )
-    if request.mode == "preflight":
-        return ClaimTypeMigrationPreflightV1(
-            coordinate=AcceptedCoordinate.from_internal(current),
-            successor_artifact_digest=claim_type_digest(successor).tagged,
-            semantic_delta=delta,
-            dependents=inventory,
-            warnings=(),
-            lint=lint if lint.warnings else None,
-        )
-
-    operation_digest = _v2_operation_digest(
-        actor_id=actor.actor_id,
-        coordinate=coordinate,
-        successor=successor,
-        dependents=normalized,
-    )
-    target_ref = (
-        f"refs/proposals/{actor.actor_id}/claim-type-migration-"
-        f"{operation_digest.removeprefix('sha256:')}"
-    )
-    proposal = instance.proposal_service().submit(
-        actor=actor,
-        request=ProposalAdmissionRequest(
-            target_ref=target_ref,
-            proposed_base_oid=current.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    return ClaimTypeMigrationResultV2(
-        operation_digest=operation_digest,
-        semantic_delta=delta,
-        dependents=normalized,
-        proposal=ProposalInspection(
-            proposal=proposal,
-            workspace_advertisement=proposal.workspace_advertisement,
-            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        ),
-        warnings=(),
-        lint=lint if lint.warnings else None,
-    )
-
-
-def _service_migrate_claim_type_v3(
+def _service_migrate_claim_type(
     instance: PlaybillInstance,
     *,
     request: ClaimTypeMigrationRequest,
     actor: AuthenticatedActor,
-) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResultV3:
+) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResult:
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
@@ -1357,7 +958,7 @@ def _service_migrate_claim_type_v3(
             lint=lint if lint.warnings else None,
         )
 
-    operation_digest = _v3_operation_digest(
+    operation_digest = _operation_digest(
         actor_id=actor.actor_id,
         coordinate=coordinate,
         successor=successor,
@@ -1376,7 +977,7 @@ def _service_migrate_claim_type_v3(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    return ClaimTypeMigrationResultV3(
+    return ClaimTypeMigrationResult(
         operation_digest=operation_digest,
         semantic_delta=delta,
         dependents=normalized,
@@ -1393,40 +994,27 @@ def _service_migrate_claim_type_v3(
 def service_migrate_claim_type(
     instance: PlaybillInstance,
     *,
-    request: ClaimTypeMigrationRequestAny,
+    request: ClaimTypeMigrationRequest,
     actor: AuthenticatedActor,
 ) -> ClaimTypeMigrationResponse:
     """Preflight or submit one complete ClaimType migration changeset."""
 
-    if isinstance(request, ClaimTypeMigrationRequest):
-        return _service_migrate_claim_type_v3(instance, request=request, actor=actor)
-    if isinstance(request, ClaimTypeMigrationRequestV2):
-        return _service_migrate_claim_type_v2(instance, request=request, actor=actor)
-    return _service_migrate_claim_type_v1(instance, request=request, actor=actor)
+    return _service_migrate_claim_type(instance, request=request, actor=actor)
 
 
 __all__ = [
     "CLAIM_TYPE_MIGRATION_DOMAIN",
-    "ClaimTypeDependentDispositionV1",
-    "ClaimTypeDependentDispositionV2",
     "ClaimTypeDependentDisposition",
-    "ClaimTypeMigrationDispositionV1",
-    "ClaimTypeMigrationDispositionV2",
-    "ClaimTypeMigrationDispositionV3",
+    "ClaimTypeMigrationDisposition",
     "ClaimTypeMigrationDependentInvalid",
     "ClaimTypeMigrationDependentSetMismatch",
     "ClaimTypeMigrationError",
     "ClaimTypeMigrationIncomplete",
     "ClaimTypeMigrationInventoryItemV1",
     "ClaimTypeMigrationPreflightV1",
-    "ClaimTypeMigrationRequestAny",
-    "ClaimTypeMigrationRequestV1",
-    "ClaimTypeMigrationRequestV2",
     "ClaimTypeMigrationRequest",
     "ClaimTypeMigrationResponse",
-    "ClaimTypeMigrationResultV1",
-    "ClaimTypeMigrationResultV2",
-    "ClaimTypeMigrationResultV3",
+    "ClaimTypeMigrationResult",
     "build_claim_type_migration_candidate",
     "claim_type_migration_inventory",
     "resolve_claim_type_succession",

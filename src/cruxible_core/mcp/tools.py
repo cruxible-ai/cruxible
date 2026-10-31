@@ -87,7 +87,7 @@ from cruxible_client.contracts.write import (
     WriteValue,
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget
@@ -801,7 +801,7 @@ def register_tools(
     def cruxible_claim_type_migrate(
         instance_id: InstanceId = None,
         *,
-        request: ClaimTypeMigrationRequestAny,
+        request: ClaimTypeMigrationRequest,
     ) -> contracts.ClaimTypeMigrationResponse:
         """Propose one ClaimType successor and its dependent dispositions atomically."""
         return handlers.handle_playbill_migrate_claim_type(

@@ -22,8 +22,8 @@ from cruxible_client.contracts.errors import (
     ProposalStale,
 )
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV2,
-    ClaimTypeMigrationRequestV2,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -199,11 +199,11 @@ def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    request = ClaimTypeMigrationRequestV2(
+    request = ClaimTypeMigrationRequest(
         mode="submit",
         successor=_successor(instance),
         dependents=(
-            ClaimTypeDependentDispositionV2(
+            ClaimTypeDependentDisposition(
                 identity=ArtifactIdentity(kind="Claim", name=claim_id),
                 disposition="successor",
             ),

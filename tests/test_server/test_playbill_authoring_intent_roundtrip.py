@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.contracts.authoring.models import AuthoringIntent, AuthoringIntentV1
+from cruxible_client.contracts.authoring.models import AuthoringIntent
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
@@ -22,10 +22,11 @@ def test_public_compile_get_pending_and_submit_preserve_intent_version(
     instance = get_playbill_manager().get(instance_id)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     references = [item.model_dump(mode="json") for item in _expectation(coordinate)]
-    # Compile with no intent ID creates the intent: the V1 request makes a V1
-    # intent, the V3 request (references plus program stamp) a V2 intent.
+    # Compile with no intent ID creates the intent. One request grammar: case 1
+    # asserts no references and carries no stamp, case 2 asserts references and
+    # names its program; the intent keeps the omitted/asserted distinction.
     request: dict[str, object] = {
-        "tag": f"playbill-authoring-intent-compile-request-v{1 if version == 1 else 3}",
+        "tag": "cruxible-authoring-intent-compile-request-v4",
         "payload": _self_source_payload().model_dump(mode="json"),
     }
     if version == 2:
@@ -46,7 +47,7 @@ def test_public_compile_get_pending_and_submit_preserve_intent_version(
         assert response.status_code == 200, response.text
     expected = contracts.AuthoringIntentViewRecord.model_validate(got.json()).intent
     assert expected["intent_id"] == intent_id
-    model = AuthoringIntent if version == 2 else AuthoringIntentV1
+    model = AuthoringIntent
     assert model.model_validate(expected).model_dump(mode="json") == expected
     if version == 2:
         assert expected["reference_expectations"] == references
@@ -54,7 +55,7 @@ def test_public_compile_get_pending_and_submit_preserve_intent_version(
         assert "reference_expectations" not in expected
     assert pending.json()["intents"] == [expected]
     # Missing Subject/ClaimType refuses this unseeded fixture; its response must
-    # still retain the assertions rather than silently returning a V1 shape.
+    # still retain the assertions rather than silently dropping them.
     submitted_intent = submitted.json()["intent"]
     restored = model.model_validate(submitted_intent)
     assert restored.intent_id == intent_id

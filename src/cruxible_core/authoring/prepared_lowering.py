@@ -15,10 +15,10 @@ from typing import Callable
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayload,
     AuthoringExactContentObject,
-    AuthoringIntentV1,
+    AuthoringIntent,
     AuthoringPayload,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayload,
     ClaimTypeAuthoringPayload,
     ProcedureRuntimePolicyAuthoringPayload,
     QueryDefinitionAuthoringPayload,
@@ -59,7 +59,7 @@ def _cache(instance: PlaybillInstance) -> BoundedCache[_Entry]:
 def _eligible(payload: object) -> bool:
     if isinstance(payload, ChangeSetAuthoringPayload):
         return all(_eligible(member) for member in payload.members)
-    if isinstance(payload, ClaimAuthoringPayloadV1):
+    if isinstance(payload, ClaimAuthoringPayload):
         # Working selections consult projection registrations; existing captures
         # consult producer receipts and other mutable provenance. Neither belongs
         # in a cache keyed only by immutable authoring and accepted state.
@@ -80,7 +80,7 @@ def _generated_bodies(payload: AuthoringPayload, lowered: LoweredAuthoring) -> t
     members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
     digests: set[str] = set()
     for member in members:
-        if not isinstance(member, ClaimAuthoringPayloadV1):
+        if not isinstance(member, ClaimAuthoringPayload):
             continue
         assert isinstance(member.source, SelfSourceBody)
         digests.add("sha256:" + hashlib.sha256(member.source.content).hexdigest())
@@ -102,7 +102,7 @@ def _generated_bodies(payload: AuthoringPayload, lowered: LoweredAuthoring) -> t
 def reuse_lowering(
     instance: PlaybillInstance,
     *,
-    intent: AuthoringIntentV1,
+    intent: AuthoringIntent,
     actor: AuthenticatedActor,
     accepted: AcceptedCoordinate,
     receive_limits: ProposalReceiveLimits,

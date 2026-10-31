@@ -25,8 +25,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringDiagnostic,
     AuthoringReferenceExpectation,
     ChangeSetAuthoringPayload,
-    ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayload,
     ClaimDependencyDrafts,
     ClaimRetirementMember,
     ClaimTypeAuthoringPayload,
@@ -139,8 +138,8 @@ def _claim(
     body: str = "status: ready\n",
     revises: str | None = None,
     dispositions: tuple[object, ...] = (),
-) -> ClaimAuthoringPayloadV1:
-    return ClaimAuthoringPayloadV1(
+) -> ClaimAuthoringPayload:
+    return ClaimAuthoringPayload(
         statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, subject_id)),
             predicate=predicate,
@@ -606,7 +605,7 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     index = next(
         position
         for position, member in enumerate(payload.members)
-        if isinstance(member, ClaimAuthoringPayloadV1) and member.statement.qualifier == "b"
+        if isinstance(member, ClaimAuthoringPayload) and member.statement.qualifier == "b"
     )
     honest = coordinator.create(
         actor=actor,
@@ -883,11 +882,11 @@ def test_a_singular_intent_is_never_re_addressed_to_a_member(
     }
 
 
-def _claim_with_subject_draft(subject_id: str, shell: SubjectShell) -> ClaimAuthoringPayloadV2:
+def _claim_with_subject_draft(subject_id: str, shell: SubjectShell) -> ClaimAuthoringPayload:
     """One Claim carrying its own Subject as a dependency draft."""
 
     authored = _claim(subject_id=subject_id)
-    return ClaimAuthoringPayloadV2(
+    return ClaimAuthoringPayload(
         statement=authored.statement,
         rationale=authored.rationale,
         source=authored.source,
