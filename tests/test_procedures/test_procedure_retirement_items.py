@@ -86,14 +86,6 @@ def test_the_item_names_a_claim_by_id_with_a_reason_and_a_rationale() -> None:
         ProcedureClaimRetirementItem.model_validate(_retire("not-a-claim"))
 
 
-_NEEDS_B3_EXTRACT = pytest.mark.skip(
-    reason="needs B3 extract: _proposed_world/_settled_world read FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
-
-
-@_NEEDS_B3_EXTRACT
 def test_a_retirement_item_proposes_and_review_retires_the_claim(tmp_path: Path) -> None:
     instance, owner, root, line, claim_id = _proposed_world(tmp_path)
     _write_feed(root, [_retire(claim_id)])
@@ -119,7 +111,6 @@ def test_a_retirement_item_proposes_and_review_retires_the_claim(tmp_path: Path)
     assert retired.retirement is not None and retired.retirement.reason == "was-wrong"
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_mixed_terminal_retires_one_claim_and_proposes_another(tmp_path: Path) -> None:
     instance, owner, root, line, claim_id = _proposed_world(tmp_path)
     _write_feed(root, [_retire(claim_id), _element("vendor")])
@@ -139,7 +130,6 @@ def test_a_mixed_terminal_retires_one_claim_and_proposes_another(tmp_path: Path)
     assert created.lifecycle.state == "live" and created.statement.qualifier == "vendor"
 
 
-@_NEEDS_B3_EXTRACT
 def test_retiring_and_revising_one_lineage_in_one_terminal_refuses(tmp_path: Path) -> None:
     instance, _owner, root, line, claim_id = _proposed_world(tmp_path)
     revision = _element(None, revises=claim_id)
@@ -168,7 +158,6 @@ def _valued(value: str) -> dict[str, object]:
     return item
 
 
-@_NEEDS_B3_EXTRACT
 def test_one_terminal_adds_a_value_and_retires_its_sibling_in_a_many_valued_slot(
     tmp_path: Path,
 ) -> None:
@@ -245,7 +234,6 @@ def test_a_retiring_claim_admits_only_a_not_tested_disposition(disposition: str)
     )
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_retirement_of_no_live_claim_refuses(tmp_path: Path) -> None:
     instance, _owner, root, line, claim_id = _proposed_world(tmp_path)
     _write_feed(root, [_retire("CLM-" + "0" * 32)])
@@ -257,7 +245,6 @@ def test_a_retirement_of_no_live_claim_refuses(tmp_path: Path) -> None:
     assert _head_claim(instance, claim_id).lifecycle.state == "live"
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_key_claim_retires_with_its_subject_never_as_an_item(tmp_path: Path) -> None:
     from tests.test_procedures.test_procedure_subject_items import (
         KIND,
@@ -292,7 +279,6 @@ def test_a_key_claim_retires_with_its_subject_never_as_an_item(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("after_submit", [True, False], ids=["after-proposal", "before-proposal"])
-@_NEEDS_B3_EXTRACT
 def test_a_crashed_retirement_terminal_recovers_one_proposal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_submit: bool
 ) -> None:
@@ -334,7 +320,6 @@ def _settled_world(tmp_path: Path, *, change_kinds: tuple[str, ...]):  # type: i
     return instance, root, line, _claim_id(child.path)
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_settle_grant_listing_retire_settles_the_retirement(tmp_path: Path) -> None:
     instance, root, line, claim_id = _settled_world(
         tmp_path, change_kinds=("create", "revise", "retire")
@@ -360,7 +345,6 @@ def test_a_settle_grant_listing_retire_settles_the_retirement(tmp_path: Path) ->
     assert _head_claim(instance, claim_id).lifecycle.state == "retired"
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_settle_grant_without_retire_proposes_the_retirement_instead(tmp_path: Path) -> None:
     instance, root, line, claim_id = _settled_world(tmp_path, change_kinds=("create", "revise"))
     base = instance.accepted_coordinate()

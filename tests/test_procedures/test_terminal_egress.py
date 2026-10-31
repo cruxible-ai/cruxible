@@ -8,7 +8,7 @@ import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
     InboxEgressNode,
     ProcedureDefinition,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_core.exhaust import parse_journal_payload
@@ -46,7 +46,7 @@ def _terminal_procedure():
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={},

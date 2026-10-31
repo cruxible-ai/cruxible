@@ -25,7 +25,6 @@ from cruxible_core.service.refusals import (
 EXPECTED_UNDECLARED_REFUSAL_CODES = frozenset(
     {
         "acceptance_divergence",
-        "adapter_value_invalid",
         "admission_material_corrupt",
         "admission_material_unavailable_by_policy",
         "aggregate_items_input_invalid",

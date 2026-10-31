@@ -51,7 +51,18 @@ LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-ope
 TRIGGER = "trigger-source-trigger"
 
 
-def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources=(), **kwargs):
+def world(  # noqa: PLR0913
+    tmp_path,
+    *,
+    window=False,
+    line_budget=None,
+    with_owner=False,
+    sources=(),
+    trigger_input=SOURCE_ALIAS,
+    **kwargs,
+):
+    # A trigger binds only the Capture; the Procedure reads it through an extract.
+    kwargs.setdefault("document", True)
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
     if kwargs.get("historical"):
         from tests.core_support._pc_c_support import capture_contract as frozen_contract
@@ -73,7 +84,7 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         )
     values = {
         **original.model_dump(mode="python"),
-        "trigger_input": SOURCE_ALIAS,
+        "trigger_input": trigger_input,
         "trigger_event": selector,
     }
 
@@ -212,6 +223,26 @@ def test_trigger_capture_is_consumed_without_provider_or_workspace_read(
     assert facts.source_coverage[0].input_name == SOURCE_ALIAS
     assert facts.source_coverage[0].disposition == "consumed"
     assert facts.source_coverage[0].capture_digests == (capture_digest,)
+
+
+@pytest.mark.parametrize("named", [SOURCE_ALIAS, f"{SOURCE_ALIAS}.capture"], ids=["alias", "field"])
+def test_a_trigger_substitutes_its_capture_output_by_alias_or_by_field(tmp_path, named):
+    """The call does not run: its one capture field binds the triggering Capture."""
+
+    instance, root, line = world(tmp_path, trigger_input=named)
+    produced, _ = _run(instance, root)
+    event = event_from(produced)
+
+    consumed = run_line(instance, line, event)
+
+    assert consumed.status == "succeeded", consumed.model_dump(mode="json")
+    assert consumed.result == {"severity": "high"}
+    bound = admission(instance, consumed.run_id)
+    assert bound.acquisition_plan.external_occurrences == ()
+    assert (
+        bound.admission.landed_capture_inputs[0].capture_digest
+        == produced.source_observations[0].capture_digest
+    )
 
 
 def test_pending_dispatch_and_restart_keep_the_same_capture_binding(tmp_path):

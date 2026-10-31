@@ -41,9 +41,7 @@ from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
     AuthorityVerb,
-    ExhaustTapNode,
     ProcedureDefinition,
-    SourceNode,
 )
 from cruxible_client.contracts.procedures.trigger_rules import (
     trigger_capture_source,
@@ -390,19 +388,14 @@ def evaluate_line_spec_law(
             path=path,
         )
     definition = procedure.procedure.definition
-    exhaust_taps = tuple(
-        node.node_id for node in definition.nodes if isinstance(node, ExhaustTapNode)
-    )
-    if exhaust_taps:
-        return _refusal(
-            "cruxible.line.exhaust_tap_unsupported",
-            "No v1 path runs a Procedure with an exhaust_tap node "
-            f"({', '.join(exhaust_taps)}); a Line over it could never run.",
-            path=path,
-        )
     trigger_problem = validate_trigger_input(line, procedure)
     if trigger_problem is not None:
-        return _refusal("cruxible.line.trigger_input_mismatch", trigger_problem, path=path)
+        code = (
+            "cruxible.line.trigger_target_ambiguous"
+            if trigger_problem.startswith("trigger_target_ambiguous")
+            else "cruxible.line.trigger_input_mismatch"
+        )
+        return _refusal(code, trigger_problem, path=path)
     from cruxible_client.contracts.procedures.contracts import (
         OwnedProcedureContractValidator,
         ProcedureContractValidationError,
@@ -424,12 +417,13 @@ def evaluate_line_spec_law(
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
-    aliases = {node.as_ for node in definition.nodes if isinstance(node, SourceNode)}
-    unknown_aliases = sorted(set(line.acquisition) - aliases)
+    from cruxible_client.contracts.procedures.artifacts import acquisition_aliases
+
+    unknown_aliases = sorted(set(line.acquisition) - acquisition_aliases(definition))
     if unknown_aliases:
         return _refusal(
             "cruxible.line.acquisition_unknown_source",
-            f"Line acquisition names no Source alias of its Procedure: {unknown_aliases}.",
+            f"Line acquisition names no acquiring call alias of its Procedure: {unknown_aliases}.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:

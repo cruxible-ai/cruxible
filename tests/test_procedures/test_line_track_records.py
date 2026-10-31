@@ -26,7 +26,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
 from cruxible_core.exhaust import (
@@ -90,9 +90,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
-                node_id="read", query=named(query), parameters={}, as_="rows", next="emit"
-            ),
+            ReadNode(node_id="read", query=named(query), parameters={}, as_="rows", next="emit"),
             InboxEgressNode(node_id="emit", input={"items": "$steps.rows.items"}),
         ),
         returns="rows",

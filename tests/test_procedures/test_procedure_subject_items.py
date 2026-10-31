@@ -97,11 +97,12 @@ def subject_world(  # type: ignore[no-untyped-def]
     templates: tuple[object, ...],
     *,
     namespace: tuple[str, ...] = (SELF_SOURCE_NAMESPACE, "claims", f"subjects/{KIND}"),
+    document: bool = False,
 ):
     """The proposal world, with packages keyed by slug and a mandate reaching them."""
 
     instance, owner, root, line, procedure = delivery.proposal_world(
-        tmp_path, templates=templates, mandate=None
+        tmp_path, templates=templates, mandate=None, document=document
     )
     slug = bare_slug_claim_type(KIND)
     severity = _severity_type()
@@ -601,11 +602,6 @@ def test_a_subject_item_citing_the_runs_capture_writes_a_supported_key_claim(
     assert row.verdict == "supported"
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: this test needs the document's content to change in a way "
-    "unrelated to severity (advisory_id changes, severity stays), which workspace.file's "
-    "text/bytes-only content contract (one scalar) cannot represent pre-B3"
-)
 def test_a_reimport_naming_live_subjects_restates_their_claims(tmp_path: Path) -> None:
     """Re-importing a document whose Subjects already exist (the SBOM re-import):
     the terminal's own Subject item names the live Subject, so a Claim item on
@@ -615,7 +611,9 @@ def test_a_reimport_naming_live_subjects_restates_their_claims(tmp_path: Path) -
 
     from datetime import timedelta
 
-    instance, owner, root, line = subject_world(tmp_path, (subject_item(), keyed_claim_item()))
+    instance, owner, root, line = subject_world(
+        tmp_path, (subject_item(), keyed_claim_item()), document=True
+    )
     first = _delivered(instance, delivery.run_line(instance, root, line))
     accept_proposal(
         instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)

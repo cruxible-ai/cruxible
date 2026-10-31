@@ -35,7 +35,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
         nodes.insert(
             0,
             {
-                "kind": "state_tap",
+                "kind": "read",
                 "node_id": "read",
                 "query": {
                     "kind": "accepted",

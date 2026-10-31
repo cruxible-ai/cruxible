@@ -1,9 +1,10 @@
-"""A Procedure with a Source node and a Call node admits on both run lanes.
+"""A Procedure with an acquiring call and a plain call admits on both run lanes.
 
 Occurrences are planned in occurrence-path order (``call/...`` sorts before
-``source/...``) while admission requires its Provider bindings in node-id order.
-With a Source node ``export`` and a Call node ``records`` the two orders differ,
-and both lanes used to fail admission with an internal validation error.
+``source/...``, an acquiring call's path) while admission requires its Provider
+bindings in node-id order. With an acquiring call ``export`` and a plain call
+``records`` the two orders differ, and both lanes used to fail admission with an
+internal validation error.
 """
 
 from __future__ import annotations

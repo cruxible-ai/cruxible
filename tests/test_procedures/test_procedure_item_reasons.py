@@ -69,11 +69,6 @@ def test_reusing_proposal_ref_does_not_inherit_item_reasons(tmp_path: Path) -> N
     assert [item.path for item in kept.item_reasons] == [egress.children[0].path]
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: retire._proposed_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_ref_reuse_after_withdrawal_on_the_same_member_shows_only_its_own(
     tmp_path: Path,
 ) -> None:
@@ -140,11 +135,6 @@ def _evidence_rationale(instance, claim_id: str):  # type: ignore[no-untyped-def
     return result.evidence.rationale
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: retire._proposed_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_accepted_manual_retirement_does_not_use_withdrawn_procedure_reason(
     tmp_path: Path,
 ) -> None:
@@ -296,11 +286,6 @@ def test_cli_why_displays_own_reason_terminal_safe(tmp_path: Path, capsys: objec
 # --- a rationale that normalizes to nothing (F-004) ------------------------------
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: retire._proposed_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 @pytest.mark.parametrize("rationale", ["\x00", " \x00 \t\x00"], ids=["nul", "space-and-nul"])
 @pytest.mark.parametrize("kind", ["retirement", "claim"])
 def test_a_rationale_of_only_nuls_refuses_as_an_invalid_item(
@@ -327,11 +312,6 @@ def test_a_rationale_of_only_nuls_refuses_as_an_invalid_item(
     assert service_recover_proposal_egress(instance, recorded_at=retire.LATER) == {}
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: retire._proposed_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -353,10 +333,6 @@ def test_a_reason_record_that_still_fails_refuses_typed_to_its_item(
     assert "repair" in refusal.details
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
-    "workspace.file's content contract is text/bytes only pre-B3"
-)
 def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
     """A Claim ID format error in `revises` is a typed item refusal, not an internal one."""
 
@@ -383,11 +359,6 @@ def test_a_malformed_revises_refuses_as_an_invalid_item(tmp_path: Path) -> None:
 # --- recovery never lends a crashed operation's reasons (delta review F-002) -----
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: retire._proposed_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_recovery_does_not_attach_reasons_to_an_independent_equivalent_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -15,8 +15,6 @@ from cruxible_client.authoring.procedures import (
     ProcedureCompositionError,
     Project,
     Sequence,
-    Source,
-    Transform,
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
@@ -26,7 +24,6 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperand,
     ProcedureBudget,
     ProcedureHardCaps,
-    TransformAdapterSpec,
 )
 from cruxible_client.contracts.provider_operations import ProcedureSlot
 from tests.support.procedures import RUN_WALL_CLOCK
@@ -45,7 +42,7 @@ CAPS = ProcedureHardCaps(
     max_items=100,
     max_repeat_attempts=1,
 )
-#: The one slot every sequence below declares for its Call/Source steps. A
+#: The one slot every sequence below declares for its Call steps. A
 #: Line binds a slot to an exact {build, operation} later (ruling C3);
 #: nothing about which Provider serves it is an authoring-time concern any
 #: more (ProviderBinding/.bind()/ProviderInterface discovery are gone, B2
@@ -69,7 +66,7 @@ def _node_field(node, name):
 
 
 def sequence(*steps, **kwargs):
-    if any(isinstance(step, (Call, Source)) for step in steps):
+    if any(isinstance(step, Call) for step in steps):
         kwargs.setdefault("slots", SLOTS)
     return Sequence(
         steps,
@@ -106,10 +103,10 @@ def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
 
 def test_source_project_emit_matches_security_dogfood_shape():
     plan = sequence(
-        Source(
+        Call(
             "fetch",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
@@ -142,11 +139,11 @@ def test_undeclared_slot_refuses_before_authoring():
 
 def test_existing_node_identities_survive_sequence_adoption():
     plan = sequence(
-        Source(
+        Call(
             "observation",
             node_id="fetch",
             next="retain",
-            capture_contract="http",
+            captures={"capture": "http"},
             slot=PROVIDER_SLOT,
         ),
         Project("result", node_id="retain", next="emit", fields={"count": 1}, contract_out=NUMBER),
@@ -177,19 +174,6 @@ def test_existing_node_identities_survive_sequence_adoption():
 def test_literal_fields_use_existing_contract_validator():
     plan = sequence(Project("bad", fields={"count": "wrong"}, contract_out=NUMBER))
     assert any(d.code == "contract_value_invalid" for d in plan.preview().errors)
-
-
-def test_transform_adapter_uses_value_contract_not_spec_envelope():
-    plan = sequence(
-        Transform(
-            "adapt",
-            transform_kind="adapter",
-            contract_in=NUMBER,
-            contract_out=NUMBER,
-            spec=TransformAdapterSpec(value={"count": 2}),
-        )
-    )
-    assert plan.preview().ready_for_prepare, plan.preview().errors
 
 
 def test_existing_guard_branches_are_inspected_not_reimplemented():
@@ -357,10 +341,10 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
     plan = sequence(
-        Source(
+        Call(
             "result",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
@@ -468,10 +452,10 @@ def test_typed_item_builders_emit_the_frozen_tags_and_item_references():
     assert request["tag"] == "playbill-workspace-file-source-request-v2"
 
     plan = sequence(
-        Source(
+        Call(
             "result",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),

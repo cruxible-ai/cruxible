@@ -35,6 +35,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import QueryArtifactsEntry, QueryBudgets
 from cruxible_client.contracts.query.results import (
@@ -65,6 +66,7 @@ from cruxible_core.query.engine import (
     bind_reference_forms,
     evaluate_artifact_query,
     evaluate_claim_query,
+    procedure_read_budgets,
     query_execution_receipt,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -845,8 +847,15 @@ def evaluate_accepted_query(
     facts: Callable[[], ClaimQueryFactsV1] | None = None,
     live_subjects_only: bool = False,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
 ) -> ClaimQueryResult:
-    """One dispatch for public reads and projection currency, with lazy Claim facts."""
+    """One dispatch for public reads and projection currency, with lazy Claim facts.
+
+    ``procedure_read`` evaluates for a Procedure ``read`` node: its ceiling
+    replaces the definition's interactive budgets for this call only.
+    """
+    if procedure_read is not None:
+        budgets = procedure_read_budgets(definition.query, procedure_read)
     if parameters:
         parameters = parameters_through_aliases(
             instance, definition, coordinate=coordinate, parameters=parameters
@@ -885,6 +894,7 @@ def evaluate_accepted_query(
             evaluation_time=evaluation_time,
             parameters=parameters,
             budgets=budgets,
+            procedure_read=procedure_read,
         )
     selection = None
     canonical_forms = None
@@ -952,6 +962,7 @@ def evaluate_accepted_query(
         entry_paths=None if selection is None else selection.paths,
         entry_candidate_count=None if selection is None else selection.candidate_count,
         canonical_forms=canonical_forms,
+        procedure_read=procedure_read,
     )
 
 
@@ -966,6 +977,7 @@ def service_run_playbill_query(
     budgets: QueryBudgets | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     receipt_journal: PlaybillQueryReceiptJournal | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
 ) -> PlaybillQueryRunV1:
     """Execute one accepted QueryDefinition at one accepted coordinate.
 
@@ -987,6 +999,7 @@ def service_run_playbill_query(
         parameters=parameters,
         budgets=budgets,
         external_readers=external_readers,
+        procedure_read=procedure_read,
     )
     receipt = query_execution_receipt(result)
     accepted = AcceptedCoordinate.from_internal(coordinate)

@@ -337,7 +337,7 @@ class _Compiler:
             node["as"] = (
                 self.assignment_alias
                 if (
-                    kind in {"source", "call", "state_tap", "state_claim"}
+                    kind in {"call", "read"}
                     or kind == "invoke"
                     and source_syntax(self.program) != "cruxible.procedure-source.v1"
                 )
@@ -352,7 +352,8 @@ class _Compiler:
         self.maps.append(SourceMapEntry(node_id=node_id, span=self.span(at)))
         self.tail = (
             []
-            if kind in {"return", "emit_capture", "propose_change_set", "settle_change_set", "halt"}
+            if kind in {"emit_capture", "propose_change_set", "settle_change_set", "halt"}
+            or fields.get("leaf") is True
             else [(node, "next")]
         )
         return node
@@ -367,9 +368,9 @@ class _Compiler:
         if value.literal and isinstance(value.wire, str) and value.wire.startswith("$"):
             schema = ContractSchema(fields={"value": _field_type(value.type)})
             node = self.append(
-                "constant",
+                "project",
                 at,
-                fields={"value": value.wire},
+                literal={"value": value.wire},
                 contract_out=self.anonymous(schema),
                 **{"as": True},
             )
@@ -822,12 +823,18 @@ class _Compiler:
                     kind="QueryDefinition", name=binding.name.removeprefix("QueryDefinition:")
                 )
             )
+            if budgets is not None:
+                self.fail(
+                    node,
+                    "A Procedure read runs to the end under the run's read ceiling; it takes "
+                    "no interactive Query budgets",
+                    "contract_value_invalid",
+                )
             emitted = self.append(
-                "state_tap",
+                "read",
                 node,
                 query=query_pin.model_dump(mode="json"),
                 parameters=self.wire(value, node),
-                budgets=None if budgets is None else budgets.model_dump(mode="json"),
                 **{"as": True},
             )
             return Value("$steps." + emitted["as"], query_view_schema(), phase="state")
@@ -854,12 +861,18 @@ class _Compiler:
             if binding.effect == "external_mutation":
                 self.fail(node, "A Source slot cannot mutate", "binding_kind")
             capture_pin = self.capture_pin(kwargs["capture_contract"])
+            if len(binding.captures) != 1:
+                self.fail(
+                    node,
+                    "source() needs a slot whose out Contract has exactly one capture<K> field",
+                    "binding_kind",
+                )
             emitted = self.append(
-                "source",
+                "call",
                 node,
                 slot=slot_name,
-                request=self.wire(value, node),
-                capture_contract=capture_pin,
+                input=self.wire(value, node),
+                captures={binding.captures[0]: capture_pin},
                 **{"as": True},
             )
             return Observation("$steps." + emitted["as"], binding.output)
@@ -889,13 +902,13 @@ class _Compiler:
         schema = claim_view_schema(shape)
         pin = self.reference(ArtifactIdentity(kind="ClaimType", name=shape.predicate))
         emitted = self.append(
-            "state_claim",
+            "read",
             node,
             claim_type=pin.model_dump(mode="json"),
             subject_kind=selected.subject.kind,
             subject_id=self.wire(selected.subject.identity, node),
             cardinality=cardinality,
-            limit=limit,
+            **({} if limit is None else {"limit": limit}),
             **{"as": True},
         )
         return ClaimValue(
@@ -1545,10 +1558,11 @@ class _Compiler:
                             "return_contract",
                         )
                     emitted = self.append(
-                        "return",
+                        "project",
                         stmt,
                         fields=self.wire(value, stmt),
                         contract_out=self.contract(self.output),
+                        leaf=True,
                         **{"as": True},
                     )
                     self.returns.append(emitted["as"])

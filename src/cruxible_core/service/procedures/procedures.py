@@ -14,11 +14,12 @@ from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS, ProcedureReadCeiling
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
     ClaimQueryResult,
 )
-from cruxible_client.contracts.shapes import EnumResolver
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -42,6 +43,7 @@ from cruxible_core.procedures.execution import (
     ProcedureExecutor,
     ProcedureRunResultV1,
     ProviderRuntimeInvokerProtocol,
+    ReadCeilingExceeded,
     StateTapReaderProtocol,
     StateTapReadResultV1,
 )
@@ -138,10 +140,9 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-        budgets: QueryBudgets | None = None,
+        ceiling: int = DEFAULT_MAX_READ_ROWS,
     ) -> StateTapReadResultV1:
-        if budgets is not None and self.budgets is not None and not budgets.within(self.budgets):
-            raise ExecutionError("state tap query budget exceeds the run ceiling")
+        """Run one Query to the end under ``ceiling`` rows, or refuse if anything clips."""
         if query.target.kind != "QueryDefinition":
             raise ExecutionError("state tap pin must target QueryDefinition")
         if not isinstance(parameters, Mapping):
@@ -167,14 +168,22 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             evaluation_time=self.evaluation_time,
             parameters=dict(parameters),
             at=coordinate,
-            budgets=budgets or self.budgets,
+            procedure_read=ProcedureReadCeiling(rows=ceiling),
         )
         if run.result.verdict != "completed":
             code = None if run.result.refusal is None else run.result.refusal.code
             raise ExecutionError(f"state tap query refused: {code or 'unknown'}")
+        truncation = run.result.truncation
+        if truncation.clipped_budgets:
+            raise ReadCeilingExceeded(
+                clipped=truncation.clipped_budgets,
+                candidates=truncation.candidate_result_count,
+                ceiling=ceiling,
+            )
         return StateTapReadResultV1(
             value=state_tap_value(run.result),
             effective_budgets=run.result.budgets,
+            rows=len(run.result.rows),
         )
 
     def read_accepted_claim(
@@ -316,6 +325,7 @@ def service_execute_direct_procedure(
     parent_context: ParentInvocationContext | None = None,
     ephemeral_spec_digest: str | None = None,
     enum_resolver: EnumResolver | None = None,
+    contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
@@ -342,6 +352,7 @@ def service_execute_direct_procedure(
             nested_runner=nested_runner,
             parent_context=parent_context,
             enum_resolver=enum_resolver,
+            contract_resolver=contract_resolver,
             ephemeral_spec_digest=ephemeral_spec_digest,
         ).execute(prepared, accepted)
     finally:

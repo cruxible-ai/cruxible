@@ -51,7 +51,7 @@ def test_typed_extra_forbidden_and_no_numeric_coercion():
     with pytest.raises(ValidationError):
         spec(budget={"provider_calls": True})
     with pytest.raises(ValidationError):
-        spec(steps=[{"project": "result", "fields": {}, "tap": "other", "query": "q"}])
+        spec(steps=[{"project": "result", "fields": {}, "read": "other", "query": "q"}])
 
 
 @pytest.mark.parametrize(
@@ -144,22 +144,23 @@ OPERATIONS = json.loads(
 def _corpus_resolver(original):
     """Independent schema metadata for unbound operation signatures, not providers."""
     by_request = {entry["signature"]["in"]["name"]: entry for entry in OPERATIONS.values()}
-    sources = {node.as_: node for node in original.definition.nodes if node.kind == "source"}
+    sources = {
+        node.as_: node
+        for node in original.definition.nodes
+        if node.kind == "call" and node.acquires
+    }
 
     def resolve(kind, value):
         if kind == "slot":
             return value
         signature = original.definition.slots[value.slot]
         entry = by_request[signature.in_.name]
-        schema = (
-            (entry.get("source_view") or entry["output"])
-            if hasattr(value, "source")
-            else entry["output"]
-        )
+        acquiring = bool(getattr(value, "captures", None))
+        schema = (entry.get("source_view") or entry["output"]) if acquiring else entry["output"]
         return {
             "output": ContractSchema.model_validate(schema).fields,
             "input": None,
-            "request_defaults": sources[value.source].request if hasattr(value, "source") else {},
+            "request_defaults": sources[value.call].input if acquiring else {},
         }
 
     return resolve
@@ -223,26 +224,26 @@ def _inventory_import_worked_example():
         },
         steps=[
             {
-                "source": "inventory",
-                "contract": "security.runtime-inventory-v1",
+                "call": "inventory",
+                "captures": {"capture": "security.runtime-inventory-v1"},
                 "slot": "inventory",
-                "request": {
+                "input": {
                     "logical_source": "security.inventory",
                     "relative_path": "inventory.json",
                 },
             },
             {
-                "tap": "held",
+                "read": "held",
                 "query": "security.inventory_index",
                 "params": {"scope": "$input.scope"},
             },
             {
-                "tap": "runs",
+                "read": "runs",
                 "query": "security.inventory_runs",
                 "params": {"scope": "$input.scope"},
             },
             {
-                "tap": "patches",
+                "read": "patches",
                 "query": "security.inventory_patches",
                 "params": {"scope": "$input.scope"},
             },
@@ -312,7 +313,9 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
     _original, authored, resolve = _inventory_import_worked_example()
     # K1's provider build will consume the new tap view. Keep its lowering check
     # separate from equality with the stored provider's row/truncation arguments.
-    call_index = next(i for i, step in enumerate(authored.steps) if hasattr(step, "call"))
+    call_index = next(
+        i for i, step in enumerate(authored.steps) if getattr(step, "call", None) == "parse"
+    )
     authored = authored.model_copy(
         update={
             "steps": tuple(
@@ -338,10 +341,10 @@ def test_inventory_import_worked_example_has_eleven_nodes_and_typed_tap_values()
     lowered = lower_procedure_spec(authored, resolve=resolve)
     assert len(lowered.definition["nodes"]) == 11
     assert [node["kind"] for node in lowered.definition["nodes"]] == [
-        "source",
-        "state_tap",
-        "state_tap",
-        "state_tap",
+        "call",
+        "read",
+        "read",
+        "read",
         "call",
         "project",
         "guard",
@@ -499,7 +502,9 @@ def test_decompile_preserves_predicates_outside_lossless_expr(node_kind, predica
 
 def test_decompile_recognizes_the_generated_tap_view_and_lowers_it_back():
     original = ProcedureArtifact.model_validate(CORPUS["security.inventory-import.json"])
-    call = next(node for node in original.definition.nodes if node.kind == "call")
+    call = next(
+        node for node in original.definition.nodes if node.kind == "call" and not node.acquires
+    )
     view = {"rows": "$steps.held.result.rows", "truncated": "$steps.held.truncated"}
     definition = original.definition.model_copy(
         update={
@@ -512,10 +517,12 @@ def test_decompile_recognizes_the_generated_tap_view_and_lowers_it_back():
         }
     )
     authored = decompile_procedure(original.model_copy(update={"definition": definition}))
-    authored_call = next(step for step in authored.steps if hasattr(step, "call"))
+    authored_call = next(step for step in authored.steps if getattr(step, "call", None) == call.as_)
     assert authored_call.input["held"] == "$held"
     lowered = lower_procedure_spec(authored)
-    lowered_call = next(node for node in lowered.definition["nodes"] if node["kind"] == "call")
+    lowered_call = next(
+        node for node in lowered.definition["nodes"] if node["node_id"] == call.node_id
+    )
     assert lowered_call["input"]["held"] == view
 
 
@@ -577,7 +584,7 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
     ("step", "field", "candidate"),
     [
         (
-            {"claim": "read", "claim_type": "semantic.alais", "subject": "test"},
+            {"read": "read", "claim_type": "semantic.alais", "subject": "test"},
             "claim_type",
             "ClaimType:semantic.alias",
         ),
@@ -588,12 +595,12 @@ def test_authored_graph_refusal_names_step_id(tmp_path):
         ),
         (
             {
-                "source": "read",
-                "contract": "security.invenotry",
+                "call": "read",
+                "captures": {"capture": "security.invenotry"},
                 "slot": "read",
-                "request": {},
+                "input": {},
             },
-            "contract",
+            "captures.capture",
             "CaptureContract:security.inventory",
         ),
     ],
@@ -633,7 +640,7 @@ def test_named_schema_refusals_keep_authored_path_and_nearest_candidate(
                 "effect": "external_read",
             }
         }
-        if "source" in step
+        if "captures" in step
         else {},
         steps=[step, {"project": "result", "fields": {"value": 1}}],
     )
@@ -731,23 +738,26 @@ def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
 
 
 def test_v3_retains_the_transform_spec_union_discriminator():
-    from cruxible_client.contracts.procedures.models import TransformAdapterSpec, TransformNode
+    from cruxible_client.contracts.procedures.models import (
+        TransformNode,
+        TransformShapeItemsSpec,
+    )
     from tests.test_procedures.test_procedure_artifacts import _definition
 
     definition = _definition()
     transform = TransformNode(
         node_id="result",
-        transform_kind="adapter",
+        transform_kind="shape_items",
         contract_in=named(definition.contract_in),
         contract_out=named(definition.contract_out),
-        spec=TransformAdapterSpec(value={}),
+        spec=TransformShapeItemsSpec(items=[], fields={}),
         **{"as": "result"},
     )
     artifact = _artifact(definition.model_copy(update={"nodes": (transform,), "returns": "result"}))
     content = render_procedure(artifact)
     assert (
         json.loads(content)["definition"]["nodes"][0]["spec"]["tag"]
-        == "playbill-transform-adapter-spec-v1"
+        == "playbill-transform-shape-items-spec-v1"
     )
     assert (
         parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact
@@ -830,7 +840,7 @@ def test_parameter_name_can_match_a_collection_step_alias():
         params={"limit": "integer"},
         steps=[
             {
-                "claim": "limit",
+                "read": "limit",
                 "claim_type": "catalog.entry.value",
                 "subject": "$input.subject",
                 "all": 10,
@@ -860,7 +870,7 @@ def test_measurement_node_coordinates_are_not_graph_node_ids():
     from tests.test_procedures.test_procedure_artifacts import _definition
 
     definition = _definition()
-    read = next(node for node in definition.nodes if node.kind == "state_tap")
+    read = next(node for node in definition.nodes if node.kind == "read")
     measurement = ProcedureMeasurementDeclaration(
         name="credit",
         subject_grain="node",

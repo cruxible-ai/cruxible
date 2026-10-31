@@ -20,6 +20,7 @@ from cruxible_client.contracts.captures import (
     CaptureContract,
     CaptureContractAny,
     CaptureContractV1,
+    CaptureDecoding,
     CaptureFormatError,
     CaptureReplay,
     CaptureRetentionErasurePolicy,
@@ -48,6 +49,12 @@ class CaptureContractInputRecord(BaseModel):
     erasable: bool | None = None
     max_bytes: int | None = Field(default=None, ge=1)
     selector_privacy: Literal["direct_allowed", "pseudonymous_required"] | None = None
+    decoding: CaptureDecoding | None = Field(
+        default=None,
+        description="How the bytes decode for an extract: {format: json|csv|text|bytes, "
+        "encoding: identity|gzip, csv?: {comment_prefix, header}, limits: {decoded_bytes, "
+        "depth, records}}. Required for any CaptureContract an extract reads.",
+    )
     lifecycle: Literal["live", "retired"] | None = None
 
     @model_serializer(mode="wrap")
@@ -103,6 +110,7 @@ def _lower_capture_contract_input(
             replay=replay,
             components=capture_shape_components(record.shape, replay),
             epistemic_grade=record.grade or "observed",
+            decoding=record.decoding,
             selection_budget=CaptureSelectionBudget(
                 max_bytes=record.max_bytes or 16 * 1024 * 1024, max_rows=1, max_items=1
             ),
@@ -164,6 +172,8 @@ def _lower_capture_contract_input(
     }
     if "grade" in record.model_fields_set:
         updates["epistemic_grade"] = record.grade
+    if "decoding" in record.model_fields_set:
+        updates["decoding"] = record.decoding
     if "max_bytes" in record.model_fields_set:
         updates["selection_budget"] = predecessor.selection_budget.model_copy(
             update={"max_bytes": record.max_bytes}

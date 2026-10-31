@@ -27,11 +27,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    SourceNode,
 )
 from cruxible_client.contracts.shapes import contract_digest
 from cruxible_client.contracts.uploads import (
@@ -581,11 +581,11 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             }
         },
         nodes=(
-            SourceNode(
+            CallNode(
                 node_id="read",
-                capture_contract=named(contract_pin),
+                captures={"capture": named(contract_pin)},
                 slot="read",
-                request=request,
+                input=request,
                 as_="advisory",
                 next="shape",
             ),

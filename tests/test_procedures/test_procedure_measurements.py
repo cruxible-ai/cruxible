@@ -37,7 +37,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.projection_artifacts import (
@@ -131,7 +131,7 @@ def _definition(
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(_pin("query", "QueryDefinition", "accepted-state")),
                 as_="rows",
@@ -199,7 +199,7 @@ def test_measurement_declaration_moves_only_the_definition_envelope_digest() -> 
         compute_procedure_definition_digest(measured)
     )
     assert compute_procedure_definition_digest(measured).tagged == (
-        "sha256:dc71275c3f2438c62feb91d311f2a7ff3850c901863a034c32753be60c0ce643"
+        "sha256:548e549dfb7589cb21ef67b6ab1217cc5f4c0fb0fe3575ebb2e41f3a4984926d"
     )
     payload = measured.model_dump(mode="json", by_alias=True)
     assert payload["annotations"] == {}

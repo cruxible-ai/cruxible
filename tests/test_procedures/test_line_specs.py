@@ -30,7 +30,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNode,
+    ReadNode,
 )
 from tests.support.procedures import accepted_procedure, named
 
@@ -55,7 +55,7 @@ def _definition(query: ArtifactPin) -> ProcedureDefinition:
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={},
@@ -130,7 +130,7 @@ def _line(
 def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, _interfaces = _line()
 
-    expected = "sha256:54c26633d304e9853f51302f314bd8cfee2297caa04a978c7749fd7f19f8e034"
+    expected = "sha256:34c2a41b4eef8d0909e10b7a36780ac0b90c484598919cac222e8197e5a6ae10"
     assert line_spec_digest(line).tagged == expected
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

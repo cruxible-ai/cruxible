@@ -292,7 +292,7 @@ def test_query_binds_request_parameters_and_types_the_result():
             )
         },
     )
-    assert compiled.definition.nodes[0].kind == "state_tap"
+    assert compiled.definition.nodes[0].kind == "read"
     assert compiled.definition.nodes[0].parameters == {"status": "ready"}
 
     from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
@@ -445,7 +445,7 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
         budget=_budget(),
         hard_caps=_hard_caps(),
     )
-    assert compiled.definition.nodes[0].kind == "state_claim"
+    assert compiled.definition.nodes[0].kind == "read"
     assert compiled.definition.nodes[0].subject_id == "app"
     artifact = bind_fixture(accepted(compiled))
     fixture = _fixture(tmp_path)
@@ -503,7 +503,7 @@ def test_required_nullable_source_output_executes_without_weakening_old_contract
         validate_contract_schema(output.schema_, {"value": None})
 
 
-def test_query_defaults_and_explicit_budget_use_existing_contracts():
+def test_a_query_read_takes_no_interactive_budgets_and_defaults_its_parameters():
     from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
     from tests.test_query.test_query_definitions import active_work_query
 
@@ -520,10 +520,20 @@ def test_query_defaults_and_explicit_budget_use_existing_contracts():
                                       max_paths=1, max_paths_per_result=1))
             return Output.value(value=result.receipt.verdict)
     """
-    compiled = compile(program, bindings={"work": binding})
-    assert compiled.definition.nodes[0].budgets.max_results == 1
-    with pytest.raises(SourceCompileError, match="ceiling"):
-        compile(program.replace("max_results=1", "max_results=1000000"), bindings={"work": binding})
+    # A read runs to the end under the run's read ceiling: interactive Query
+    # budgets are refused, never silently applied.
+    with pytest.raises(SourceCompileError, match="read ceiling"):
+        compile(program, bindings={"work": binding})
+    compiled = compile(
+        program.replace(
+            """,
+                budgets=QueryBudgets(max_results=1, max_traversal_depth=0,
+                                      max_paths=1, max_paths_per_result=1))""",
+            ")",
+        ),
+        bindings={"work": binding},
+    )
+    assert compiled.definition.nodes[0].kind == "read"
     # Required parameters cannot silently disappear when parameters is omitted.
     with pytest.raises(SourceCompileError):
         compile(

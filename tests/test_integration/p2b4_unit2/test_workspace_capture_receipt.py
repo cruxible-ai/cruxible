@@ -6,7 +6,6 @@ from dataclasses import replace
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
     ProviderProducerReceiptResolution,
@@ -59,6 +58,8 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         generation_root=fixture.bound_generation,
         compiler_digest="sha256:" + "c" * 64,
     )
+    # A workspace Capture commits the exact bytes core read.
+    file_bytes = b"orders-bytes"
     source_read = SourceReadReceipt(
         run_id=fixture.receipt.run_id,
         admission_binding_digest=fixture.receipt.admission_binding_digest,
@@ -66,8 +67,8 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         logical_source=fixture.result.source_identity,
         workspace_binding_digest=digest("workspace-binding", "root"),
         relative_path="docs/orders.json",
-        bytes_digest=digest("workspace-bytes", "orders"),
-        byte_length=12,
+        bytes_digest="sha256:" + hashlib.sha256(file_bytes).hexdigest(),
+        byte_length=len(file_bytes),
         policy_coordinate=coordinate,
         resolved_max_bytes=4096,
         derived_request_digest=digest("derived-request", "orders"),
@@ -84,7 +85,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         },
         "content": {"kind": "text", "text": "orders"},
     }
-    material = canonical_bytes(provider_output)
+    material = file_bytes
     result = ProviderResultToExternalCapture(
         **{
             **fixture.result.model_dump(mode="python"),
@@ -119,7 +120,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
 
 
 def test_workspace_capture_commits_and_replays_both_receipts(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    fixture, source_read, _output = _workspace_fixture(tmp_path)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
     built = build_provider_external_capture_v2(
         store=fixture.store,
         contract=fixture.contract,
@@ -129,6 +130,7 @@ def test_workspace_capture_commits_and_replays_both_receipts(tmp_path) -> None: 
         producer=fixture.producer,
         bound_generation=fixture.bound_generation,
         source_read_receipt=source_read,
+        provider_output=output,
     )
     evidence = built.envelope.production_evidence
     assert evidence.source_read_receipt_digest is not None  # type: ignore[union-attr]
@@ -156,7 +158,7 @@ def test_workspace_capture_commits_and_replays_both_receipts(tmp_path) -> None: 
 
 
 def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    fixture, source_read, provider_output = _workspace_fixture(tmp_path)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
     with pytest.raises(CaptureFormatError, match="requires exactly one"):
         build_provider_external_capture_v2(
             store=fixture.store,
@@ -166,6 +168,7 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
             occurrence=fixture.occurrence,
             producer=fixture.producer,
             bound_generation=fixture.bound_generation,
+            provider_output=output,
         )
     mixed = source_read.model_copy(update={"bytes_digest": digest("other", "attempt")})
     with pytest.raises(CaptureFormatError, match="mixes source attempts"):
@@ -178,8 +181,9 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
             producer=fixture.producer,
             bound_generation=fixture.bound_generation,
             source_read_receipt=mixed,
+            provider_output=output,
         )
-    assert provider_output["source"]["bytes_digest"] == source_read.bytes_digest  # type: ignore[index]
+    assert output["source"]["bytes_digest"] == source_read.bytes_digest  # type: ignore[index]
 
 
 @pytest.mark.parametrize(
@@ -199,7 +203,7 @@ def test_workspace_capture_forbids_missing_or_mixed_read_receipt(tmp_path) -> No
 def test_workspace_capture_binds_admitted_policy_coordinate_and_cap(
     tmp_path, changed: dict[str, object]
 ) -> None:  # type: ignore[no-untyped-def]
-    fixture, source_read, _output = _workspace_fixture(tmp_path)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
 
     with pytest.raises(CaptureFormatError, match="does not correspond"):
         build_provider_external_capture_v2(
@@ -211,11 +215,12 @@ def test_workspace_capture_binds_admitted_policy_coordinate_and_cap(
             producer=fixture.producer,
             bound_generation=fixture.bound_generation,
             source_read_receipt=source_read.model_copy(update=changed),
+            provider_output=output,
         )
 
 
 def test_non_workspace_capture_forbids_source_read_receipt(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    fixture, source_read, _output = _workspace_fixture(tmp_path)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
     ordinary = provider_capture_fixture(tmp_path / "ordinary")
     with pytest.raises(CaptureFormatError, match="requires exactly one"):
         build_provider_external_capture_v2(
@@ -227,4 +232,5 @@ def test_non_workspace_capture_forbids_source_read_receipt(tmp_path) -> None:  #
             producer=ordinary.producer,
             bound_generation=ordinary.bound_generation,
             source_read_receipt=source_read,
+            provider_output=output,
         )

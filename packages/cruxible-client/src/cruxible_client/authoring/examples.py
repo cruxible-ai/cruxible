@@ -472,19 +472,14 @@ def procedure_example() -> ProcedureInput:
             "contract_out": carried("count-result", "contract-out"),
             "nodes": [
                 {
-                    "kind": "transform",
+                    "kind": "project",
                     "node_id": "adapt",
-                    "transform_kind": "adapter",
-                    "contract_in": carried("collection", "contract-in"),
                     "contract_out": carried("collection", "contract-out"),
-                    "spec": {
-                        "tag": "playbill-transform-adapter-spec-v1",
-                        "value": {
-                            "items": [
-                                {"id": "one", "keep": True},
-                                {"id": "two", "keep": False},
-                            ]
-                        },
+                    "literal": {
+                        "items": [
+                            {"id": "one", "keep": True},
+                            {"id": "two", "keep": False},
+                        ]
                     },
                     "as": "adapted",
                 },

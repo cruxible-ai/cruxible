@@ -7,9 +7,8 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, typed_digest
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNode,
-    SourceNode,
-    StateTapNode,
+    CallNode,
+    ReadNode,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -84,30 +83,27 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
     )
     validate_run_input_vector((exhaust, capture), expected_accepted=local)
 
-    state_node = StateTapNode(
+    state_node = ReadNode(
         node_id="state",
         query=named(_pin("query", "QueryDefinition", "claims")),
         parameters={},
         as_="claims",
     )
-    source_node = SourceNode(
+    source_node = CallNode(
         node_id="source",
-        capture_contract=named(_pin("capture-contract", "CaptureContract", "world")),
+        captures={"capture": named(_pin("capture-contract", "CaptureContract", "world"))},
         slot="fetch",
-        request={},
+        input={},
         as_="capture",
     )
-    exhaust_node = ExhaustTapNode(
-        node_id="exhaust",
-        reducer_or_query=named(_pin("reducer", "Reducer", "reduce-exhaust")),
-        journal_identity="procedure-exhaust",
-        as_="receipts",
-    )
-
     with pytest.raises(ValueError, match="requires 'accepted_state'"):
         validate_node_input_plane(state_node, capture)
     validate_node_input_plane(source_node, capture)
-    validate_node_input_plane(exhaust_node, exhaust)
+    # No node reads the exhaust plane: an exhaust input relabels as no node's.
+    with pytest.raises(ValueError, match="requires 'accepted_state'"):
+        validate_node_input_plane(state_node, exhaust)
+    with pytest.raises(ValueError, match="requires 'landed_capture'"):
+        validate_node_input_plane(source_node, exhaust)
 
 
 def test_run_input_vector_refuses_duplicate_or_insertion_order_names() -> None:

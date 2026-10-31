@@ -55,6 +55,8 @@ class SourceSlotBinding(_Closed):
     effect: OperationEffect
     input: ContractSchema
     output: ContractSchema
+    #: The out Contract's ``capture<K>`` fields, in declaration order.
+    captures: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     def signature(self) -> ProcedureSlot:
         return ProcedureSlot.model_validate(

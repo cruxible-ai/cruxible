@@ -770,10 +770,10 @@ def sourced_spec(*, description=None, acquisition_defaults=None):  # type: ignor
             },
             "steps": [
                 {
-                    "source": "doc",
-                    "contract": "test.orders-v1",
+                    "call": "doc",
+                    "captures": {"capture": "test.orders-v1"},
                     "slot": "read",
-                    "request": {
+                    "input": {
                         "logical_source": "commerce.production.orders",
                         "relative_path": "data/doc.json",
                         "coordinate_type": "database-snapshot-v1",
@@ -1314,10 +1314,10 @@ def _fetch_world(
                 },
                 "steps": [
                     {
-                        "source": "doc",
-                        "contract": capture_contract.identity.name,
+                        "call": "doc",
+                        "captures": {"capture": capture_contract.identity.name},
                         "slot": "fetch",
-                        "request": request,
+                        "input": request,
                     },
                     {"project": "out", "fields": {"ok": True}},
                 ],

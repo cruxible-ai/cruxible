@@ -42,6 +42,7 @@ FIELD_ROLES = {
     "procedure": "procedure",
     "effect_policy": "effect-policy",
     "capture_contracts": "capture-contract",
+    "captures": "capture-contract",
     "line": "line",
     "coordinate_schemas": "coordinate-schema",
     "selector_schemas": "selector-schema",
@@ -98,6 +99,7 @@ def dependency_pins(
         "cruxible-provider-v6",
         "cruxible-provider-identity-v3",
         "cruxible-capture-contract-v3",
+        "cruxible-capture-contract-v4",
     }:
         return tuple(pins)
 
@@ -135,6 +137,11 @@ def dependency_pins(
         elif isinstance(item, tuple | list):
             for member in item:
                 yield from visit(member, field)
+        elif isinstance(item, dict):
+            # A call's captures name one CaptureContract per capture field.
+            for member in item.values():
+                if isinstance(member, ArtifactNameRef | BaseModel):
+                    yield from visit(member, field)
 
     pins.extend(visit(artifact))
     kind = getattr(getattr(artifact, "identity", None), "kind", None)
@@ -148,11 +155,20 @@ def dependency_pins(
             for binding in getattr(artifact, "bindings", {}).values()
         )
     if kind == "Procedure":
-        for slot in getattr(getattr(artifact, "definition", None), "slots", {}).values():
+        definition = getattr(artifact, "definition", None)
+        for slot in getattr(definition, "slots", {}).values():
             for ref in (slot.in_, slot.out):
                 pins.append(
                     ArtifactRef(
                         role=CONTRACT_PIN_ROLE, target=contract_identity(ref.name, ref.version)
+                    )
+                )
+        for node in getattr(definition, "nodes", ()):
+            row = getattr(node, "row", None) if getattr(node, "kind", None) == "extract" else None
+            if row is not None:
+                pins.append(
+                    ArtifactRef(
+                        role=CONTRACT_PIN_ROLE, target=contract_identity(row.name, row.version)
                     )
                 )
     if kind == "Provider":

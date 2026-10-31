@@ -58,7 +58,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
 )
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNode,
+    CallNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -68,10 +68,9 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProcedureTransformSpec,
     ProjectNode,
+    ReadNode,
     RepeatBodyNode,
     RepeatNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -139,7 +138,6 @@ from cruxible_core.procedures.execution import (
     procedure_semantic_replay_key_digest,
     procedure_semantic_result_digest,
     procedure_semantic_run_id,
-    run_value_digest,
     seal_procedure_run_admission,
     verify_line_admission_spec,
 )
@@ -150,11 +148,6 @@ from cruxible_core.procedures.input_planes import (
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.service.procedures.procedure_runs import service_prepare_playbill_line_admission
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.storage.material_reservations import (
-    ProcedureMaterialReservationStore,
-    RunMaterialReservationV1,
-    reserve_admission_material_body,
-)
 from tests.core_support._support import initialize_local
 from tests.support.operation_world import contract_files
 from tests.support.procedures import (
@@ -268,7 +261,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={"status": "accepted"},
@@ -296,43 +289,6 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
         terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
-
-
-def _exhaust_procedure() -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
-    # A registry Reducer has no ledger owner to resolve a name against; the
-    # exhaust tap reads through a named Query.
-    reducer = ArtifactPin(
-        role="query",
-        target=ArtifactIdentity(kind="QueryDefinition", name="upstream"),
-        artifact_digest=_digest("upstream-reducer"),
-    )
-    definition = ProcedureDefinition(
-        name="exhaust-procedure",
-        contract_in=named(contract_in),
-        contract_out=named(contract_out),
-        nodes=(
-            ExhaustTapNode(
-                node_id="read-prior",
-                reducer_or_query=named(reducer),
-                journal_identity="upstream-journal",
-                as_="prior_rows",
-                next="project",
-            ),
-            ProjectNode(
-                node_id="project",
-                fields={"items": "$steps.prior_rows.rows", "status": "ok"},
-                contract_out=named(contract_out),
-                as_="result",
-            ),
-        ),
-        returns="result",
-        budget=_budget(),
-        hard_caps=_hard_caps(),
-        terminal_capability=1,
-    )
-    return _accepted(definition, pins=(contract_in, contract_out, reducer))
 
 
 def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContract:
@@ -378,14 +334,18 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
         identity=ArtifactIdentity(kind="Contract", name="query-rows"),
         schema=ContractSchema(fields={}, allow_extra=True),
     )
-    typed = _owned_contract(
-        f"list-{boundary}",
-        {
-            "items": PropertySchema(
-                type="list",
-                item_fields={"id": PropertySchema(type="string")},
-            )
-        },
+    typed = ProcedureOwnedContract(
+        identity=ArtifactIdentity(kind="Contract", name=f"list-{boundary}"),
+        schema=ContractSchema(
+            fields={
+                "items": PropertySchema(
+                    type="list",
+                    item_fields={"id": PropertySchema(type="string")},
+                )
+            },
+            # A transform's input carries its spec's other members beside the list.
+            allow_extra=boundary == "contract-in",
+        ),
     )
     entry_pin = _owned_pin("contract-in", empty)
     opaque_out = _owned_pin("contract-out", opaque)
@@ -394,7 +354,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
     typed_in = _owned_pin("contract-in", typed)
     typed_out = _owned_pin("contract-out", typed)
     query = _pin("query", "QueryDefinition", f"accepted-items-{boundary}")
-    read = StateTapNode(
+    read = ReadNode(
         node_id="read",
         query=named(query),
         parameters={},
@@ -417,18 +377,20 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
     if boundary == "contract-in":
         compute = TransformNode(
             node_id="compute",
-            transform_kind="adapter",
+            transform_kind="shape_items",
             contract_in=named(typed_in),
-            contract_out=named(opaque_out),
+            contract_out=named(rows_out),
             spec={
-                "tag": "playbill-transform-adapter-spec-v1",
-                "value": {"items": "$steps.shaped.items"},
+                "tag": "playbill-transform-shape-items-spec-v1",
+                "items": "$steps.shaped.items",
+                "fields": {},
+                "include_input": True,
             },
             as_="result",
         )
-        return_pin = opaque_out
-        contracts = (empty, opaque, rows, typed)
-        pins = (entry_pin, typed_in, opaque_out, rows_in, rows_out, query)
+        return_pin = rows_out
+        contracts = (empty, rows, typed)
+        pins = (entry_pin, typed_in, rows_in, rows_out, query)
     else:
         compute = ProjectNode(
             node_id="compute",
@@ -455,13 +417,8 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
 
 
 def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpec:
-    if kind != "adapter":
-        assert isinstance(spec, dict)
-    payload = (
-        {"tag": "playbill-transform-adapter-spec-v1", "value": spec}
-        if kind == "adapter"
-        else {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
-    )
+    assert isinstance(spec, dict)
+    payload = {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
     return TypeAdapter(ProcedureTransformSpec).validate_python(payload)
 
 
@@ -557,6 +514,7 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
                 "auxiliary": PropertySchema(
                     type="list",
                     item_fields={"label": PropertySchema(type="string")},
+                    optional=True,
                 ),
                 "items": PropertySchema(
                     type="list",
@@ -576,22 +534,12 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
         "contract-out",
         list_output if boundary == "contract-out" else opaque,
     )
-    transform_kind = "adapter" if boundary == "contract-out" else "shape_items"
-    spec = (
-        {
-            "tag": "playbill-transform-adapter-spec-v1",
-            "value": {
-                "auxiliary": [],
-                "items": [{"identifier": "a"}, {"identifier": "b"}],
-            },
-        }
-        if boundary == "contract-out"
-        else {
-            "tag": "playbill-transform-shape-items-spec-v1",
-            "items": [{"id": "a"}, {"id": "b"}],
-            "fields": {"identifier": "$item.id"},
-        }
-    )
+    transform_kind = "shape_items"
+    spec = {
+        "tag": "playbill-transform-shape-items-spec-v1",
+        "items": [{"id": "a"}, {"id": "b"}],
+        "fields": {"identifier": "$item.id"},
+    }
     definition = ProcedureDefinition(
         name=f"repeat-{boundary}-budget",
         contract_in=named(entry_pin),
@@ -758,22 +706,16 @@ def _guarded_scalar_procedure(
         {"count": PropertySchema(type="int")},
     )
     entry_pin = _owned_pin("contract-in", empty)
-    count_in = _owned_pin("contract-in", count_result)
     count_out = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
         name="guarded-scalar-" + alias + "-" + "-".join(path),
         contract_in=named(entry_pin),
         contract_out=named(count_out),
         nodes=(
-            _typed_transform_node(
+            ProjectNode(
                 node_id="summarize",
-                transform_kind="adapter",
-                contract_in=count_in,
-                contract_out=count_out,
-                spec={
-                    "tag": "playbill-transform-adapter-spec-v1",
-                    "value": {"count": 1},
-                },
+                literal={"count": 1},
+                contract_out=named(count_out),
                 as_="summary",
                 next="gate",
             ),
@@ -789,15 +731,10 @@ def _guarded_scalar_procedure(
                 refusal_code="guard.nonpositive_summary",
                 message="The summary count is not positive.",
             ),
-            _typed_transform_node(
+            ProjectNode(
                 node_id="emit",
-                transform_kind="adapter",
-                contract_in=count_in,
-                contract_out=count_out,
-                spec={
-                    "tag": "playbill-transform-adapter-spec-v1",
-                    "value": "$steps.summary",
-                },
+                fields="$steps.summary",
+                contract_out=named(count_out),
                 as_="result",
             ),
             HaltNode(node_id="stop", reason="Summary count was not positive."),
@@ -810,7 +747,7 @@ def _guarded_scalar_procedure(
     return _owned_accepted(
         definition,
         contracts=(empty, count_result),
-        pins=(entry_pin, count_in, count_out),
+        pins=(entry_pin, count_out),
     )
 
 
@@ -1796,11 +1733,11 @@ def test_three_plane_projection_is_stable_and_material_digest_free(tmp_path) -> 
 
 def test_executor_recognizes_a_source_node_as_a_landed_capture_input(tmp_path) -> None:
     capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
-    source = SourceNode(
+    source = CallNode(
         node_id="source",
-        capture_contract=named(capture_contract),
+        captures={"capture": named(capture_contract)},
         slot="fetch",
-        request={},
+        input={},
         as_="capture",
     )
     source_definition = ProcedureDefinition(
@@ -2006,138 +1943,6 @@ def test_a_removed_admission_envelope_is_refused_never_reinterpreted(tmp_path, t
     retired = {**payload.model_dump(mode="json"), "tag": tag}
     with pytest.raises(ExecutionError, match="admission payload version is unsupported"):
         parse_admission_payload(retired)
-
-
-def test_line_admission_bound_persists_manifest_not_material_values(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    fixture = _fixture(tmp_path)
-    accepted = _exhaust_procedure()
-    direct = _prepare(accepted, fixture, _StateReader())
-    exhaust_value = {"rows": [{"id": "retained"}]}
-    exhaust_input = ExhaustRunInputV1(
-        input_name="prior_rows",
-        journal_identity="upstream-journal",
-        first_cursor="partition:0001",
-        last_cursor="partition:0001",
-        reducer_or_query_digest=_digest("upstream-reducer"),
-        result_digest=run_value_digest("exhaust-result", exhaust_value),
-    )
-    admission = _line_admission(accepted, fixture, exhaust_inputs=(exhaust_input,))
-    pending = reserve_admission_material_body(
-        bodies=fixture.bodies,
-        instance_id=admission.instance_id,
-        run_id=admission.run_id,
-        admission_binding_digest=admission.admission_binding_digest,
-        input_name=exhaust_input.input_name,
-        plane="exhaust",
-        content=canonical_bytes(exhaust_value),
-    )
-    member = ProcedureAdmissionMaterialMember(
-        input_name=exhaust_input.input_name,
-        plane="exhaust",
-        semantic_digest=exhaust_input.result_digest,
-        body_digest=pending.body_digest,
-        retention_authority_digest=exhaust_input.reducer_or_query_digest,
-        body_retention="optional",
-    )
-    manifest = ProcedureAdmissionMaterialManifest(members=(member,))
-    prepared = _line_prepared(
-        admission,
-        direct,
-        manifest=manifest,
-        exhaust_materials=(ExhaustRunMaterialV1(input=exhaust_input, value=exhaust_value),),
-    )
-    fixture.journal.activate_writer(
-        fixture.stream,
-        admission.journal_partition_id,
-        fencing_token="writer",
-        expected_head=fixture.journal.read_head(
-            fixture.stream,
-            admission.journal_partition_id,
-        ),
-    )
-    reservations = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
-    original_store = fixture.bodies.store
-
-    def store_after_run_reservation(content: bytes, **kwargs):  # type: ignore[no-untyped-def]
-        body_digest = fixture.bodies.digest_bytes(content).tagged
-        assert any(
-            isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
-            for item in reservations.active_locked()
-        )
-        return original_store(content, **kwargs)
-
-    monkeypatch.setattr(fixture.bodies, "store", store_after_run_reservation)
-    original_append = fixture.journal.append
-
-    def append_while_leased(draft, **kwargs):  # type: ignore[no-untyped-def]
-        active = reservations.active_locked()
-        assert any(
-            isinstance(item, RunMaterialReservationV1) and item.body_digest == draft.payload_digest
-            for item in active
-        )
-        if draft.event_kind == "admission_bound":
-            assert pending in active
-        return original_append(draft, **kwargs)
-
-    monkeypatch.setattr(fixture.journal, "append", append_while_leased)
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-    ).execute(prepared, accepted)
-
-    assert result.status == "succeeded"
-    admission_record = next(
-        item
-        for item in fixture.journal.all_records(
-            fixture.stream,
-            admission.journal_partition_id,
-        )
-        if item.record.event_kind == "admission_bound"
-    )
-    payload = parse_journal_payload(
-        fixture.bodies.read(
-            admission_record.record.payload_digest,
-            access=BodyAccessContext(principal_id="test", can_read_body=True),
-        )
-    )
-    assert payload["tag"] == "playbill-procedure-admission-bound-payload-v10"
-    assert "accepted_state_materials" not in payload
-    assert payload["admission_material_manifest"]["members"] == [member.model_dump(mode="json")]
-    assert ProcedureRunAdmission.model_validate(payload["admission"]) == admission
-    assert reservations.active() == ()
-
-    records = fixture.journal.all_records(
-        fixture.stream,
-        admission.journal_partition_id,
-    )
-    monkeypatch.setattr(
-        procedure_run_service,
-        "_records_for_run",
-        lambda _instance, _run_id: records,
-    )
-
-    class _Instance:
-        def body_store(self):  # type: ignore[no-untyped-def]
-            return fixture.bodies
-
-    state = procedure_run_service._state_from_records(  # noqa: SLF001
-        _Instance(),
-        run_id=admission.run_id,
-    )
-    assert isinstance(state.receipt, ProcedureRunReceipt)
-    assert state.receipt.invocation_origin == "line"
-    assert state.receipt.line_identity == admission.line_identity
-    assert state.receipt.acquisition_plan_digest == admission.acquisition_plan_digest
-    assert state.receipt.admission_material_manifest.model_dump(mode="json") == manifest.model_dump(
-        mode="json"
-    )
 
 
 def test_a_zero_provider_line_run_journals_and_receipts_its_empty_plan(
@@ -2359,12 +2164,6 @@ def test_distinct_semantic_refusals_have_distinct_result_digests(tmp_path) -> No
 
 
 _TRANSFORM_CASES = [
-    (
-        "adapter",
-        {"arbitrary": ["bridge", {"value": 2}]},
-        {"arbitrary": ["bridge", {"value": 2}]},
-        None,
-    ),
     (
         "shape_items",
         {
@@ -2679,15 +2478,9 @@ def test_existing_transform_kernel_matrix_refuses_malformed_inputs(
         _apply_transform(kind, spec)
 
 
-def test_existing_adapter_kernel_accepts_every_canonical_shape() -> None:
-    for value in (None, True, 3, "text", [1, 2], {"items": [1, 2]}):
-        assert _apply_transform("adapter", value) == (value, None)
-
-
 @pytest.mark.parametrize(
     ("kind", "spec"),
     [
-        ("adapter", "$item.id"),
         ("shape_items", {"items": "$item.rows", "fields": {}}),
         (
             "filter_items",
@@ -3174,7 +2967,7 @@ def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> Non
         contract_in=named(entry_pin),
         contract_out=named(output_pin),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={},

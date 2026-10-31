@@ -37,6 +37,7 @@ from cruxible_client.contracts.procedures.expressions import (
     ProcedureExpressionError,
     parse_procedure_expression,
 )
+from cruxible_client.contracts.procedures.extract import CompleteWhen, ExtractField
 from cruxible_client.contracts.procedures.measurements import ProcedureMeasurementDeclaration
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
@@ -49,6 +50,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.procedures.source_program import ProcedureSourceProgram
+from cruxible_client.contracts.shapes import parse_contract_ref
 
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")]
 StepId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,127}$")]
@@ -89,24 +91,18 @@ class StepOptions(_Model):
     next: str | None = None
 
 
-class SourceStep(StepOptions):
-    source: StepId
-    contract: str
-    slot: str
-    request: Template
+class ReadStep(StepOptions):
+    """A read of accepted state: a named ``query`` with ``params``, or one ClaimType.
 
+    A Claim read names ``claim_type`` and its ``subject`` (and optionally its
+    ``subject_kind``); ``all: N`` reads at most N Claims instead of one.
+    """
 
-class TapStep(StepOptions):
-    tap: StepId
-    query: str
+    read: StepId
+    query: str | None = None
     params: Template = Field(default_factory=dict)
-    budgets: JsonValue = None
-
-
-class ClaimStep(StepOptions):
-    claim: StepId
-    claim_type: str
-    subject: Template
+    claim_type: str | None = None
+    subject: Template = None
     subject_kind: str | None = None
     all: Annotated[int, Field(strict=True, ge=1)] | None = None
 
@@ -116,6 +112,31 @@ class CallStep(StepOptions):
     slot: str
     input: Template
     effect_policy: str | None = None
+    captures: dict[str, str] = Field(
+        default_factory=dict,
+        description="The CaptureContract each capture<K> field of the slot's out Contract "
+        "is committed as.",
+    )
+
+
+class ExtractStep(StepOptions):
+    """Read one Capture's records, typed: ``capture`` names ``$<alias>.<capture field>``.
+
+    ``row`` is the Contract (``name@N``) whose fields the step reads; the rest
+    are the extract node's declarations (records, key, fields, header,
+    complete_when, duplicates, only_keys).
+    """
+
+    extract: StepId
+    capture: str
+    records: str
+    row: str
+    fields: dict[str, ExtractField]
+    key: dict[str, ExtractField] = Field(default_factory=dict)
+    header: dict[str, ExtractField] = Field(default_factory=dict)
+    complete_when: CompleteWhen | None = None
+    duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
+    only_keys: Template = None
 
 
 class ProjectStep(StepOptions):
@@ -204,11 +225,17 @@ def _verb(value: Any) -> str | None:
     return verbs[0] if len(verbs) == 1 else None
 
 
+#: Authored step verbs the current syntax no longer has, each with its replacement.
+RETIRED_STEP_VERBS: dict[str, str] = {
+    "source": "'call:' with 'captures' (the slot's out Contract carries capture<K> fields)",
+    "tap": "'read:' naming its 'query'",
+    "claim": "'read:' naming its 'claim_type'",
+}
+
 _VERBS = (
-    "source",
-    "tap",
-    "claim",
+    "read",
     "call",
+    "extract",
     "project",
     "transform",
     "guard",
@@ -223,10 +250,9 @@ _VERBS = (
     "explicit",
 )
 Step: TypeAlias = Annotated[
-    Annotated[SourceStep, Tag("source")]
-    | Annotated[TapStep, Tag("tap")]
-    | Annotated[ClaimStep, Tag("claim")]
+    Annotated[ReadStep, Tag("read")]
     | Annotated[CallStep, Tag("call")]
+    | Annotated[ExtractStep, Tag("extract")]
     | Annotated[ProjectStep, Tag("project")]
     | Annotated[TransformStep, Tag("transform")]
     | Annotated[GuardStep, Tag("guard")]
@@ -325,6 +351,26 @@ class ProcedureSpec(_Model):
     def _wire(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
         return cast(dict[str, Any], _authored_defaults(self, handler(self)))
 
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _retired_steps(cls, value: Any) -> Any:
+        if isinstance(value, (list, tuple)):
+            for index, step in enumerate(value):
+                if not isinstance(step, Mapping):
+                    continue
+                for verb, replacement in RETIRED_STEP_VERBS.items():
+                    if verb in step:
+                        raise ValueError(
+                            f"procedure_node_kind_retired: steps[{index}] uses retired step "
+                            f"{verb!r}; use {replacement}"
+                        )
+                explicit = step.get("explicit")
+                if isinstance(explicit, Mapping):
+                    from cruxible_client.contracts.procedures.nodes import refuse_retired_kinds
+
+                    refuse_retired_kinds([explicit], location=f"steps[{index}] explicit node")
+        return value
+
     @field_validator("input", "params", "output", mode="before")
     @classmethod
     def _field_types(cls, value: Any) -> Any:
@@ -363,6 +409,24 @@ def _authored_defaults(value: Any, wire: Any) -> Any:
             _authored_defaults(member, encoded) for member, encoded in zip(value, wire, strict=True)
         ]
     return wire
+
+
+def extract_view_fields(
+    row_fields: Mapping[str, PropertySchema] | None,
+) -> dict[str, PropertySchema]:
+    """How later steps see an extract's value: its rows typed by the row Contract."""
+
+    opaque = PropertySchema(type="json", json_schema={"type": "array"})
+    return {
+        "results": opaque,
+        "records": opaque,
+        "rows": opaque
+        if row_fields is None
+        else PropertySchema(type="list", item_fields=dict(row_fields)),
+        "header": PropertySchema(type="json", json_schema={"type": "object"}),
+        "complete": PropertySchema(type="bool"),
+        "count": PropertySchema(type="int"),
+    }
 
 
 class ProcedureSpecError(ValueError):
@@ -437,9 +501,13 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         for i, step in enumerate(spec.steps)
         if not isinstance(step, (GuardStep, HaltStep, InboxStep, ProposeStep, SettleStep, EmitStep))
     }
-    taps = {step.tap for step in spec.steps if isinstance(step, TapStep)}
+    taps = {
+        step.read for step in spec.steps if isinstance(step, ReadStep) and step.query is not None
+    }
     collection_aliases = {
-        step.claim for step in spec.steps if isinstance(step, ClaimStep) and step.all is not None
+        step.read
+        for step in spec.steps
+        if isinstance(step, ReadStep) and step.claim_type is not None and step.all is not None
     }
     used_ids = {_step_id(step, index) for index, step in enumerate(spec.steps)}
     generated: list[dict[str, Any]] = []
@@ -499,6 +567,8 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             )
         field: PropertySchema | None = None
         for index, member in enumerate(rest):
+            if member.isdigit() and field is not None and field.type == "list":
+                continue  # one element of the list: its fields are the item's
             if member not in fields:
                 _unknown(path, member, fields)
             field = fields[member]
@@ -564,7 +634,7 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             node["next"] = step.next
         output: dict[str, PropertySchema] | None = None
         alias: str | None = None
-        if isinstance(step, (CallStep, SourceStep)):
+        if isinstance(step, CallStep):
             details = {} if resolve is None else resolve("binding", step)
             if not isinstance(details, dict):
                 raise ValueError("binding resolver must return binding details")
@@ -574,12 +644,21 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     path + ".slot",
                     f"Slot {step.slot!r} is not declared in slots: {sorted(spec.slots)}",
                 )
-            node.update(kind="call" if isinstance(step, CallStep) else "source", slot=step.slot)
+            node.update(kind="call", slot=step.slot)
             output = details.get("output")
-            if isinstance(step, CallStep):
+            if step.captures:
+                node["captures"] = {
+                    field: ref("CaptureContract", name, "capture-contract")
+                    for field, name in sorted(step.captures.items())
+                }
+                node["input"] = template(
+                    {**details.get("request_defaults", {}), **step.input}
+                    if isinstance(step.input, dict)
+                    else step.input,
+                    path + ".input",
+                )
+            else:
                 node["input"] = template(step.input, path + ".input")
-                if step.effect_policy:
-                    node["effect_policy"] = ref("EffectPolicy", step.effect_policy, "effect-policy")
                 _check_call_input(
                     step.input,
                     details.get("input"),
@@ -587,46 +666,74 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
                     lookup_ref,
                     allow_extra=details.get("input_allow_extra", False),
                 )
-                alias = step.call
-            else:
-                node.update(
-                    capture_contract=ref("CaptureContract", step.contract, "capture-contract"),
-                    request=template(
-                        {**details.get("request_defaults", {}), **step.request}
-                        if isinstance(step.request, dict)
-                        else step.request,
-                        path + ".request",
-                    ),
-                )
-                alias = step.source
-        elif isinstance(step, TapStep):
+            if step.effect_policy:
+                node["effect_policy"] = ref("EffectPolicy", step.effect_policy, "effect-policy")
+            alias = step.call
+        elif isinstance(step, ExtractStep):
+            capture = template(step.capture, path + ".capture")
+            details = {} if resolve is None else resolve("extract_row", step)
+            row = details.get("row") or parse_contract_ref(step.row).model_dump(mode="json")
             node.update(
-                kind="state_tap",
+                kind="extract",
+                capture=capture,
+                records=step.records,
+                row=row,
+                fields={name: field.model_dump(mode="json") for name, field in step.fields.items()},
+                duplicates=step.duplicates,
+            )
+            if step.key:
+                node["key"] = {
+                    name: field.model_dump(mode="json") for name, field in step.key.items()
+                }
+            if step.header:
+                node["header"] = {
+                    name: field.model_dump(mode="json") for name, field in step.header.items()
+                }
+            if step.complete_when is not None:
+                node["complete_when"] = step.complete_when.model_dump(mode="json")
+            if step.only_keys is not None:
+                node["only_keys"] = template(step.only_keys, path + ".only_keys")
+            output = extract_view_fields(details.get("row_fields"))
+            alias = step.extract
+        elif isinstance(step, ReadStep) and step.query is not None:
+            if step.claim_type is not None or step.subject is not None or step.all is not None:
+                raise ProcedureSpecError(
+                    "procedure_step_invalid",
+                    path,
+                    "A read names exactly one of query and claim_type",
+                )
+            node.update(
+                kind="read",
                 query=ref("QueryDefinition", step.query, "query"),
                 parameters=template(step.params, path + ".params"),
             )
-            if step.budgets is not None:
-                node["budgets"] = step.budgets
             from cruxible_client.contracts.procedures.source_views import query_view_schema
 
             if tap_fields is None:
                 tap_fields = query_view_schema().fields
             output = tap_fields
-            alias = step.tap
-        elif isinstance(step, ClaimStep):
+            alias = step.read
+        elif isinstance(step, ReadStep):
+            if step.claim_type is None or step.subject is None:
+                raise ProcedureSpecError(
+                    "procedure_step_invalid",
+                    path,
+                    "A read names a query, or a claim_type and its subject",
+                )
             details = {} if resolve is None else resolve("claim", step)
             output = details.get("output")
             node.update(
-                kind="state_claim",
+                kind="read",
                 claim_type=ref("ClaimType", step.claim_type, "claim-type"),
                 subject_kind=details.get("subject_kind")
                 or step.subject_kind
                 or step.claim_type.rpartition(".")[0],
                 subject_id=template(step.subject, path + ".subject"),
                 cardinality="one" if step.all is None else "all",
-                limit=step.all,
             )
-            alias = step.claim
+            if step.all is not None:
+                node["limit"] = step.all
+            alias = step.read
         elif isinstance(step, ProjectStep):
             fields = template(step.fields, path + ".fields")
             output = (
@@ -919,7 +1026,7 @@ def _output_alias(step: Step, index: int) -> str:
         return str(getattr(step.explicit, "as_", step.explicit.node_id))
     if isinstance(step, InvokeStep):
         return step.as_ or step.id or f"step_{index + 1}"
-    for key in ("source", "tap", "claim", "call", "project", "transform", "select", "repeat"):
+    for key in ("read", "call", "extract", "project", "transform", "select", "repeat"):
         value = getattr(step, key, None)
         if value is not None:
             return str(value)
@@ -931,7 +1038,7 @@ def _step_id(step: Step, index: int) -> str:
         return step.explicit.node_id
     if step.id is not None:
         return step.id
-    for key in ("source", "tap", "claim", "call", "project", "transform", "select", "repeat"):
+    for key in ("read", "call", "extract", "project", "transform", "select", "repeat"):
         value = getattr(step, key, None)
         if value is not None:
             return str(value)

@@ -10,19 +10,19 @@ import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
+from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     InboxEgressNode,
     ProjectNode,
-    SourceNode,
 )
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import (
-    ADVISORY,
     NOW,
     SOURCE_ALIAS,
     _accept_more,
@@ -30,46 +30,64 @@ from tests.test_procedures.test_procedure_source_runs import (
     _world,
 )
 
-pytestmark = pytest.mark.skip(
-    reason=(
-        "needs B3 extract: every test in this file reads structured rows "
-        "(a list) out of a Source read via '$steps.<alias>.content.json...' "
-        "or by spreading the fixture ADVISORY constant as a JSON mapping -- "
-        "both assume the provider JSON-decodes the file, which no longer "
-        "happens pre-extract (content.text is the read's whole decoded text, "
-        "and the shared ADVISORY fixture is now a plain bytes string, not a "
-        "dict). This whole file's post_inbox-over-structured-rows premise "
-        "needs the extract node, not a mechanical fixture fix."
-    )
-)
-
 ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
+#: The extract that reads the feed's rows out of the workspace read's exact bytes.
+ROWS_ALIAS = "feed_rows"
+
+
+def _row_contract() -> Any:
+    from cruxible_client.contracts.shapes import validate_contract
+
+    return validate_contract({"name": "test.inbox-row", "version": 1, "fields": {"cve": "string"}})
+
+
+def _rows_extract(*, next_node: str) -> ExtractNode:
+    from cruxible_client.contracts.shapes import contract_digest
+
+    row = _row_contract()
+    return ExtractNode.model_validate(
+        {
+            "kind": "extract",
+            "node_id": "rows",
+            "capture": f"$steps.{SOURCE_ALIAS}.capture",
+            "records": "/rows/*",
+            "row": {
+                "name": row.name,
+                "version": row.version,
+                "digest": contract_digest(row).tagged,
+            },
+            "fields": {"cve": {"at": "cve"}},
+            "as": ROWS_ALIAS,
+            "next": next_node,
+        }
+    )
+
+
+def _feed(extra: Any = None) -> bytes:
+    return canonical_bytes({"severity": "high", "rows": ROWS, **(extra or {})})
 
 
 def inbox_world(  # type: ignore[no-untyped-def]
     tmp_path: Path, *, max_items: int | None = None, items: Any = None, extra: Any = None
 ):
-    """The Source Procedure, ending in a post_inbox over its rows, behind an observe-only Line."""
+    """The workspace read, its rows extracted, ending in a post_inbox, behind an observe Line."""
+
+    from cruxible_client.contracts.shapes import contract_path, render_contract
 
     instance, owner, procedure, root, policy = _world(
-        tmp_path,
-        accept_procedure=False,
-        contents=canonical_bytes({**ADVISORY, "rows": ROWS, **(extra or {})}),
+        tmp_path, accept_procedure=False, contents=_feed(extra)
     )
     source, shape = procedure.definition.nodes
-    assert isinstance(source, SourceNode) and isinstance(shape, ProjectNode)
+    assert isinstance(source, CallNode) and isinstance(shape, ProjectNode)
     definition = procedure.definition.model_copy(
         update={
             "nodes": (
-                source,
+                source.model_copy(update={"next": "rows"}),
+                _rows_extract(next_node=shape.node_id),
                 shape.model_copy(update={"next": "inbox"}),
                 InboxEgressNode(
                     node_id="inbox",
-                    input=(
-                        {"items": f"$steps.{SOURCE_ALIAS}.content.json.rows"}
-                        if items is None
-                        else items
-                    ),
+                    input=({"items": f"$steps.{ROWS_ALIAS}.rows"} if items is None else items),
                     max_items=max_items,
                 ),
             ),
@@ -82,11 +100,13 @@ def inbox_world(  # type: ignore[no-untyped-def]
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
         }
     )
-    line = _served_line(with_inbox, policy)
+    line = _served_line(instance, with_inbox, policy)
+    row = _row_contract()
     _accept_more(
         instance,
         owner,
         {
+            contract_path(row.name, row.version): render_contract(row),
             procedure_path(with_inbox.identity.name): render_procedure(with_inbox),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
@@ -157,13 +177,13 @@ def test_a_run_posts_at_most_its_cap_and_reports_the_truncation(tmp_path: Path) 
 
 
 def test_a_single_input_is_one_item(tmp_path: Path) -> None:
-    instance, root, line = inbox_world(tmp_path, items=f"$steps.{SOURCE_ALIAS}.content.json")
+    instance, root, line = inbox_world(tmp_path, items="$steps.result")
 
     state = manual_run(instance, line, at=NOW, root=root)
 
     assert state.status == "succeeded", state.terminal
     (entry,) = _entries(instance)
-    assert entry.payload == {**ADVISORY, "rows": ROWS}
+    assert entry.payload == {"severity": _feed().decode()}
 
 
 def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
@@ -242,10 +262,10 @@ def test_the_same_item_again_keeps_its_disposition(tmp_path: Path) -> None:
     [
         ([{"note": "a"}, {"note": "b"}], None, [{"note": "a"}, {"note": "b"}]),
         ([], None, []),
-        (f"$steps.{SOURCE_ALIAS}.content.json.rows", None, ROWS),
+        (f"$steps.{ROWS_ALIAS}.rows", None, ROWS),
         (
-            f"$steps.{SOURCE_ALIAS}.content.json.bundle",
-            {"bundle": {"items": [1, 2], "kind": "batch"}},
+            {"items": [1, 2], "kind": "batch"},
+            None,
             {"items": [1, 2], "kind": "batch"},
         ),
     ],
@@ -267,21 +287,19 @@ def test_a_single_input_is_posted_whole(  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize(
-    ("field", "extra", "reason"),
+    ("reference", "reason"),
     [
-        ("absent", None, "items_unresolved"),
-        ("nothing", {"nothing": None}, "items_not_a_list"),
-        ("severity", None, "items_not_a_list"),
-        ("bundle", {"bundle": {"rows": ROWS}}, "items_not_a_list"),
+        (f"$steps.{ROWS_ALIAS}.absent", "items_unresolved"),
+        (f"$steps.{ROWS_ALIAS}.complete", "items_not_a_list"),
+        ("$steps.result.severity", "items_not_a_list"),
+        (f"$steps.{ROWS_ALIAS}.header", "items_not_a_list"),
     ],
-    ids=["absent", "null", "string", "object"],
+    ids=["absent", "bool", "string", "object"],
 )
 def test_an_explicit_fan_out_that_is_not_a_list_refuses_typed(  # type: ignore[no-untyped-def]
-    tmp_path: Path, field, extra, reason
+    tmp_path: Path, reference, reason
 ) -> None:
-    instance, root, line = inbox_world(
-        tmp_path, items={"items": f"$steps.{SOURCE_ALIAS}.content.json.{field}"}, extra=extra
-    )
+    instance, root, line = inbox_world(tmp_path, items={"items": reference})
 
     state = manual_run(instance, line, at=NOW, root=root)
 
@@ -356,49 +374,60 @@ def _accept_sdk_input(instance: PlaybillInstance, owner: Any, payload: Any) -> N
 
 
 def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Path) -> None:
-    """Sequence(..., PostInbox(...)) lowers to the same post_inbox terminal a Line posts from."""
+    """Sequence(..., Extract, PostInbox) lowers to the same graph a Line posts from."""
 
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.authoring.procedures import (
+        Call,
+        Extract,
         Output,
         PostInbox,
         Project,
-        ProviderBinding,
         Sequence,
-        Source,
     )
     from cruxible_client.authoring.sdk import Cruxible
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
-    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_OPERATION
-    from cruxible_core.governance.seed_artifacts.workspace_file import (
-        WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-    )
+    from cruxible_client.contracts.shapes import contract_digest, contract_path, render_contract
     from tests.core_support._light_capture_support import record_contract as capture_contract
     from tests.test_procedures.test_procedure_source_runs import _source_request
 
-    instance, owner, _procedure, root, policy = _world(
-        tmp_path,
-        accept_procedure=False,
-        contents=canonical_bytes({**ADVISORY, "rows": ROWS}),
+    instance, owner, procedure, root, policy = _world(
+        tmp_path, accept_procedure=False, contents=_feed()
+    )
+    row = _row_contract()
+    _accept_more(
+        instance, owner, {contract_path(row.name, row.version): render_contract(row)}, name="row"
     )
     severity = CarriedContractInput(
         name="sdk-inbox-output", fields={"severity": PropertySchema(type="string")}
     )
     plan = Sequence(
         (
-            Source(
+            Call(
                 SOURCE_ALIAS,
-                capture_contract=capture_contract().identity.name,
-                request=_source_request(instance, root).model_dump(mode="json"),
+                slot="read",
+                input=_source_request(instance, root).model_dump(mode="json"),
+                captures={"capture": capture_contract().identity.name},
+            ),
+            Extract(
+                ROWS_ALIAS,
+                capture=Output(SOURCE_ALIAS, "capture"),
+                records="/rows/*",
+                row={
+                    "name": row.name,
+                    "version": row.version,
+                    "digest": contract_digest(row).tagged,
+                },
+                fields={"cve": {"at": "cve"}},
             ),
             Project(
                 "result",
-                fields={"severity": Output(SOURCE_ALIAS, "content.json.severity")},
+                fields={"severity": Output(SOURCE_ALIAS, "content.text")},
                 contract_out=severity,
             ),
-            PostInbox("inbox", input={"items": Output(SOURCE_ALIAS, "content.json.rows")}),
+            PostInbox("inbox", input={"items": Output(ROWS_ALIAS, "rows")}),
         ),
         name="sdk-inbox",
         contract_in=CarriedContractInput(name="sdk-inbox-input", fields={}),
@@ -415,14 +444,7 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
             max_items=200,
             max_repeat_attempts=1,
         ),
-        acquisition_policy=policy.identity.name,
-    ).bind(
-        **{
-            SOURCE_ALIAS: ProviderBinding(
-                provider=WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
-                interface=WORKSPACE_FILE_OPERATION,
-            )
-        }
+        slots=dict(procedure.definition.slots),
     )
     preview = plan.preview()
     assert preview.ready_for_prepare, preview.errors
@@ -436,9 +458,9 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
     assert accepted.definition.model_dump(mode="json", by_alias=True)["nodes"][-1] == {
         "kind": "post_inbox",
         "node_id": "inbox",
-        "input": {"items": f"$steps.{SOURCE_ALIAS}.content.json.rows"},
+        "input": {"items": f"$steps.{ROWS_ALIAS}.rows"},
     }
-    line = _served_line(accepted, policy)
+    line = _served_line(instance, accepted, policy)
     _accept_more(
         instance,
         owner,

@@ -36,18 +36,17 @@ from cruxible_client.contracts.procedures.nodes import (
 )
 from cruxible_client.contracts.procedures.nodes import (
     AUTHORITY_RUNG,
+    CLOSED_TRANSFORM_KINDS,
     RUNG_AUTHORITY,
     TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
     AuthorityVerb,
     CallNode,
     CaptureEgressNode,
-    ClaimTapNode,
     ComparisonOperator,
-    ConstantNode,
     EffectiveAuthority,
     EgressNode,
-    ExhaustTapNode,
+    ExtractNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -60,14 +59,11 @@ from cruxible_client.contracts.procedures.nodes import (
     ProjectNode,
     ProposalItemsFanOut,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatBodyNode,
     RepeatNode,
-    ReturnNode,
     SelectNode,
     SettleChangeSetNode,
-    SourceNode,
-    StateTapNode,
-    TransformAdapterSpec,
     TransformAggregateItemsSpec,
     TransformDedupeItemsSpec,
     TransformFilterItemsSpec,
@@ -77,8 +73,11 @@ from cruxible_client.contracts.procedures.nodes import (
     TransformShapeItemsSpec,
     authority_for_rung,
     derived_terminal_capability,
+    is_terminal_node,
+    refuse_retired_kinds,
     required_authority,
 )
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
 from cruxible_client.contracts.procedures.slots import (
     ProcedureSlot,
     validate_procedure_slots,
@@ -114,6 +113,14 @@ class ProcedureHardCaps(_StrictProcedureModel):
     max_result_bytes: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
     max_items: int = Field(ge=1, le=2**31 - 1)
     max_repeat_attempts: int = Field(ge=1, le=2**31 - 1)
+    #: The most rows the run's reads may return in all; each read's ceiling is
+    #: what is left of it.
+    max_read_rows: int = Field(
+        default=DEFAULT_MAX_READ_ROWS,
+        ge=1,
+        le=2**31 - 1,
+        exclude_if=lambda value: value == DEFAULT_MAX_READ_ROWS,
+    )
 
     @model_validator(mode="after")
     def _nonzero_wall_clock(self) -> "ProcedureHardCaps":
@@ -149,6 +156,13 @@ class ProcedureDefinition(_StrictProcedureModel):
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
     source: ProcedureSourceProgram | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_kinds(cls, value: object) -> object:
+        if isinstance(value, dict):
+            refuse_retired_kinds(value.get("nodes"))
+        return value
 
     @field_validator("name")
     @classmethod
@@ -225,9 +239,16 @@ class ProcedureDefinition(_StrictProcedureModel):
                 if slot_name is None or slot_name not in self.slots:
                     continue
                 effect = self.slots[slot_name].effect
-                if isinstance(item, SourceNode):
+                if isinstance(item, CallNode) and item.acquires:
                     if effect == "external_mutation":
-                        raise ValueError(f"Source {item.node_id!r}: a Source slot cannot mutate")
+                        raise ValueError(
+                            f"call {item.node_id!r}: a call with captures acquires; its slot "
+                            "cannot mutate"
+                        )
+                    if item.effect_policy is not None:
+                        raise ValueError(
+                            f"call {item.node_id!r}: an acquiring call declares no effect policy"
+                        )
                 elif (effect == "external_mutation") != (
                     getattr(item, "effect_policy", None) is not None
                 ):
@@ -293,7 +314,7 @@ class ProcedureDefinition(_StrictProcedureModel):
 
         found: list[tuple[str, str]] = []
         for node in self.nodes:
-            if isinstance(node, CallNode | SourceNode):
+            if isinstance(node, CallNode):
                 found.append((node.node_id, node.slot))
             elif isinstance(node, RepeatNode):
                 found.extend(
@@ -310,8 +331,8 @@ REFERENCE_ROLES = {
     "contract_out": "contract-out",
     "parameter_contract": "parameter-contract",
     "query": "query",
-    "reducer_or_query": "query",
     "capture_contract": "capture-contract",
+    "captures": "capture-contract",
     "claim_type": "claim-type",
     "claim_types": "claim-type",
     "procedure": "procedure",
@@ -356,15 +377,14 @@ def iter_references(value: object) -> tuple[ArtifactNameRef, ...]:
 
 __all__ = [
     "AUTHORITY_RUNG",
+    "CLOSED_TRANSFORM_KINDS",
     "AuthorityVerb",
     "CallNode",
     "CaptureEgressNode",
-    "ClaimTapNode",
     "ComparisonOperator",
-    "ConstantNode",
     "EffectiveAuthority",
     "EgressNode",
-    "ExhaustTapNode",
+    "ExtractNode",
     "GuardNode",
     "GuardPredicate",
     "HaltNode",
@@ -382,17 +402,14 @@ __all__ = [
     "ProjectNode",
     "ProposalItemsFanOut",
     "ProposeChangeSetNode",
+    "ReadNode",
     "RUNG_AUTHORITY",
     "RepeatBodyNode",
     "RepeatNode",
-    "ReturnNode",
     "SelectNode",
     "SettleChangeSetNode",
-    "SourceNode",
-    "StateTapNode",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
-    "TransformAdapterSpec",
     "TransformAggregateItemsSpec",
     "TransformDedupeItemsSpec",
     "TransformFilterItemsSpec",
@@ -401,6 +418,7 @@ __all__ = [
     "TransformNode",
     "TransformShapeItemsSpec",
     "authority_for_rung",
+    "is_terminal_node",
     "derived_terminal_capability",
     "REFERENCE_ROLES",
     "iter_references",

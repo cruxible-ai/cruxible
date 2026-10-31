@@ -22,6 +22,7 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+    CAPTURE_CONTRACT_V4_LAW,
     CLAIM_LAW_V2_REVISION_10,
     CLAIM_LAW_V3_REVISION_11,
     CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -281,6 +282,17 @@ LAW_COORDINATES += (
 
 LAW_COORDINATES += (
     (
+        CAPTURE_CONTRACT_V4_LAW,
+        "cruxible.capture-contract.named.v2",
+        "cruxible-capture-contract-v4",
+        1,
+        "sha256:429486d66392c18c188619c26925a7257d36bd97bcdef3b8b459a864fa7df3c6",
+    ),
+)
+
+
+LAW_COORDINATES += (
+    (
         NAMED_REFERENCE_LAWS[0],
         "cruxible.capture-contract.named.v1",
         "cruxible-capture-contract-v3",
@@ -369,16 +381,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f"
+    expected = "sha256:1b6fc46fd55f755f6974866cb22703a58d27ebff523efb74e0761b6514886279"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 38,
+            "semantic_revision": 39,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "admitted-run-v1",
+            "revision_name": "nodes-extract-v1",
         },
     )
     assert computed == expected
@@ -423,9 +435,11 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "admitted-run-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "admitted-run-v1"
+    assert CURRENT_COMPILER_REVISION == "nodes-extract-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "nodes-extract-v1"
     for earlier_digest in (
+        # Revision 38 (admitted-run-v1): before the B3 node union and extract.
+        "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f",
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
         "sha256:e77d9aaac5116b76aaf7b7060dedde6bca2cdaaeaa909c59c391bd20f3779924",

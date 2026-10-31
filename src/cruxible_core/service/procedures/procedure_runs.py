@@ -63,6 +63,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     ProcedureNodeSupport,
     ProcedureRunnable,
+    acquisition_aliases,
     procedure_path,
     procedure_runnability,
 )
@@ -78,13 +79,11 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExhaustTapNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     RepeatBodyNode,
     RepeatNode,
-    SourceNode,
     authority_for_rung,
     required_authority,
 )
@@ -163,6 +162,7 @@ from cruxible_client.contracts.resolution_contracts import (
     InvestigationBinding,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.shapes import Contract, ContractRef
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
@@ -761,6 +761,37 @@ def _claim_type_enum_resolver(
             return None
         members = claim_type.literal_schema.get("enum")
         return tuple(members) if isinstance(members, list) else None
+
+    return resolve
+
+
+def accepted_contract_resolver(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> Callable[[ContractRef], Contract | None]:
+    """An extract's row Contract, and any Contract it nests, at this run's coordinate.
+
+    A Contract resolves by name and version and must reproduce the digest its
+    reference pins; the coordinate is immutable once admitted, so a replay
+    resolves the same Contracts.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_identity
+
+    found: dict[tuple[str, int], Contract | None] = {}
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        key = (ref.name, ref.version)
+        if key not in found:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
+            found[key] = value if isinstance(value, Contract) else None
+        contract = found[key]
+        if contract is None or (
+            ref.digest is not None and contract_digest(contract).tagged != ref.digest
+        ):
+            return None
+        return contract
 
     return resolve
 
@@ -1436,10 +1467,10 @@ def _line_state_materials(
 
 def _provider_nodes(
     definition: ProcedureDefinition,
-) -> tuple[tuple[CallNode | SourceNode | RepeatBodyNode, str | None], ...]:
-    result: list[tuple[CallNode | SourceNode | RepeatBodyNode, str | None]] = []
+) -> tuple[tuple[CallNode | RepeatBodyNode, str | None], ...]:
+    result: list[tuple[CallNode | RepeatBodyNode, str | None]] = []
     for node in definition.nodes:
-        if isinstance(node, CallNode | SourceNode):
+        if isinstance(node, CallNode):
             result.append((node, None))
         elif isinstance(node, RepeatNode):
             result.extend((body, node.node_id) for body in node.body if body.operation == "call")
@@ -1469,7 +1500,7 @@ def _plan_external_occurrences(
     }
     occurrences: list[ProviderExternalOccurrencePlan] = []
     for node, repeat_node_id in _provider_nodes(definition):
-        if isinstance(node, SourceNode) and node.as_ in supplied_source_inputs:
+        if isinstance(node, CallNode) and node.acquires and node.as_ in supplied_source_inputs:
             continue
         slot = node.slot
         binding = plan_bindings.get(slot or "")
@@ -1516,7 +1547,7 @@ def _plan_external_occurrences(
             implementation.implementation_digest,
             eligible_environment_pin_keys=eligible,
         )
-        produces_capture = isinstance(node, SourceNode)
+        produces_capture = isinstance(node, CallNode) and node.acquires
         call_kind = "call"
         translation = translate_provider_budget(
             budget=budget,
@@ -1555,8 +1586,8 @@ def _plan_external_occurrences(
             "secret_plan": ProviderSecretResolutionPlan(),
             "budget_translation": translation,
         }
-        if isinstance(node, SourceNode):
-            capture_pin = resolved_pin(accepted_procedure, node.capture_contract)
+        if isinstance(node, CallNode) and node.acquires:
+            capture_pin = resolved_pin(accepted_procedure, next(iter(node.captures.values())))
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
@@ -1564,8 +1595,12 @@ def _plan_external_occurrences(
                     "capture_contract_digest": capture_pin.artifact_digest,
                     "source_runtime_plan_digest": typed_digest(
                         Sha256Value,
-                        "playbill-source-runtime-plan-v1",
-                        {"node_id": node.node_id, "request": node.request},
+                        "cruxible-acquiring-call-plan-v1",
+                        {
+                            "node_id": node.node_id,
+                            "input": node.input,
+                            "captures": sorted(node.captures),
+                        },
                     ).tagged,
                 }
             )
@@ -1593,7 +1628,8 @@ def _line_external_occurrences(
         runtime_policy=runtime_policy,
         budget=budget,
         supplied_source_inputs=(
-            frozenset({accepted_line.line.trigger_input})
+            # The substituted call's alias: a trigger names <alias>.<field> or <alias>.
+            frozenset({accepted_line.line.trigger_input.partition(".")[0]})
             if accepted_line.line.trigger_input is not None
             else frozenset()
         ),
@@ -1604,7 +1640,7 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
     return tuple(
         sorted(
-            (node.as_ for node in definition.nodes if isinstance(node, SourceNode)),
+            acquisition_aliases(definition),
             key=lambda item: item.encode("utf-8"),
         )
     )
@@ -3261,6 +3297,7 @@ def service_run_playbill_procedure(
             egress_sink=direct_egress_sink,
             ephemeral_spec_digest=ephemeral_spec_digest,
             enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+            contract_resolver=accepted_contract_resolver(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -3923,17 +3960,6 @@ def _run_playbill_line(
         return _state_from_records(instance, run_id=existing.run_id)
     if investigation is not None:
         require_current_investigation(instance, investigation)
-    if any(isinstance(node, ExhaustTapNode) for node in accepted.procedure.definition.nodes):
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="exhaust_binding_carrier_required",
-            message="This Line requires an opaque Exhaust access-binding carrier.",
-            details={"repair": "Trigger through a carrier-aware Line scheduler."},
-        )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
@@ -4356,6 +4382,7 @@ def _run_playbill_line(
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
                 enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+                contract_resolver=accepted_contract_resolver(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,

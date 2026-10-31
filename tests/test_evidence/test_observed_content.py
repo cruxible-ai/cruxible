@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -95,8 +94,8 @@ def _web_fetch_fixture(tmp_path: Path, *, body: bytes, stated: str | None = None
 
 
 def test_a_workspace_capture_records_the_bytes_it_read(tmp_path: Path) -> None:
-    fixture, source_read, _output = _workspace_fixture(tmp_path)
-    built = _build(fixture, source_read_receipt=source_read)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
+    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
     assert built.envelope.observed_content_digest == source_read.bytes_digest
     seen = observed_content(built.envelope)
     assert (seen.digest, seen.basis) == (source_read.bytes_digest, "workspace_file_bytes")
@@ -128,8 +127,8 @@ def test_any_other_capture_records_none_and_keeps_its_bytes(tmp_path: Path) -> N
 def test_verification_refuses_an_observed_digest_the_evidence_does_not_yield(
     tmp_path: Path,
 ) -> None:
-    fixture, source_read, _output = _workspace_fixture(tmp_path)
-    built = _build(fixture, source_read_receipt=source_read)
+    fixture, source_read, output = _workspace_fixture(tmp_path)
+    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
     resolution = ProviderProducerReceiptResolution(
         receipt=fixture.receipt, occurrence=fixture.occurrence, source_read_receipt=source_read
     )
@@ -150,34 +149,12 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
     from tests.test_evidence.test_citation_sql import AT, World
 
     fixture, source_read, output = _workspace_fixture(tmp_path)
-    first = _build(fixture, source_read_receipt=source_read)
-    # The same file bytes read by another run: its derived request differs, so
-    # the material echoing it -- and the commitment -- differs; the content does not.
-    reread = source_read.model_copy(
-        update={"derived_request_digest": "sha256:" + hashlib.sha256(b"rerun").hexdigest()}
-    )
-    material = canonical_bytes(
-        {
-            **output,
-            "source": {**output["source"], "commitment_digest": reread.derived_request_digest},
-        }
-    )
-    result = fixture.result.model_copy(
-        update={
-            "content_base64": base64.b64encode(material).decode("ascii"),
-            "byte_length": len(material),
-            "bytes_digest": "sha256:" + hashlib.sha256(material).hexdigest(),
-        }
-    )
-    receipt = fixture.receipt.model_copy(
-        update={
-            "output": ProviderInvocationOutputDigest(
-                output_digest=provider_invocation_output_digest(json.loads(material))
-            ).model_dump(mode="json")
-        }
-    )
-    second = _build(replace(fixture, result=result, receipt=receipt), source_read_receipt=reread)
-    assert first.envelope.commitment.digest != second.envelope.commitment.digest
+    first = _build(fixture, source_read_receipt=source_read, provider_output=output)
+    # The same file bytes read by another run: its envelope differs, and both
+    # commit the bytes core read exactly, so their content is one.
+    second, _reread_receipt = _reread(fixture, source_read, output)
+    assert first.capture_digest != second.capture_digest
+    assert first.envelope.commitment.digest == second.envelope.commitment.digest
     assert first.envelope.observed_content_digest == second.envelope.observed_content_digest
 
     connection = sqlite3.connect(":memory:")
@@ -204,7 +181,7 @@ def test_coverage_groups_two_captures_of_the_same_content_as_one_row(tmp_path: P
     assert set(row.capture_digests) == {first.capture_digest, second.capture_digest}
     assert row.observed_content_digest == source_read.bytes_digest
     by_commitment, _ = coverage_rows(world.reader, bodies=fixture.store, at=AT, version=1)
-    assert len(by_commitment.citations) == 2
+    assert len(by_commitment.citations) == 1
 
 
 # -- refusal matching keeps every key it ever produced (review F-007) -------------
@@ -219,33 +196,26 @@ def _legacy(fixture: Any, built: Any) -> str:
 
 
 def _reread(fixture: Any, source_read: Any, output: Any) -> tuple[Any, Any]:
-    """The same file bytes read by another run: other material, same content."""
+    """The same file bytes read by another run: another envelope, the same bytes."""
 
     reread = source_read.model_copy(
         update={"derived_request_digest": "sha256:" + hashlib.sha256(b"rerun").hexdigest()}
     )
-    material = canonical_bytes(
-        {
-            **output,
-            "source": {**output["source"], "commitment_digest": reread.derived_request_digest},
-        }
-    )
-    result = fixture.result.model_copy(
-        update={
-            "content_base64": base64.b64encode(material).decode("ascii"),
-            "byte_length": len(material),
-            "bytes_digest": "sha256:" + hashlib.sha256(material).hexdigest(),
-        }
-    )
+    structured = {
+        **output,
+        "source": {**output["source"], "commitment_digest": reread.derived_request_digest},
+    }
     receipt = fixture.receipt.model_copy(
         update={
             "output": ProviderInvocationOutputDigest(
-                output_digest=provider_invocation_output_digest(json.loads(material))
+                output_digest=provider_invocation_output_digest(structured)
             ).model_dump(mode="json")
         }
     )
     return _build(
-        replace(fixture, result=result, receipt=receipt), source_read_receipt=reread
+        replace(fixture, receipt=receipt),
+        source_read_receipt=reread,
+        provider_output=structured,
     ), reread
 
 
@@ -253,14 +223,14 @@ def test_a_legacy_workspace_capture_keeps_its_verified_bytes_identity(tmp_path: 
     from cruxible_core.proposals.refusal_index import capture_evidence_content
 
     fixture, source_read, output = _workspace_fixture(tmp_path)
-    built = _build(fixture, source_read_receipt=source_read)
+    built = _build(fixture, source_read_receipt=source_read, provider_output=output)
     legacy = _legacy(fixture, built)
     # Old and new envelopes of the same file bytes are one piece of evidence.
     assert capture_evidence_content(fixture.store, legacy) == source_read.bytes_digest
     assert capture_evidence_content(fixture.store, built.capture_digest) == source_read.bytes_digest
     # Two pre-field Captures of the same bytes from different runs still match.
     again, _reread_receipt = _reread(fixture, source_read, output)
-    assert again.envelope.commitment.digest != built.envelope.commitment.digest
+    assert again.envelope.commitment.digest == built.envelope.commitment.digest
     assert capture_evidence_content(fixture.store, _legacy(fixture, again)) == (
         capture_evidence_content(fixture.store, legacy)
     )

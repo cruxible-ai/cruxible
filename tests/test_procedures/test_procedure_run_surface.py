@@ -47,7 +47,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNode,
+    ReadNode,
     TransformNode,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -1155,7 +1155,7 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
     instance, owner, procedure = _world(tmp_path)
     read = procedure.definition.nodes[0]
     project = procedure.definition.nodes[-1]
-    assert isinstance(read, StateTapNode)
+    assert isinstance(read, ReadNode)
     filter_in = _contract(
         "pipeline-filter-in",
         {"items": PropertySchema(type="json"), "where": PropertySchema(type="json")},
@@ -1391,7 +1391,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     instance, owner, procedure = _world(tmp_path)
     nodes = list(procedure.definition.nodes)
     read = nodes[0]
-    assert isinstance(read, StateTapNode)
+    assert isinstance(read, ReadNode)
     nodes[0] = read.model_copy(update={"next": "gate"})
     nodes.insert(
         1,

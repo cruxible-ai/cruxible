@@ -1856,7 +1856,11 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
         if kind is not None and kind.name in NAMED_REFERENCE_FORMATS:
             named = NAMED_REFERENCE_FORMATS[kind.name]
             if artifact_tag != named and not (
-                kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2"
+                (kind.name == "provider" and artifact_tag == "cruxible-provider-identity-v2")
+                or (
+                    kind.name == "capture-contract"
+                    and artifact_tag == "cruxible-capture-contract-v4"
+                )
             ):
                 raise FormatError(f"New {kind.name} artifacts require {named}.")
     if context.historical_law_coordinate is None:
@@ -2067,14 +2071,26 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             procedure=previous,
             artifact_digest=procedure_artifact_digest(previous).tagged,
         )
+    from cruxible_client.contracts.captures import capture_contract_path
+    from cruxible_client.contracts.procedures.artifacts import procedure_contract_refs
+
+    def candidate_contract(ref: Any) -> Any:
+        return _candidate_contract(context, f"{ref.name}/v{ref.version}")
+
+    def candidate_capture_contract(name: str) -> Any:
+        path = capture_contract_path(name)
+        content = context.candidate_tree.get(path)
+        return None if content is None else parse_capture_contract(content, path=path)
+
     law = evaluate_procedure_law(
         procedure,
         path=context.path,
         predecessor=predecessor,
         contracts=_candidate_contract_digests(
-            context,
-            (ref for slot in procedure.definition.slots.values() for ref in (slot.in_, slot.out)),
+            context, procedure_contract_refs(procedure.definition)
         ),
+        contract_lookup=candidate_contract,
+        capture_lookup=candidate_capture_contract,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3115,9 +3131,12 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     if (
         context.historical_law_coordinate is None
         and not context.rechecking
-        and contract.artifact_format != "cruxible-capture-contract-v3"
+        and contract.artifact_format
+        not in {"cruxible-capture-contract-v3", "cruxible-capture-contract-v4"}
     ):
-        raise FormatError("new CaptureContracts require cruxible-capture-contract-v3")
+        raise FormatError(
+            "new CaptureContracts require cruxible-capture-contract-v3, or v4 with decoding"
+        )
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
         previous = parse_capture_contract(context.parent_content, path=context.path)

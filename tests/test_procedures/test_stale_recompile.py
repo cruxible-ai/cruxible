@@ -272,15 +272,27 @@ def _two_line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
     from tests.test_procedures.test_proposal_fan_out import FAN_OUT
 
-    instance, owner, root, line, _procedure = proposal_world(
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+
+    instance, owner, root, line, procedure = proposal_world(
         tmp_path,
         templates=FAN_OUT,  # type: ignore[arg-type]
     )
     other = line.model_copy(update={"identity": ArtifactIdentity(kind="Line", name="other-import")})
+    # Each Line runs under its own Mandate, which pins that Line's exact digest.
+    mandate = fixtures._line_mandate(other, procedure).model_copy(
+        update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="other-import-mandate")}
+    )
     fixtures._accept_more(
         instance,
         owner,
-        {line_spec_path(other.identity.name): render_line_spec(other)},
+        {
+            line_spec_path(other.identity.name): render_line_spec(other),
+            procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+        },
         name="other-import-line",
     )
     return instance, owner, root, line, other
@@ -301,11 +313,6 @@ def _readmit(instance, proposal_id: str, *, dry_run: bool = False):  # type: ign
     )
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: _two_line_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_a_line_proposal_partly_live_at_the_head_readmits_what_is_left(tmp_path: Path) -> None:
     """Readmit re-decides the Line's open proposal at the head instead of replaying it.
 
@@ -384,11 +391,6 @@ def _run_of(instance, proposal_id: str) -> str:  # type: ignore[no-untyped-def]
     raise AssertionError("no item reason")
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: _two_line_world reads FAN_OUT's "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
 def test_a_line_proposal_wholly_live_at_the_head_closes_as_answered(tmp_path: Path) -> None:
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
     from cruxible_core.service.proposals.proposals import (

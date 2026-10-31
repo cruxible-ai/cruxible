@@ -143,27 +143,46 @@ class Step:
 
 
 @dataclass(frozen=True)
-class StateTap(Step):
+class Read(Step):
+    """A read of accepted state through a named Query; it runs to the end."""
+
     query: str = ""
     parameters: object = None
 
 
-@dataclass(frozen=True)
-class Source(Step):
-    """An acquisition through ``slot``; a Line binds the slot to an exact operation."""
-
-    capture_contract: str = ""
-    request: object = Previous()
-    slot: str = ""
-
-
 @dataclass(frozen=True, kw_only=True)
 class Call(Step):
-    """A typed call through ``slot``; a Line binds the slot to an exact operation."""
+    """A typed call through ``slot``; a Line binds the slot to an exact operation.
+
+    ``captures`` names, for each ``capture<K>`` field of the slot's out
+    Contract, the CaptureContract its bytes are committed as; a call with
+    captures acquires.
+    """
 
     input: object = Previous()
     slot: str
     effect_policy: str | None = None
+    captures: dict[str, str] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Extract(Step):
+    """Read one Capture's records, typed: ``capture`` is ``Output(<call>, <capture field>)``.
+
+    ``row`` pins the Contract whose fields the step reads (``{name, version,
+    digest}``); ``fields``, ``key`` and ``header`` map each name to where it
+    is read (``{"at": ..., "parse": ..., "presence": ...}``).
+    """
+
+    capture: object
+    records: str
+    row: dict[str, object]
+    fields: dict[str, dict[str, object]]
+    key: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
+    header: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
+    complete_when: dict[str, object] | None = None
+    duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
+    only_keys: object = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -239,9 +258,9 @@ class Halt(Step):
 
 
 _KINDS = {
-    StateTap: "state_tap",
-    Source: "source",
+    Read: "read",
     Call: "call",
+    Extract: "extract",
     Transform: "transform",
     Project: "project",
     Guard: "guard",
@@ -385,7 +404,7 @@ def _schema(contract: CarriedContractInput) -> ContractSchema:
 class Sequence:
     """Compose forward steps; guards may name explicit forward branch targets.
 
-    Source and Call steps name a slot of ``slots``; a Line binds each slot to an
+    Call steps name a slot of ``slots``; a Line binds each slot to an
     exact operation. ``preview()`` is local; ``build()`` produces the shared
     ProcedureInput consumed by every surface.
     """
@@ -442,6 +461,12 @@ class Sequence:
                     node[field.name] = contract_ref(value, field.name.replace("_", "-"))
                 elif field.name == "capture_contract":
                     node[field.name] = _accepted(value, "CaptureContract", "capture-contract")
+                elif field.name == "captures":
+                    if value:
+                        node[field.name] = {
+                            name: _accepted(contract, "CaptureContract", "capture-contract")
+                            for name, contract in sorted(value.items())
+                        }
                 elif field.name == "query":
                     node[field.name] = _accepted(value, "QueryDefinition", "query")
                 elif field.name == "effect_policy":
@@ -451,11 +476,11 @@ class Sequence:
                     node["slot"] = value
                 else:
                     node[field.name] = _template(value, previous)
-            if isinstance(step, StateTap) and step.parameters is None:
+            if isinstance(step, Read) and step.parameters is None:
                 node["parameters"] = {}
             if isinstance(step, PostInbox) and step.max_items is None:
                 del node["max_items"]  # absent takes the core default cap
-            if isinstance(step, (Source, Call)) and step.slot not in self.slots:
+            if isinstance(step, Call) and step.slot not in self.slots:
                 error(
                     step.name,
                     "slot_undeclared",
@@ -486,11 +511,7 @@ class Sequence:
                     try:
                         value = node[field_name]
                         if field_name == "spec":
-                            value = (
-                                value["value"]
-                                if node["transform_kind"] == "adapter"
-                                else {k: v for k, v in value.items() if k != "tag"}
-                            )
+                            value = {k: v for k, v in value.items() if k != "tag"}
                         validate_contract_schema(_schema(schema_ref), value)
                     except ValueError as exc:
                         error(step.name, "contract_value_invalid", str(exc))
@@ -624,6 +645,7 @@ __all__ = [
     "CompositionDiagnostic",
     "Contract",
     "EmitCapture",
+    "Extract",
     "Guard",
     "Halt",
     "Item",
@@ -643,8 +665,7 @@ __all__ = [
     "Sequence",
     "ProcedureSpec",
     "lower_procedure_spec",
-    "Source",
-    "StateTap",
+    "Read",
     "SubjectKeyClaimObject",
     "SubjectKeyReference",
     "Transform",

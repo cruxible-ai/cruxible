@@ -184,7 +184,10 @@ def resolve_source(
     bindings: dict[str, SourceBinding] = {}
     for name, selected in request.bindings.items():
         if isinstance(selected, SourceSlotSelection):
-            from cruxible_client.contracts.provider_operations import contract_schema_view
+            from cruxible_client.contracts.provider_operations import (
+                capture_fields,
+                contract_schema_view,
+            )
             from cruxible_client.contracts.shapes import contract_digest
 
             def resolve_ref(ref: Any) -> Any:
@@ -203,6 +206,7 @@ def resolve_source(
                     "effect": selected.effect,
                     "input": contract_schema_view(in_contract, resolve_ref),
                     "output": contract_schema_view(out_contract, resolve_ref),
+                    "captures": [field for field, _kind in capture_fields(out_contract)],
                 }
             )
         elif isinstance(selected, SourceQuerySelection):

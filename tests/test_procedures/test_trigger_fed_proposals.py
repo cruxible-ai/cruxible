@@ -61,15 +61,17 @@ PROPOSER = "advisory-proposer"
 def _trigger_fed_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """The plain Source Procedure produces Captures; a proposing Line consumes them."""
 
-    instance, owner, _procedure, root, policy = fixtures._world(tmp_path)
-    # A second Procedure of the same shape, ending in a proposal terminal.
+    instance, owner, _procedure, root, policy = fixtures._world(tmp_path, document=True)
+    # A second Procedure of the same shape, ending in a proposal terminal; the
+    # triggering Capture is bound to its call, which it reads through an extract.
     monkeypatch.setattr(fixtures, "PROCEDURE_NAME", PROPOSER)
     proposer = terminal_procedure(
         fixtures._procedure(
             instance,
             root=root,
             contract=capture_contract(),
-        )
+        ),
+        document=True,
     )
     monkeypatch.undo()
     contract = capture_contract()

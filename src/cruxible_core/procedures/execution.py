@@ -12,7 +12,8 @@ from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Final, Literal, Protocol, cast
 
-from cruxible_client.contracts.captures import capture_retention_policy
+from cruxible_client.contracts.captures import capture_retention_policy, parse_capture_envelope
+from cruxible_client.contracts.shapes import Contract, ContractRef
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -67,18 +68,17 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import analyze_procedure
+from cruxible_client.contracts.procedures.graph import analyze_procedure, reference_templates
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
     line_identity_digest,
 )
 from cruxible_client.contracts.procedures.models import (
+    CLOSED_TRANSFORM_KINDS,
     TERMINAL_REQUIRED_RUNGS,
     CallNode,
     CaptureEgressNode,
-    ClaimTapNode,
-    ConstantNode,
-    ExhaustTapNode,
+    ExtractNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -91,15 +91,14 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNode,
     ProposalItemsFanOut,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatBodyNode,
     RepeatNode,
-    ReturnNode,
     SelectNode,
     SettleChangeSetNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
     authority_for_rung,
+    is_terminal_node,
     iter_references,
     iter_role_references,
 )
@@ -143,6 +142,7 @@ from cruxible_client.contracts.provider_execution import (
 from cruxible_client.contracts.provider_operations import (
     OperationItemBudgetExceeded,
     OperationValueRefused,
+    capture_fields,
     closure_lookup,
     validate_operation_value,
 )
@@ -186,6 +186,7 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
     disallowed_origin,
 )
+from cruxible_core.procedures.completeness import Completeness, CompletenessProbe
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
@@ -208,6 +209,7 @@ from cruxible_core.procedures.egress import (
     effective_rung_digest,
     verify_terminal_egress_receipt,
 )
+from cruxible_core.procedures.extract import ExtractRefused, run_extract
 from cruxible_core.procedures.input_planes import (
     AcceptedClaimRunInputV1,
     AcceptedStateRunInputV2,
@@ -253,6 +255,11 @@ from cruxible_core.procedures.terminal_dependencies import (
     produced_capture_token,
     receipt_token,
     terminal_item_key,
+)
+from cruxible_core.procedures.transforms import (
+    TransformInputInvalid,
+    TransformItemBudgetExceeded,
+    apply_closed_transform,
 )
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -1054,6 +1061,20 @@ class StateTapReadResultV1(_StrictExecutionModel):
     tag: Literal["playbill-state-tap-read-result-v1"] = "playbill-state-tap-read-result-v1"
     value: object
     effective_budgets: QueryBudgets
+    #: Rows the read returned, charged against the run's read ceiling.
+    rows: int = Field(default=0, ge=0, exclude=True)
+
+
+class ReadCeilingExceeded(ExecutionError):
+    """A Procedure read that the run's read ceiling would clip: refused, never truncated."""
+
+    def __init__(self, *, clipped: tuple[str, ...], candidates: int | None, ceiling: int) -> None:
+        self.clipped = clipped
+        self.candidates = candidates
+        self.ceiling = ceiling
+        super().__init__(
+            f"read_ceiling_exceeded: the read clips {list(clipped)} under its {ceiling}-row ceiling"
+        )
 
     @field_validator("value", mode="before")
     @classmethod
@@ -1068,7 +1089,7 @@ class StateTapReaderProtocol(Protocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-        budgets: QueryBudgets | None = None,
+        ceiling: int = ...,
     ) -> StateTapReadResultV1: ...
 
     def read_accepted_claim(
@@ -1644,8 +1665,12 @@ def _node_pin_sets(accepted: AcceptedProcedure) -> tuple[ProcedureNodePinSetV1, 
     plan = execution_plan(accepted)
     result: list[ProcedureNodePinSetV1] = []
     for node in plan.definition.nodes:
+        # One artifact pinned by two fields (two capture fields of one
+        # CaptureContract) is one pin of the node.
         pins = tuple(
-            plan.pin(reference, role=role) for role, reference in iter_role_references(node)
+            dict.fromkeys(
+                plan.pin(reference, role=role) for role, reference in iter_role_references(node)
+            )
         )
         result.append(
             ProcedureNodePinSetV1(
@@ -1678,12 +1703,12 @@ def accepted_procedure_pin_set_digest(accepted: AcceptedProcedure) -> str:
 
 
 def state_tap_parameters(
-    node: StateTapNode | ClaimTapNode,
+    node: ReadNode,
     *,
     invocation_input: object,
     values: dict[str, CanonicalValue],
 ) -> CanonicalValue:
-    if isinstance(node, ClaimTapNode):
+    if node.reads_claims:
         return _resolve_template(
             {
                 "subject_kind": node.subject_kind,
@@ -1693,15 +1718,13 @@ def state_tap_parameters(
             input_payload=normalize_canonical(invocation_input),
             outputs=values,
         )
-    if isinstance(node, StateTapNode):
-        return _resolve_template(
-            node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
-        )
-    return normalize_canonical(node.parameters)
+    return _resolve_template(
+        node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
+    )
 
 
-def state_tap_view(node: StateTapNode | ClaimTapNode, value: object) -> CanonicalValue:
-    if isinstance(node, StateTapNode):
+def state_tap_view(node: ReadNode, value: object) -> CanonicalValue:
+    if not node.reads_claims:
         from cruxible_client.contracts.query.results import ClaimQueryResult
         from cruxible_core.query.engine import query_execution_receipt
 
@@ -1739,17 +1762,21 @@ def bind_accepted_state_materials(
 
     materials: list[AcceptedStateRunMaterial] = []
     values: dict[str, CanonicalValue] = {}
+    # One ceiling across the run's reads: each read gets what is left of it.
+    remaining = accepted.procedure.definition.hard_caps.max_read_rows
     for node in accepted.procedure.definition.nodes:
-        if isinstance(node, ConstantNode):
-            values[node.as_] = normalize_canonical(node.fields)
-        if not isinstance(node, StateTapNode | ClaimTapNode):
+        if isinstance(node, ProjectNode) and node.literal is not None:
+            values[node.as_] = normalize_canonical(node.literal)
+        if not isinstance(node, ReadNode):
             continue
-        binding = node.claim_type if isinstance(node, ClaimTapNode) else node.query
+        binding = node.claim_type if node.claim_type is not None else node.query
+        assert binding is not None  # a read names exactly one selection
         query = resolved_pin(accepted, binding)
         parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
-            if isinstance(node, ClaimTapNode):
+            if node.reads_claims:
                 assert isinstance(parameters, dict)
+                assert node.subject_kind is not None
                 identity = parameters["subject_id"]
                 if not isinstance(identity, str):
                     raise ExecutionError("Subject id must resolve to a string")
@@ -1762,16 +1789,27 @@ def bind_accepted_state_materials(
                     coordinate=accepted_coordinate,
                 )
             else:
+                if remaining < 1:
+                    raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
                 read = state_reader.read_accepted_state(
                     query=query,
                     parameters=parameters,
                     coordinate=accepted_coordinate,
-                    **(
-                        {"budgets": node.budgets}
-                        if isinstance(node, StateTapNode) and node.budgets is not None
-                        else {}
-                    ),
+                    ceiling=remaining,
                 )
+                remaining -= read.rows
+        except ReadCeilingExceeded as exc:
+            raise ProcedureBoundaryRefused(
+                "read_ceiling_exceeded",
+                "A Procedure read would be clipped by the run's read ceiling; it refuses "
+                "rather than return part of its result.",
+                details={
+                    "node": node.node_id,
+                    "clipped": list(exc.clipped),
+                    "candidates": exc.candidates,
+                    "ceiling": exc.ceiling,
+                },
+            ) from exc
         except Exception as exc:
             raise ProcedureBoundaryRefused(
                 "state_tap_refused",
@@ -1793,7 +1831,7 @@ def bind_accepted_state_materials(
             AcceptedClaimRunInputV1.model_validate(
                 dict(common, claim_type_digest=query.artifact_digest)
             )
-            if isinstance(node, ClaimTapNode)
+            if node.reads_claims
             else AcceptedStateRunInputV2.model_validate(
                 dict(common, query_definition_digest=query.artifact_digest)
             )
@@ -2073,6 +2111,13 @@ class _RunState:
     #: and their canonical bytes, against the run's inbox byte bound.
     inbox_items: int = 0
     inbox_bytes: int = 0
+    #: Exact bytes of each Capture this run committed or was admitted, by
+    #: Capture digest, for the extract nodes that decode them.
+    capture_bodies: dict[str, bytes] = dataclass_field(default_factory=dict)
+    #: The CaptureContract digest each such Capture was committed under.
+    capture_contracts: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Which aliases hold incomplete values, and the control lineage's state.
+    completeness: Completeness = dataclass_field(default_factory=Completeness)
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2153,6 +2198,8 @@ class ProcedureExecutor:
         parent_context: ParentInvocationContext | None = None,
         ephemeral_spec_digest: str | None = None,
         enum_resolver: EnumResolver | None = None,
+        contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
+        completeness_probe: CompletenessProbe | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2189,6 +2236,12 @@ class ProcedureExecutor:
         # coordinate; replay re-reads the same pinned coordinate and so sees
         # the same members deterministically -- nothing extra needs retaining.
         self.enum_resolver = enum_resolver
+        # Resolves an extract's row Contract (and the Contracts it nests) at the
+        # admitted coordinate, by name, version and pinned digest.
+        self.contract_resolver = contract_resolver
+        # A sink harness told whether each sink's value is complete (the law's
+        # real sinks belong to the Claims terminal).
+        self.completeness_probe = completeness_probe
 
     def _use_plan(self, accepted: AcceptedProcedure) -> ProcedureExecutionPlan:
         """Run against ``accepted``'s execution plan: its references resolve through it."""
@@ -2530,7 +2583,9 @@ class ProcedureExecutor:
         """Refuse an incomplete Source closure before the first attempt record."""
 
         sources = tuple(
-            node for node in accepted.procedure.definition.nodes if isinstance(node, SourceNode)
+            node
+            for node in accepted.procedure.definition.nodes
+            if isinstance(node, CallNode) and node.acquires
         )
         if not sources:
             return
@@ -2559,7 +2614,9 @@ class ProcedureExecutor:
                 None,
             )
             if supplied is not None:
-                contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+                contract_pin = self._pin(
+                    next(iter(node.captures.values())), label=f"call {node.node_id!r} captures"
+                )
                 contract = self.capture_contracts.get(contract_pin.artifact_digest)
                 selected = next(
                     (item for item in selection.decisions if item.input_name == node.as_),
@@ -2593,8 +2650,8 @@ class ProcedureExecutor:
                 )
             occurrence = matches[0]
             contract_pin = self._pin(
-                node.capture_contract,
-                label=f"source {node.node_id!r}",
+                next(iter(node.captures.values())),
+                label=f"call {node.node_id!r} captures",
             )
             contract = self.capture_contracts.get(contract_pin.artifact_digest)
             if (
@@ -2788,15 +2845,15 @@ class ProcedureExecutor:
         }
         retained_values.update(
             {
-                node.as_: normalize_canonical(node.fields)
+                node.as_: normalize_canonical(node.literal)
                 for node in procedure.definition.nodes
-                if isinstance(node, ConstantNode)
+                if isinstance(node, ProjectNode) and node.literal is not None
             }
         )
         expected_state_inputs = {
             node.as_: (
                 self._pin(
-                    node.claim_type if isinstance(node, ClaimTapNode) else node.query,
+                    cast(ArtifactNameRef, node.claim_type or node.query),
                     label=f"state read {node.node_id!r}",
                 ),
                 run_value_digest(
@@ -2807,7 +2864,7 @@ class ProcedureExecutor:
                 ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, StateTapNode | ClaimTapNode)
+            if isinstance(node, ReadNode)
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -2872,13 +2929,10 @@ class ProcedureExecutor:
         """Refuse every cross-plane relabel before the first node can observe a value."""
         self._use_plan(accepted)
 
-        nodes = {
+        nodes: dict[str, ReadNode | CallNode] = {
             node.as_: node
             for node in accepted.procedure.definition.nodes
-            if isinstance(
-                node,
-                ClaimTapNode | StateTapNode | SourceNode | ExhaustTapNode,
-            )
+            if isinstance(node, ReadNode) or (isinstance(node, CallNode) and node.acquires)
         }
         for run_input in admission.run_inputs:
             node = nodes.get(run_input.input_name)
@@ -2889,43 +2943,20 @@ class ProcedureExecutor:
                 )
             try:
                 validate_node_input_plane(node, run_input)
-                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(node, SourceNode):
-                    pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
-                    if pin.artifact_digest != run_input.capture_contract_digest:
-                        raise ValueError("landed Capture does not match the Source CaptureContract")
+                if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(node, CallNode):
+                    pins = {
+                        self._pin(ref, label=f"call {node.node_id!r} captures").artifact_digest
+                        for ref in node.captures.values()
+                    }
+                    if run_input.capture_contract_digest not in pins:
+                        raise ValueError(
+                            "landed Capture does not match the call's capture CaptureContract"
+                        )
             except ValueError as exc:
                 raise ProcedureBoundaryRefused(
                     "input_material_mismatch",
                     f"Admitted input plane was relabelled: {exc}",
                 ) from exc
-        expected_exhaust = {
-            node.as_
-            for node in accepted.procedure.definition.nodes
-            if isinstance(node, ExhaustTapNode)
-        }
-        if {item.input_name for item in admission.exhaust_inputs} != expected_exhaust and (
-            admission.invocation_origin == "line"
-        ):
-            raise ProcedureBoundaryRefused(
-                "input_material_mismatch",
-                "Line admission exhaust_tap input set differs.",
-            )
-        for exhaust in admission.exhaust_inputs:
-            node = nodes[exhaust.input_name]
-            if not isinstance(node, ExhaustTapNode):  # pragma: no cover - plane law covers it
-                raise ExecutionError("exhaust input names a non-exhaust node")
-            reducer = self._pin(
-                node.reducer_or_query,
-                label=f"exhaust_tap {node.node_id!r}",
-            )
-            if (
-                exhaust.reducer_or_query_digest != reducer.artifact_digest
-                or exhaust.journal_identity != node.journal_identity
-            ):
-                raise ProcedureBoundaryRefused(
-                    "input_material_mismatch",
-                    f"Procedure admission exhaust input {exhaust.input_name!r} differs.",
-                )
 
     def _require_current(self, admission: ProcedureRunAdmission) -> None:
         if admission.lane == "replay":
@@ -3050,6 +3081,7 @@ class ProcedureExecutor:
                         node, CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode
                     ),
                 )
+                self._track_completeness(node, state)
                 self._append_event(
                     admission,
                     records,
@@ -3099,7 +3131,7 @@ class ProcedureExecutor:
                 )
             if target is None:
                 try:
-                    if isinstance(node, ReturnNode):
+                    if isinstance(node, ProjectNode) and node.leaf:
                         result = state.outputs[node.as_]
                         state.return_tokens = (
                             state.alias_tokens(frozenset({node.as_})) | state.control
@@ -3128,6 +3160,12 @@ class ProcedureExecutor:
                         )
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise ExecutionError("Procedure return alias was not produced") from exc
+                if self.completeness_probe is not None and not is_terminal_node(node):
+                    returned = definition.returns
+                    self.completeness_probe(
+                        node.node_id,
+                        state.completeness.at_sink(() if returned is None else (returned,)),
+                    )
                 return_contract = self._pin(
                     definition.contract_out,
                     label="Procedure contract_out",
@@ -3184,28 +3222,20 @@ class ProcedureExecutor:
                 started_ns=started_ns,
             )
             return None
-        if isinstance(node, StateTapNode | ClaimTapNode):
+        if isinstance(node, ReadNode):
             if node.as_ not in state.outputs:
-                raise ExecutionError("admitted state_tap material is absent")
-            self._extend_alias(
-                state, node.as_, _node_policy_tokens(node, self.references) | state.control
-            )
-            return None
-        if isinstance(node, SourceNode):
-            self._run_source(node, admission=admission, state=state, records=records)
-            return None
-        if isinstance(node, ExhaustTapNode):
-            if node.as_ not in state.outputs:
-                raise _RunRefusal(
-                    "line_binding_required",
-                    "No run lane serves exhaust_tap yet; a Line binding cannot enable it.",
-                    node_id=node.node_id,
-                )
+                raise ExecutionError("admitted read material is absent")
             self._extend_alias(
                 state, node.as_, _node_policy_tokens(node, self.references) | state.control
             )
             return None
         if isinstance(node, HaltNode):
+            return None
+        if isinstance(node, CallNode) and node.acquires:
+            self._run_acquiring_call(node, admission=admission, state=state, records=records)
+            return None
+        if isinstance(node, ExtractNode):
+            self._run_extract(node, state=state)
             return None
         if isinstance(node, CallNode):
             self._run_provider_v4(
@@ -3215,7 +3245,11 @@ class ProcedureExecutor:
                 records=records,
             )
             return None
+        if isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS:
+            self._run_closed_transform(node, admission=admission, state=state)
+            return None
         if isinstance(node, TransformNode):
+            assert node.contract_in is not None and node.contract_out is not None
             declared_spec = _declared_transform_spec(node.transform_kind, node.spec)
             resolved = _resolve_node_template(
                 declared_spec,
@@ -3269,10 +3303,10 @@ class ProcedureExecutor:
                     )
                 fields: object = "$steps." + present[0]
             else:
-                fields = node.fields
+                fields = node.template
             value = (
-                normalize_canonical(fields)
-                if isinstance(node, ConstantNode)
+                normalize_canonical(node.literal)
+                if isinstance(node, ProjectNode) and node.literal is not None
                 else _resolve_node_template(
                     fields,
                     node_id=node.node_id,
@@ -3291,7 +3325,7 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
-            provenance_fields = {} if isinstance(node, ConstantNode) else fields
+            provenance_fields = fields
             state.provenance[node.as_] = _projected_provenance(
                 provenance_fields,
                 state=state,
@@ -3359,7 +3393,7 @@ class ProcedureExecutor:
         )
 
     def _executed_workspace_request(
-        self, node: SourceNode, resolved_request: object
+        self, node: CallNode, resolved_request: object
     ) -> ExecutedWorkspaceFileSourceRequestV2:
         """The authored workspace request as the daemon executes it, or a typed refusal."""
 
@@ -3385,7 +3419,7 @@ class ProcedureExecutor:
                 details={
                     "path_class": "binding",
                     "repair_commands": [
-                        "remove workspace_binding_digest from the Source request; the daemon "
+                        "remove workspace_binding_digest from the call input; the daemon "
                         "resolves the workspace"
                     ],
                 },
@@ -3397,15 +3431,21 @@ class ProcedureExecutor:
         except WorkspaceFileReadRefused as exc:
             raise _workspace_refusal(exc, node_id=node.node_id) from exc
 
-    def _run_source(
+    def _run_acquiring_call(
         self,
-        node: SourceNode,
+        node: CallNode,
         *,
         admission: ProcedureRunAdmission,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
-        """Run Source through B2's admitted common Provider occurrence."""
+        """Run a call with captures through its admitted Provider occurrence.
+
+        Each ``capture<K>`` field of the slot's out Contract is committed
+        byte-exact as a Capture of its pinned CaptureContract; every other
+        field is normalized and checked by the out Contract. The call's value
+        names each Capture by digest.
+        """
 
         if node.as_ in state.outputs:
             self._extend_alias(
@@ -3415,23 +3455,36 @@ class ProcedureExecutor:
         if not admission.plans_providers:
             raise _RunRefusal(
                 "provider_acquisition_plan_required",
-                "Graph-v4 Source execution requires the landed B2 acquisition carrier.",
+                "An acquiring call requires the admitted acquisition carrier.",
                 node_id=node.node_id,
             )
         rule = self._acquisition_rule(node)
         if rule is None:
             raise _RunRefusal(
                 "source_acquisition_unavailable",
-                "No declared acquisition rule serves this Source node.",
+                "No declared acquisition rule serves this acquiring call.",
                 node_id=node.node_id,
             )
+        # The first capture field is the acquisition's own Capture; any other
+        # capture field is committed beside it under the same CaptureContract.
+        capture_field, capture_ref = next(iter(node.captures.items()))
+        extra_fields = tuple(field for field in node.captures if field != capture_field)
         occurrence = self._planned_external_occurrence(
             state=state,
             node_id=node.node_id,
             repeat_node_id=None,
             occurrence_kind="source",
         )
-        contract_pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+        contract_pin = self._pin(capture_ref, label=f"call {node.node_id!r} captures")
+        if any(
+            self._pin(node.captures[field], label=f"call {node.node_id!r} captures") != contract_pin
+            for field in extra_fields
+        ):
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "An acquiring call commits its capture fields under one CaptureContract.",
+                node_id=node.node_id,
+            )
         if (
             occurrence.input_name != node.as_
             or occurrence.capture_contract_digest != contract_pin.artifact_digest
@@ -3440,12 +3493,12 @@ class ProcedureExecutor:
         ):
             raise _RunRefusal(
                 "provider_acquisition_plan_mismatch",
-                "The admitted Source occurrence differs from the graph binding.",
+                "The admitted acquiring occurrence differs from the graph binding.",
                 node_id=node.node_id,
             )
         resolved_request = normalize_canonical(
             _resolve_template(
-                node.request,
+                node.input,
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
@@ -3457,7 +3510,7 @@ class ProcedureExecutor:
             # provider is invoked.
             raise _RunRefusal(
                 cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
-                f"Source alias {node.as_!r} requests {offending_origin!r}, whose origin is "
+                f"Call alias {node.as_!r} requests {offending_origin!r}, whose origin is "
                 f"not in the Line's permitted acquisition.origins for this field.",
                 node_id=node.node_id,
             )
@@ -3589,15 +3642,39 @@ class ProcedureExecutor:
             # a redirect) are checked too, before any Capture conversion.
             raise _RunRefusal(
                 cast(ProcedureNodeRefusalCode, ACQUISITION_ORIGIN_INELIGIBLE),
-                f"Source alias {node.as_!r} result names {offending_result_origin!r}, whose "
+                f"Call alias {node.as_!r} result names {offending_result_origin!r}, whose "
                 f"origin is not in the Line's permitted acquisition.origins for this field.",
                 node_id=node.node_id,
             )
+        out_contract = closure_lookup(occurrence.contracts)(occurrence.operation.out)
+        # An operation whose out Contract carries no capture<K> field returns
+        # its whole output as Capture wire; the call's value then names only
+        # that Capture.
+        whole_wire = workspace_request is None and (
+            out_contract is None or not capture_fields(out_contract)
+        )
+        if whole_wire:
+            output = self._validate_operation_value(
+                occurrence,
+                normalize_canonical(output),
+                direction="out",
+                admission=admission,
+                state=state,
+                node_id=node.node_id,
+            )
         try:
-            if workspace_request is None or source_read_receipt is None:
+            if whole_wire:
                 provider_result = ProviderResultToExternalCapture.model_validate(output)
+            elif workspace_request is None or source_read_receipt is None:
+                if not isinstance(output, dict):
+                    raise ValueError("an acquiring call's output is a record")
+                provider_result = ProviderResultToExternalCapture.model_validate(
+                    output.get(capture_field)
+                )
             else:
-                material_bytes = canonical_bytes(output)
+                # The core-served read commits the file's exact bytes, the ones
+                # core read and handed the operation; its output structures them.
+                assert isinstance(provider_payload, dict)
                 provider_result = ProviderResultToExternalCapture(
                     source_identity=workspace_request.logical_source,
                     coordinate_type=workspace_request.coordinate_type,
@@ -3605,15 +3682,18 @@ class ProcedureExecutor:
                     selector_type=workspace_request.selector_type,
                     selector=workspace_request.selector,
                     replayability=workspace_request.replayability,
-                    content_base64=base64.b64encode(material_bytes).decode("ascii"),
-                    byte_length=len(material_bytes),
-                    bytes_digest=self.bodies.digest_bytes(material_bytes).tagged,
+                    content_base64=str(provider_payload["bytes"]),
+                    byte_length=int(cast(int, provider_payload["byte_length"])),
+                    bytes_digest=str(provider_payload["bytes_digest"]),
                     observed_at=source_read_receipt.read_at,
                 )
         except (ValidationError, ValueError) as exc:
             raise _InternalFailure(
                 "provider_protocol_violation",
-                details={"node_id": node.node_id, "reason": "Source result is not Capture wire"},
+                details={
+                    "node_id": node.node_id,
+                    "reason": f"capture field {capture_field!r} is not Capture wire",
+                },
             ) from exc
         try:
             # F05b: every check independent of the result's byte length runs
@@ -3696,18 +3776,62 @@ class ProcedureExecutor:
                 producer=self.slot_bindings[node.slot].build.target,
                 bound_generation=admission.accepted_coordinate.generation_root,
                 source_read_receipt=source_read_receipt,
+                provider_output=None if whole_wire else output,
             )
             envelope = built.envelope
             source = envelope.source
             assert isinstance(source, ExternalSourceReference)
             material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
-            material = normalize_canonical(json.loads(material_bytes))
-            # A workspace read's material is the canonical encoding this run made
-            # of its output, and the Capture build verified it canonical again;
-            # any other Provider's material is checked here.
-            if workspace_request is None or source_read_receipt is None:
-                if canonical_bytes(material) != material_bytes:
-                    raise ValueError("Source material is not canonical JSON")
+            assert isinstance(output, dict)
+            extras: dict[str, tuple[str, bytes]] = {}
+            for field in extra_fields:
+                extra_result = ProviderResultToExternalCapture.model_validate(output.get(field))
+                extra = build_provider_external_capture_v2(
+                    store=reserved_store,
+                    contract=contract,
+                    result=extra_result,
+                    receipt=invocation_receipt,
+                    occurrence=occurrence,
+                    producer=self.slot_bindings[node.slot].build.target,
+                    bound_generation=admission.accepted_coordinate.generation_root,
+                    provider_output=output,
+                )
+                extras[field] = (
+                    extra.capture_digest,
+                    base64.b64decode(extra_result.content_base64, validate=True),
+                )
+            material = (
+                {capture_field: built.capture_digest}
+                if whole_wire
+                # The core-served read: the operation's own structured result,
+                # beside the capture field of the bytes core read.
+                else {
+                    **self._validate_operation_value(
+                        occurrence,
+                        normalize_canonical(output),
+                        direction="out",
+                        admission=admission,
+                        state=state,
+                        node_id=node.node_id,
+                    ),  # type: ignore[dict-item]
+                    capture_field: built.capture_digest,
+                }
+                if workspace_request is not None
+                else self._validate_operation_value(
+                    occurrence,
+                    normalize_canonical(
+                        {
+                            **output,
+                            capture_field: built.capture_digest,
+                            **{field: digest for field, (digest, _body) in extras.items()},
+                        }
+                    ),
+                    direction="out",
+                    admission=admission,
+                    state=state,
+                    node_id=node.node_id,
+                )
+            )
             acquisition_receipt = CaptureAcquisitionReceiptV1(
                 capture_contract_digest=envelope.capture_contract_digest,
                 producer=envelope.producer,
@@ -3787,7 +3911,190 @@ class ProcedureExecutor:
                     capture_digest=built.capture_digest,
                 )
             )
+            state.capture_bodies[built.capture_digest] = material_bytes
+            state.capture_contracts[built.capture_digest] = contract_pin.artifact_digest
+            for digest, body in extras.values():
+                state.capture_bodies[digest] = body
+                state.capture_contracts[digest] = contract_pin.artifact_digest
+                state.capture_bytes += len(body)
+                state.facts[digest] = DependencyEvidenceFactsV1(
+                    epistemic_grade=contract.epistemic_grade,
+                    provenance_grade="daemon-fetched",
+                    acquisition_input_name=rule.input_name,
+                )
+                self._extend_alias(state, node.as_, frozenset({produced_capture_token(digest)}))
         reserved_store.release()
+
+    def _capture_body(self, state: _RunState, capture_digest: str) -> bytes:
+        """The exact bytes of a Capture this run committed or was admitted."""
+
+        held = state.capture_bodies.get(capture_digest)
+        if held is not None:
+            return held
+        access = BodyAccessContext(principal_id="procedure-extract", can_read_body=True)
+        envelope = parse_capture_envelope(self.bodies.read(capture_digest, access=access))
+        body = self.bodies.read(envelope.commitment.digest, access=access)
+        state.capture_bodies[capture_digest] = body
+        state.capture_contracts[capture_digest] = envelope.capture_contract_digest
+        return body
+
+    def _run_extract(self, node: ExtractNode, *, state: _RunState) -> None:
+        """Read one Capture's records, typed, by its CaptureContract's decoding."""
+
+        call = state.outputs.get(node.capture_alias)
+        capture_digest = call.get(node.capture_field) if isinstance(call, dict) else None
+        if not isinstance(capture_digest, str):
+            raise _RunRefusal(
+                "runtime_reference_unresolved",
+                f"extract {node.node_id!r}: {node.capture!r} holds no Capture this run made "
+                "or was admitted (an omitted or defaulted acquisition binds none)",
+                node_id=node.node_id,
+            )
+        try:
+            content = self._capture_body(state, capture_digest)
+        except Exception as exc:
+            raise _RunRefusal(
+                "source_material_unavailable",
+                f"extract {node.node_id!r}: the Capture's bytes are unavailable",
+                node_id=node.node_id,
+            ) from exc
+        contract = self.capture_contracts.get(state.capture_contracts.get(capture_digest, ""))
+        row = None if self.contract_resolver is None else self.contract_resolver(node.row)
+        if contract is None or row is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node.node_id,
+                    "reason": "the extract's CaptureContract or row Contract is unavailable",
+                },
+            )
+        only_keys = None
+        if node.only_keys is not None:
+            resolved = _resolve_node_template(
+                node.only_keys,
+                node_id=node.node_id,
+                transform_kind=None,
+                input_payload=state.input_payload,
+                outputs=state.outputs,
+            )
+            if not isinstance(resolved, list) or not all(
+                isinstance(item, dict) for item in resolved
+            ):
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    f"extract {node.node_id!r}: only_keys resolves to a list of key records",
+                    node_id=node.node_id,
+                )
+            only_keys = cast(list[dict[str, object]], resolved)
+        try:
+            outcome = run_extract(
+                node,
+                capture_digest=capture_digest,
+                content=content,
+                decoding=getattr(contract, "decoding", None),
+                row=row,
+                resolve=self.contract_resolver,
+                enums=self.enum_resolver,
+                only_keys=only_keys,
+            )
+        except ExtractRefused as exc:
+            raise _RunRefusal(
+                cast(ProcedureNodeRefusalCode, exc.code),
+                str(exc),
+                node_id=node.node_id,
+                details=exc.details or None,
+            ) from exc
+        value = normalize_canonical(outcome.value())
+        state.observe_items(len(outcome.held), f"extract:{node.node_id}", "results")
+        state.outputs[node.as_] = value
+        state.completeness.mark(
+            node.as_,
+            outcome.complete and state.completeness.complete((node.capture_alias,)),
+        )
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_node_policy_tokens(node, self.references)
+            | state.control
+            | state.alias_tokens(frozenset({node.capture_alias}))
+        )
+
+    def _run_closed_transform(
+        self,
+        node: TransformNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+    ) -> None:
+        """One closed transform over records: typed, three-valued, completeness carried."""
+
+        def resolve(reference: object) -> object:
+            return _resolve_node_template(
+                reference,
+                node_id=node.node_id,
+                transform_kind=None,
+                input_payload=state.input_payload,
+                outputs=state.outputs,
+            )
+
+        try:
+            value, complete = apply_closed_transform(
+                node.transform_kind,
+                node.spec,
+                resolve,
+                parameters=state.parameters if isinstance(state.parameters, dict) else None,
+                enums=self.enum_resolver,
+                max_items=_effective_max_items(admission),
+            )
+        except TransformItemBudgetExceeded as exc:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=exc.limit,
+                observed=exc.observed,
+                node_id=node.node_id,
+                boundary=f"transform:{node.node_id}",
+                field_path="records",
+            ) from exc
+        except TransformInputInvalid as exc:
+            raise _RunRefusal(
+                "contract_input_refused",
+                f"The {node.transform_kind} transform input is invalid: {exc}",
+                node_id=node.node_id,
+            ) from exc
+        aliases = _referenced_aliases(node.spec)
+        state.outputs[node.as_] = value
+        state.completeness.mark(node.as_, complete and state.completeness.complete(aliases))
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=_node_policy_tokens(node, self.references)
+            | state.control
+            | state.alias_tokens(aliases)
+        )
+
+    def _track_completeness(self, node: object, state: _RunState) -> None:
+        """Carry the completeness law past one node (extract and closed transforms set theirs)."""
+
+        tracker = state.completeness
+        if isinstance(node, GuardNode):
+            tracker.guard(node.predicate.step_aliases())
+            return
+        if isinstance(node, ExtractNode) or (
+            isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS
+        ):
+            return
+        aliases: frozenset[str] = frozenset()
+        if isinstance(node, SelectNode):
+            aliases = frozenset(alias for alias in node.sources if alias in state.outputs)
+        else:
+            for _field, template in reference_templates(node):  # type: ignore[arg-type]
+                aliases |= _referenced_aliases(template)
+        if is_terminal_node(node):
+            if self.completeness_probe is not None:
+                self.completeness_probe(node.node_id, tracker.at_sink(aliases))  # type: ignore[attr-defined]
+            return
+        alias = getattr(node, "as_", None)
+        if isinstance(alias, str) and alias in state.outputs:
+            if isinstance(node, ReadNode) or (isinstance(node, CallNode) and node.acquires):
+                tracker.mark(alias, True)
+            else:
+                tracker.mark(alias, tracker.complete(aliases))
 
     def _occurrence_matches_slot(
         self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
@@ -3804,15 +4111,15 @@ class ProcedureExecutor:
             and occurrence.operation_signature_digest == binding.operation_signature_digest
         )
 
-    def _acquisition_rule(self, node: SourceNode) -> AcquisitionRule | None:
+    def _acquisition_rule(self, node: CallNode) -> AcquisitionRule | None:
         if self.acquisition_rules is None:
             return None
-        # A Source node's one Capture output is named by its alias.
+        # An acquiring call's rule is named by its alias.
         return self.acquisition_rules.rule_for(node.node_id, node.as_)
 
     def _bind_acquisition(
         self,
-        node: SourceNode,
+        node: CallNode,
         *,
         admission: ProcedureRunAdmission,
         state: _RunState,
@@ -3839,7 +4146,7 @@ class ProcedureExecutor:
                 disposition="refused",
             )
             details: dict[str, object] = {"input_name": rule.input_name}
-            message = f"Source alias {rule.input_name!r} refuses this result. "
+            message = f"Acquiring call {rule.input_name!r} refuses this result. "
             if (
                 result.acquisition is not None
                 and rule.max_age is not None
@@ -5161,15 +5468,12 @@ class ProcedureExecutor:
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             )
         assert output is not None
-        if occurrence.occurrence_kind in ("call", "source"):
+        if occurrence.occurrence_kind == "call":
             # F02: every operation output is checked against its own pinned
-            # Contract, call or Source, pure or external_read alike. A Source
-            # over a pure operation (the workspace.file structuring) returns
-            # the material itself; an external_read Source's acquisition
-            # envelope is checked here too -- the later Capture-wire check
-            # (ProviderResultToExternalCapture) is a different, generic
-            # shape/law, never a substitute for the operation's own out
-            # Contract.
+            # Contract. An acquiring call's output is checked by the same
+            # Contract once core has committed each capture field and put its
+            # Capture digest in that field (``_run_acquiring_call``): what the
+            # operation returns there is Capture wire, not yet a digest.
             output = self._validate_operation_value(
                 occurrence,
                 output,
@@ -6275,13 +6579,10 @@ def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
     if not isinstance(spec, BaseModel):
         raise ExecutionError("typed transform spec is absent")
     payload = spec.model_dump(mode="json", exclude={"tag"})
-    if kind == "adapter":
-        return normalize_canonical(payload["value"])
     return normalize_canonical(payload)
 
 
 _TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCode] = {
-    "adapter": "adapter_value_invalid",
     "shape_items": "shape_items_input_invalid",
     "filter_items": "filter_items_input_invalid",
     "dedupe_items": "dedupe_items_input_invalid",
@@ -6532,8 +6833,6 @@ def _apply_transform(
 ) -> tuple[CanonicalValue, _ItemLineage | None]:
     """Apply one deterministic transform and report which input item fed each output."""
 
-    if kind == "adapter":
-        return spec, None
     if list_boundary is None:
         max_items = None
     if not isinstance(spec, dict):

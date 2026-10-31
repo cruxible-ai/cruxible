@@ -8,9 +8,9 @@ from typing import Any
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.captures import capture_components
 from cruxible_client.contracts.procedures.authored import (
+    CallStep,
     ProcedureSpec,
     ProcedureSpecError,
-    SourceStep,
     lower_procedure_spec,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
@@ -139,33 +139,62 @@ def resolve_procedure_spec(
             if kind == "slot":
                 assert isinstance(name, ProcedureSlot)
                 return pinned(name, "$.slots")
+            if kind == "extract_row":
+                from cruxible_client.contracts.shapes import parse_contract_ref
+
+                row_path = step_paths.get(id(name), "$.steps") + ".row"
+                ref = parse_contract_ref(name.row)
+                row = contract(ref, row_path)
+                return {
+                    "row": ref.model_copy(
+                        update={"digest": contract_digest(row).tagged}
+                    ).model_dump(mode="json"),
+                    "row_fields": contract_schema_view(row, resolve_ref).fields,
+                }
             step = name
             authored_path = step_paths.get(id(step), "$.steps")
-            capture = (
-                source(
-                    "CaptureContract:" + step.contract.removeprefix("CaptureContract:"),
-                    authored_path + ".contract",
-                )
-                if isinstance(step, SourceStep)
-                else None
+            acquiring = isinstance(step, CallStep) and bool(step.captures)
+            captures = (
+                [
+                    source(
+                        "CaptureContract:" + name.removeprefix("CaptureContract:"),
+                        f"{authored_path}.captures.{field}",
+                    )
+                    for field, name in sorted(step.captures.items())
+                ]
+                if acquiring
+                else []
             )
+            capture = captures[0] if len(captures) == 1 else None
             slot = pinned(spec.slots[step.slot], "$.slots." + step.slot)
             input_view = contract_schema_view(contract(slot.in_, authored_path), resolve_ref)
             output_view = contract_schema_view(contract(slot.out, authored_path), resolve_ref)
             request_defaults: dict[str, Any] = {}
             output_fields: Any = output_view.fields
-            workspace_source = isinstance(step, SourceStep) and is_workspace_file_signature(
+            workspace_source = acquiring and is_workspace_file_signature(
                 operation_signature_digest(slot)
             )
-            if isinstance(step, SourceStep) and not workspace_source:
-                # An external Source's alias binds its Capture's material: the
-                # canonical JSON its result carries as content_base64. The slot's
-                # out Contract types that Capture wire, not the material inside
-                # it, so references into the material are not checked against it.
-                # (A workspace read's material is its structured result itself.)
-                output_fields = None
+            if acquiring and not workspace_source:
+                from cruxible_client.contracts.procedures.capture_outputs import (
+                    WHOLE_WIRE_CAPTURE_FIELD,
+                )
+                from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+                from cruxible_client.contracts.provider_operations import capture_fields
+
+                if not capture_fields(contract(slot.out, authored_path)):
+                    # The operation returns one Capture as its whole output: the
+                    # call's value names only that Capture.
+                    output_fields = {WHOLE_WIRE_CAPTURE_FIELD: PropertySchema(type="string")}
             if workspace_source:
-                assert capture is not None
+                from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+                from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_CAPTURE_FIELD
+
+                # The read's exact bytes, committed by core beside its result.
+                output_fields = {
+                    **output_fields,
+                    WORKSPACE_FILE_CAPTURE_FIELD: PropertySchema(type="string"),
+                }
+            if workspace_source and capture is not None:
                 components = capture_components(capture)
                 coordinates = components.coordinate_schema_pins
                 selectors = components.selector_schema_pins

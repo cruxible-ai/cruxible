@@ -28,6 +28,7 @@ from cruxible_client.authoring.procedures import (
     ProcedureStateDependency,
 )
 from cruxible_client.authoring.sdk_types import ProcedureRef, QueryRef
+from cruxible_client.contracts.artifacts import ArtifactNameRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
@@ -187,11 +188,11 @@ class ProcedureSource:
         )
         from cruxible_client.contracts.procedures.models import (
             TERMINAL_REQUIRED_RUNGS,
-            ClaimTapNode,
             GuardNode,
             InvokeNode,
+            ReadNode,
             SelectNode,
-            StateTapNode,
+            is_terminal_node,
             required_authority,
         )
 
@@ -199,7 +200,7 @@ class ProcedureSource:
         source = None if definition is None else definition.source
         edges = compiled.edges
         terminal_kinds: dict[str, Literal["pure", "capture", "proposal", "settlement", "halt"]] = {
-            "return": "pure",
+            "project": "pure",
             "emit_capture": "capture",
             "propose_change_set": "proposal",
             "settle_change_set": "settlement",
@@ -228,7 +229,7 @@ class ProcedureSource:
             nodes=compiled.nodes,
             edges=edges,
             slots=dict(self.slots),
-            terminals=tuple(n.node_id for n in compiled.nodes if n.kind in terminal_kinds),
+            terminals=tuple(n.node_id for n in compiled.nodes if is_terminal_node(n)),
             returns=definition.returns if definition else "",
             budget=self._request.budget,
             hard_caps=self._request.hard_caps,
@@ -239,20 +240,18 @@ class ProcedureSource:
             state_dependencies=tuple(
                 ProcedureStateDependency(
                     node_id=n.node_id,
-                    kind="claim" if isinstance(n, ClaimTapNode) else "query",
-                    selection=n.claim_type if isinstance(n, ClaimTapNode) else n.query,
-                    cardinality=n.cardinality if isinstance(n, ClaimTapNode) else "query",
-                    limit=n.limit if isinstance(n, ClaimTapNode) else None,
-                    subject_kind=n.subject_kind if isinstance(n, ClaimTapNode) else None,
+                    kind="claim" if n.reads_claims else "query",
+                    selection=cast(ArtifactNameRef, n.claim_type or n.query),
+                    cardinality=n.cardinality if n.reads_claims else "query",
+                    limit=n.limit if n.reads_claims else None,
+                    subject_kind=n.subject_kind if n.reads_claims else None,
                     selector=cast(
                         JsonValue,
-                        normalize_canonical(
-                            n.subject_id if isinstance(n, ClaimTapNode) else n.parameters
-                        ),
+                        normalize_canonical(n.subject_id if n.reads_claims else n.parameters),
                     ),
                 )
                 for n in compiled.nodes
-                if isinstance(n, (ClaimTapNode, StateTapNode))
+                if isinstance(n, ReadNode)
             ),
             binding_requirements=tuple(
                 ProcedureBindingRequirement(
@@ -284,7 +283,7 @@ class ProcedureSource:
                     ),
                 )
                 for n in compiled.nodes
-                if n.kind in terminal_kinds
+                if is_terminal_node(n) and n.kind in terminal_kinds
             )
             if definition
             else (),

@@ -19,7 +19,6 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ExhaustTapNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -30,10 +29,9 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatBodyNode,
     RepeatNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
 )
 from tests.support.procedures import named
@@ -101,26 +99,20 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "node-output")
     return _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="state",
                 query=named(_pin("query", "QueryDefinition", "accepted-state")),
                 parameters={},
                 as_="state_rows",
             ),
-            SourceNode(
+            CallNode(
                 node_id="source",
-                capture_contract=named(
-                    _pin("capture-contract", "CaptureContract", "source-capture")
-                ),
+                captures={
+                    "capture": named(_pin("capture-contract", "CaptureContract", "source-capture"))
+                },
                 slot="fetch",
-                request={"state": "$steps.state_rows"},
+                input={"state": "$steps.state_rows"},
                 as_="source_rows",
-            ),
-            ExhaustTapNode(
-                node_id="exhaust",
-                reducer_or_query=named(_pin("reducer", "Reducer", "journal-reducer")),
-                journal_identity="run-exhaust",
-                as_="exhaust_rows",
             ),
             CallNode(
                 node_id="provider",
@@ -155,12 +147,13 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                     RepeatBodyNode(
                         node_id="body-transform",
                         operation="transform",
-                        transform_kind="adapter",
+                        transform_kind="shape_items",
                         contract_in=named(contract_in),
                         contract_out=named(contract_out),
                         spec={
-                            "tag": "playbill-transform-adapter-spec-v1",
-                            "value": {"rows": "$steps.projected_rows"},
+                            "tag": "playbill-transform-shape-items-spec-v1",
+                            "items": "$steps.projected_rows",
+                            "fields": {},
                         },
                         as_="body_rows",
                     ),
@@ -210,15 +203,14 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("contract_out",),
         ("parameter_contract",),
         ("nodes", 0, "query"),
-        ("nodes", 1, "capture_contract"),
-        ("nodes", 2, "reducer_or_query"),
-        ("nodes", 3, "effect_policy"),
-        ("nodes", 4, "contract_in"),
+        ("nodes", 1, "captures", "capture"),
+        ("nodes", 2, "effect_policy"),
+        ("nodes", 3, "contract_in"),
+        ("nodes", 3, "contract_out"),
         ("nodes", 4, "contract_out"),
-        ("nodes", 5, "contract_out"),
-        ("nodes", 6, "body", 0, "contract_in"),
-        ("nodes", 6, "body", 0, "contract_out"),
-        ("nodes", 7, "capture_contract"),
+        ("nodes", 5, "body", 0, "contract_in"),
+        ("nodes", 5, "body", 0, "contract_out"),
+        ("nodes", 6, "capture_contract"),
     ),
 )
 def test_semantic_reference_expectations_cover_every_dependency_field(
@@ -237,7 +229,7 @@ def test_semantic_reference_expectations_cover_every_dependency_field(
 # declared as a cross-checked slot reference (ProcedurePinSlotRef) with its
 # own independent role declaration (ProcedurePinSlot) that could disagree
 # with how it was actually used. Slots are now type-fixed to provider-calling
-# nodes only (SourceNode/CallNode/the call arm of RepeatBodyNode), named
+# nodes only (CallNode/CallNode/the call arm of RepeatBodyNode), named
 # directly as a plain `slot: str`, with no indirection and so no possible
 # role mismatch to validate -- the test had no surviving behavior to migrate
 # to and is deleted.
@@ -247,7 +239,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
     contract_out = _pin("contract-out", "Contract", "result")
     definition = _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="state",
                 query=named(_pin("query", "QueryDefinition", "state")),
                 as_="rows",
@@ -292,7 +284,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
     with pytest.raises(ProcedureGraphFormatError, match="not produced on every path"):
         _definition(
             (
-                StateTapNode(
+                ReadNode(
                     node_id="state",
                     query=named(_pin("query", "QueryDefinition", "state")),
                     as_="rows",
@@ -333,7 +325,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
 def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
     definition = _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(_pin("query", "QueryDefinition", "halt-input")),
                 as_="rows",
@@ -352,7 +344,7 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
 
 def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "guard-layout-result")
-    read = StateTapNode(
+    read = ReadNode(
         node_id="read",
         query=named(_pin("query", "QueryDefinition", "guard-layout-input")),
         as_="rows",
@@ -462,7 +454,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     with pytest.raises(ProcedureGraphFormatError) as raised:
         _definition(
             (
-                StateTapNode(
+                ReadNode(
                     node_id="read",
                     query=named(_pin("query", "QueryDefinition", "guard-tail-input")),
                     as_="rows",
@@ -509,13 +501,13 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     "path",
     (
         ("nodes", 0, "parameters"),
-        ("nodes", 1, "request"),
-        ("nodes", 3, "input"),
-        ("nodes", 4, "spec", "items"),
-        ("nodes", 5, "fields"),
-        ("nodes", 6, "body", 0, "spec", "value"),
-        ("nodes", 7, "input"),
-        ("nodes", 7, "result"),
+        ("nodes", 1, "input"),
+        ("nodes", 2, "input"),
+        ("nodes", 3, "spec", "items"),
+        ("nodes", 4, "fields"),
+        ("nodes", 5, "body", 0, "spec", "items"),
+        ("nodes", 6, "input"),
+        ("nodes", 6, "result"),
     ),
 )
 def test_structured_step_references_are_checked_in_every_runtime_template(
@@ -529,7 +521,7 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
 
 def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     definition = _kitchen_sink_definition()
-    transform = definition.nodes[4]
+    transform = definition.nodes[3]
     assert isinstance(transform, TransformNode)
     raw = transform.model_dump(mode="json", by_alias=True)
 

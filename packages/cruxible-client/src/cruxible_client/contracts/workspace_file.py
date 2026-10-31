@@ -71,6 +71,11 @@ WORKSPACE_FILE_RESULT_CONTRACT: dict[str, object] = {
         "content": "workspace.file.content@1",
     },
 }
+#: The capture field an acquiring call bound to ``workspace.file`` commits: the
+#: exact bytes core read. Core reads them itself, so the field is core's, beside
+#: the operation's own structured result; the call's ``captures`` names the
+#: accepted CaptureContract they are committed as.
+WORKSPACE_FILE_CAPTURE_FIELD = "capture"
 #: Detail of a ``provider_declined`` refusal: the built-in's digest mismatch
 #: guard (``declared``/``computed``) or its oversized-file guard
 #: (``byte_length``/``max_bytes``); every field optional since either pair,

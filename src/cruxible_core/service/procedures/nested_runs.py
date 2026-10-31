@@ -319,6 +319,7 @@ class ServedNestedProcedureRunner:
             _journal_for_write,
             _LineTerminalEgressSink,
             _prepare_direct_external_run,
+            accepted_contract_resolver,
         )
         from cruxible_core.service.procedures.procedures import (
             PlaybillProcedureStateTapReader,
@@ -418,6 +419,7 @@ class ServedNestedProcedureRunner:
             effective_rung=context.child_rung(accepted),
             egress_sink=sink,
             enum_resolver=_claim_type_enum_resolver(self.instance, self.coordinate),
+            contract_resolver=accepted_contract_resolver(self.instance, self.coordinate),
             clock=self.clock,
             nested_runner=replace(self, prefix=child_prefix),
             parent_context=context,

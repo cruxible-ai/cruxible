@@ -94,18 +94,14 @@ def _expand_node(node: dict[str, Any]) -> dict[str, Any]:
     if "id" in node:
         node["node_id"] = node.pop("id")
     if node["kind"] in {
-        "source",
-        "state_tap",
-        "exhaust_tap",
         "call",
+        "read",
+        "extract",
         "transform",
         "project",
         "repeat",
-        "state_claim",
         "invoke",
         "select",
-        "return",
-        "constant",
     }:
         node.setdefault("as", node["node_id"])
     if "predicate" in node:

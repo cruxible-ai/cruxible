@@ -8,12 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
-from cruxible_client.contracts.procedures.models import (
-    ClaimTapNode,
-    ExhaustTapNode,
-    SourceNode,
-    StateTapNode,
-)
+from cruxible_client.contracts.procedures.models import CallNode, ReadNode
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.source_references import (
     SemanticReadCoordinate,
@@ -133,10 +128,8 @@ ProcedureRunInputV1 = Annotated[
 
 
 _PLANE_FOR_NODE: dict[str, str] = {
-    "state_tap": "accepted_state",
-    "state_claim": "accepted_state",
-    "source": "landed_capture",
-    "exhaust_tap": "exhaust",
+    "read": "accepted_state",
+    "call": "landed_capture",
 }
 
 _PLANE_DIGEST_DOMAINS: dict[str, str] = {
@@ -200,7 +193,7 @@ def validate_run_input_vector(
 
 
 def validate_node_input_plane(
-    node: ClaimTapNode | StateTapNode | SourceNode | ExhaustTapNode,
+    node: ReadNode | CallNode,
     run_input: ProcedureRunInputV1,
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""

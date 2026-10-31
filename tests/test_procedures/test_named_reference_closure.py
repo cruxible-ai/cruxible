@@ -198,7 +198,7 @@ def authored_procedure(name="reader", query="definitions"):
         "contract_out": reference("Contract", "io"),
         "nodes": [
             {
-                "kind": "state_tap",
+                "kind": "read",
                 "node_id": "read",
                 "as": "result",
                 "query": reference("QueryDefinition", query),
@@ -208,10 +208,10 @@ def authored_procedure(name="reader", query="definitions"):
         if query is not None
         else [
             {
-                "kind": "constant",
+                "kind": "project",
                 "node_id": "result",
                 "as": "result",
-                "fields": {},
+                "literal": {},
                 "contract_out": reference("Contract", "io"),
             }
         ],

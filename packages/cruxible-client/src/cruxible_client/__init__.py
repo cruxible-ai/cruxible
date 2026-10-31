@@ -83,7 +83,7 @@ if TYPE_CHECKING:
         ProcedureHardCaps,
         ProcedureSlot,
         ProjectNode,
-        StateTapNode,
+        ReadNode,
         TransformNode,
     )
     from cruxible_client.contracts.read_values import (
@@ -154,7 +154,7 @@ __all__ = [
     "NoneValue",
     "SlotRef",
     "SourceRef",
-    "StateTapNode",
+    "ReadNode",
     "SubjectRef",
     "TypedRef",
     "TransformNode",
@@ -284,7 +284,7 @@ def __getattr__(name: str) -> Any:
         "ProcedureHardCaps",
         "ProcedureSlot",
         "ProjectNode",
-        "StateTapNode",
+        "ReadNode",
         "TransformNode",
     }:
         from cruxible_client.contracts.procedures import models

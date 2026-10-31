@@ -527,6 +527,16 @@ NAMED_REFERENCE_LAWS = tuple(
     for kind, tag in NAMED_REFERENCE_FORMATS.items()
 )
 
+#: A CaptureContract that declares how its bytes decode (format v4) is accepted
+#: under its own named law beside v3's.
+CAPTURE_CONTRACT_V4_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.capture-contract.named.v2", "cruxible-capture-contract-v4", semantic_revision=1
+    ),
+    artifact_kind="capture-contract",
+    artifact_tag="cruxible-capture-contract-v4",
+)
+
 # Public names refer to the one current named-law entry for each v3 tag.
 LIGHT_PROCEDURE_LAW = next(law for law in NAMED_REFERENCE_LAWS if law.artifact_kind == "procedure")
 QUERY_DEFINITION_V3_ACCEPTANCE_LAW = next(
@@ -544,6 +554,7 @@ NAMED_PROVIDER_IDENTITY_LAW = InstalledAcceptanceLaw(
 ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         *NAMED_REFERENCE_LAWS,
+        CAPTURE_CONTRACT_V4_LAW,
         NAMED_PROVIDER_IDENTITY_LAW,
         LIGHT_CAPTURE_CONTRACT_LAW,
         PROVIDER_V3_ACCEPTANCE_LAW,

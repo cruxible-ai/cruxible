@@ -58,7 +58,6 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_external_occurrence_plan_digest,
     provider_invocation_output_digest,
-    provider_invocation_output_digest_of_bytes,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
@@ -202,6 +201,50 @@ class CaptureRetentionErasurePolicy(_StrictCaptureModel):
         return self
 
 
+#: The most bytes, nesting depth and records any decoding may declare.
+MAX_DECODED_BYTES = 1 << 34
+MAX_DECODED_DEPTH = 256
+MAX_DECODED_RECORDS = 10_000_000
+
+
+class CaptureDecodingLimits(_StrictCaptureModel):
+    """What decoding one Capture of this kind may produce before it refuses."""
+
+    decoded_bytes: int = Field(ge=1, le=MAX_DECODED_BYTES)
+    depth: int = Field(ge=1, le=MAX_DECODED_DEPTH)
+    records: int = Field(ge=1, le=MAX_DECODED_RECORDS)
+
+
+class CaptureCsvDecoding(_StrictCaptureModel):
+    """How a CSV Capture is read: an optional comment prefix and a header row."""
+
+    comment_prefix: str | None = Field(
+        default=None, min_length=1, max_length=8, exclude_if=lambda value: value is None
+    )
+    header: bool = True
+
+
+class CaptureDecoding(_StrictCaptureModel):
+    """How the bytes of a Capture of this kind decode, for an ``extract`` that reads them.
+
+    ``format`` names the decoded shape, ``encoding`` the transfer encoding the
+    bytes carry (gzip is decoded as a stream, never past ``limits.decoded_bytes``),
+    ``csv`` the CSV dialect when ``format`` is ``csv``. It is accepted state:
+    core decodes with exactly these declarations, and nothing else adapts them.
+    """
+
+    format: Literal["json", "csv", "text", "bytes"]
+    encoding: Literal["identity", "gzip"] = "identity"
+    csv: CaptureCsvDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
+    limits: CaptureDecodingLimits
+
+    @model_validator(mode="after")
+    def _dialect(self) -> CaptureDecoding:
+        if (self.format == "csv") != (self.csv is not None):
+            raise ValueError("a csv decoding declares its csv dialect, and only csv does")
+        return self
+
+
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
     return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
 
@@ -327,6 +370,7 @@ class CaptureContract(_StrictCaptureModel):
     selection_budget: CaptureSelectionBudget
     retention_erasure_policy: CaptureRetentionErasurePolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
+    decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
@@ -397,7 +441,11 @@ class NamedCaptureRetentionPolicy(_StrictCaptureModel):
 
 
 class NamedCaptureContract(_StrictCaptureModel):
-    artifact_format: Literal["cruxible-capture-contract-v3"] = "cruxible-capture-contract-v3"
+    """The stored CaptureContract: v3, or v4 when it declares how its bytes decode."""
+
+    artifact_format: Literal["cruxible-capture-contract-v3", "cruxible-capture-contract-v4"] = (
+        "cruxible-capture-contract-v3"
+    )
     identity: ArtifactIdentity
     shape: CaptureShape | Literal["coordinator_self_source"]
     replay: CaptureReplay
@@ -405,10 +453,24 @@ class NamedCaptureContract(_StrictCaptureModel):
     selection_budget: CaptureSelectionBudget
     retention_erasure_policy: NamedCaptureRetentionPolicy
     epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
+    decoding: CaptureDecoding | None = Field(default=None, exclude_if=lambda value: value is None)
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _format_for_decoding(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and value.get("decoding") is not None
+            and "artifact_format" not in value
+        ):
+            return {**value, "artifact_format": "cruxible-capture-contract-v4"}
+        return value
 
     @model_validator(mode="after")
     def _shape(self) -> NamedCaptureContract:
+        if (self.artifact_format == "cruxible-capture-contract-v4") != (self.decoding is not None):
+            raise ValueError("CaptureContract format v4 is exactly the one that declares decoding")
         if self.identity.kind != "CaptureContract" or not _CONTRACT_ID_RE.fullmatch(
             self.identity.name
         ):
@@ -1085,6 +1147,7 @@ def _parse_capture_contract(
             "playbill-capture-contract-v1",
             "cruxible-capture-contract-v2",
             "cruxible-capture-contract-v3",
+            "cruxible-capture-contract-v4",
         }
     ):
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
@@ -1201,6 +1264,8 @@ def capture_contract_successor_break(
     ):
         if previous.shape != successor.shape or previous.replay != successor.replay:
             return "shape/replay"
+        if previous.decoding != successor.decoding:
+            return "decoding"
     if isinstance(previous, CaptureContractV1) and isinstance(successor, CaptureContractV1):
         for name in _WIDEN_ON_SUCCESSION:
             if not set(getattr(previous, name)).issubset(getattr(successor, name)):
@@ -2799,8 +2864,17 @@ def build_provider_external_capture_v2(
     producer: ArtifactIdentity,
     bound_generation: str,
     source_read_receipt: SourceReadReceipt | None = None,
+    provider_output: object | None = None,
 ) -> CaptureBuildResult:
-    """Validate one common-driver Source result and commit its v2 Capture."""
+    """Validate one capture field of an acquiring call's result and commit its v2 Capture.
+
+    ``result`` carries the field's exact bytes, which are committed byte-exact.
+    ``provider_output`` is the operation's whole output when the receipt
+    digests more than the capture field (a call whose out Contract carries
+    other fields, and the core-served ``workspace.file`` read, whose bytes are
+    the file core read itself and whose output structures them); without it
+    the receipt digests ``result`` itself.
+    """
 
     validate_provider_external_capture_result(
         contract=contract,
@@ -2820,34 +2894,22 @@ def build_provider_external_capture_v2(
         raise CaptureFormatError("Provider Capture result exceeds its contract byte budget")
     workspace_source = is_workspace_file_signature(occurrence.operation_signature_digest)
     content = base64.b64decode(result.content_base64, validate=True)
-    try:
-        # An external result is the provider's output, checked against its
-        # operation Contract, in which optional means an absent key and no
-        # value is null: the decoder's defaults (an unstated validity window)
-        # are absent from what the receipt digested, so they are here too.
-        provider_output = (
-            normalize_canonical(json.loads(content))
-            if workspace_source
-            else result.model_dump(mode="json", exclude_none=True)
-        )
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise CaptureFormatError("workspace.file result is not canonical JSON") from exc
-    if workspace_source:
-        # Verified canonical, the material's own bytes are the output's encoding.
-        reproduces = canonical_bytes(
-            provider_output
-        ) == content and output_commitment.output_digest == (
-            provider_invocation_output_digest_of_bytes(content)
-        )
-    else:
-        reproduces = output_commitment.output_digest == provider_invocation_output_digest(
-            provider_output
-        )
-    if not reproduces:
+    if workspace_source and provider_output is None:
+        raise CaptureFormatError("a workspace.file Capture is built with its structured output")
+    # An external result is the provider's output, checked against its
+    # operation Contract, in which optional means an absent key and no value
+    # is null: the decoder's defaults (an unstated validity window) are absent
+    # from what the receipt digested, so they are here too.
+    digested = (
+        result.model_dump(mode="json", exclude_none=True)
+        if provider_output is None
+        else normalize_canonical(provider_output)
+    )
+    if output_commitment.output_digest != provider_invocation_output_digest(digested):
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if workspace_source:
         assert source_read_receipt is not None
-        source_echo = provider_output.get("source") if isinstance(provider_output, dict) else None
+        source_echo = digested.get("source") if isinstance(digested, dict) else None
         if not isinstance(source_echo, dict) or source_echo != {
             "logical_source": source_read_receipt.logical_source,
             "commitment_digest": source_read_receipt.derived_request_digest,
@@ -2855,6 +2917,8 @@ def build_provider_external_capture_v2(
             "byte_length": source_read_receipt.byte_length,
         }:
             raise CaptureFormatError("workspace.file result mixes source attempts")
+        if result.bytes_digest != source_read_receipt.bytes_digest:
+            raise CaptureFormatError("workspace.file Capture bytes are not the bytes core read")
     observed_content_digest: str | None = None
     if source_read_receipt is not None:
         # Cross-checked above against this result's own source echo.
@@ -3741,40 +3805,16 @@ def _verify_capture_once(
                     resolved_receipt.source_read_receipt is None
                 ):
                     raise CaptureFormatError("workspace.file source-read receipt is unavailable")
-                try:
-                    workspace_body = json.loads(material)
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise CaptureFormatError(
-                        "workspace.file material is not canonical JSON"
-                    ) from exc
-                if canonical_bytes(workspace_body) != material or not isinstance(
-                    workspace_body, dict
-                ):
-                    raise CaptureFormatError("workspace.file material is not canonical JSON")
-                source_echo = workspace_body.get("source")
+                # A workspace.file Capture commits the exact bytes core read; the
+                # structuring output digested by the invocation receipt is not
+                # the material. The bytes are the read's bytes, exactly.
                 source_read = resolved_receipt.source_read_receipt
-                try:
-                    output_commitment = ProviderInvocationOutputDigest.model_validate(
-                        resolved_receipt.receipt.output
-                    )
-                except ValidationError as exc:
-                    raise CaptureFormatError(
-                        "workspace.file invocation output digest is unavailable"
-                    ) from exc
-                # The material was just verified canonical: its bytes are the encoding.
-                if output_commitment.output_digest != provider_invocation_output_digest_of_bytes(
-                    material
+                if (
+                    "sha256:" + hashlib.sha256(material).hexdigest() != source_read.bytes_digest
+                    or len(material) != source_read.byte_length
+                    or envelope.commitment.digest != source_read.bytes_digest
                 ):
-                    raise CaptureFormatError(
-                        "workspace.file material differs from its invocation receipt"
-                    )
-                if not isinstance(source_echo, dict) or source_echo != {
-                    "logical_source": source_read.logical_source,
-                    "commitment_digest": source_read.derived_request_digest,
-                    "bytes_digest": source_read.bytes_digest,
-                    "byte_length": source_read.byte_length,
-                }:
-                    raise CaptureFormatError("workspace.file material mixes source attempts")
+                    raise CaptureFormatError("workspace.file material is not the bytes core read")
     if isinstance(envelope.source, CasSourceReference):
         if envelope.source.content_digest != envelope.commitment.digest:
             raise CaptureFormatError("Capture CAS source differs from its commitment")
@@ -3829,6 +3869,9 @@ def _verify_capture_once(
 
 
 __all__ = [
+    "CaptureCsvDecoding",
+    "CaptureDecoding",
+    "CaptureDecodingLimits",
     "LazyKeyedOverlay",
     "ProducerVersions",
     "producer_version_admitted",

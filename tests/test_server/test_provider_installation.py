@@ -511,12 +511,22 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     }
     assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
 
-    contract = http_contract()
+    from cruxible_client.contracts.shapes import contract_path, render_contract, validate_contract
+    from tests.core_support._light_capture_support import JSON_DECODING
+
+    contract = http_contract(decoding=JSON_DECODING)
+    # The observation bundle is read as one record: its derived text.
+    bundle = validate_contract(
+        {"name": "test.web-bundle", "version": 1, "fields": {"text": "string"}}
+    )
     _accept(
         http,
         instance_id,
         reviewer,
-        {capture_contract_path(contract.identity.name): render_capture_contract(contract)},
+        {
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            contract_path(bundle.name, bundle.version): render_contract(bundle),
+        },
         name="web-capture-contract",
     )
     # web.fetch refuses private and loopback origins, so the run reads the
@@ -542,12 +552,19 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
             "acquisition_defaults": {"observation": _policy().model_dump(mode="json")},
             "steps": [
                 {
-                    "source": "observation",
-                    "contract": contract.identity.name,
+                    "call": "observation",
+                    "captures": {"capture": contract.identity.name},
                     "slot": "fetch",
-                    "request": {"url": url, "expected_format": "json"},
+                    "input": {"url": url, "expected_format": "json"},
                 },
-                {"project": "result", "fields": {"text": "$observation.derived.text"}},
+                {
+                    "extract": "bundle",
+                    "capture": "$observation.capture",
+                    "records": "/",
+                    "row": "test.web-bundle@1",
+                    "fields": {"text": {"at": "derived/text"}},
+                },
+                {"project": "result", "fields": {"text": "$bundle.rows.0.text"}},
             ],
             "returns": "result",
             "budget": {"provider_calls": 1, "capture_bytes": 1048576},

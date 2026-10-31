@@ -682,7 +682,7 @@ def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_s
     }
     assert offending == {"procedure"}
     assert any(
-        "acquisition_defaults name no Source alias" in item.message
+        "acquisition_defaults name no acquiring call's alias" in item.message
         for item in result.frontier.diagnostics
     )
 
