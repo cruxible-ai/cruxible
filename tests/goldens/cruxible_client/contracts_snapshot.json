@@ -4770,7 +4770,7 @@
           },
           "AcquisitionDefault": {
             "additionalProperties": false,
-            "description": "One Source alias's rule as a Procedure or Line declares it.",
+            "description": "One capture output's rule as a Procedure or Line declares it.",
             "properties": {
               "max_age": {
                 "anyOf": [
@@ -8280,10 +8280,29 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
-            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
+            "description": "Terminal output into the Line inbox: typed items sent, as they are, to intelligence.\n\nEvery posted item is a record of ``contract`` (an accepted Contract,\n``name@N``, pinned to its digest). With ``for_each`` (a reference to a list\nthe run produced: an extract's or a closed transform's records, a rows\nview, or any list) each element posts one item whose ``fields`` read it as\n``$item...`` (``$item.fields.<f>`` reads a record's field when it is\npresent); without it, ``fields`` resolve to one item. ``dedupe_key`` names\nthe item fields that are its identity in the inbox: items with the same\nkey are one item (absent: the whole item). Posting is inert: it never\ntouches accepted state. ``max_items`` caps what one run posts\n(``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items past it are not posted\nand the run reports the truncation.",
             "properties": {
-              "input": {
-                "title": "Input"
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "dedupe_key": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dedupe Key",
+                "type": "array"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "for_each": {
+                "default": null,
+                "title": "For Each"
               },
               "kind": {
                 "const": "post_inbox",
@@ -8312,14 +8331,35 @@
             },
             "required": [
               "node_id",
-              "input"
+              "contract",
+              "fields"
             ],
             "title": "InboxEgressNode",
             "type": "object"
           },
           "InboxStep": {
             "additionalProperties": false,
+            "description": "Post typed items to the Line inbox: ``inbox`` names the item Contract, ``name@N``.\n\n``for_each`` names a list the run produced (each element posts one item,\nread as ``$item...``); ``fields`` make the item; ``dedupe_key`` names the\nfields that are an item's inbox identity.",
             "properties": {
+              "dedupe_key": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dedupe Key",
+                "type": "array"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "title": "Fields",
+                "type": "object"
+              },
+              "for_each": {
+                "$ref": "#/$defs/JsonValue",
+                "default": null
+              },
               "id": {
                 "anyOf": [
                   {
@@ -8334,7 +8374,8 @@
                 "title": "Id"
               },
               "inbox": {
-                "$ref": "#/$defs/JsonValue"
+                "title": "Inbox",
+                "type": "string"
               },
               "max_items": {
                 "anyOf": [
@@ -8363,7 +8404,8 @@
               }
             },
             "required": [
-              "inbox"
+              "inbox",
+              "fields"
             ],
             "title": "InboxStep",
             "type": "object"
@@ -8479,7 +8521,7 @@
                 "additionalProperties": {
                   "$ref": "#/$defs/AcquisitionDefault"
                 },
-                "description": "Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+                "description": "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the Procedure default.",
                 "title": "Acquisition",
                 "type": "object"
               },
@@ -9077,6 +9119,19 @@
                 "minimum": 0,
                 "title": "Provider Calls",
                 "type": "integer"
+              },
+              "read_rows": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Read Rows"
               },
               "repeat_attempts": {
                 "default": 1,
@@ -9720,7 +9775,7 @@
                 "additionalProperties": {
                   "$ref": "#/$defs/AcquisitionDefault"
                 },
-                "description": "Default acquisition rule per Source alias; a Line overrides it.",
+                "description": "Default acquisition rule per capture output <alias>.<field>; a Line overrides it.",
                 "title": "Acquisition Defaults",
                 "type": "object"
               },
@@ -9744,6 +9799,7 @@
                   "capture_bytes": 1048576,
                   "items": null,
                   "provider_calls": 100,
+                  "read_rows": null,
                   "repeat_attempts": 1,
                   "result_bytes": null,
                   "wall_clock": "PT1M"
@@ -12516,33 +12572,11 @@
           },
           "RepeatBodyNode": {
             "additionalProperties": false,
-            "description": "One bounded repeat operation: a slotted call or a typed transform.",
+            "description": "One bounded repeat operation: a slotted call or a closed transform.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "effect_policy": {
                 "anyOf": [
@@ -12590,12 +12624,7 @@
                         "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                         "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                         "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                        "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                        "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                        "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                        "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                        "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                       },
                       "propertyName": "tag"
                     },
@@ -12620,21 +12649,6 @@
                       },
                       {
                         "$ref": "#/$defs/TransformDeriveSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformShapeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformFilterItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformDedupeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformJoinItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformAggregateItemsSpec"
                       }
                     ]
                   },
@@ -12652,12 +12666,7 @@
                       "aggregate",
                       "dedupe",
                       "union",
-                      "derive",
-                      "shape_items",
-                      "join_items",
-                      "filter_items",
-                      "aggregate_items",
-                      "dedupe_items"
+                      "derive"
                     ],
                     "type": "string"
                   },
@@ -13698,25 +13707,6 @@
             "title": "SubjectSuccessionInput",
             "type": "object"
           },
-          "TransformAggregateItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-aggregate-items-spec-v1",
-                "default": "playbill-transform-aggregate-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "TransformAggregateItemsSpec",
-            "type": "object"
-          },
           "TransformAggregateSpec": {
             "additionalProperties": false,
             "description": "One value over the records: ``count``, ``any``/``all`` of ``where``, ``min``/``max`` of\n``field``, or the ``first_by`` record ordered by ``field``.",
@@ -13764,33 +13754,6 @@
               "op"
             ],
             "title": "TransformAggregateSpec",
-            "type": "object"
-          },
-          "TransformDedupeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "keys": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Keys",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-transform-dedupe-items-spec-v1",
-                "default": "playbill-transform-dedupe-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "keys"
-            ],
-            "title": "TransformDedupeItemsSpec",
             "type": "object"
           },
           "TransformDedupeSpec": {
@@ -13871,31 +13834,6 @@
             "title": "TransformDeriveSpec",
             "type": "object"
           },
-          "TransformFilterItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-filter-items-spec-v1",
-                "default": "playbill-transform-filter-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "where": {
-                "additionalProperties": true,
-                "title": "Where",
-                "type": "object"
-              }
-            },
-            "required": [
-              "items",
-              "where"
-            ],
-            "title": "TransformFilterItemsSpec",
-            "type": "object"
-          },
           "TransformFilterSpec": {
             "additionalProperties": false,
             "description": "Keep the records whose closed predicate is ``true``; an ``unknown`` one taints the output.",
@@ -13918,45 +13856,6 @@
               "where"
             ],
             "title": "TransformFilterSpec",
-            "type": "object"
-          },
-          "TransformJoinItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "left_items": {
-                "title": "Left Items"
-              },
-              "left_key": {
-                "title": "Left Key",
-                "type": "string"
-              },
-              "right_items": {
-                "title": "Right Items"
-              },
-              "right_key": {
-                "title": "Right Key",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-transform-join-items-spec-v1",
-                "default": "playbill-transform-join-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "left_items",
-              "right_items",
-              "left_key",
-              "right_key",
-              "fields"
-            ],
-            "title": "TransformJoinItemsSpec",
             "type": "object"
           },
           "TransformJoinSpec": {
@@ -14011,33 +13910,11 @@
           },
           "TransformNode": {
             "additionalProperties": false,
-            "description": "A deterministic transform. The closed kinds type their records as they flow;\nthe item kinds check owned input and output Contracts.",
+            "description": "A closed, deterministic transform: records in, records (or one value) out.\n\nIts records are typed as they flow (each field keeps its field result), its\npredicates are three-valued, and its output carries completeness.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "kind": {
                 "const": "transform",
@@ -14070,12 +13947,7 @@
                     "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                     "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                     "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                   },
                   "propertyName": "tag"
                 },
@@ -14100,21 +13972,6 @@
                   },
                   {
                     "$ref": "#/$defs/TransformDeriveSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformShapeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformFilterItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformDedupeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformJoinItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformAggregateItemsSpec"
                   }
                 ],
                 "title": "Spec"
@@ -14127,12 +13984,7 @@
                   "aggregate",
                   "dedupe",
                   "union",
-                  "derive",
-                  "shape_items",
-                  "join_items",
-                  "filter_items",
-                  "aggregate_items",
-                  "dedupe_items"
+                  "derive"
                 ],
                 "title": "Transform Kind",
                 "type": "string"
@@ -14145,36 +13997,6 @@
               "as"
             ],
             "title": "TransformNode",
-            "type": "object"
-          },
-          "TransformShapeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "include_input": {
-                "default": false,
-                "title": "Include Input",
-                "type": "boolean"
-              },
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-shape-items-spec-v1",
-                "default": "playbill-transform-shape-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "fields"
-            ],
-            "title": "TransformShapeItemsSpec",
             "type": "object"
           },
           "TransformShapeSpec": {
@@ -14207,31 +14029,8 @@
           },
           "TransformStep": {
             "additionalProperties": false,
+            "description": "A closed transform (shape, filter, join, aggregate, dedupe, union, derive).\n\nIts records are typed as they flow; it names no Contracts of its own.",
             "properties": {
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Contract In"
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Contract Out"
-              },
               "id": {
                 "anyOf": [
                   {
@@ -14245,32 +14044,6 @@
                 "default": null,
                 "title": "Id"
               },
-              "input": {
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "string",
-                        "int",
-                        "integer",
-                        "float",
-                        "number",
-                        "bool",
-                        "date",
-                        "datetime",
-                        "json",
-                        "list"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/ProcedureField"
-                    }
-                  ]
-                },
-                "title": "Input",
-                "type": "object"
-              },
               "kind": {
                 "enum": [
                   "shape",
@@ -14279,12 +14052,7 @@
                   "aggregate",
                   "dedupe",
                   "union",
-                  "derive",
-                  "shape_items",
-                  "join_items",
-                  "filter_items",
-                  "aggregate_items",
-                  "dedupe_items"
+                  "derive"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -14301,32 +14069,6 @@
                 "default": null,
                 "title": "Next"
               },
-              "output": {
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "string",
-                        "int",
-                        "integer",
-                        "float",
-                        "number",
-                        "bool",
-                        "date",
-                        "datetime",
-                        "json",
-                        "list"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/ProcedureField"
-                    }
-                  ]
-                },
-                "title": "Output",
-                "type": "object"
-              },
               "spec": {
                 "discriminator": {
                   "mapping": {
@@ -14336,12 +14078,7 @@
                     "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                     "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                     "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                   },
                   "propertyName": "tag"
                 },
@@ -14366,21 +14103,6 @@
                   },
                   {
                     "$ref": "#/$defs/TransformDeriveSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformShapeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformFilterItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformDedupeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformJoinItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformAggregateItemsSpec"
                   }
                 ],
                 "title": "Spec"
@@ -14394,9 +14116,7 @@
             "required": [
               "transform",
               "kind",
-              "spec",
-              "input",
-              "output"
+              "spec"
             ],
             "title": "TransformStep",
             "type": "object"
@@ -35803,12 +35523,6 @@
                   "runtime_reference_unresolved",
                   "contract_input_refused",
                   "contract_output_refused",
-                  "shape_items_input_invalid",
-                  "filter_items_input_invalid",
-                  "dedupe_items_input_invalid",
-                  "join_items_left_input_invalid",
-                  "join_items_right_input_invalid",
-                  "aggregate_items_input_invalid",
                   "result_not_canonical",
                   "line_binding_required",
                   "source_acquisition_unavailable",
@@ -36491,12 +36205,6 @@
                   "runtime_reference_unresolved",
                   "contract_input_refused",
                   "contract_output_refused",
-                  "shape_items_input_invalid",
-                  "filter_items_input_invalid",
-                  "dedupe_items_input_invalid",
-                  "join_items_left_input_invalid",
-                  "join_items_right_input_invalid",
-                  "aggregate_items_input_invalid",
                   "result_not_canonical",
                   "line_binding_required",
                   "source_acquisition_unavailable",
@@ -53431,7 +53139,7 @@
           },
           "AcquisitionDefault": {
             "additionalProperties": false,
-            "description": "One Source alias's rule as a Procedure or Line declares it.",
+            "description": "One capture output's rule as a Procedure or Line declares it.",
             "properties": {
               "max_age": {
                 "anyOf": [
@@ -54401,10 +54109,29 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
-            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
+            "description": "Terminal output into the Line inbox: typed items sent, as they are, to intelligence.\n\nEvery posted item is a record of ``contract`` (an accepted Contract,\n``name@N``, pinned to its digest). With ``for_each`` (a reference to a list\nthe run produced: an extract's or a closed transform's records, a rows\nview, or any list) each element posts one item whose ``fields`` read it as\n``$item...`` (``$item.fields.<f>`` reads a record's field when it is\npresent); without it, ``fields`` resolve to one item. ``dedupe_key`` names\nthe item fields that are its identity in the inbox: items with the same\nkey are one item (absent: the whole item). Posting is inert: it never\ntouches accepted state. ``max_items`` caps what one run posts\n(``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items past it are not posted\nand the run reports the truncation.",
             "properties": {
-              "input": {
-                "title": "Input"
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "dedupe_key": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dedupe Key",
+                "type": "array"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "for_each": {
+                "default": null,
+                "title": "For Each"
               },
               "kind": {
                 "const": "post_inbox",
@@ -54433,7 +54160,8 @@
             },
             "required": [
               "node_id",
-              "input"
+              "contract",
+              "fields"
             ],
             "title": "InboxEgressNode",
             "type": "object"
@@ -54578,7 +54306,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per Source alias (``max_age``,\n``on_unavailable``); a Line's ``acquisition`` overrides them field by field.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
             "properties": {
               "acquisition_defaults": {
                 "additionalProperties": {
@@ -54666,6 +54394,20 @@
                 "minimum": 0,
                 "title": "Max Provider Calls",
                 "type": "integer"
+              },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
               },
               "max_result_bytes": {
                 "anyOf": [
@@ -57221,33 +56963,11 @@
           },
           "RepeatBodyNode": {
             "additionalProperties": false,
-            "description": "One bounded repeat operation: a slotted call or a typed transform.",
+            "description": "One bounded repeat operation: a slotted call or a closed transform.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "effect_policy": {
                 "anyOf": [
@@ -57295,12 +57015,7 @@
                         "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                         "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                         "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                        "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                        "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                        "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                        "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                        "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                       },
                       "propertyName": "tag"
                     },
@@ -57325,21 +57040,6 @@
                       },
                       {
                         "$ref": "#/$defs/TransformDeriveSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformShapeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformFilterItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformDedupeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformJoinItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformAggregateItemsSpec"
                       }
                     ]
                   },
@@ -57357,12 +57057,7 @@
                       "aggregate",
                       "dedupe",
                       "union",
-                      "derive",
-                      "shape_items",
-                      "join_items",
-                      "filter_items",
-                      "aggregate_items",
-                      "dedupe_items"
+                      "derive"
                     ],
                     "type": "string"
                   },
@@ -57795,25 +57490,6 @@
             "title": "SourceSlotBinding",
             "type": "object"
           },
-          "TransformAggregateItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-aggregate-items-spec-v1",
-                "default": "playbill-transform-aggregate-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "TransformAggregateItemsSpec",
-            "type": "object"
-          },
           "TransformAggregateSpec": {
             "additionalProperties": false,
             "description": "One value over the records: ``count``, ``any``/``all`` of ``where``, ``min``/``max`` of\n``field``, or the ``first_by`` record ordered by ``field``.",
@@ -57861,33 +57537,6 @@
               "op"
             ],
             "title": "TransformAggregateSpec",
-            "type": "object"
-          },
-          "TransformDedupeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "keys": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Keys",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-transform-dedupe-items-spec-v1",
-                "default": "playbill-transform-dedupe-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "keys"
-            ],
-            "title": "TransformDedupeItemsSpec",
             "type": "object"
           },
           "TransformDedupeSpec": {
@@ -57968,31 +57617,6 @@
             "title": "TransformDeriveSpec",
             "type": "object"
           },
-          "TransformFilterItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-filter-items-spec-v1",
-                "default": "playbill-transform-filter-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "where": {
-                "additionalProperties": true,
-                "title": "Where",
-                "type": "object"
-              }
-            },
-            "required": [
-              "items",
-              "where"
-            ],
-            "title": "TransformFilterItemsSpec",
-            "type": "object"
-          },
           "TransformFilterSpec": {
             "additionalProperties": false,
             "description": "Keep the records whose closed predicate is ``true``; an ``unknown`` one taints the output.",
@@ -58015,45 +57639,6 @@
               "where"
             ],
             "title": "TransformFilterSpec",
-            "type": "object"
-          },
-          "TransformJoinItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "left_items": {
-                "title": "Left Items"
-              },
-              "left_key": {
-                "title": "Left Key",
-                "type": "string"
-              },
-              "right_items": {
-                "title": "Right Items"
-              },
-              "right_key": {
-                "title": "Right Key",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-transform-join-items-spec-v1",
-                "default": "playbill-transform-join-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "left_items",
-              "right_items",
-              "left_key",
-              "right_key",
-              "fields"
-            ],
-            "title": "TransformJoinItemsSpec",
             "type": "object"
           },
           "TransformJoinSpec": {
@@ -58108,33 +57693,11 @@
           },
           "TransformNode": {
             "additionalProperties": false,
-            "description": "A deterministic transform. The closed kinds type their records as they flow;\nthe item kinds check owned input and output Contracts.",
+            "description": "A closed, deterministic transform: records in, records (or one value) out.\n\nIts records are typed as they flow (each field keeps its field result), its\npredicates are three-valued, and its output carries completeness.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "kind": {
                 "const": "transform",
@@ -58167,12 +57730,7 @@
                     "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                     "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                     "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                   },
                   "propertyName": "tag"
                 },
@@ -58197,21 +57755,6 @@
                   },
                   {
                     "$ref": "#/$defs/TransformDeriveSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformShapeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformFilterItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformDedupeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformJoinItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformAggregateItemsSpec"
                   }
                 ],
                 "title": "Spec"
@@ -58224,12 +57767,7 @@
                   "aggregate",
                   "dedupe",
                   "union",
-                  "derive",
-                  "shape_items",
-                  "join_items",
-                  "filter_items",
-                  "aggregate_items",
-                  "dedupe_items"
+                  "derive"
                 ],
                 "title": "Transform Kind",
                 "type": "string"
@@ -58242,36 +57780,6 @@
               "as"
             ],
             "title": "TransformNode",
-            "type": "object"
-          },
-          "TransformShapeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "include_input": {
-                "default": false,
-                "title": "Include Input",
-                "type": "boolean"
-              },
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-shape-items-spec-v1",
-                "default": "playbill-transform-shape-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "fields"
-            ],
-            "title": "TransformShapeItemsSpec",
             "type": "object"
           },
           "TransformShapeSpec": {
@@ -62156,6 +61664,20 @@
                 "title": "Max Provider Calls",
                 "type": "integer"
               },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
+              },
               "max_result_bytes": {
                 "anyOf": [
                   {
@@ -62736,12 +62258,6 @@
                   "runtime_reference_unresolved",
                   "contract_input_refused",
                   "contract_output_refused",
-                  "shape_items_input_invalid",
-                  "filter_items_input_invalid",
-                  "dedupe_items_input_invalid",
-                  "join_items_left_input_invalid",
-                  "join_items_right_input_invalid",
-                  "aggregate_items_input_invalid",
                   "result_not_canonical",
                   "line_binding_required",
                   "source_acquisition_unavailable",
@@ -63230,6 +62746,12 @@
                 "title": "Provider Calls",
                 "type": "integer"
               },
+              "read_rows": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Read Rows",
+                "type": "integer"
+              },
               "result_bytes": {
                 "$ref": "#/$defs/ProcedureBudgetBoundaryObservation"
               },
@@ -63334,10 +62856,14 @@
           },
           "ProcedureSourceCaptureAssociation": {
             "additionalProperties": false,
-            "description": "Reserved B4 association between one Provider occurrence and one Capture.",
+            "description": "One capture field of one Provider occurrence, and the Capture it produced.",
             "properties": {
               "capture_digest": {
                 "title": "Capture Digest",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
                 "type": "string"
               },
               "invocation_receipt_digest": {
@@ -63357,6 +62883,7 @@
             },
             "required": [
               "occurrence_path",
+              "field",
               "invocation_receipt_digest",
               "capture_digest"
             ],
@@ -65051,6 +64578,20 @@
                 "title": "Max Provider Calls",
                 "type": "integer"
               },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
+              },
               "max_result_bytes": {
                 "anyOf": [
                   {
@@ -65666,12 +65207,6 @@
                   "runtime_reference_unresolved",
                   "contract_input_refused",
                   "contract_output_refused",
-                  "shape_items_input_invalid",
-                  "filter_items_input_invalid",
-                  "dedupe_items_input_invalid",
-                  "join_items_left_input_invalid",
-                  "join_items_right_input_invalid",
-                  "aggregate_items_input_invalid",
                   "result_not_canonical",
                   "line_binding_required",
                   "source_acquisition_unavailable",
@@ -66215,6 +65750,12 @@
                 "title": "Provider Calls",
                 "type": "integer"
               },
+              "read_rows": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Read Rows",
+                "type": "integer"
+              },
               "result_bytes": {
                 "$ref": "#/$defs/ProcedureBudgetBoundaryObservation"
               },
@@ -66753,10 +66294,14 @@
           },
           "ProcedureSourceCaptureAssociation": {
             "additionalProperties": false,
-            "description": "Reserved B4 association between one Provider occurrence and one Capture.",
+            "description": "One capture field of one Provider occurrence, and the Capture it produced.",
             "properties": {
               "capture_digest": {
                 "title": "Capture Digest",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
                 "type": "string"
               },
               "invocation_receipt_digest": {
@@ -66776,6 +66321,7 @@
             },
             "required": [
               "occurrence_path",
+              "field",
               "invocation_receipt_digest",
               "capture_digest"
             ],
@@ -66797,6 +66343,18 @@
                 ],
                 "default": null,
                 "title": "Capture Digest"
+              },
+              "field": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field"
               },
               "input_name": {
                 "anyOf": [
@@ -67692,6 +67250,26 @@
             "title": "Capture Digest"
           }
         },
+        "field": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "field",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
+          }
+        },
         "input_name": {
           "default": null,
           "default_json_serializable": true,
@@ -67967,6 +67545,18 @@
             ],
             "default": null,
             "title": "Capture Digest"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field"
           },
           "input_name": {
             "anyOf": [
@@ -79043,7 +78633,7 @@
           },
           "AcquisitionDefault": {
             "additionalProperties": false,
-            "description": "One Source alias's rule as a Procedure or Line declares it.",
+            "description": "One capture output's rule as a Procedure or Line declares it.",
             "properties": {
               "max_age": {
                 "anyOf": [
@@ -81394,10 +80984,29 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
-            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
+            "description": "Terminal output into the Line inbox: typed items sent, as they are, to intelligence.\n\nEvery posted item is a record of ``contract`` (an accepted Contract,\n``name@N``, pinned to its digest). With ``for_each`` (a reference to a list\nthe run produced: an extract's or a closed transform's records, a rows\nview, or any list) each element posts one item whose ``fields`` read it as\n``$item...`` (``$item.fields.<f>`` reads a record's field when it is\npresent); without it, ``fields`` resolve to one item. ``dedupe_key`` names\nthe item fields that are its identity in the inbox: items with the same\nkey are one item (absent: the whole item). Posting is inert: it never\ntouches accepted state. ``max_items`` caps what one run posts\n(``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items past it are not posted\nand the run reports the truncation.",
             "properties": {
-              "input": {
-                "title": "Input"
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "dedupe_key": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dedupe Key",
+                "type": "array"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "for_each": {
+                "default": null,
+                "title": "For Each"
               },
               "kind": {
                 "const": "post_inbox",
@@ -81426,7 +81035,8 @@
             },
             "required": [
               "node_id",
-              "input"
+              "contract",
+              "fields"
             ],
             "title": "InboxEgressNode",
             "type": "object"
@@ -81571,7 +81181,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per Source alias (``max_age``,\n``on_unavailable``); a Line's ``acquisition`` overrides them field by field.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
             "properties": {
               "acquisition_defaults": {
                 "additionalProperties": {
@@ -81659,6 +81269,20 @@
                 "minimum": 0,
                 "title": "Max Provider Calls",
                 "type": "integer"
+              },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
               },
               "max_result_bytes": {
                 "anyOf": [
@@ -84973,33 +84597,11 @@
           },
           "RepeatBodyNode": {
             "additionalProperties": false,
-            "description": "One bounded repeat operation: a slotted call or a typed transform.",
+            "description": "One bounded repeat operation: a slotted call or a closed transform.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "effect_policy": {
                 "anyOf": [
@@ -85047,12 +84649,7 @@
                         "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                         "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                         "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                        "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                        "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                        "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                        "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                        "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                       },
                       "propertyName": "tag"
                     },
@@ -85077,21 +84674,6 @@
                       },
                       {
                         "$ref": "#/$defs/TransformDeriveSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformShapeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformFilterItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformDedupeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformJoinItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformAggregateItemsSpec"
                       }
                     ]
                   },
@@ -85109,12 +84691,7 @@
                       "aggregate",
                       "dedupe",
                       "union",
-                      "derive",
-                      "shape_items",
-                      "join_items",
-                      "filter_items",
-                      "aggregate_items",
-                      "dedupe_items"
+                      "derive"
                     ],
                     "type": "string"
                   },
@@ -85547,25 +85124,6 @@
             "title": "SourceSlotBinding",
             "type": "object"
           },
-          "TransformAggregateItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-aggregate-items-spec-v1",
-                "default": "playbill-transform-aggregate-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "TransformAggregateItemsSpec",
-            "type": "object"
-          },
           "TransformAggregateSpec": {
             "additionalProperties": false,
             "description": "One value over the records: ``count``, ``any``/``all`` of ``where``, ``min``/``max`` of\n``field``, or the ``first_by`` record ordered by ``field``.",
@@ -85613,33 +85171,6 @@
               "op"
             ],
             "title": "TransformAggregateSpec",
-            "type": "object"
-          },
-          "TransformDedupeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "keys": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Keys",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-transform-dedupe-items-spec-v1",
-                "default": "playbill-transform-dedupe-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "keys"
-            ],
-            "title": "TransformDedupeItemsSpec",
             "type": "object"
           },
           "TransformDedupeSpec": {
@@ -85720,31 +85251,6 @@
             "title": "TransformDeriveSpec",
             "type": "object"
           },
-          "TransformFilterItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-filter-items-spec-v1",
-                "default": "playbill-transform-filter-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "where": {
-                "additionalProperties": true,
-                "title": "Where",
-                "type": "object"
-              }
-            },
-            "required": [
-              "items",
-              "where"
-            ],
-            "title": "TransformFilterItemsSpec",
-            "type": "object"
-          },
           "TransformFilterSpec": {
             "additionalProperties": false,
             "description": "Keep the records whose closed predicate is ``true``; an ``unknown`` one taints the output.",
@@ -85767,45 +85273,6 @@
               "where"
             ],
             "title": "TransformFilterSpec",
-            "type": "object"
-          },
-          "TransformJoinItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "left_items": {
-                "title": "Left Items"
-              },
-              "left_key": {
-                "title": "Left Key",
-                "type": "string"
-              },
-              "right_items": {
-                "title": "Right Items"
-              },
-              "right_key": {
-                "title": "Right Key",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-transform-join-items-spec-v1",
-                "default": "playbill-transform-join-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "left_items",
-              "right_items",
-              "left_key",
-              "right_key",
-              "fields"
-            ],
-            "title": "TransformJoinItemsSpec",
             "type": "object"
           },
           "TransformJoinSpec": {
@@ -85860,33 +85327,11 @@
           },
           "TransformNode": {
             "additionalProperties": false,
-            "description": "A deterministic transform. The closed kinds type their records as they flow;\nthe item kinds check owned input and output Contracts.",
+            "description": "A closed, deterministic transform: records in, records (or one value) out.\n\nIts records are typed as they flow (each field keeps its field result), its\npredicates are three-valued, and its output carries completeness.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "kind": {
                 "const": "transform",
@@ -85919,12 +85364,7 @@
                     "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                     "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                     "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                   },
                   "propertyName": "tag"
                 },
@@ -85949,21 +85389,6 @@
                   },
                   {
                     "$ref": "#/$defs/TransformDeriveSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformShapeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformFilterItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformDedupeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformJoinItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformAggregateItemsSpec"
                   }
                 ],
                 "title": "Spec"
@@ -85976,12 +85401,7 @@
                   "aggregate",
                   "dedupe",
                   "union",
-                  "derive",
-                  "shape_items",
-                  "join_items",
-                  "filter_items",
-                  "aggregate_items",
-                  "dedupe_items"
+                  "derive"
                 ],
                 "title": "Transform Kind",
                 "type": "string"
@@ -85994,36 +85414,6 @@
               "as"
             ],
             "title": "TransformNode",
-            "type": "object"
-          },
-          "TransformShapeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "include_input": {
-                "default": false,
-                "title": "Include Input",
-                "type": "boolean"
-              },
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-shape-items-spec-v1",
-                "default": "playbill-transform-shape-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "fields"
-            ],
-            "title": "TransformShapeItemsSpec",
             "type": "object"
           },
           "TransformShapeSpec": {
@@ -88952,7 +88342,7 @@
           },
           "AcquisitionDefault": {
             "additionalProperties": false,
-            "description": "One Source alias's rule as a Procedure or Line declares it.",
+            "description": "One capture output's rule as a Procedure or Line declares it.",
             "properties": {
               "max_age": {
                 "anyOf": [
@@ -91340,10 +90730,29 @@
           },
           "InboxEgressNode": {
             "additionalProperties": false,
-            "description": "Terminal output into the Line inbox: items sent, as they are, to intelligence.\n\n``input`` is one item, or ``{\"items\": ...}`` to fan out over a list the run\nproduced. Posting is inert: it never touches accepted state. ``max_items``\ncaps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items\npast it are not posted and the run reports the truncation.",
+            "description": "Terminal output into the Line inbox: typed items sent, as they are, to intelligence.\n\nEvery posted item is a record of ``contract`` (an accepted Contract,\n``name@N``, pinned to its digest). With ``for_each`` (a reference to a list\nthe run produced: an extract's or a closed transform's records, a rows\nview, or any list) each element posts one item whose ``fields`` read it as\n``$item...`` (``$item.fields.<f>`` reads a record's field when it is\npresent); without it, ``fields`` resolve to one item. ``dedupe_key`` names\nthe item fields that are its identity in the inbox: items with the same\nkey are one item (absent: the whole item). Posting is inert: it never\ntouches accepted state. ``max_items`` caps what one run posts\n(``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items past it are not posted\nand the run reports the truncation.",
             "properties": {
-              "input": {
-                "title": "Input"
+              "contract": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "dedupe_key": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dedupe Key",
+                "type": "array"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "maxProperties": 256,
+                "minProperties": 1,
+                "title": "Fields",
+                "type": "object"
+              },
+              "for_each": {
+                "default": null,
+                "title": "For Each"
               },
               "kind": {
                 "const": "post_inbox",
@@ -91372,7 +90781,8 @@
             },
             "required": [
               "node_id",
-              "input"
+              "contract",
+              "fields"
             ],
             "title": "InboxEgressNode",
             "type": "object"
@@ -91517,7 +90927,7 @@
           },
           "ProcedureArtifact": {
             "additionalProperties": false,
-            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per Source alias (``max_age``,\n``on_unavailable``); a Line's ``acquisition`` overrides them field by field.",
+            "description": "The one Procedure envelope: one named graph and the Contracts it carries.\n\nEvery dependency the graph names resolves at the accepted coordinate; the\nenvelope itself pins nothing. ``acquisition_defaults`` holds the\nProcedure's acquisition rule per capture output, ``<alias>.<field>``\n(``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides\nthem output by output.",
             "properties": {
               "acquisition_defaults": {
                 "additionalProperties": {
@@ -91605,6 +91015,20 @@
                 "minimum": 0,
                 "title": "Max Provider Calls",
                 "type": "integer"
+              },
+              "max_read_rows": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Read Rows"
               },
               "max_result_bytes": {
                 "anyOf": [
@@ -95195,33 +94619,11 @@
           },
           "RepeatBodyNode": {
             "additionalProperties": false,
-            "description": "One bounded repeat operation: a slotted call or a typed transform.",
+            "description": "One bounded repeat operation: a slotted call or a closed transform.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "effect_policy": {
                 "anyOf": [
@@ -95269,12 +94671,7 @@
                         "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                         "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                         "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                        "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                        "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                        "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                        "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                        "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                        "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                       },
                       "propertyName": "tag"
                     },
@@ -95299,21 +94696,6 @@
                       },
                       {
                         "$ref": "#/$defs/TransformDeriveSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformShapeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformFilterItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformDedupeItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformJoinItemsSpec"
-                      },
-                      {
-                        "$ref": "#/$defs/TransformAggregateItemsSpec"
                       }
                     ]
                   },
@@ -95331,12 +94713,7 @@
                       "aggregate",
                       "dedupe",
                       "union",
-                      "derive",
-                      "shape_items",
-                      "join_items",
-                      "filter_items",
-                      "aggregate_items",
-                      "dedupe_items"
+                      "derive"
                     ],
                     "type": "string"
                   },
@@ -95819,25 +95196,6 @@
             "title": "SourceSlotBinding",
             "type": "object"
           },
-          "TransformAggregateItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-aggregate-items-spec-v1",
-                "default": "playbill-transform-aggregate-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items"
-            ],
-            "title": "TransformAggregateItemsSpec",
-            "type": "object"
-          },
           "TransformAggregateSpec": {
             "additionalProperties": false,
             "description": "One value over the records: ``count``, ``any``/``all`` of ``where``, ``min``/``max`` of\n``field``, or the ``first_by`` record ordered by ``field``.",
@@ -95885,33 +95243,6 @@
               "op"
             ],
             "title": "TransformAggregateSpec",
-            "type": "object"
-          },
-          "TransformDedupeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "keys": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Keys",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-transform-dedupe-items-spec-v1",
-                "default": "playbill-transform-dedupe-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "keys"
-            ],
-            "title": "TransformDedupeItemsSpec",
             "type": "object"
           },
           "TransformDedupeSpec": {
@@ -95992,31 +95323,6 @@
             "title": "TransformDeriveSpec",
             "type": "object"
           },
-          "TransformFilterItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-filter-items-spec-v1",
-                "default": "playbill-transform-filter-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "where": {
-                "additionalProperties": true,
-                "title": "Where",
-                "type": "object"
-              }
-            },
-            "required": [
-              "items",
-              "where"
-            ],
-            "title": "TransformFilterItemsSpec",
-            "type": "object"
-          },
           "TransformFilterSpec": {
             "additionalProperties": false,
             "description": "Keep the records whose closed predicate is ``true``; an ``unknown`` one taints the output.",
@@ -96039,45 +95345,6 @@
               "where"
             ],
             "title": "TransformFilterSpec",
-            "type": "object"
-          },
-          "TransformJoinItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "left_items": {
-                "title": "Left Items"
-              },
-              "left_key": {
-                "title": "Left Key",
-                "type": "string"
-              },
-              "right_items": {
-                "title": "Right Items"
-              },
-              "right_key": {
-                "title": "Right Key",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-transform-join-items-spec-v1",
-                "default": "playbill-transform-join-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "left_items",
-              "right_items",
-              "left_key",
-              "right_key",
-              "fields"
-            ],
-            "title": "TransformJoinItemsSpec",
             "type": "object"
           },
           "TransformJoinSpec": {
@@ -96132,33 +95399,11 @@
           },
           "TransformNode": {
             "additionalProperties": false,
-            "description": "A deterministic transform. The closed kinds type their records as they flow;\nthe item kinds check owned input and output Contracts.",
+            "description": "A closed, deterministic transform: records in, records (or one value) out.\n\nIts records are typed as they flow (each field keeps its field result), its\npredicates are three-valued, and its output carries completeness.",
             "properties": {
               "as": {
                 "title": "As",
                 "type": "string"
-              },
-              "contract_in": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "contract_out": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/ArtifactNameRef"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
               },
               "kind": {
                 "const": "transform",
@@ -96191,12 +95436,7 @@
                     "cruxible-transform-filter-spec-v1": "#/$defs/TransformFilterSpec",
                     "cruxible-transform-join-spec-v1": "#/$defs/TransformJoinSpec",
                     "cruxible-transform-shape-spec-v1": "#/$defs/TransformShapeSpec",
-                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec",
-                    "playbill-transform-aggregate-items-spec-v1": "#/$defs/TransformAggregateItemsSpec",
-                    "playbill-transform-dedupe-items-spec-v1": "#/$defs/TransformDedupeItemsSpec",
-                    "playbill-transform-filter-items-spec-v1": "#/$defs/TransformFilterItemsSpec",
-                    "playbill-transform-join-items-spec-v1": "#/$defs/TransformJoinItemsSpec",
-                    "playbill-transform-shape-items-spec-v1": "#/$defs/TransformShapeItemsSpec"
+                    "cruxible-transform-union-spec-v1": "#/$defs/TransformUnionSpec"
                   },
                   "propertyName": "tag"
                 },
@@ -96221,21 +95461,6 @@
                   },
                   {
                     "$ref": "#/$defs/TransformDeriveSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformShapeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformFilterItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformDedupeItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformJoinItemsSpec"
-                  },
-                  {
-                    "$ref": "#/$defs/TransformAggregateItemsSpec"
                   }
                 ],
                 "title": "Spec"
@@ -96248,12 +95473,7 @@
                   "aggregate",
                   "dedupe",
                   "union",
-                  "derive",
-                  "shape_items",
-                  "join_items",
-                  "filter_items",
-                  "aggregate_items",
-                  "dedupe_items"
+                  "derive"
                 ],
                 "title": "Transform Kind",
                 "type": "string"
@@ -96266,36 +95486,6 @@
               "as"
             ],
             "title": "TransformNode",
-            "type": "object"
-          },
-          "TransformShapeItemsSpec": {
-            "additionalProperties": false,
-            "properties": {
-              "fields": {
-                "additionalProperties": true,
-                "title": "Fields",
-                "type": "object"
-              },
-              "include_input": {
-                "default": false,
-                "title": "Include Input",
-                "type": "boolean"
-              },
-              "items": {
-                "title": "Items"
-              },
-              "tag": {
-                "const": "playbill-transform-shape-items-spec-v1",
-                "default": "playbill-transform-shape-items-spec-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "items",
-              "fields"
-            ],
-            "title": "TransformShapeItemsSpec",
             "type": "object"
           },
           "TransformShapeSpec": {
