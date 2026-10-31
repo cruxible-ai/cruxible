@@ -1,9 +1,10 @@
 """Acquisition rules: how fresh and how replayable a Source's Capture must
 be, and what unavailability, staleness and an oversized read each do.
 
-A Procedure declares ``acquisition_defaults`` per Source alias; a Line's
-``acquisition`` replaces the default for any alias it names. The rule a run
-admits for one Source is :class:`AcquisitionRule`. ``on_unavailable``,
+A Procedure declares ``acquisition_defaults`` per capture output, keyed
+``<alias>.<capture field>``; a Line's ``acquisition`` replaces the default for
+any capture output it names. The rule a run admits for one capture output is
+:class:`AcquisitionRule`; each field of a call is decided by its own rule. ``on_unavailable``,
 ``on_stale`` and ``on_oversized`` each choose ``refuse`` (the default) or
 ``omit``: an absorbable typed refusal, a Capture older than ``max_age``, or
 one over the bound operation's byte budget, omits the Source from the run
@@ -29,7 +30,8 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 
-_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+#: A capture output: ``<acquiring call alias>.<capture field>``.
+_CAPTURE_OUTPUT_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}\.[a-z][a-z0-9_]{0,127}$")
 ACQUISITION_RULES_DIGEST_DOMAIN = "cruxible-acquisition-rules-v1"
 
 UnavailableBehavior = Literal["refuse", "omit"]
@@ -66,7 +68,7 @@ class _Strict(BaseModel):
 
 
 class AcquisitionDefault(_Strict):
-    """One Source alias's rule as a Procedure or Line declares it."""
+    """One capture output's rule as a Procedure or Line declares it."""
 
     max_age: CanonicalDuration | None = None
     on_unavailable: UnavailableBehavior = "refuse"
@@ -106,14 +108,16 @@ class AcquisitionDefault(_Strict):
 def validate_acquisition_keys(
     value: Mapping[str, AcquisitionDefault],
 ) -> dict[str, AcquisitionDefault]:
-    for alias in value:
-        if not _ALIAS_RE.fullmatch(alias):
-            raise ValueError(f"acquisition rules are keyed by Source alias, not {alias!r}")
+    for key in value:
+        if not _CAPTURE_OUTPUT_RE.fullmatch(key):
+            raise ValueError(
+                f"acquisition rules are keyed by capture output <alias>.<field>, not {key!r}"
+            )
     return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
 
 
 class AcquisitionRule(_Strict):
-    """The rule one run admits for one Source alias."""
+    """The rule one run admits for one capture output (``input_name`` is ``<alias>.<field>``)."""
 
     input_name: str
     max_age: CanonicalDuration | None = None
@@ -142,7 +146,7 @@ def resolve_acquisition_rules(
     defaults: Mapping[str, AcquisitionDefault],
     overrides: Mapping[str, AcquisitionDefault],
 ) -> dict[str, AcquisitionRule]:
-    """Every Source alias's rule: the Line's override, else the Procedure's default."""
+    """Every capture output's rule: the Line's override, else the Procedure's default."""
 
     rules: dict[str, AcquisitionRule] = {}
     for alias in aliases:

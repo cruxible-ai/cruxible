@@ -39,7 +39,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
-    StateTapNode,
+    ReadNode,
 )
 from tests.support.procedures import named, procedure_artifact
 
@@ -65,7 +65,7 @@ def _definition(
     contract_out = _pin("contract-out", "Contract", "claim-rows")
     query = query or _pin("query", "QueryDefinition", "claims-by-status")
     default_nodes = (
-        StateTapNode(node_id="read", query=named(query), parameters={}, as_="rows"),
+        ReadNode(node_id="read", query=named(query), parameters={}, as_="rows"),
         ProjectNode(
             node_id="shape",
             fields={"rows": "$steps.rows"},
@@ -103,7 +103,7 @@ def _artifact(definition: ProcedureDefinition) -> ProcedureArtifact:
 
 def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "claim-rows")
-    read = StateTapNode(
+    read = ReadNode(
         node_id="read",
         query=named(_pin("query", "QueryDefinition", "claims-by-status")),
         parameters={},
@@ -140,11 +140,11 @@ def test_procedure_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 7
     assert procedure_runnability(definition) == ("direct", ())
     assert procedure.definition_digest == (
-        "sha256:87e3602861388e1ea1780c54c2a43255cbd0233b9cbb2dda2bc290735fb6444d"
+        "sha256:e0153780cfe32fdb46637123c24f4342afd0be003351174beca842db5c3c3f9f"
     )
     nodes = compute_procedure_node_digests(definition)
     assert nodes["read"].subtree_digest == (
-        "sha256:acb3c1cff183a4824487c65f3bf6dee35389b9c10ecec062d21e4ba983f099d9"
+        "sha256:f1145190135161a7149f7f69930c232649ae7d679cb6e23e9f9aa964179acae9"
     )
 
     content = render_procedure(procedure)
@@ -299,33 +299,41 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
         ProcedureDefinition.model_validate(payload)
 
 
-def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
-    from cruxible_client.contracts.procedures.models import ExhaustTapNode
+@pytest.mark.parametrize(
+    ("kind", "replacement"),
+    [
+        ("source", "'call'"),
+        ("state_tap", "'read' naming its 'query'"),
+        ("state_claim", "'read' naming its 'claim_type'"),
+        ("exhaust_tap", "nothing: no run lane serves exhaust reads"),
+        ("return", "'project' with 'leaf: true'"),
+        ("constant", "'project' with a 'literal' record"),
+    ],
+)
+def test_a_retired_node_kind_is_refused_by_name_with_its_replacement(
+    kind: str, replacement: str
+) -> None:
+    """Graph format 7 no longer has these kinds; a stored graph naming one is refused."""
 
-    base = _definition()
-    definition = _definition(
-        nodes=(
-            ExhaustTapNode(
-                node_id="exhaust",
-                reducer_or_query=named(_pin("query", "QueryDefinition", "journal-query")),
-                journal_identity="retained-journal",
-                as_="rows",
-            ),
-            base.nodes[1],
-        )
-    )
-    artifact = _artifact(definition)
-    content = render_procedure(artifact)
-    parsed = parse_procedure(content, path=procedure_path("triage"))
-    assert render_procedure(parsed) == content
-    assert procedure_artifact_digest(parsed) == procedure_artifact_digest(artifact)
-    assert (
-        evaluate_procedure_law(parsed, path=procedure_path("triage"), predecessor=None).verdict
-        == "accepted"
-    )
-    runnable, (node,) = procedure_runnability(parsed.definition)
-    assert runnable == "unsupported"
-    assert node.kind == "exhaust_tap" and node.runs_on == "nowhere"
+    payload = _definition().model_dump(mode="json", by_alias=True)
+    payload["nodes"][0] = {"kind": kind, "node_id": "retired", "as": "rows"}
+    with pytest.raises(ValidationError) as caught:
+        ProcedureDefinition.model_validate(payload)
+    message = str(caught.value)
+    assert "procedure_node_kind_retired" in message and kind in message
+    assert replacement in message
+
+
+def test_the_adapter_transform_is_refused_by_name_with_its_replacement() -> None:
+    payload = _definition().model_dump(mode="json", by_alias=True)
+    payload["nodes"][0] = {
+        "kind": "transform",
+        "node_id": "adapt",
+        "transform_kind": "adapter",
+        "as": "rows",
+    }
+    with pytest.raises(ValidationError, match="procedure_node_kind_retired.*'adapter'.*'project'"):
+        ProcedureDefinition.model_validate(payload)
 
 
 def test_procedure_has_no_cross_reference_digests() -> None:
@@ -369,7 +377,7 @@ def test_graph_keeps_reference_shaped_payloads_as_data() -> None:
     base = _artifact(_definition())
     nodes = tuple(
         node.model_copy(update={"parameters": payload})
-        if isinstance(node, StateTapNode)
+        if isinstance(node, ReadNode)
         else node.model_copy(update={"fields": payload})
         for node in base.definition.nodes
     )

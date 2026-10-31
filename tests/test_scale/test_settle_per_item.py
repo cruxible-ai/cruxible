@@ -128,7 +128,7 @@ FLAT_SLACK = {
     "journal_appends": 1,
 }
 
-_FAN_OUT = {"items": f"$steps.{fixtures.SOURCE_ALIAS}.content.json.proposals"}
+_FAN_OUT = fixtures.FAN_OUT
 
 
 class _Counts:
@@ -449,7 +449,6 @@ def _roomy_selection_budget(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(module, "capture_contract", roomy)
 
 
-@pytest.mark.xfail(strict=True, reason="needs B3 content.json extraction; B3 merge gate")
 def test_a_settles_work_per_item_stays_at_its_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

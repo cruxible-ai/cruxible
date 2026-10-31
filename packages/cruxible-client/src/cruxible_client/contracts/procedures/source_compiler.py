@@ -14,6 +14,7 @@ from typing import Any, Literal, NoReturn, cast
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactNameRef
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.procedures.capture_outputs import WHOLE_WIRE_CAPTURE_FIELD
 from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
@@ -71,7 +72,13 @@ class Value:
 
 @dataclass(frozen=True)
 class Observation(Value):
-    """A Source output whose evidence provenance is owned by the runtime."""
+    """A Source output whose evidence provenance is owned by the runtime.
+
+    ``capture_field`` is the out Contract field the call commits as a Capture;
+    an ``extract`` reads that field's bytes.
+    """
+
+    capture_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -337,7 +344,7 @@ class _Compiler:
             node["as"] = (
                 self.assignment_alias
                 if (
-                    kind in {"source", "call", "state_tap", "state_claim"}
+                    kind in {"call", "read"}
                     or kind == "invoke"
                     and source_syntax(self.program) != "cruxible.procedure-source.v1"
                 )
@@ -352,7 +359,8 @@ class _Compiler:
         self.maps.append(SourceMapEntry(node_id=node_id, span=self.span(at)))
         self.tail = (
             []
-            if kind in {"return", "emit_capture", "propose_change_set", "settle_change_set", "halt"}
+            if kind in {"emit_capture", "propose_change_set", "settle_change_set", "halt"}
+            or fields.get("leaf") is True
             else [(node, "next")]
         )
         return node
@@ -367,9 +375,9 @@ class _Compiler:
         if value.literal and isinstance(value.wire, str) and value.wire.startswith("$"):
             schema = ContractSchema(fields={"value": _field_type(value.type)})
             node = self.append(
-                "constant",
+                "project",
                 at,
-                fields={"value": value.wire},
+                literal={"value": value.wire},
                 contract_out=self.anonymous(schema),
                 **{"as": True},
             )
@@ -687,6 +695,8 @@ class _Compiler:
                 "invoke",
             }:
                 return self.operation(node)
+            if isinstance(node.func, ast.Name) and node.func.id == "extract":
+                return self.extract(node)
             if isinstance(node.func, ast.Name) and node.func.id == "claim_candidate":
                 return self.candidate(node)
             target = self.expr(node.func)
@@ -822,12 +832,18 @@ class _Compiler:
                     kind="QueryDefinition", name=binding.name.removeprefix("QueryDefinition:")
                 )
             )
+            if budgets is not None:
+                self.fail(
+                    node,
+                    "A Procedure read runs to the end under the run's read ceiling; it takes "
+                    "no interactive Query budgets",
+                    "contract_value_invalid",
+                )
             emitted = self.append(
-                "state_tap",
+                "read",
                 node,
                 query=query_pin.model_dump(mode="json"),
                 parameters=self.wire(value, node),
-                budgets=None if budgets is None else budgets.model_dump(mode="json"),
                 **{"as": True},
             )
             return Value("$steps." + emitted["as"], query_view_schema(), phase="state")
@@ -854,15 +870,25 @@ class _Compiler:
             if binding.effect == "external_mutation":
                 self.fail(node, "A Source slot cannot mutate", "binding_kind")
             capture_pin = self.capture_pin(kwargs["capture_contract"])
+            if len(binding.captures) > 1:
+                self.fail(
+                    node,
+                    "source() needs a slot whose out Contract has at most one capture<K> field",
+                    "binding_kind",
+                )
+            # With no capture<K> field the operation's whole output is the Capture.
+            (capture_field,) = binding.captures or (WHOLE_WIRE_CAPTURE_FIELD,)
             emitted = self.append(
-                "source",
+                "call",
                 node,
                 slot=slot_name,
-                request=self.wire(value, node),
-                capture_contract=capture_pin,
+                input=self.wire(value, node),
+                captures={capture_field: capture_pin},
                 **{"as": True},
             )
-            return Observation("$steps." + emitted["as"], binding.output)
+            return Observation(
+                "$steps." + emitted["as"], binding.output, capture_field=capture_field
+            )
         if set(kwargs) != {"input"}:
             self.fail(node, "call accepts only its typed input in this form")
         if binding.effect == "external_mutation":
@@ -889,13 +915,13 @@ class _Compiler:
         schema = claim_view_schema(shape)
         pin = self.reference(ArtifactIdentity(kind="ClaimType", name=shape.predicate))
         emitted = self.append(
-            "state_claim",
+            "read",
             node,
             claim_type=pin.model_dump(mode="json"),
             subject_kind=selected.subject.kind,
             subject_id=self.wire(selected.subject.identity, node),
             cardinality=cardinality,
-            limit=limit,
+            **({} if limit is None else {"limit": limit}),
             **{"as": True},
         )
         return ClaimValue(
@@ -905,6 +931,70 @@ class _Compiler:
             else PropertySchema(type="list", item_fields=schema.fields),
             phase="state",
         )
+
+    def extract(self, node: ast.Call) -> Value:
+        """``extract(observation, row="name@N", fields={name: pointer})``: one record, typed.
+
+        The Source's Capture decodes by its accepted CaptureContract's
+        ``decoding``; ``records`` (default ``/``, the whole document) names one
+        record, and the value is that record's row of the accepted ``row``
+        Contract's fields.
+        """
+
+        if len(node.args) != 1:
+            self.fail(node, "extract reads one Source observation")
+        observation = self.expr(node.args[0])
+        if not isinstance(observation, Observation) or observation.capture_field is None:
+            self.fail(node.args[0], "extract reads a source() observation", "binding_kind")
+        kwargs = {item.arg: item.value for item in node.keywords}
+        if None in kwargs or not {"row", "fields"} <= set(kwargs) <= {"row", "fields", "records"}:
+            self.fail(node, "extract takes row, fields and optionally records")
+        row = kwargs["row"]
+        if (
+            not isinstance(row, ast.Constant)
+            or not isinstance(row.value, str)
+            or row.value not in self.program.row_contracts
+        ):
+            self.fail(
+                row, "extract's row names an accepted Contract, 'name@N'", "contract_mismatch"
+            )
+        contract = self.program.row_contracts[row.value]
+        records = "/"
+        if "records" in kwargs:
+            selected = self.value(kwargs["records"])
+            if not selected.literal or not isinstance(selected.wire, str):
+                self.fail(kwargs["records"], "extract's records is a literal JSON Pointer")
+            records = selected.wire
+        if "*" in records:
+            self.fail(
+                kwargs["records"],
+                "Source extract reads one record; iterate records in an authored spec",
+            )
+        declared = kwargs["fields"]
+        if not isinstance(declared, ast.Dict):
+            self.fail(declared, "extract's fields map each row field to a literal pointer")
+        fields: dict[str, dict[str, str]] = {}
+        for key, at in zip(declared.keys, declared.values, strict=True):
+            if not (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and isinstance(at, ast.Constant)
+                and isinstance(at.value, str)
+            ):
+                self.fail(declared, "extract's fields map each row field to a literal pointer")
+            if key.value not in contract.schema_.fields:
+                self.fail(key, f"No declared row field {key.value!r}", "unknown_field")
+            fields[key.value] = {"at": at.value}
+        emitted = self.append(
+            "extract",
+            node,
+            capture=f"{observation.wire}.{observation.capture_field}",
+            records=records,
+            row=contract.ref.model_dump(mode="json"),
+            fields=fields,
+            **{"as": True},
+        )
+        return Value("$steps." + emitted["as"] + ".rows.0", contract.schema_)
 
     def candidate(self, node: ast.Call) -> ClaimCandidate:
         fields = {k.arg: k.value for k in node.keywords}
@@ -1349,6 +1439,7 @@ class _Compiler:
                         "query",
                         "call",
                         "source",
+                        "extract",
                         "invoke",
                         "require",
                         "halt",
@@ -1545,10 +1636,11 @@ class _Compiler:
                             "return_contract",
                         )
                     emitted = self.append(
-                        "return",
+                        "project",
                         stmt,
                         fields=self.wire(value, stmt),
                         contract_out=self.contract(self.output),
+                        leaf=True,
                         **{"as": True},
                     )
                     self.returns.append(emitted["as"])

@@ -63,6 +63,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     ProcedureNodeSupport,
     ProcedureRunnable,
+    acquisition_keys,
     procedure_path,
     procedure_runnability,
 )
@@ -78,16 +79,15 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ExhaustTapNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     RepeatBodyNode,
     RepeatNode,
-    SourceNode,
     authority_for_rung,
     required_authority,
 )
+from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
     LineOpenProposalOutcome,
@@ -163,6 +163,7 @@ from cruxible_client.contracts.resolution_contracts import (
     InvestigationBinding,
     ResolutionContractReference,
 )
+from cruxible_client.contracts.shapes import Contract, ContractRef
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
@@ -575,7 +576,10 @@ class ProcedureRunRequest(_StrictProcedureSurfaceModel):
     )
     acquisition: dict[str, AcquisitionDefault] = Field(
         default_factory=dict,
-        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+        description=(
+            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
+            "Procedure default."
+        ),
     )
     input: object
 
@@ -761,6 +765,37 @@ def _claim_type_enum_resolver(
             return None
         members = claim_type.literal_schema.get("enum")
         return tuple(members) if isinstance(members, list) else None
+
+    return resolve
+
+
+def accepted_contract_resolver(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> Callable[[ContractRef], Contract | None]:
+    """An extract's row Contract, and any Contract it nests, at this run's coordinate.
+
+    A Contract resolves by name and version and must reproduce the digest its
+    reference pins; the coordinate is immutable once admitted, so a replay
+    resolves the same Contracts.
+    """
+
+    from cruxible_client.contracts.shapes import contract_digest, contract_identity
+
+    found: dict[tuple[str, int], Contract | None] = {}
+
+    def resolve(ref: ContractRef) -> Contract | None:
+        key = (ref.name, ref.version)
+        if key not in found:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                value = projection.typed.source(contract_identity(ref.name, ref.version).qualified)
+            found[key] = value if isinstance(value, Contract) else None
+        contract = found[key]
+        if contract is None or (
+            ref.digest is not None and contract_digest(contract).tagged != ref.digest
+        ):
+            return None
+        return contract
 
     return resolve
 
@@ -1400,18 +1435,35 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
+    mandates: Sequence[tuple[str, ProcedureMandateAny]] = (),
 ) -> ProcedureBudget:
+    """The Line occurrence's budget: the Line's, its read rows lowered by its Mandates.
+
+    A Line that states no ``max_read_rows`` reads under the Procedure's hard
+    cap; every live Mandate granting the Line caps it by its resource ceiling.
+    """
+
+    definition = accepted_procedure.procedure.definition
     budgets = accepted_line.line.budgets
+    stated = budgets.get("max_read_rows") if isinstance(budgets, dict) else None
+    read_rows = min(
+        (
+            effective_read_rows(
+                stated if isinstance(stated, int) else definition.budget.max_read_rows,
+                definition.hard_caps.max_read_rows,
+            ),
+            *(mandate.resource_ceiling.max_read_rows for _digest, mandate in mandates),
+        )
+    )
     if not isinstance(budgets, dict):
-        return accepted_procedure.procedure.definition.budget
+        return definition.budget.model_copy(update={"max_read_rows": read_rows})
     return ProcedureBudget(
         wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
-        max_result_bytes=budgets.get(
-            "max_result_bytes", accepted_procedure.procedure.definition.budget.max_result_bytes
-        ),
+        max_result_bytes=budgets.get("max_result_bytes", definition.budget.max_result_bytes),
+        max_read_rows=read_rows,
     )
 
 
@@ -1422,6 +1474,7 @@ def _line_state_materials(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     invocation_input: object,
+    read_ceiling: int,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     return bind_accepted_state_materials(
         accepted_procedure,
@@ -1430,16 +1483,17 @@ def _line_state_materials(
             instance=instance, evaluation_time=evaluation_time
         ),
         bodies=instance.body_store(),
+        read_ceiling=read_ceiling,
         invocation_input=invocation_input,
     )
 
 
 def _provider_nodes(
     definition: ProcedureDefinition,
-) -> tuple[tuple[CallNode | SourceNode | RepeatBodyNode, str | None], ...]:
-    result: list[tuple[CallNode | SourceNode | RepeatBodyNode, str | None]] = []
+) -> tuple[tuple[CallNode | RepeatBodyNode, str | None], ...]:
+    result: list[tuple[CallNode | RepeatBodyNode, str | None]] = []
     for node in definition.nodes:
-        if isinstance(node, CallNode | SourceNode):
+        if isinstance(node, CallNode):
             result.append((node, None))
         elif isinstance(node, RepeatNode):
             result.extend((body, node.node_id) for body in node.body if body.operation == "call")
@@ -1469,7 +1523,7 @@ def _plan_external_occurrences(
     }
     occurrences: list[ProviderExternalOccurrencePlan] = []
     for node, repeat_node_id in _provider_nodes(definition):
-        if isinstance(node, SourceNode) and node.as_ in supplied_source_inputs:
+        if isinstance(node, CallNode) and node.acquires and node.as_ in supplied_source_inputs:
             continue
         slot = node.slot
         binding = plan_bindings.get(slot or "")
@@ -1516,7 +1570,7 @@ def _plan_external_occurrences(
             implementation.implementation_digest,
             eligible_environment_pin_keys=eligible,
         )
-        produces_capture = isinstance(node, SourceNode)
+        produces_capture = isinstance(node, CallNode) and node.acquires
         call_kind = "call"
         translation = translate_provider_budget(
             budget=budget,
@@ -1555,17 +1609,24 @@ def _plan_external_occurrences(
             "secret_plan": ProviderSecretResolutionPlan(),
             "budget_translation": translation,
         }
-        if isinstance(node, SourceNode):
-            capture_pin = resolved_pin(accepted_procedure, node.capture_contract)
+        if isinstance(node, CallNode) and node.acquires:
             occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
                     "input_name": node.as_,
-                    "capture_contract_digest": capture_pin.artifact_digest,
+                    # Each capture field is pinned to its own CaptureContract.
+                    "capture_contracts": {
+                        field: resolved_pin(accepted_procedure, reference).artifact_digest
+                        for field, reference in node.captures.items()
+                    },
                     "source_runtime_plan_digest": typed_digest(
                         Sha256Value,
-                        "playbill-source-runtime-plan-v1",
-                        {"node_id": node.node_id, "request": node.request},
+                        "cruxible-acquiring-call-plan-v1",
+                        {
+                            "node_id": node.node_id,
+                            "input": node.input,
+                            "captures": sorted(node.captures),
+                        },
                     ).tagged,
                 }
             )
@@ -1593,7 +1654,8 @@ def _line_external_occurrences(
         runtime_policy=runtime_policy,
         budget=budget,
         supplied_source_inputs=(
-            frozenset({accepted_line.line.trigger_input})
+            # The substituted call's alias: a trigger names its one capture output.
+            frozenset({accepted_line.line.trigger_input.partition(".")[0]})
             if accepted_line.line.trigger_input is not None
             else frozenset()
         ),
@@ -1604,7 +1666,7 @@ def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
     return tuple(
         sorted(
-            (node.as_ for node in definition.nodes if isinstance(node, SourceNode)),
+            acquisition_keys(definition),
             key=lambda item: item.encode("utf-8"),
         )
     )
@@ -1646,7 +1708,7 @@ def procedure_acquisition_rules(
     accepted: AcceptedProcedure,
     overrides: Mapping[str, AcquisitionDefault] | None = None,
 ) -> dict[str, AcquisitionRule]:
-    """The run's acquisition rule per Source alias: the Line's, else the Procedure's."""
+    """The run's acquisition rule per capture output: the Line's, else the Procedure's."""
 
     procedure = authored_procedure(accepted)
     return resolve_acquisition_rules(
@@ -1663,11 +1725,12 @@ def _plan_selection_decision(
     occurrences: tuple[ProviderExternalOccurrencePlan, ...],
     capture_contracts: Mapping[str, CaptureContract],
 ) -> ProcedureSelectionDecision:
-    """Evaluate the run's acquisition rules against this plan, per PLANNED occurrence.
+    """Evaluate the run's acquisition rules against this plan, per capture output.
 
     This is a PLAN-time evaluation and it says only what a plan can say: which
-    Source alias each planned occurrence serves, and whether its CaptureContract
-    is accepted and fits the run's output budget (an oversized contract refuses).
+    capture outputs (``<alias>.<field>``) each planned occurrence serves, and
+    whether each field's own CaptureContract is accepted and fits the run's
+    output budget (an oversized contract refuses).
     It never invents an acquisition outcome: staleness and unavailability fire
     only from a real read, in ``apply_acquisition_result`` at execution time.
     """
@@ -1675,28 +1738,32 @@ def _plan_selection_decision(
     decisions: list[AcquisitionInputDecision] = []
     for occurrence in occurrences:
         alias = occurrence.input_name
-        if occurrence.occurrence_kind != "source" or alias is None or alias not in rules:
+        if occurrence.occurrence_kind != "source" or alias is None:
             continue
-        contract = capture_contracts.get(occurrence.capture_contract_digest or "")
-        if contract is None:
-            decisions.append(
-                AcquisitionInputDecision(
-                    input_name=alias, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
+        for field, contract_digest in occurrence.capture_contracts.items():
+            key = f"{alias}.{field}"
+            if key not in rules:
+                continue
+            contract = capture_contracts.get(contract_digest)
+            if contract is None:
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
+                    )
                 )
-            )
-            continue
-        if contract.selection_budget.max_bytes > (
-            occurrence.budget_translation.policy_output_bytes_cap
-        ):
-            decisions.append(
-                AcquisitionInputDecision(
-                    input_name=alias,
-                    disposition="refused",
-                    reason_codes=(ACQUISITION_OVERSIZED,),
+                continue
+            if contract.selection_budget.max_bytes > (
+                occurrence.budget_translation.policy_output_bytes_cap
+            ):
+                decisions.append(
+                    AcquisitionInputDecision(
+                        input_name=key,
+                        disposition="refused",
+                        reason_codes=(ACQUISITION_OVERSIZED,),
+                    )
                 )
-            )
-            continue
-        decisions.append(AcquisitionInputDecision(input_name=alias, disposition="selected"))
+                continue
+            decisions.append(AcquisitionInputDecision(input_name=key, disposition="selected"))
     ordered = tuple(
         sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
     )
@@ -2273,6 +2340,7 @@ def _state_from_records(
                         raise TypeError("Source Capture association is partial")
                     association = ProcedureSourceCaptureAssociation(
                         occurrence_path=occurrence_path,
+                        field=str(payload.get("field")),
                         invocation_receipt_digest=invocation_receipt_digest,
                         capture_digest=str(payload.get("capture_digest")),
                     )
@@ -2335,10 +2403,12 @@ def _state_from_records(
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: Source Capture associations are invalid"
             ) from exc
-        if tuple(item.occurrence_path for item in source_capture_associations) != tuple(
+        if tuple(
+            (item.occurrence_path, item.field) for item in source_capture_associations
+        ) != tuple(
             sorted(
-                {item.occurrence_path for item in source_capture_associations},
-                key=str.encode,
+                {(item.occurrence_path, item.field) for item in source_capture_associations},
+                key=lambda pair: (pair[0].encode("utf-8"), pair[1].encode("utf-8")),
             )
         ) or any(
             item.invocation_receipt_digest not in invocation_receipt_digests
@@ -2351,7 +2421,10 @@ def _state_from_records(
         expected_source_associations = tuple(
             sorted(
                 produced_source_associations,
-                key=lambda item: item.occurrence_path.encode("utf-8"),
+                key=lambda item: (
+                    item.occurrence_path.encode("utf-8"),
+                    item.field.encode("utf-8"),
+                ),
             )
         )
         if source_capture_associations != expected_source_associations:
@@ -2559,15 +2632,23 @@ def _state_from_records(
     next_kind: Literal["retry", "done", "terminal"] = (
         "done" if status == "succeeded" else "retry" if status == "running" else "terminal"
     )
-    captures_by_path = {
-        item.occurrence_path: item
-        for item in (source_capture_associations or tuple(produced_source_associations))
-    }
+    # One observation per capture field an occurrence produced; an occurrence
+    # that produced none (omitted, refused, still running) reports its reads.
+    captures_by_path: dict[str, list[ProcedureSourceCaptureAssociation]] = {}
+    for item in source_capture_associations or tuple(produced_source_associations):
+        captures_by_path.setdefault(item.occurrence_path, []).append(item)
     observations = tuple(
         ProcedureSourceObservation(
             occurrence_path=occurrence_path,
             node_id=None if derived is None else derived.node_id,
-            input_name=None if derived is None else derived.input_name,
+            input_name=(
+                None
+                if derived is None
+                else derived.input_name
+                if association is None
+                else f"{derived.input_name}.{association.field}"
+            ),
+            field=None if association is None else association.field,
             source_read_receipt=receipt,
             source_read_receipt_digest=(
                 None if receipt is None else source_read_receipt_digest(receipt)
@@ -2578,15 +2659,14 @@ def _state_from_records(
             capture_digest=None if association is None else association.capture_digest,
         )
         for occurrence_path, derived, receipt, association in (
-            (
-                path,
-                derived_source_requests.get(path),
-                source_reads.get(path),
-                captures_by_path.get(path),
-            )
+            (path, derived_source_requests.get(path), source_reads.get(path), produced)
             for path in sorted(
                 set(derived_source_requests) | set(source_reads) | set(captures_by_path),
                 key=lambda item: item.encode("utf-8"),
+            )
+            for produced in (
+                cast(list[ProcedureSourceCaptureAssociation | None], captures_by_path.get(path))
+                or [None]
             )
         )
     )
@@ -2971,6 +3051,7 @@ def _prepare_direct_external_run(
         accepted_coordinate=accepted_coordinate,
         state_reader=state_reader,
         bodies=instance.body_store(),
+        read_ceiling=effective_read_rows(budget.max_read_rows, caps.max_read_rows),
         invocation_input=invocation_input,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
@@ -3156,44 +3237,59 @@ def service_run_playbill_procedure(
     prepared: PreparedProcedureRun
     acquisition_rules: Mapping[str, AcquisitionRule] | None = None
     capture_contracts: Mapping[str, CaptureContract] = {}
-    if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
-        planned = _prepare_direct_external_run(
-            instance,
+    try:
+        if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
+            planned = _prepare_direct_external_run(
+                instance,
+                accepted,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                journal_stream=stream,
+                lane=lane,
+                provider_runtime_operator=provider_runtime_operator,
+                acquisition=request.acquisition,
+                ephemeral_spec_digest=ephemeral_spec_digest,
+            )
+            if isinstance(planned, ProcedureRunStateV2):
+                return planned
+            prepared, acquisition_rules, capture_contracts = planned
+        else:
+            try:
+                direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
+            except ProcedureRuntimePolicyAbsent:
+                direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
+            prepared = prepare_direct_procedure_run(
+                accepted,
+                runtime_policy=direct_runtime_policy,
+                instance_id=instance.descriptor.instance_id,
+                accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                bodies=instance.body_store(),
+                journal_stream=stream,
+                journal_partition_id=None,
+                head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+                lane=lane,
+                admitted_at=evaluation_time,
+            )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+            raise
+        # A read the admission refuses (past the run's read budget, or a
+        # selection the reader declines) is an admission refusal, not a crash.
+        return _direct_refusal_state(
             accepted,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
-            invocation_input=request.input,
-            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
-            state_reader=state_reader,
-            journal_stream=stream,
-            lane=lane,
-            provider_runtime_operator=provider_runtime_operator,
-            acquisition=request.acquisition,
-            ephemeral_spec_digest=ephemeral_spec_digest,
-        )
-        if isinstance(planned, ProcedureRunStateV2):
-            return planned
-        prepared, acquisition_rules, capture_contracts = planned
-    else:
-        try:
-            direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
-        except ProcedureRuntimePolicyAbsent:
-            direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
-        prepared = prepare_direct_procedure_run(
-            accepted,
-            runtime_policy=direct_runtime_policy,
-            instance_id=instance.descriptor.instance_id,
-            accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
-            invocation_input=request.input,
-            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
-            state_reader=state_reader,
-            bodies=instance.body_store(),
-            journal_stream=stream,
-            journal_partition_id=None,
-            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
-            lane=lane,
-            admitted_at=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
         )
     # The journal is created only once an admission exists: a Source run that
     # cannot be admitted leaves no run history behind it.
@@ -3261,6 +3357,7 @@ def service_run_playbill_procedure(
             egress_sink=direct_egress_sink,
             ephemeral_spec_digest=ephemeral_spec_digest,
             enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+            contract_resolver=accepted_contract_resolver(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
                 instance,
@@ -3923,19 +4020,8 @@ def _run_playbill_line(
         return _state_from_records(instance, run_id=existing.run_id)
     if investigation is not None:
         require_current_investigation(instance, investigation)
-    if any(isinstance(node, ExhaustTapNode) for node in accepted.procedure.definition.nodes):
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="exhaust_binding_carrier_required",
-            message="This Line requires an opaque Exhaust access-binding carrier.",
-            details={"repair": "Trigger through a carrier-aware Line scheduler."},
-        )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
-    budget = _line_budget(accepted_line, accepted)
+    budget = _line_budget(accepted_line, accepted, mandates)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
@@ -4112,13 +4198,30 @@ def _run_playbill_line(
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
     plan_digest = procedure_acquisition_plan_digest(plan)
-    materials = _line_state_materials(
-        instance,
-        accepted,
-        coordinate=coordinate,
-        evaluation_time=evaluation_time,
-        invocation_input=accepted_line.line.parameters,
-    )
+    try:
+        materials = _line_state_materials(
+            instance,
+            accepted,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            invocation_input=accepted_line.line.parameters,
+            read_ceiling=effective_read_rows(
+                budget.max_read_rows, accepted.procedure.definition.hard_caps.max_read_rows
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+            raise
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
+        )
     full_pins = accepted.procedure.pins
     node_pin_sets = procedure_node_pin_sets(accepted)
     mandate_coordinate_digest = typed_digest(
@@ -4356,6 +4459,7 @@ def _run_playbill_line(
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
                 enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+                contract_resolver=accepted_contract_resolver(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(
                     instance,
@@ -4698,7 +4802,7 @@ def service_recover_provider_invocations(
                         occurrence.local_execution.operation_signature_digest
                     ),
                     protocol_version=occurrence.local_execution.protocol_version,
-                    capture_contract_digest=occurrence.capture_contract_digest,
+                    capture_contracts=occurrence.capture_contracts,
                     input_digest=started.input_digest,
                     outcome=outcome,
                     egress=ProviderEgressObservation(

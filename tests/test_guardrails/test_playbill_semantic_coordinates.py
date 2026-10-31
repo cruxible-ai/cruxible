@@ -218,9 +218,9 @@ LAW_COORDINATES += (
     (
         NAMED_REFERENCE_LAWS[0],
         "cruxible.capture-contract.named.v1",
-        "cruxible-capture-contract-v3",
+        "cruxible-capture-contract-v4",
         1,
-        "sha256:6555affa65a4c90224a03b0b3305fad1c89ef4f61d15bbee153a24c04b61dcc1",
+        "sha256:e2d78b0e54a0055bf9d100d1726f5fae6c32b1658532ab85ba093f4717c45be3",
     ),
     (
         NAMED_REFERENCE_LAWS[1],
@@ -303,16 +303,16 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:014d2d38585615a14144eda7f57ff500421d98a411b25014f10f0b64f405dd90"
+    expected = "sha256:d190704d4c9b2a48f778902f1222b1c97640800aca52f354bd30499cd760c7db"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "schema_version": 1,
             "projection_content": "claims-procedures-runtime-v1",
-            "semantic_revision": 39,
+            "semantic_revision": 40,
             "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
-            "revision_name": "claim-grammar-v1",
+            "revision_name": "claim-grammar-nodes-v1",
         },
     )
     assert computed == expected
@@ -357,8 +357,8 @@ def test_capture_v1_run_id_grammar_is_retained_exactly() -> None:
 def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
     """One coordinate: an earlier build's is refused, not replayed (no 0.3.2 porting)."""
 
-    assert CURRENT_COMPILER_REVISION == "claim-grammar-v1"
-    assert compiler_revision_label(CURRENT_COMPILER) == "claim-grammar-v1"
+    assert CURRENT_COMPILER_REVISION == "claim-grammar-nodes-v1"
+    assert compiler_revision_label(CURRENT_COMPILER) == "claim-grammar-nodes-v1"
     for earlier_digest in (
         "sha256:56542b566100db8fadfd4bfcea8f0fe58e37de444885906f3914ec1cc225d085",
         # Revision 36 (light-artifacts-v1): flat-manifest sroot-v1 genesis.
@@ -367,6 +367,10 @@ def test_the_release_installs_exactly_one_compiler_coordinate() -> None:
         "sha256:db1e61201a7691c12fd5a1e269040455ba4505dd4341ada115a4f2a790c8e942",
         # Revision 38 (admitted-run-v1): the versioned Claim and authoring grammar.
         "sha256:68fd35df011eb6aea18919148845925264983efa12dd558f8d611a7b03efca9f",
+        # Revision 39 (claim-grammar-v1): C4's Claim and authoring grammar alone.
+        "sha256:014d2d38585615a14144eda7f57ff500421d98a411b25014f10f0b64f405dd90",
+        # Revision 39 (nodes-extract-v1): B3's node union and extract alone.
+        "sha256:1b6fc46fd55f755f6974866cb22703a58d27ebff523efb74e0761b6514886279",
     ):
         earlier = CompilerCoordinate(rule_digest=earlier_digest)
         assert compiler_revision_label(earlier) is None

@@ -53,7 +53,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_retention_policy
-from cruxible_client.contracts.procedures.models import SourceNode
+from cruxible_client.contracts.procedures.models import CallNode
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.uploads import (
     UPLOAD_PART_SIZE,
@@ -519,18 +519,22 @@ def check_upload_procedure(
     reads = tuple(
         node
         for node in accepted.procedure.definition.nodes
-        if isinstance(node, SourceNode)
+        if isinstance(node, CallNode)
+        and node.acquires
         and node.slot in slots
         and is_workspace_file_signature(operation_signature_digest(slots[node.slot]))
     )
     if not reads:
         raise CaptureUploadRefused(
             "procedure_reads_no_upload",
-            f"Procedure {name} has no workspace.file Source to read the upload with; "
+            f"Procedure {name} has no call bound to workspace.file to read the upload with; "
             "complete the upload with the Procedure that acquires this kind of file.",
         )
     pins = tuple(
-        node.capture_contract for node in reads if isinstance(node.capture_contract, ArtifactPin)
+        capture
+        for node in reads
+        for capture in node.captures.values()
+        if isinstance(capture, ArtifactPin)
     )
     contracts = _accepted_capture_contracts(instance, coordinate, pins)
     for pin in pins:

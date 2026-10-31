@@ -12,7 +12,10 @@ post when it cannot.
 
 The dedupe key is the payload digest, the Line and the posting node: the same
 payload from the same terminal of the same Line is one item however often it is
-seen, whatever evidence each sighting stood on. Posting it again creates nothing
+seen, whatever evidence each sighting stood on. A terminal that declares a
+``dedupe_key`` names the item fields the key reads instead of the whole payload:
+the same values in those fields are one item, whose payload is its first
+sighting's. Posting it again creates nothing
 new: the item counts the sighting and keeps its evidence (the first sighting
 and the most recent ones, bounded), and keeps its status and the agent's
 decision. Only a new dedupe key -- a changed payload -- is new work, so a Line

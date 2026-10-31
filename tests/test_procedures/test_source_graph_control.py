@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperand,
     ProcedureDefinition,
     ProjectNode,
-    ReturnNode,
     SelectNode,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
@@ -55,7 +54,7 @@ def definition(*, early=False):
         refusal_code="choice",
         message="Choose a branch",
     )
-    factory = ReturnNode if early else ProjectNode
+    factory = ProjectNode
     nodes = [
         branch,
         factory(
@@ -63,6 +62,7 @@ def definition(*, early=False):
             fields={"value": 1},
             contract_out=po,
             as_="yes",
+            leaf=early,
             next=None if early else "join",
         ),
         factory(
@@ -70,14 +70,19 @@ def definition(*, early=False):
             fields={"value": 2},
             contract_out=po,
             as_="no",
+            leaf=early,
             next=None if early else "join",
         ),
     ]
     if not early:
         nodes += [
             SelectNode(node_id="join", sources=("yes", "no"), contract_out=named(po), as_="joined"),
-            ReturnNode(
-                node_id="return", fields="$steps.joined", contract_out=named(po), as_="result"
+            ProjectNode(
+                node_id="return",
+                fields="$steps.joined",
+                contract_out=named(po),
+                as_="result",
+                leaf=True,
             ),
         ]
     graph = ProcedureDefinition(

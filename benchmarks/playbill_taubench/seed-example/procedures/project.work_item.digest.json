@@ -59,7 +59,7 @@
     "nodes": [
       {
         "as": "query",
-        "kind": "state_tap",
+        "kind": "read",
         "next": "shape",
         "node_id": "read",
         "parameters": {},

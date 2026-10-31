@@ -48,6 +48,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.content_memo import request_derive
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
+from cruxible_client.contracts.procedures.reads import ProcedureReadCeiling
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -907,10 +908,32 @@ def resolve_query_parameters(
     return tuple(bindings)
 
 
+def procedure_read_budgets(
+    definition: QueryDefinition, ceiling: ProcedureReadCeiling
+) -> QueryBudgets:
+    """A Procedure read's budgets: every result and path limit lifted to its ceiling.
+
+    The declared traversal depth is kept. The ceiling is the run's remaining
+    ``max_read_rows``; anything it clips refuses the read, never truncates it.
+    """
+
+    return QueryBudgets(
+        max_results=ceiling.rows,
+        max_traversal_depth=definition.default_budgets.max_traversal_depth,
+        max_paths=ceiling.rows,
+        max_paths_per_result=ceiling.rows,
+    )
+
+
 def _effective_budgets(
     definition: QueryDefinition,
     budgets: QueryBudgets | None,
+    procedure_read: ProcedureReadCeiling | None = None,
 ) -> QueryBudgets:
+    if procedure_read is not None:
+        # A Procedure read is not an interactive read: its ceiling replaces the
+        # definition's interactive limits for this one call.
+        return procedure_read_budgets(definition, procedure_read)
     effective = budgets or definition.default_budgets
     if not effective.within(definition.maximum_budgets):
         raise _refuse(
@@ -978,8 +1001,12 @@ def evaluate_claim_query(
     entry_paths: tuple[str, ...] | None = None,
     entry_candidate_count: int | None = None,
     canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
 ) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
+
+    ``procedure_read`` evaluates for a Procedure: result, path and include
+    limits are lifted to its ceiling for this call (``procedure_read_budgets``).
 
     The result is a pure function of the definition digest, the resolved
     parameters, the accepted coordinate, and the explicit evaluation time. The
@@ -1013,7 +1040,8 @@ def evaluate_claim_query(
             coordinate=coordinate,
             evaluation_time=evaluation_time,
             bindings=bindings,
-            budgets=_effective_budgets(query, budgets),
+            budgets=_effective_budgets(query, budgets, procedure_read),
+            include_cap=None if procedure_read is None else procedure_read.rows,
             backend_factory=backend_factory,
             resolve_reference=resolve_reference,
             entry_paths=entry_paths,
@@ -1051,6 +1079,7 @@ def evaluate_artifact_query(
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
     budgets: QueryBudgets | None = None,
+    procedure_read: ProcedureReadCeiling | None = None,
 ) -> ClaimQueryResult:
     """Evaluate definition membership using the coordinate-bound indexed reader."""
     query = definition.query
@@ -1064,7 +1093,7 @@ def evaluate_artifact_query(
     effective = budgets or query.default_budgets
     try:
         bindings = resolve_query_parameters(query, parameters)
-        effective = _effective_budgets(query, budgets)
+        effective = _effective_budgets(query, budgets, procedure_read)
         count, definitions = read(query.entry, effective.max_results)
         rows = tuple(
             QueryResultRow(tag="playbill-query-result-row-v2", bindings=(), artifact=item)
@@ -1170,6 +1199,8 @@ def _hydrate(
     backend: ClaimQueryBackendV1,
     row: _Row,
     include: QueryInclude,
+    *,
+    cap: int | None = None,
 ) -> QueryIncludeResult:
     source = row.bindings.get(include.from_binding)
     pairs: list[tuple[VisibleClaimRow, str | None]] = []
@@ -1198,7 +1229,7 @@ def _hydrate(
         scoped,
         include.orderings,
         tiebreaks=[claim.visibility.claim_path.encode("utf-8") for claim, _ in candidates],
-    )[: include.max_items]
+    )[: include.max_items if cap is None else cap]
     for position in order:
         for visibility in scoped[position].ordered_reads():
             row.record(visibility)
@@ -1223,7 +1254,7 @@ def _hydrate(
             for position in order
         ),
         candidate_count=len(candidates),
-        max_items=include.max_items,
+        max_items=include.max_items if cap is None else max(cap, include.max_items),
         truncated=len(candidates) > len(order),
     )
 
@@ -1253,6 +1284,7 @@ def _evaluate(
     bindings: tuple[QueryParameterBinding, ...],
     budgets: QueryBudgets,
     backend_factory: ClaimQueryBackendFactoryV1,
+    include_cap: int | None = None,
     resolve_reference: SubjectReferenceResolver | None = None,
     entry_paths: tuple[str, ...] | None = None,
     entry_candidate_count: int | None = None,
@@ -1311,7 +1343,9 @@ def _evaluate(
 
     truncated_includes: set[str] = set()
     for row in rows:
-        row.includes = tuple(_hydrate(evaluator, backend, row, item) for item in query.includes)
+        row.includes = tuple(
+            _hydrate(evaluator, backend, row, item, cap=include_cap) for item in query.includes
+        )
         truncated_includes.update(item.name for item in row.includes if item.truncated)
     if truncated_includes:
         clipped.add("include_max_items")

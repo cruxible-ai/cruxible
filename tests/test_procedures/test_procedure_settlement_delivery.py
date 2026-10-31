@@ -242,21 +242,24 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     definition = procedure.definition.model_copy(
         update={
             "terminal_capability": 3,
-            "nodes": (
-                source,
-                shape.model_copy(update={"next": "settle"}),
-                SettleChangeSetNode(
-                    node_id="settle",
-                    candidate_templates=(
-                        (
-                            *subject_items,
-                            *(_predicate_item(predicate) for predicate in item_predicates),
-                        )
-                        if candidate_templates is None
-                        else candidate_templates
+            "nodes": fixtures.with_fan_out(
+                (
+                    source,
+                    shape.model_copy(update={"next": "settle"}),
+                    SettleChangeSetNode(
+                        node_id="settle",
+                        candidate_templates=(
+                            (
+                                *subject_items,
+                                *(_predicate_item(predicate) for predicate in item_predicates),
+                            )
+                            if candidate_templates is None
+                            else candidate_templates
+                        ),
+                        result="$steps.result",
                     ),
-                    result="$steps.result",
                 ),
+                candidate_templates,
             ),
         }
     )

@@ -35,11 +35,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
 )
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
-from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNode,
-    SourceNode,
-    StateTapNode,
-)
+from cruxible_client.contracts.procedures.models import CallNode, ReadNode
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_core.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
@@ -165,12 +161,10 @@ def line_declared_inputs(
 
     declared: list[LineDeclaredInputV1] = []
     for node in accepted_procedure.procedure.definition.nodes:
-        if isinstance(node, StateTapNode):
+        if isinstance(node, ReadNode) and node.query is not None:
             declared.append(LineDeclaredInputV1(plane="accepted_state", input_name=node.as_))
-        elif isinstance(node, SourceNode):
+        elif isinstance(node, CallNode) and node.acquires:
             declared.append(LineDeclaredInputV1(plane="landed_capture", input_name=node.as_))
-        elif isinstance(node, ExhaustTapNode):
-            declared.append(LineDeclaredInputV1(plane="exhaust", input_name=node.as_))
     declared.sort(
         key=lambda item: (_INPUT_PLANES.index(item.plane), item.input_name.encode("utf-8"))
     )

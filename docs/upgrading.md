@@ -203,8 +203,8 @@ compiler, so reads and proofs at them are unchanged. The instance descriptor
 keeps its genesis compiler; inspection reports the active compiler from
 accepted history.
 
-This release installs one compiler, revision 39 (`claim-grammar-v1`), and no
-upgrade edge leads to or from it: `cruxible compiler upgrade` refuses
+This release installs one compiler, revision 40 (`claim-grammar-nodes-v1`), and
+no upgrade edge leads to or from it: `cruxible compiler upgrade` refuses
 `cruxible.compiler_upgrade.already_current` (or
 `cruxible.compiler_upgrade.unsupported_transition` for any other target). An
 instance created by an earlier, unshipped build records another compiler or

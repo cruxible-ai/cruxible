@@ -117,9 +117,9 @@ class Previous:
 
 
 def Item(path: str = "") -> str:  # noqa: N802 - reads as a reference, like Output and Previous
-    """The current row inside an item template (``shape_items``/``make_*``), or one of its fields.
+    """The current record inside a closed transform or a fan-out item template, or its field.
 
-    Lowers to ``"$item.<path>"``, the reference an item transform resolves per
+    Lowers to ``"$item.<path>"``, the reference a transform or fan-out resolves per
     row. It is a plain string, so it fits any typed builder field below:
     ``ProcedureKeyedClaimProposalItem(statement=ProcedureClaimStatement(
     subject=SubjectKeyReference(subject_kind="catalog.part", key=Item("part_id")),
@@ -143,34 +143,53 @@ class Step:
 
 
 @dataclass(frozen=True)
-class StateTap(Step):
+class Read(Step):
+    """A read of accepted state through a named Query; it runs to the end."""
+
     query: str = ""
     parameters: object = None
 
 
-@dataclass(frozen=True)
-class Source(Step):
-    """An acquisition through ``slot``; a Line binds the slot to an exact operation."""
-
-    capture_contract: str = ""
-    request: object = Previous()
-    slot: str = ""
-
-
 @dataclass(frozen=True, kw_only=True)
 class Call(Step):
-    """A typed call through ``slot``; a Line binds the slot to an exact operation."""
+    """A typed call through ``slot``; a Line binds the slot to an exact operation.
+
+    ``captures`` names, for each ``capture<K>`` field of the slot's out
+    Contract, the CaptureContract its bytes are committed as; a call with
+    captures acquires.
+    """
 
     input: object = Previous()
     slot: str
     effect_policy: str | None = None
+    captures: dict[str, str] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Extract(Step):
+    """Read one Capture's records, typed: ``capture`` is ``Output(<call>, <capture field>)``.
+
+    ``row`` pins the Contract whose fields the step reads (``{name, version,
+    digest}``); ``fields``, ``key`` and ``header`` map each name to where it
+    is read (``{"at": ..., "parse": ..., "presence": ...}``).
+    """
+
+    capture: object
+    records: str
+    row: dict[str, object]
+    fields: dict[str, dict[str, object]]
+    key: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
+    header: dict[str, dict[str, object]] = dataclass_field(default_factory=dict)
+    complete_when: dict[str, object] | None = None
+    duplicates: Literal["refuse_run", "refuse_key", "first"] = "refuse_key"
+    only_keys: object = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class Transform(Step):
+    """A closed transform: its records are typed as they flow; it names no Contracts."""
+
     transform_kind: TransformKind
-    contract_in: Contract
-    contract_out: Contract
     spec: ProcedureTransformSpec
 
 
@@ -198,18 +217,25 @@ class EmitCapture(Step):
     result: object = Previous()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PostInbox(Step):
-    """Post items to the Line inbox, as they are, for intelligence to decide.
+    """Post typed items to the Line inbox, for intelligence to decide.
 
-    ``input`` is one item, or ``{"items": Output("rows", "items")}`` to post one
-    item per element of a list the run produced. Posting is inert (it never
-    touches accepted state) and needs observe authority; a Procedure posts only
-    when a Line runs it. ``max_items`` caps what one run posts (the core default
-    when absent); items past it are not posted and the run reports the cut.
+    Every item is a record of ``contract`` (an accepted Contract, ``name@N``,
+    pinned to its digest). ``for_each`` names a list the run produced
+    (``"$steps.<alias>.records"``): each element posts one item whose
+    ``fields`` read it with ``Item(...)``; without it, ``fields`` make one item.
+    ``dedupe_key`` names the fields that are an item's inbox identity. Posting
+    is inert (it never touches accepted state) and needs observe authority; a
+    Procedure posts only when a Line runs it. ``max_items`` caps what one run
+    posts (the core default when absent); items past it are not posted and the
+    run reports the cut.
     """
 
-    input: object = Previous()
+    contract: str
+    fields: dict[str, object]
+    for_each: object = None
+    dedupe_key: tuple[str, ...] = ()
     max_items: int | None = None
 
 
@@ -239,9 +265,9 @@ class Halt(Step):
 
 
 _KINDS = {
-    StateTap: "state_tap",
-    Source: "source",
+    Read: "read",
     Call: "call",
+    Extract: "extract",
     Transform: "transform",
     Project: "project",
     Guard: "guard",
@@ -385,7 +411,7 @@ def _schema(contract: CarriedContractInput) -> ContractSchema:
 class Sequence:
     """Compose forward steps; guards may name explicit forward branch targets.
 
-    Source and Call steps name a slot of ``slots``; a Line binds each slot to an
+    Call steps name a slot of ``slots``; a Line binds each slot to an
     exact operation. ``preview()`` is local; ``build()`` produces the shared
     ProcedureInput consumed by every surface.
     """
@@ -442,6 +468,12 @@ class Sequence:
                     node[field.name] = contract_ref(value, field.name.replace("_", "-"))
                 elif field.name == "capture_contract":
                     node[field.name] = _accepted(value, "CaptureContract", "capture-contract")
+                elif field.name == "captures":
+                    if value:
+                        node[field.name] = {
+                            name: _accepted(contract, "CaptureContract", "capture-contract")
+                            for name, contract in sorted(value.items())
+                        }
                 elif field.name == "query":
                     node[field.name] = _accepted(value, "QueryDefinition", "query")
                 elif field.name == "effect_policy":
@@ -451,11 +483,16 @@ class Sequence:
                     node["slot"] = value
                 else:
                     node[field.name] = _template(value, previous)
-            if isinstance(step, StateTap) and step.parameters is None:
+            if isinstance(step, Read) and step.parameters is None:
                 node["parameters"] = {}
-            if isinstance(step, PostInbox) and step.max_items is None:
-                del node["max_items"]  # absent takes the core default cap
-            if isinstance(step, (Source, Call)) and step.slot not in self.slots:
+            if isinstance(step, PostInbox):
+                if step.max_items is None:
+                    del node["max_items"]  # absent takes the core default cap
+                if step.for_each is None:
+                    del node["for_each"]
+                if not step.dedupe_key:
+                    del node["dedupe_key"]
+            if isinstance(step, Call) and step.slot not in self.slots:
                 error(
                     step.name,
                     "slot_undeclared",
@@ -486,11 +523,7 @@ class Sequence:
                     try:
                         value = node[field_name]
                         if field_name == "spec":
-                            value = (
-                                value["value"]
-                                if node["transform_kind"] == "adapter"
-                                else {k: v for k, v in value.items() if k != "tag"}
-                            )
+                            value = {k: v for k, v in value.items() if k != "tag"}
                         validate_contract_schema(_schema(schema_ref), value)
                     except ValueError as exc:
                         error(step.name, "contract_value_invalid", str(exc))
@@ -624,6 +657,7 @@ __all__ = [
     "CompositionDiagnostic",
     "Contract",
     "EmitCapture",
+    "Extract",
     "Guard",
     "Halt",
     "Item",
@@ -643,8 +677,7 @@ __all__ = [
     "Sequence",
     "ProcedureSpec",
     "lower_procedure_spec",
-    "Source",
-    "StateTap",
+    "Read",
     "SubjectKeyClaimObject",
     "SubjectKeyReference",
     "Transform",

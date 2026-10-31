@@ -164,6 +164,7 @@ def _fold_partition(
                 fold.associations.append(
                     {
                         "occurrence_path": occurrence_path,
+                        "field": str(payload.get("field")),
                         "invocation_receipt_digest": receipt_digest,
                         "capture_digest": str(payload.get("capture_digest")),
                     }
@@ -341,7 +342,10 @@ def _append_recovery_records(
                     }
                     for item in sorted(
                         fold.associations,
-                        key=lambda item: item["occurrence_path"].encode("utf-8"),
+                        key=lambda item: (
+                            item["occurrence_path"].encode("utf-8"),
+                            item["field"].encode("utf-8"),
+                        ),
                     )
                 ],
                 "budget": ProcedureRunBudget(

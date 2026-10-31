@@ -76,9 +76,9 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     assert isinstance(first, CaptureLandingEventV1)
     assert isinstance(second, CaptureLandingEvent)
     assert first.idempotency_key == (
-        "3d636124d746d8d0394e884e363548a8eba5064f7a862b2b6beb682e00f0cbde"
+        "dc57c23b7c7a90bd8163b0aea4b5c9689a2a0be9b072bd8df5481be297122ee9"
     )
-    assert first.event_id == "7977239ca08da339d6e4863dd4dec09cec16935fd188ba605a788cf83be1e58f"
+    assert first.event_id == "c5048dd3e2a59b9b65438f843c1f8fe18bc60f07b6c88962283abd0966edc095"
     assert first.partition_id == second.partition_id
     assert second.sequence == 1
     assert second.previous_event_digest == first.event_id

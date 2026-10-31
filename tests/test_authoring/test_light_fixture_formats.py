@@ -22,7 +22,9 @@ def test_current_capture_fixtures_are_named_and_admitted(tmp_path, factory):
     contract = factory()
     body = render_capture_contract(contract)
     path = capture_contract_path(contract.identity.name)
-    assert contract.artifact_format == "cruxible-capture-contract-v3"
+    # One current format; a record contract also declares how its bytes decode.
+    assert contract.artifact_format == "cruxible-capture-contract-v4"
+    assert (contract.decoding is not None) == (factory is record_contract)
     assert parse_capture_contract(body, path=path) == contract
     assert "pins" not in contract.model_dump(mode="json")
     accept_tree(instance, {path: body}, name="current-fixture")

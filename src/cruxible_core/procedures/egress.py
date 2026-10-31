@@ -580,6 +580,9 @@ class TerminalEgressRequestV1(_StrictEgressModel):
     capped_by: EffectiveRungTermV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: A typed post_inbox's dedupe_key: the item fields that are an item's
+    #: identity in the inbox (absent: the whole item).
+    inbox_dedupe_key: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     _digests = field_validator("procedure_artifact_digest", "admission_binding_digest")(_tagged)
 
@@ -600,6 +603,8 @@ class TerminalEgressRequestV1(_StrictEgressModel):
             raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
         if self.mandate_pin is not None or self.mandate_basis_digests:
             raise ValueError(_INHERITED_MANDATE_REFUSAL)
+        if self.inbox_dedupe_key and self.kind != "post_inbox":
+            raise ValueError("only a post_inbox terminal declares an inbox dedupe_key")
         if not self.items:
             raise ValueError("terminal egress requires at least one child item")
         if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):

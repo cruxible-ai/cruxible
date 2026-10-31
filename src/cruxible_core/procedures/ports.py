@@ -3,7 +3,7 @@
 The executor consumes these two ports only. A bound operation is the admitted
 occurrence's exact build and operation (the Line's binding for its slot); the
 acquisition rules are the run's resolved rules (its Line's ``acquisition``
-over its Procedure's ``acquisition_defaults``), keyed by Source alias.
+over its Procedure's ``acquisition_defaults``), keyed by capture output (``<alias>.<field>``).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class AcquisitionRules(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAcquisitionRules:
-    """A run's resolved rules, one per Source alias.
+    """A run's resolved rules, one per capture output (``<alias>.<field>``).
 
     A Source node today has one Capture output, named by its alias, and the
     rules are keyed by that alias; ``node_path`` does not narrow the lookup.

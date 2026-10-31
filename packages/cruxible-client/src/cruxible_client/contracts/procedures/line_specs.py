@@ -41,9 +41,7 @@ from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
     AuthorityVerb,
-    ExhaustTapNode,
     ProcedureDefinition,
-    SourceNode,
 )
 from cruxible_client.contracts.procedures.trigger_rules import (
     trigger_capture_source,
@@ -143,7 +141,7 @@ class LineSpec(_StrictLineModel):
     holds one exact ``{build, operation}`` per slot, including the slots of
     invoked children (keyed ``<invoke node path>.<slot>``); core records them
     when the Line is accepted, and runs never rebind. ``acquisition`` replaces
-    the Procedure's ``acquisition_defaults`` per Source alias.
+    the Procedure's ``acquisition_defaults`` per capture output (``<alias>.<field>``).
 
     When it runs is not the Line's to say: every Trigger aimed at it is its own
     governed artifact, and Triggers drive it only while the Line is enabled.
@@ -390,19 +388,14 @@ def evaluate_line_spec_law(
             path=path,
         )
     definition = procedure.procedure.definition
-    exhaust_taps = tuple(
-        node.node_id for node in definition.nodes if isinstance(node, ExhaustTapNode)
-    )
-    if exhaust_taps:
-        return _refusal(
-            "cruxible.line.exhaust_tap_unsupported",
-            "No v1 path runs a Procedure with an exhaust_tap node "
-            f"({', '.join(exhaust_taps)}); a Line over it could never run.",
-            path=path,
-        )
     trigger_problem = validate_trigger_input(line, procedure)
     if trigger_problem is not None:
-        return _refusal("cruxible.line.trigger_input_mismatch", trigger_problem, path=path)
+        code = (
+            "cruxible.line.trigger_target_ambiguous"
+            if trigger_problem.startswith("trigger_target_ambiguous")
+            else "cruxible.line.trigger_input_mismatch"
+        )
+        return _refusal(code, trigger_problem, path=path)
     from cruxible_client.contracts.procedures.contracts import (
         OwnedProcedureContractValidator,
         ProcedureContractValidationError,
@@ -424,12 +417,14 @@ def evaluate_line_spec_law(
     )
     if binding_problem is not None:
         return _refusal(binding_problem[0], binding_problem[1], path=path)
-    aliases = {node.as_ for node in definition.nodes if isinstance(node, SourceNode)}
-    unknown_aliases = sorted(set(line.acquisition) - aliases)
-    if unknown_aliases:
+    from cruxible_client.contracts.procedures.artifacts import acquisition_keys
+
+    unknown_keys = sorted(set(line.acquisition) - acquisition_keys(definition))
+    if unknown_keys:
         return _refusal(
             "cruxible.line.acquisition_unknown_source",
-            f"Line acquisition names no Source alias of its Procedure: {unknown_aliases}.",
+            "Line acquisition names no capture output (<alias>.<field>) of its Procedure: "
+            f"{unknown_keys}.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:
@@ -453,6 +448,16 @@ def evaluate_line_spec_law(
             return _refusal(
                 "cruxible.line.budget_exceeds_procedure_cap",
                 f"LineSpec budget {key!r} is missing, invalid, or exceeds the Procedure cap.",
+                path=path,
+            )
+    # The read budget is optional: a Line that states none reads under the
+    # Procedure's hard cap; one that states it can only lower it.
+    if isinstance(line.budgets, dict) and "max_read_rows" in line.budgets:
+        rows = _budget_int(line.budgets, "max_read_rows")
+        if rows is None or rows < 1 or rows > caps.max_read_rows:
+            return _refusal(
+                "cruxible.line.budget_exceeds_procedure_cap",
+                "LineSpec budget 'max_read_rows' is invalid or exceeds the Procedure cap.",
                 path=path,
             )
     if predecessor is None:

@@ -404,7 +404,7 @@ PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 
 
 NAMED_REFERENCE_FORMATS = {
-    "capture-contract": "cruxible-capture-contract-v3",
+    "capture-contract": "cruxible-capture-contract-v4",
     "procedure": "cruxible-procedure-v3",
     "query-definition": "cruxible-query-definition-v3",
     "trigger": "cruxible-trigger-v2",

@@ -136,7 +136,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         operation_signature_digest=operation_sig_digest,
         implementation_digest=implementation_digest,
         effect_class="external_read",
-        capture_contract_digest=capture_contract_digest(contract).tagged,
+        capture_contracts={"capture": capture_contract_digest(contract).tagged},
         contracts=(_SOURCE_VALUE,),
         local_execution=local,
         secret_plan=secret_plan,
@@ -174,7 +174,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         operation=local.operation,
         operation_signature_digest=local.operation_signature_digest,
         protocol_version="2.0",
-        capture_contract_digest=capture_contract_digest(contract).tagged,
+        capture_contracts={"capture": capture_contract_digest(contract).tagged},
         input_digest=digest("input", "source"),
         outcome=ProviderInvocationOutcome(
             status="ok",

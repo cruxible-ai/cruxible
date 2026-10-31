@@ -170,7 +170,7 @@ def test_line_without_named_policy_runs_with_the_instance_default(tmp_path: Path
     assert invoker.spawn_calls == 1
     expected = acquisition_rules_digest(
         resolve_acquisition_rules(
-            (source.SOURCE_ALIAS,), defaults={source.SOURCE_ALIAS: policy}, overrides={}
+            (source.SOURCE_CAPTURE,), defaults={source.SOURCE_CAPTURE: policy}, overrides={}
         )
     )
     assert source._admission(instance, state).acquisition_policy_digest == expected
@@ -182,7 +182,9 @@ def test_line_default_is_independent_of_a_procedures_direct_run_override(tmp_pat
 
     instance, owner, procedure, root, default = source._world(tmp_path, accept_procedure=False)
     custom = AcquisitionDefault(max_age=CanonicalDuration(microseconds=7_200_000_000))
-    procedure = procedure.model_copy(update={"acquisition_defaults": {source.SOURCE_ALIAS: custom}})
+    procedure = procedure.model_copy(
+        update={"acquisition_defaults": {source.SOURCE_CAPTURE: custom}}
+    )
     source._accept_more(
         instance,
         owner,
@@ -205,13 +207,13 @@ def test_line_default_is_independent_of_a_procedures_direct_run_override(tmp_pat
         instance, direct
     ).acquisition_policy_digest == acquisition_rules_digest(
         resolve_acquisition_rules(
-            (source.SOURCE_ALIAS,), defaults={source.SOURCE_ALIAS: custom}, overrides={}
+            (source.SOURCE_CAPTURE,), defaults={source.SOURCE_CAPTURE: custom}, overrides={}
         )
     )
     assert source._admission(
         instance, inherited
     ).acquisition_policy_digest == acquisition_rules_digest(
         resolve_acquisition_rules(
-            (source.SOURCE_ALIAS,), defaults={}, overrides={source.SOURCE_ALIAS: default}
+            (source.SOURCE_CAPTURE,), defaults={}, overrides={source.SOURCE_CAPTURE: default}
         )
     )

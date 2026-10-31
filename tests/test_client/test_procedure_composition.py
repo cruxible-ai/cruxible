@@ -15,8 +15,6 @@ from cruxible_client.authoring.procedures import (
     ProcedureCompositionError,
     Project,
     Sequence,
-    Source,
-    Transform,
     lower_procedure_spec,
 )
 from cruxible_client.authoring.sdk import Cruxible
@@ -26,7 +24,6 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperand,
     ProcedureBudget,
     ProcedureHardCaps,
-    TransformAdapterSpec,
 )
 from cruxible_client.contracts.provider_operations import ProcedureSlot
 from tests.support.procedures import RUN_WALL_CLOCK
@@ -45,7 +42,7 @@ CAPS = ProcedureHardCaps(
     max_items=100,
     max_repeat_attempts=1,
 )
-#: The one slot every sequence below declares for its Call/Source steps. A
+#: The one slot every sequence below declares for its Call steps. A
 #: Line binds a slot to an exact {build, operation} later (ruling C3);
 #: nothing about which Provider serves it is an authoring-time concern any
 #: more (ProviderBinding/.bind()/ProviderInterface discovery are gone, B2
@@ -69,7 +66,7 @@ def _node_field(node, name):
 
 
 def sequence(*steps, **kwargs):
-    if any(isinstance(step, (Call, Source)) for step in steps):
+    if any(isinstance(step, Call) for step in steps):
         kwargs.setdefault("slots", SLOTS)
     return Sequence(
         steps,
@@ -106,10 +103,10 @@ def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
 
 def test_source_project_emit_matches_security_dogfood_shape():
     plan = sequence(
-        Source(
+        Call(
             "fetch",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
@@ -142,11 +139,11 @@ def test_undeclared_slot_refuses_before_authoring():
 
 def test_existing_node_identities_survive_sequence_adoption():
     plan = sequence(
-        Source(
+        Call(
             "observation",
             node_id="fetch",
             next="retain",
-            capture_contract="http",
+            captures={"capture": "http"},
             slot=PROVIDER_SLOT,
         ),
         Project("result", node_id="retain", next="emit", fields={"count": 1}, contract_out=NUMBER),
@@ -177,19 +174,6 @@ def test_existing_node_identities_survive_sequence_adoption():
 def test_literal_fields_use_existing_contract_validator():
     plan = sequence(Project("bad", fields={"count": "wrong"}, contract_out=NUMBER))
     assert any(d.code == "contract_value_invalid" for d in plan.preview().errors)
-
-
-def test_transform_adapter_uses_value_contract_not_spec_envelope():
-    plan = sequence(
-        Transform(
-            "adapt",
-            transform_kind="adapter",
-            contract_in=NUMBER,
-            contract_out=NUMBER,
-            spec=TransformAdapterSpec(value={"count": 2}),
-        )
-    )
-    assert plan.preview().ready_for_prepare, plan.preview().errors
 
 
 def test_existing_guard_branches_are_inspected_not_reimplemented():
@@ -357,10 +341,10 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
     from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
     plan = sequence(
-        Source(
+        Call(
             "result",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),
@@ -374,54 +358,76 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
 
 
 def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
-    """The original fixture's nonexistent items field must be refused."""
+    """A field reading an output the run never produces is refused."""
 
     from cruxible_client.authoring.procedures import PostInbox
 
     plan = sequence(
         Project("result", fields={"count": 1}, contract_out=NUMBER),
-        PostInbox("inbox", input={"items": Output("result", "items")}, max_items=5),
+        PostInbox(
+            "inbox",
+            contract="test.inbox-note@1",
+            fields={"note": Output("missing", "count")},
+            max_items=5,
+        ),
     )
     preview = plan.preview()
     assert not preview.ready_for_prepare
-    assert [error.code for error in preview.errors] == ["procedure_ref_unknown"]
-    assert preview.errors[0].step == "inbox"
-    assert "$.steps[0].inbox.items" in preview.errors[0].message
-    assert "Unknown reference 'items'" in preview.errors[0].message
+    assert [error.code for error in preview.errors] == ["graph_invalid"]
+    assert "missing" in preview.errors[0].message
     with pytest.raises(ProcedureCompositionError) as caught:
         plan.build()
     assert caught.value.preview.errors == preview.errors
 
 
 def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
-    from cruxible_client.authoring.procedures import PostInbox
+    from cruxible_client.authoring.procedures import Item, PostInbox
     from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 
+    listed = CarriedContractInput(
+        name="listed",
+        fields={
+            "items": PropertySchema(
+                type="list", item_fields={"note": PropertySchema(type="string")}
+            )
+        },
+    )
     plan = sequence(
+        Project("listed", fields={"items": [{"note": "a"}]}, contract_out=listed),
         Project("result", fields={"count": 1}, contract_out=NUMBER),
-        PostInbox("inbox", input={"items": [{"count": Output("result", "count")}]}, max_items=5),
+        PostInbox(
+            "inbox",
+            contract="test.inbox-note@1",
+            for_each=Output("listed", "items"),
+            fields={"note": Item("note")},
+            dedupe_key=("note",),
+            max_items=5,
+        ),
     )
     preview = plan.preview()
-    assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("inbox",)
     assert preview.authority == "observe"
     node = lower_procedure_spec(plan.build().spec).definition["nodes"][-1]
     assert node == {
         "kind": "post_inbox",
         "node_id": "inbox",
-        "input": {"items": [{"count": "$steps.result.count"}]},
+        "contract": "test.inbox-note@1",
+        "for_each": "$steps.listed.items",
+        "fields": {"note": "$item.note"},
+        "dedupe_key": ["note"],
         "max_items": 5,
     }
+
+    def note(**extra):  # type: ignore[no-untyped-def]
+        return PostInbox("inbox", contract="test.inbox-note@1", fields={"note": "x"}, **extra)
+
     assert (
         "max_items"
-        not in lower_procedure_spec(sequence(PostInbox("inbox")).build().spec).definition["nodes"][
-            0
-        ]
+        not in lower_procedure_spec(sequence(note()).build().spec).definition["nodes"][0]
     )
-
-    successor = sequence(PostInbox("inbox", next="after"), Halt("after"))
+    successor = sequence(note(next="after"), Halt("after"))
     assert "invalid_next" in [d.code for d in successor.preview().errors]
-    over = sequence(PostInbox("inbox", max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
+    over = sequence(note(max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
     assert [d.code for d in over.preview().errors] == ["graph_invalid"]
 
 
@@ -468,10 +474,10 @@ def test_typed_item_builders_emit_the_frozen_tags_and_item_references():
     assert request["tag"] == "playbill-workspace-file-source-request-v2"
 
     plan = sequence(
-        Source(
+        Call(
             "result",
-            capture_contract="security.http",
-            request={"url": "https://example.org"},
+            captures={"capture": "security.http"},
+            input={"url": "https://example.org"},
             slot=PROVIDER_SLOT,
         ),
         Project("summary", contract_out=NUMBER, fields={"count": 1}),

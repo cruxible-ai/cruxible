@@ -35,15 +35,16 @@
       "name": "security.credential-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.credential-state-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.credential-state-v1"
+              }
             }
           },
           "id": "credential",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -57,6 +58,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "credential"
         },
         {
@@ -90,7 +92,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:36fd4d1360472a1f0a7c1d7ce5737ecf703bff5ddceaee34df1eaaf1a4d67a16",
+    "definition_digest": "sha256:fd34acb5204419f925e44ce2483c9db396438de875c9cf2366658ec7c00aed4a",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-acquire"
@@ -163,15 +165,16 @@
       "name": "security.credential-import",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.credential-state-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.credential-state-v1"
+              }
             }
           },
           "id": "credential",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -185,11 +188,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "credential"
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -274,10 +278,15 @@
           "result": "$steps.summary"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 10
         },
@@ -314,7 +323,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:975af71ee7012c1b032f6c15edc75513d4362bd98a1916443f9e04512b26a25e",
+    "definition_digest": "sha256:274155e14eeea601a56d1ecd1b8caed3b9227bca4f073259d5e7a179dd7c45ff",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -407,15 +416,16 @@
       "name": "security.cve-applicability",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.cve-record-http-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cve-record-http-v1"
+              }
             }
           },
           "id": "record",
-          "kind": "source",
-          "request": {
+          "input": {
             "expected_format": "json",
             "extract": false,
             "logical_source": "cve.record",
@@ -423,11 +433,12 @@
             "render": false,
             "url": "https://cveawg.mitre.org/api/cve/"
           },
+          "kind": "call",
           "slot": "record"
         },
         {
           "id": "releases",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -437,7 +448,7 @@
         },
         {
           "id": "sources",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -447,7 +458,7 @@
         },
         {
           "id": "watched",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -457,7 +468,7 @@
         },
         {
           "id": "assessments",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -657,7 +668,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:ebd05d66f52eb462c89b87fb2d58f246d9b0b0428940fd4edc159746aecb8afb",
+    "definition_digest": "sha256:b51a3aeed736af964d94446d95e94fc9c6be0591924183706d63227541494700",
     "identity": {
       "kind": "Procedure",
       "name": "security.cve-applicability"
@@ -741,20 +752,22 @@
       "name": "security.epss-triage",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.epss-daily-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.epss-daily-v1"
+              }
             }
           },
           "id": "epss",
-          "kind": "source",
-          "request": {},
+          "input": {},
+          "kind": "call",
           "slot": "epss"
         },
         {
           "id": "watched",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -847,7 +860,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:cba63a7ca4f9e7e4dd71f992e46d532162a92c1b4350f20ee8606e6f85eaa049",
+    "definition_digest": "sha256:5b866a1dfc63b572066ed1a5a3d739d272157b17a71aabb149e1cd336bc738fc",
     "identity": {
       "kind": "Procedure",
       "name": "security.epss-triage"
@@ -925,15 +938,16 @@
       "name": "security.evidence-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.workspace-evidence-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.workspace-evidence-v1"
+              }
             }
           },
           "id": "evidence",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -947,6 +961,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "evidence"
         },
         {
@@ -980,7 +995,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:f642243e3a6a1b51e78d643b77512969f10d9b20562d0c70796211b76381098c",
+    "definition_digest": "sha256:672986252809e0d67aaa33738c136d978f82d85946bf774b98359db7bd1c43a2",
     "identity": {
       "kind": "Procedure",
       "name": "security.evidence-acquire"
@@ -1054,7 +1069,7 @@
       "nodes": [
         {
           "id": "hq1",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1064,7 +1079,7 @@
         },
         {
           "id": "hq2",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1074,7 +1089,7 @@
         },
         {
           "id": "hq3",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1084,7 +1099,7 @@
         },
         {
           "id": "hq4",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1094,7 +1109,7 @@
         },
         {
           "id": "hq5",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1104,7 +1119,7 @@
         },
         {
           "id": "hq6",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1172,10 +1187,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.classify.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.classify.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 200
         },
@@ -1201,7 +1221,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:00e9a0704e95f05c37a3e0b0e915c1ff14928d02fd34b55e0e5e66bd4b56fb05",
+    "definition_digest": "sha256:8246d10818a75f5d954d59ee488d25a39637550b017e99cecd9b1070374bc881",
     "identity": {
       "kind": "Procedure",
       "name": "security.harden"
@@ -1301,15 +1321,16 @@
       "name": "security.inventory-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.runtime-inventory-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.runtime-inventory-v1"
+              }
             }
           },
           "id": "inventory",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -1323,6 +1344,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "inventory"
         },
         {
@@ -1356,7 +1378,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:360bba622178dec8f92cbf2a82137a14bd048fd6f701fe30d37782113eb701aa",
+    "definition_digest": "sha256:660b6e18028827eec6271c3d8c449ea532d35e3a454a05aa793ad4d0575ee97e",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-acquire"
@@ -1429,15 +1451,16 @@
       "name": "security.inventory-import",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.runtime-inventory-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.runtime-inventory-v1"
+              }
             }
           },
           "id": "inventory",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -1451,11 +1474,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "inventory"
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "scope": "$input.scope"
           },
@@ -1468,7 +1492,7 @@
         },
         {
           "id": "runs",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "scope": "$input.scope"
           },
@@ -1481,7 +1505,7 @@
         },
         {
           "id": "patches",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "scope": "$input.scope"
           },
@@ -1621,7 +1645,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:51ca80493a868429fc512cdee22eccf8ddb33ed1fe28e9a448edde7818300a68",
+    "definition_digest": "sha256:7e661882efbee56edbcca9cf2d098bd70c64e3192acbd647abb9f4866972812a",
     "identity": {
       "kind": "Procedure",
       "name": "security.inventory-import"
@@ -1742,15 +1766,16 @@
       "name": "security.kev-attention",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.kev-http-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.kev-http-v1"
+              }
             }
           },
           "id": "catalog",
-          "kind": "source",
-          "request": {
+          "input": {
             "expected_format": "json",
             "extract": false,
             "logical_source": "cisa.kev.catalog",
@@ -1758,11 +1783,12 @@
             "render": false,
             "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
           },
+          "kind": "call",
           "slot": "catalog"
         },
         {
           "id": "releases",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1772,7 +1798,7 @@
         },
         {
           "id": "watched",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1782,7 +1808,7 @@
         },
         {
           "id": "assessments",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -1835,10 +1861,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.match.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.match.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 1000
         },
@@ -1875,7 +1906,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:5c52d7692ef1ecb695746b2f4b61eca57b90939b936ca23dd612d9ded79423cc",
+    "definition_digest": "sha256:b4c30f8600386dbdaf75bb04230643efc84b18571e401cabde70c451ca795457",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -1984,15 +2015,16 @@
       "name": "security.kev-triage",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.kev-http-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.kev-http-v1"
+              }
             }
           },
           "id": "catalog",
-          "kind": "source",
-          "request": {
+          "input": {
             "expected_format": "json",
             "extract": false,
             "logical_source": "cisa.kev.catalog",
@@ -2000,11 +2032,12 @@
             "render": false,
             "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
           },
+          "kind": "call",
           "slot": "catalog"
         },
         {
           "id": "watched",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -2096,7 +2129,7 @@
       },
       "terminal_capability": 3
     },
-    "definition_digest": "sha256:a1eab2c7b83517554ffed3207eced1c3800cdb7a89be92f1791e5dfa61e1f301",
+    "definition_digest": "sha256:4d71db5657bc4278c13f40a94b4e3dc7540688da830ff2c187089a48a444d82c",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-triage"
@@ -2171,15 +2204,16 @@
       "name": "security.log-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.log-read-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.log-read-v1"
+              }
             }
           },
           "id": "log",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -2193,6 +2227,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "log"
         },
         {
@@ -2226,7 +2261,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:df4f094950e4b8703a53670ef8efc841d9128375c82edce3e0c63a06507c6dfc",
+    "definition_digest": "sha256:0128d897f4e42162f868512ac9be60b12fbc78da77c530998c861eff8ed323e6",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-acquire"
@@ -2299,15 +2334,16 @@
       "name": "security.log-import",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.log-read-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.log-read-v1"
+              }
             }
           },
           "id": "log",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -2321,11 +2357,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "log"
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -2432,10 +2469,15 @@
           "result": "$steps.summary"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 10
         },
@@ -2477,7 +2519,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:3ad4916d46ecd120732f14ab8a20c579b6e770fc33a79cdd0c16262188485285",
+    "definition_digest": "sha256:34a6635416fe1b939f04a8131c11c55855415f379dd13495562df0eb87ab1a52",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -2574,18 +2616,20 @@
       "name": "security.registry-parse",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.pypi-release-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.pypi-release-v1"
+              }
             }
           },
           "id": "registry",
-          "kind": "source",
-          "request": {
+          "input": {
             "project": "$input.project",
             "versions": "$input.versions"
           },
+          "kind": "call",
           "slot": "registry"
         },
         {
@@ -2611,7 +2655,7 @@
         },
         {
           "id": "coverage",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "scope": "registry.files",
             "source": "$input.source"
@@ -2625,7 +2669,7 @@
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "name": "$input.project",
             "registry": "pypi"
@@ -2708,7 +2752,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:77a8794dfcf1456c910d8088622cf9ad0e52b524108350802153f5a67c390408",
+    "definition_digest": "sha256:a6542387d774ca5c52f4b243355dd4abb44a2518bf71eacb1d1aa9204185ce43",
     "identity": {
       "kind": "Procedure",
       "name": "security.registry-parse"
@@ -2805,21 +2849,23 @@
       "name": "security.repo-parse",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.repo-snapshot-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.repo-snapshot-v1"
+              }
             }
           },
           "id": "snapshot",
-          "kind": "source",
-          "request": {
+          "input": {
             "forge_host": "$input.forge_host",
             "full_name": "$input.full_name",
             "path": "$input.path",
             "ref": "$input.ref",
             "scope": "$input.scope"
           },
+          "kind": "call",
           "slot": "snapshot"
         },
         {
@@ -2845,7 +2891,7 @@
         },
         {
           "id": "coverage",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "scope": "$input.scope",
             "source": "$input.source"
@@ -2859,7 +2905,7 @@
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "source": "$input.repo_source"
           },
@@ -2872,7 +2918,7 @@
         },
         {
           "id": "targets",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "forge_host": "$input.forge_host",
             "full_name": "$input.full_name"
@@ -2886,7 +2932,7 @@
         },
         {
           "id": "releases",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "name": "$input.full_name",
             "registry": "github_release"
@@ -2974,7 +3020,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:81cc1daaf2522cbbaf551a3f8c951a4a2b09d3cd8c3b7d5a32fbd81edc0bd58d",
+    "definition_digest": "sha256:214afd4ac1668d05bb90288e1ef0f7e9d424a7790c7b502adefe8dd5238c9239",
     "identity": {
       "kind": "Procedure",
       "name": "security.repo-parse"
@@ -3092,15 +3138,16 @@
       "name": "security.reproduction-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.reproduction-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.reproduction-v1"
+              }
             }
           },
           "id": "reproduction",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -3114,6 +3161,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "reproduction"
         },
         {
@@ -3147,7 +3195,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:1452b8a0a20746a16b47724caa1b84304a55cf989283c36e96c93e8230f083de",
+    "definition_digest": "sha256:2bc7acf29b86314bf08ce3d8cf224ae78440c658aabfc33456fd0395ad6d7667",
     "identity": {
       "kind": "Procedure",
       "name": "security.reproduction-acquire"
@@ -3221,7 +3269,7 @@
       "nodes": [
         {
           "id": "exposure",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3234,7 +3282,7 @@
         },
         {
           "id": "hosts",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -3244,7 +3292,7 @@
         },
         {
           "id": "deployments",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -3254,7 +3302,7 @@
         },
         {
           "id": "patches",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3267,7 +3315,7 @@
         },
         {
           "id": "overdue",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3280,7 +3328,7 @@
         },
         {
           "id": "exceptions",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3293,7 +3341,7 @@
         },
         {
           "id": "audits",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3306,7 +3354,7 @@
         },
         {
           "id": "credentials",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "incident": "$input.incident"
           },
@@ -3382,10 +3430,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.classify.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.classify.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 200
         },
@@ -3411,7 +3464,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:badb150735540bf76bda5f602942df395ea7156f758c76a52f8502379c5a38c5",
+    "definition_digest": "sha256:9d8956806cefd78befd7a66469bff0334a4824e5613504f075c77845c5191128",
     "identity": {
       "kind": "Procedure",
       "name": "security.respond"
@@ -3518,15 +3571,16 @@
       "name": "security.sarif-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.sarif-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.sarif-v1"
+              }
             }
           },
           "id": "sarif",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -3540,6 +3594,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "sarif"
         },
         {
@@ -3573,7 +3628,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:a32fd29c806c103b4e24a1cbd5aeb6f5ad4eecffd0855772755bf5c84b857af7",
+    "definition_digest": "sha256:297e4f76fa221c6812821c02b985cb342e2f8684267473359efcc97f52b6c999",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-acquire"
@@ -3646,15 +3701,16 @@
       "name": "security.sarif-attention",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.sarif-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.sarif-v1"
+              }
             }
           },
           "id": "sarif",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -3668,11 +3724,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "sarif"
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "repo_ref": "$input.repo_ref"
           },
@@ -3758,10 +3815,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 1000
         },
@@ -3803,7 +3865,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:4bf54b9fb376ebcb4cbb551fd12e2a308bc0f02614fe9c1520aec0a8bd09751a",
+    "definition_digest": "sha256:02ad2adcb3456d9db2e7f0720391db0936d5dd008af7cf847ffa892828f0671f",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-attention"
@@ -3915,15 +3977,16 @@
       "name": "security.sarif-import",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.sarif-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.sarif-v1"
+              }
             }
           },
           "id": "sarif",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -3937,11 +4000,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "sarif"
         },
         {
           "id": "held",
-          "kind": "state_tap",
+          "kind": "read",
           "parameters": {
             "repo_ref": "$input.repo_ref"
           },
@@ -4072,7 +4136,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:0218ea5f2eaa627c2536cde837a0da754355a08c155f1ad12fa1fad6767b7d09",
+    "definition_digest": "sha256:d20f993cabc94d9b5c10e5511721338145daa95035b58f9fa5bbb2b36a68c215",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-import"
@@ -4184,15 +4248,16 @@
       "name": "security.sbom-acquire",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.cyclonedx-sbom-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cyclonedx-sbom-v1"
+              }
             }
           },
           "id": "sbom",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -4206,6 +4271,7 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "sbom"
         },
         {
@@ -4239,7 +4305,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:272c6960fa9eedbea0e7d6fd5d20bc21e76f1556b227db81de10b714deed2b46",
+    "definition_digest": "sha256:7f9110a1a49bcf47ae9b8d792fef9b07f25e035c0071f62486842f804ab6522f",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-acquire"
@@ -4312,15 +4378,16 @@
       "name": "security.sbom-import",
       "nodes": [
         {
-          "capture_contract": {
-            "target": {
-              "kind": "CaptureContract",
-              "name": "security.cyclonedx-sbom-v1"
+          "captures": {
+            "capture": {
+              "target": {
+                "kind": "CaptureContract",
+                "name": "security.cyclonedx-sbom-v1"
+              }
             }
           },
           "id": "sbom",
-          "kind": "source",
-          "request": {
+          "input": {
             "coordinate": {
               "revision": "working"
             },
@@ -4334,11 +4401,12 @@
             "selector_type": "whole-response-v1",
             "tag": "playbill-workspace-file-source-request-v2"
           },
+          "kind": "call",
           "slot": "sbom"
         },
         {
           "id": "releases",
-          "kind": "state_tap",
+          "kind": "read",
           "query": {
             "target": {
               "kind": "QueryDefinition",
@@ -4432,7 +4500,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:4cf4165a3a1b24e24c74de2dacb0801aa65a0172243bfdcb8a594573995f909a",
+    "definition_digest": "sha256:4d6a7735638dfccb4e22adae58238439350e297136d6597af3d67782017e471c",
     "identity": {
       "kind": "Procedure",
       "name": "security.sbom-import"

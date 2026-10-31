@@ -19,23 +19,21 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ExhaustTapNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
-    InboxEgressNode,
     PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatBodyNode,
     RepeatNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
 )
+from tests.support.inbox import inbox_node
 from tests.support.procedures import named
 
 
@@ -97,30 +95,23 @@ def _definition(
 
 
 def _kitchen_sink_definition() -> ProcedureDefinition:
-    contract_in = _pin("contract-in", "Contract", "node-input")
     contract_out = _pin("contract-out", "Contract", "node-output")
     return _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="state",
                 query=named(_pin("query", "QueryDefinition", "accepted-state")),
                 parameters={},
                 as_="state_rows",
             ),
-            SourceNode(
+            CallNode(
                 node_id="source",
-                capture_contract=named(
-                    _pin("capture-contract", "CaptureContract", "source-capture")
-                ),
+                captures={
+                    "capture": named(_pin("capture-contract", "CaptureContract", "source-capture"))
+                },
                 slot="fetch",
-                request={"state": "$steps.state_rows"},
+                input={"state": "$steps.state_rows"},
                 as_="source_rows",
-            ),
-            ExhaustTapNode(
-                node_id="exhaust",
-                reducer_or_query=named(_pin("reducer", "Reducer", "journal-reducer")),
-                journal_identity="run-exhaust",
-                as_="exhaust_rows",
             ),
             CallNode(
                 node_id="provider",
@@ -131,14 +122,11 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ),
             TransformNode(
                 node_id="transform",
-                transform_kind="shape_items",
-                contract_in=named(contract_in),
-                contract_out=named(contract_out),
+                transform_kind="shape",
                 spec={
-                    "tag": "playbill-transform-shape-items-spec-v1",
-                    "items": "$steps.provider_rows",
-                    "fields": {},
-                    "include_input": True,
+                    "tag": "cruxible-transform-shape-spec-v1",
+                    "input": "$steps.provider_rows",
+                    "fields": {"rows": {"from": "$item.fields.rows"}},
                 },
                 as_="transformed_rows",
             ),
@@ -155,12 +143,11 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                     RepeatBodyNode(
                         node_id="body-transform",
                         operation="transform",
-                        transform_kind="adapter",
-                        contract_in=named(contract_in),
-                        contract_out=named(contract_out),
+                        transform_kind="shape",
                         spec={
-                            "tag": "playbill-transform-adapter-spec-v1",
-                            "value": {"rows": "$steps.projected_rows"},
+                            "tag": "cruxible-transform-shape-spec-v1",
+                            "input": "$steps.projected_rows",
+                            "fields": {"rows": {"from": "$item.fields.rows"}},
                         },
                         as_="body_rows",
                     ),
@@ -210,15 +197,10 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("contract_out",),
         ("parameter_contract",),
         ("nodes", 0, "query"),
-        ("nodes", 1, "capture_contract"),
-        ("nodes", 2, "reducer_or_query"),
-        ("nodes", 3, "effect_policy"),
-        ("nodes", 4, "contract_in"),
+        ("nodes", 1, "captures", "capture"),
+        ("nodes", 2, "effect_policy"),
         ("nodes", 4, "contract_out"),
-        ("nodes", 5, "contract_out"),
-        ("nodes", 6, "body", 0, "contract_in"),
-        ("nodes", 6, "body", 0, "contract_out"),
-        ("nodes", 7, "capture_contract"),
+        ("nodes", 6, "capture_contract"),
     ),
 )
 def test_semantic_reference_expectations_cover_every_dependency_field(
@@ -237,7 +219,7 @@ def test_semantic_reference_expectations_cover_every_dependency_field(
 # declared as a cross-checked slot reference (ProcedurePinSlotRef) with its
 # own independent role declaration (ProcedurePinSlot) that could disagree
 # with how it was actually used. Slots are now type-fixed to provider-calling
-# nodes only (SourceNode/CallNode/the call arm of RepeatBodyNode), named
+# nodes only (CallNode/CallNode/the call arm of RepeatBodyNode), named
 # directly as a plain `slot: str`, with no indirection and so no possible
 # role mismatch to validate -- the test had no surviving behavior to migrate
 # to and is deleted.
@@ -247,7 +229,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
     contract_out = _pin("contract-out", "Contract", "result")
     definition = _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="state",
                 query=named(_pin("query", "QueryDefinition", "state")),
                 as_="rows",
@@ -292,7 +274,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
     with pytest.raises(ProcedureGraphFormatError, match="not produced on every path"):
         _definition(
             (
-                StateTapNode(
+                ReadNode(
                     node_id="state",
                     query=named(_pin("query", "QueryDefinition", "state")),
                     as_="rows",
@@ -333,7 +315,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
 def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
     definition = _definition(
         (
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(_pin("query", "QueryDefinition", "halt-input")),
                 as_="rows",
@@ -352,7 +334,7 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
 
 def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinition:
     contract_out = _pin("contract-out", "Contract", "guard-layout-result")
-    read = StateTapNode(
+    read = ReadNode(
         node_id="read",
         query=named(_pin("query", "QueryDefinition", "guard-layout-input")),
         as_="rows",
@@ -462,7 +444,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     with pytest.raises(ProcedureGraphFormatError) as raised:
         _definition(
             (
-                StateTapNode(
+                ReadNode(
                     node_id="read",
                     query=named(_pin("query", "QueryDefinition", "guard-tail-input")),
                     as_="rows",
@@ -478,12 +460,11 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                 ),
                 TransformNode(
                     node_id="result",
-                    transform_kind="aggregate_items",
-                    contract_in=named(_pin("contract-in", "Contract", "guard-tail-items")),
-                    contract_out=named(contract_out),
+                    transform_kind="aggregate",
                     spec={
-                        "tag": "playbill-transform-aggregate-items-spec-v1",
-                        "items": "$steps.rows",
+                        "tag": "cruxible-transform-aggregate-spec-v1",
+                        "input": "$steps.rows",
+                        "op": "count",
                     },
                     as_="result",
                 ),
@@ -509,13 +490,13 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     "path",
     (
         ("nodes", 0, "parameters"),
-        ("nodes", 1, "request"),
-        ("nodes", 3, "input"),
-        ("nodes", 4, "spec", "items"),
-        ("nodes", 5, "fields"),
-        ("nodes", 6, "body", 0, "spec", "value"),
-        ("nodes", 7, "input"),
-        ("nodes", 7, "result"),
+        ("nodes", 1, "input"),
+        ("nodes", 2, "input"),
+        ("nodes", 3, "spec", "input"),
+        ("nodes", 4, "fields"),
+        ("nodes", 5, "body", 0, "spec", "input"),
+        ("nodes", 6, "input"),
+        ("nodes", 6, "result"),
     ),
 )
 def test_structured_step_references_are_checked_in_every_runtime_template(
@@ -527,19 +508,54 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
         ProcedureDefinition.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    ("retired", "replacement"),
+    [
+        ("shape_items", "'shape'"),
+        ("filter_items", "'filter'"),
+        ("join_items", "'join'"),
+        ("aggregate_items", "'aggregate'"),
+        ("dedupe_items", "'dedupe'"),
+    ],
+)
+def test_retired_item_transform_kinds_are_refused_naming_their_closed_replacement(
+    retired: str, replacement: str
+) -> None:
+    """F12: one transform vocabulary; the old item kinds refuse, in nodes and repeat bodies."""
+
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind
+
+    payload = _kitchen_sink_definition().model_dump(mode="json", by_alias=True)
+    node = payload["nodes"][3]
+    node["transform_kind"] = retired
+    with pytest.raises(ValidationError, match="procedure_node_kind_retired") as caught:
+        ProcedureDefinition.model_validate(payload)
+    assert replacement in str(caught.value)
+    with pytest.raises((RetiredNodeKind, ValidationError), match=replacement):
+        RepeatBodyNode.model_validate(
+            {
+                "node_id": "b",
+                "operation": "transform",
+                "transform_kind": retired,
+                "spec": {},
+                "as": "b",
+            }
+        )
+
+
 def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     definition = _kitchen_sink_definition()
-    transform = definition.nodes[4]
+    transform = definition.nodes[3]
     assert isinstance(transform, TransformNode)
     raw = transform.model_dump(mode="json", by_alias=True)
 
-    untagged = {**raw, "spec": {"items": [], "fields": {}}}
+    untagged = {**raw, "spec": {"input": [], "fields": {}}}
     with pytest.raises(ValueError, match="tag"):
         TransformNode.model_validate(untagged)
 
     mismatched = {
         **raw,
-        "spec": {"tag": "playbill-transform-aggregate-items-spec-v1", "items": []},
+        "spec": {"tag": "cruxible-transform-aggregate-spec-v1", "input": [], "op": "count"},
     }
     with pytest.raises(ValueError, match="does not match"):
         TransformNode.model_validate(mismatched)
@@ -553,7 +569,7 @@ def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
 @pytest.mark.parametrize(
     ("terminal", "capability", "accepted"),
     (
-        (InboxEgressNode(node_id="inbox", input="$steps.result"), 1, True),
+        (inbox_node(fields={"note": "$steps.result"}), 1, True),
         (
             ProposeChangeSetNode(
                 node_id="propose",
@@ -630,7 +646,7 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
 @pytest.mark.parametrize(
     "terminal",
     (
-        InboxEgressNode(node_id="inbox", input="$steps.missing"),
+        inbox_node(fields={"note": "$steps.missing"}),
         ProposeChangeSetNode(
             node_id="propose",
             candidate_templates=({"input": "$steps.missing"},),
@@ -654,3 +670,60 @@ def test_all_terminal_runtime_templates_receive_structured_reference_checks(
             ),
             returns="result",
         )
+
+
+@pytest.mark.parametrize(
+    ("declared", "message"),
+    [
+        ({"fields": {"note": "x"}, "for_each": [1, 2]}, "names one list"),
+        ({"fields": {"note": "$item.note"}}, "only under for_each"),
+        ({"fields": {"note": "x"}, "dedupe_key": ["missing"]}, "dedupe_key"),
+        ({"fields": {}}, "at least 1"),
+        ({"input": {"items": []}, "fields": {"note": "x"}}, "Extra inputs"),
+    ],
+    ids=["for-each-literal", "item-without-for-each", "unknown-key", "no-fields", "untyped-input"],
+)
+def test_a_post_inbox_declares_its_typed_items(declared: dict[str, object], message: str) -> None:
+    """F13: {contract, for_each, fields, dedupe_key, max_items}; nothing untyped."""
+
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
+
+    with pytest.raises(ValidationError, match=message):
+        InboxEgressNode.model_validate(
+            {"node_id": "inbox", "contract": "test.inbox-note@1", **declared}
+        )
+    typed = InboxEgressNode.model_validate(
+        {
+            "node_id": "inbox",
+            "contract": "test.inbox-note@1",
+            "for_each": "$steps.rows.records",
+            "fields": {"note": "$item.fields.note"},
+            "dedupe_key": ["note"],
+        }
+    )
+    assert typed.contract.spelling == "test.inbox-note@1"
+
+
+def test_a_post_inbox_contract_is_pinned_to_its_accepted_version() -> None:
+    from cruxible_client.contracts.procedures.artifacts import extract_row_problem
+
+    node = inbox_node(fields={"note": "$steps.result"})
+    definition = _definition(
+        (
+            ProjectNode(
+                node_id="result",
+                literal={"note": "x"},
+                contract_out=named(_pin("contract-out", "Contract", "node-output")),
+                as_="result",
+                next="inbox",
+            ),
+            node,
+        ),
+        returns="result",
+        terminal_capability=1,
+    )
+    assert "is not accepted" in str(extract_row_problem(definition, {}))
+    pinned = {(node.contract.name, node.contract.version): node.contract.digest}
+    assert extract_row_problem(definition, pinned) is None  # type: ignore[arg-type]
+    other = {(node.contract.name, node.contract.version): "sha256:" + "0" * 64}
+    assert "must pin" in str(extract_row_problem(definition, other))

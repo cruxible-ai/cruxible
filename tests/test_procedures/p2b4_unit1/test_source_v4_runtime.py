@@ -47,8 +47,8 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     CaptureEgressNode,
-    SourceNode,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
@@ -318,7 +318,7 @@ class _SourceInvoker:
         )
 
 
-def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result"):
+def _acquisition_rules(policy: AcquisitionDefault, *, alias: str = "source_result.capture"):
     from cruxible_core.procedures.ports import ResolvedAcquisitionRules
 
     return ResolvedAcquisitionRules(
@@ -369,11 +369,11 @@ def _source_fixture(
         target=terminal_contract.identity,
         artifact_digest=capture_contract_digest(terminal_contract).tagged,
     )
-    source_node = SourceNode(
+    source_node = CallNode(
         node_id="direct",
-        capture_contract=named(contract_pin),
+        captures={"capture": named(contract_pin)},
         slot=PROVIDER_SLOT,
-        request={"value": "$input.value"},
+        input={"value": "$input.value"},
         as_="source_result",
         next="capture-output" if include_terminal else None,
     )
@@ -407,12 +407,14 @@ def _source_fixture(
         )
     )
     policy = AcquisitionDefault(max_age=CanonicalDuration(microseconds=60_000_000))
+    (source_field,) = source_node.captures
+    source_output = f"{source_node.as_}.{source_field}"
     procedure = authored.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "pins": pins,
-            "acquisition_defaults": {source_node.as_: policy},
+            "acquisition_defaults": {source_output: policy},
         }
     )
     # New Procedure artifacts are accepted only in the named (v3) format at the
@@ -451,9 +453,7 @@ def _source_fixture(
         },
     )
     policy_digest = acquisition_rules_digest(
-        resolve_acquisition_rules(
-            (source_node.as_,), defaults={source_node.as_: policy}, overrides={}
-        )
+        resolve_acquisition_rules((source_output,), defaults={source_output: policy}, overrides={})
     )
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]
@@ -463,7 +463,7 @@ def _source_fixture(
             "occurrence_path": "source/direct",
             "occurrence_kind": "source",
             "input_name": source_node.as_,
-            "capture_contract_digest": contract_pin.artifact_digest,
+            "capture_contracts": {source_field: contract_pin.artifact_digest},
             "contracts": (
                 _VALUE_CONTRACT,
                 _ENVELOPE_CONTRACT,
@@ -607,7 +607,9 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
     result = executor.execute(prepared, accepted)
 
     assert result.status == "succeeded"
-    assert result.output == {"size": 3}
+    # The acquiring call's value names the Capture its whole-wire output became.
+    assert set(result.output) == {"capture"}  # type: ignore[arg-type]
+    assert result.output["capture"].startswith("sha256:")  # type: ignore[index]
     assert (invoker.bind_calls, invoker.spawn_calls) == (1, 1)
     assert invoker.coordinates == {
         "accepted_coordinate": prepared.admission.accepted_coordinate.model_dump(mode="json"),
@@ -948,8 +950,9 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
     first = execute(first_prepared, 3)
     second = execute(second_prepared, 4)
 
-    assert first.output == {"size": 3}
-    assert second.output == {"size": 4}
+    # Each run's value names its own Capture: the two materials differ.
+    assert first.output != second.output
+    assert set(first.output) == set(second.output) == {"capture"}  # type: ignore[arg-type]
     first_replay = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -966,8 +969,8 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
     ).execute(second_prepared, accepted)
-    assert first_replay.output == {"size": 3}
-    assert second_replay.output == {"size": 4}
+    assert first_replay.output == first.output
+    assert second_replay.output == second.output
 
 
 @pytest.mark.parametrize("budget_refusal", [False, True])

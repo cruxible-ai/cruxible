@@ -658,13 +658,13 @@ def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_s
             CarriedContractInput(name="empty-input", fields={}),
             CarriedContractInput(name="rows-output", fields={"rows": PropertySchema(type="json")}),
         ),
-        acquisition_defaults={"advisory": {"max_age": "PT10M", "on_unavailable": "refuse"}},
+        acquisition_defaults={"advisory.capture": {"max_age": "PT10M", "on_unavailable": "refuse"}},
     )
     payload = lower_authoring_input(member)
     # The payload carries the rule itself; no standalone policy or digest relay.
     assert payload.tag == "cruxible-procedure-authoring-payload-v3"
-    assert payload.acquisition_defaults["advisory"].max_age.microseconds == 600_000_000
-    assert payload.acquisition_defaults["advisory"].on_unavailable == "refuse"
+    assert payload.acquisition_defaults["advisory.capture"].max_age.microseconds == 600_000_000
+    assert payload.acquisition_defaults["advisory.capture"].on_unavailable == "refuse"
 
     result = coordinator.compile_input(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -682,7 +682,7 @@ def test_a_procedure_input_carries_acquisition_defaults_and_refuses_an_unknown_s
     }
     assert offending == {"procedure"}
     assert any(
-        "acquisition_defaults name no Source alias" in item.message
+        "acquisition_defaults name no capture output" in item.message
         for item in result.frontier.diagnostics
     )
 

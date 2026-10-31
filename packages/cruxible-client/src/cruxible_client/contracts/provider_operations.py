@@ -3,8 +3,8 @@
 A provider build declares ``operations``. Each operation names its input and
 output Contracts (``name@N``, pinned to the exact accepted digest when the
 build is accepted), its effect, the typed refusals it may return, an optional
-enumeration declaration (recorded, never verified), and the package entrypoint
-that serves it.
+enumeration declaration (recorded, never verified), and the package
+entrypoint that serves it.
 
 A Procedure never names a provider. Its calling nodes name a **slot**, and the
 Procedure declares each slot's signature ``{in, out, effect}``. A Line binds

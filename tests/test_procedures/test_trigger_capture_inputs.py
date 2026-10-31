@@ -37,6 +37,7 @@ from tests.test_procedures.test_procedure_source_runs import (
     NOW,
     RELATIVE_PATH,
     SOURCE_ALIAS,
+    SOURCE_CAPTURE,
     _accept_more,
     _actor,
     _line_mandate,
@@ -51,7 +52,18 @@ LOCAL_OPERATOR = LineEnablementPrincipal(kind="local_operator", label="local-ope
 TRIGGER = "trigger-source-trigger"
 
 
-def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources=(), **kwargs):
+def world(  # noqa: PLR0913
+    tmp_path,
+    *,
+    window=False,
+    line_budget=None,
+    with_owner=False,
+    sources=(),
+    trigger_input=SOURCE_CAPTURE,
+    **kwargs,
+):
+    # A trigger binds only the Capture; the Procedure reads it through an extract.
+    kwargs.setdefault("document", True)
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
     if kwargs.get("historical"):
         from tests.core_support._pc_c_support import capture_contract as frozen_contract
@@ -73,7 +85,7 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, sources
         )
     values = {
         **original.model_dump(mode="python"),
-        "trigger_input": SOURCE_ALIAS,
+        "trigger_input": trigger_input,
         "trigger_event": selector,
     }
 
@@ -191,7 +203,7 @@ def test_trigger_capture_is_consumed_without_provider_or_workspace_read(
     state = seeded[consumed.run_id]
     assert admitted_capture_token(capture_digest) in state.provenance["result"].whole
     assert produced_capture_token(capture_digest) not in state.provenance["result"].whole
-    assert state.facts[capture_digest].acquisition_input_name == SOURCE_ALIAS
+    assert state.facts[capture_digest].acquisition_input_name == SOURCE_CAPTURE
     from cruxible_core.procedures.terminal_dependencies import (
         build_terminal_item_manifest,
         derive_terminal_item_facts,
@@ -209,9 +221,46 @@ def test_trigger_capture_is_consumed_without_provider_or_workspace_read(
         outcomes=tuple(state.outcomes.values()),
     )
     assert facts.selector_privacy == privacy
-    assert facts.source_coverage[0].input_name == SOURCE_ALIAS
+    assert facts.source_coverage[0].input_name == SOURCE_CAPTURE
     assert facts.source_coverage[0].disposition == "consumed"
     assert facts.source_coverage[0].capture_digests == (capture_digest,)
+
+
+def test_a_trigger_substitutes_its_one_capture_output_by_name(tmp_path):
+    """The call does not run: its one capture field binds the triggering Capture."""
+
+    instance, root, line = world(tmp_path, trigger_input=SOURCE_CAPTURE)
+    produced, _ = _run(instance, root)
+    event = event_from(produced)
+
+    consumed = run_line(instance, line, event)
+
+    assert consumed.status == "succeeded", consumed.model_dump(mode="json")
+    assert consumed.result == {"severity": "high"}
+    bound = admission(instance, consumed.run_id)
+    assert bound.acquisition_plan.external_occurrences == ()
+    (landed,) = bound.admission.landed_capture_inputs
+    assert landed.input_name == SOURCE_CAPTURE
+    assert landed.capture_digest == produced.source_observations[0].capture_digest
+
+
+def test_a_bare_alias_trigger_is_refused_naming_its_capture_output(tmp_path):
+    """One spelling per role: a trigger names the capture output, <alias>.<field>."""
+
+    from cruxible_client.contracts.procedures.trigger_rules import validate_trigger_input
+    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
+
+    instance, _root, line = world(tmp_path)
+    accepted = _accepted_procedure(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        name=line.procedure.target.name,
+        bind_references=True,
+    )
+    bare = line.model_copy(update={"trigger_input": SOURCE_ALIAS})
+    problem = validate_trigger_input(bare, accepted)
+    assert problem is not None and "trigger_target_unknown" in problem
+    assert repr(SOURCE_CAPTURE) in problem
 
 
 def test_pending_dispatch_and_restart_keep_the_same_capture_binding(tmp_path):
@@ -304,7 +353,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         )
         contract = capture_contract()
         rules = resolve_acquisition_rules(
-            (SOURCE_ALIAS,), defaults={SOURCE_ALIAS: _policy()}, overrides={}
+            (SOURCE_CAPTURE,), defaults={SOURCE_CAPTURE: _policy()}, overrides={}
         )
         with pytest.raises(ExecutionError, match="bound read budget") as error:
             bind_trigger_capture(
@@ -368,7 +417,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         name="second-consumer",
         procedure_name=line.procedure.target.name,
         max_authority="observe",
-        trigger_input=SOURCE_ALIAS,
+        trigger_input=SOURCE_CAPTURE,
     )
     from cruxible_core.authoring.lowering import _line_provider_resolver
 
@@ -378,7 +427,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         resolve_provider=_line_provider_resolver(instance, instance.accepted_coordinate(), tree),
     )
     authored = parse_line_spec(raw, path=path)
-    assert isinstance(authored, LineSpec) and authored.trigger_input == SOURCE_ALIAS
+    assert isinstance(authored, LineSpec) and authored.trigger_input == SOURCE_CAPTURE
     assert authored.trigger_event == line.trigger_event
     with pytest.raises(ValidationError, match="accepted trigger_event come together"):
         type(line).model_validate({**line.model_dump(mode="python"), "trigger_event": None})

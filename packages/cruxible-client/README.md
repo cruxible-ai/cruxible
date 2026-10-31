@@ -1597,8 +1597,8 @@ runs when run explicitly (`cx.line(name).run()`), or, once it is enabled
 (`cx.line(name).enable()`), when a Trigger aimed at it fires; a Trigger aimed
 at a Line that is not enabled does nothing. It inherits the Procedure's hard
 caps as its budget unless one is given.
-``trigger_input`` binds the triggering Capture to a named Source alias; the
-Line then accepts only that Source's exact CaptureContract event, and every
+``trigger_input`` binds the triggering Capture to one capture output
+(``<alias>.<field>``); the Line then accepts only that field's exact CaptureContract event, and every
 Trigger aimed at it must fire on it.
 
 Authoring refuses `exhaust_tap` with `cruxible.procedure.node_not_served`; no run path
@@ -1618,7 +1618,7 @@ mandate).
 | `procedure` | Required | Procedure name: accepted, or defined earlier in the same changeset. |
 | `acquisition_policy` | `None` | Accepted or same-set SourceAcquisitionPolicy name; omitted uses SourceAcquisitionPolicy:default. |
 | `max_authority` | `None` | Most this Line may do: `observe`, `propose` or `settle`. Defaults to its Procedure's capability; effective authority is checked at admission. |
-| `trigger_input` | `None` | Source alias receiving the exact triggering Capture; the Line accepts only that Source's CaptureContract event, and Triggers aimed at it must fire on it. |
+| `trigger_input` | `None` | Capture output (`<alias>.<field>`, of a call with that one capture field) receiving the exact triggering Capture; the Line accepts only that field's CaptureContract event, and Triggers aimed at it must fire on it. |
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
 | `budgets` | `None` | Operation-specific bounds; the signature distinguishes QueryBudgets from Line budget mappings. |
 | `occurrence_epoch` | `1` | Positive epoch distinguishing Line occurrence identity; it advances when the accepted event changes. |

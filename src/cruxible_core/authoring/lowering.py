@@ -176,6 +176,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
     ProcedureOwnedContract,
+    acquisition_keys,
     parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
@@ -199,9 +200,8 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNode,
+    CallNode,
     ProcedureDefinition,
-    SourceNode,
 )
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventNameSelector,
@@ -2911,9 +2911,37 @@ def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
         parse_contract_ref,
     )
 
-    if not isinstance(definition, Mapping) or not definition.get("slots"):
+    if not isinstance(definition, Mapping):
         return definition
     result = deepcopy(dict(definition))
+    # A post_inbox node's item Contract is named ``name@N`` and pinned here too.
+    result["nodes"] = list(result.get("nodes") or ())
+    for index, node in enumerate(result["nodes"]):
+        if not isinstance(node, Mapping) or node.get("kind") != "post_inbox":
+            continue
+        value = node.get("contract")
+        ref = parse_contract_ref(value) if isinstance(value, str) else None
+        if ref is None and isinstance(value, Mapping) and value.get("digest") is None:
+            ref = parse_contract_ref(f"{value.get('name')}@{value.get('version')}")
+        if ref is None:
+            continue
+        path = contract_path(ref.name, ref.version)
+        content = tree.get(path)
+        if content is None:
+            _refuse(
+                "cruxible.authoring.slot_contract_unresolved",
+                f"definition.nodes[{index}].contract",
+                f"post_inbox {node.get('node_id')!r} names {ref.spelling}, which is not accepted.",
+                repair_kind="replace_reference",
+                repair_description="Accept the Contract first, or name an accepted version.",
+            )
+        digest = contract_digest(parse_contract(content, path=path)).tagged
+        result["nodes"][index] = {
+            **node,
+            "contract": {"name": ref.name, "version": ref.version, "digest": digest},
+        }
+    if not result.get("slots"):
+        return result
     for name, slot in dict(result["slots"]).items():
         if not isinstance(slot, Mapping):
             continue
@@ -3302,33 +3330,23 @@ def _render_line_member(
             repair_description="Use a Procedure name present at the authoring coordinate.",
         )
     procedure = parse_procedure(procedure_content, path=procedure_target)
-    exhaust_taps = sorted(
-        node.node_id for node in procedure.definition.nodes if isinstance(node, ExhaustTapNode)
-    )
-    if exhaust_taps:
-        _refuse(
-            "cruxible.authoring.line_exhaust_tap_unsupported",
-            "procedure_name",
-            f"Procedure {payload.procedure_name!r} reads exhaust through {exhaust_taps}; no v1 "
-            "run path admits an exhaust_tap node, so a Line over it could never run.",
-            repair_kind="replace_procedure_name",
-            repair_description="Name a Procedure without exhaust_tap nodes.",
-        )
     procedure_pin = ArtifactPin(
         role="procedure",
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
-    aliases = {node.as_ for node in procedure.definition.nodes if isinstance(node, SourceNode)}
+    aliases = acquisition_keys(procedure.definition)
     unknown = sorted(set(payload.acquisition) - aliases)
     if unknown:
         _refuse(
             "cruxible.authoring.line_acquisition_unknown_source",
             "acquisition",
-            f"Line acquisition names no Source alias of {payload.procedure_name!r}: {unknown}.",
+            f"Line acquisition names no capture output of {payload.procedure_name!r}: {unknown}.",
             repair_kind="replace_acquisition",
-            repair_description=f"Key acquisition rules by Source alias: {sorted(aliases)}.",
+            repair_description=(
+                f"Key acquisition rules by capture output <alias>.<field>: {sorted(aliases)}."
+            ),
         )
 
     def child(identity: ArtifactIdentity) -> Any:
@@ -3375,25 +3393,32 @@ def _render_line_member(
         predecessor_digest = line_spec_digest(previous).tagged
     trigger_event: CaptureEventNameSelector | None = None
     if payload.trigger_input is not None:
-        sources = [
-            node
-            for node in procedure.definition.nodes
-            if getattr(node, "as_", None) == payload.trigger_input
-        ]
-        contract = (
-            sources[0].capture_contract
-            if len(sources) == 1 and isinstance(sources[0], SourceNode)
-            else None
+        from cruxible_client.contracts.procedures.capture_outputs import (
+            TriggerTargetRefused,
+            trigger_capture_output,
         )
-        if not isinstance(contract, ArtifactPin | ArtifactNameRef):
+
+        contract: ArtifactPin | ArtifactNameRef | None = None
+        try:
+            output = trigger_capture_output(procedure.definition, payload.trigger_input)
+        except TriggerTargetRefused as exc:
             _refuse(
-                "cruxible.authoring.line_trigger_input_invalid",
+                "cruxible.authoring.line_" + exc.code,
                 "trigger_input",
-                f"trigger_input {payload.trigger_input!r} must name exactly one "
-                "Source input of the Procedure that names its CaptureContract.",
+                str(exc),
                 repair_kind="replace_trigger_input",
-                repair_description="Name the `as` alias of one Source node, or omit it.",
+                repair_description=(
+                    "Name one capture output as <alias>.<field> (or the alias of a call "
+                    "with one capture field), or omit it."
+                ),
             )
+        else:
+            call = next(
+                node
+                for node in procedure.definition.nodes
+                if isinstance(node, CallNode) and node.node_id == output.node_path
+            )
+            contract = call.captures[output.field]
         assert isinstance(contract, ArtifactPin | ArtifactNameRef)
         trigger_event = CaptureEventNameSelector.model_validate(
             {"capture_contract_identity": contract.target}

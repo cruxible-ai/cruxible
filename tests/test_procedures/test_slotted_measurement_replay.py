@@ -235,14 +235,16 @@ def _slotted_world(tmp_path, *, landed=False):
                         "effect": "pure",
                     },
                 },
-                "acquisition_defaults": {"captured": AcquisitionDefault().model_dump(mode="json")},
+                "acquisition_defaults": {
+                    "captured.capture": AcquisitionDefault().model_dump(mode="json")
+                },
                 "steps": [
                     {
-                        "source": "captured",
+                        "call": "captured",
                         "id": "read",
-                        "contract": contract.identity.name,
+                        "captures": {"capture": contract.identity.name},
                         "slot": "fetch",
-                        "request": _source_request(instance, root).model_dump(mode="json"),
+                        "input": _source_request(instance, root).model_dump(mode="json"),
                     },
                     {
                         "call": "result",

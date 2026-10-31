@@ -395,7 +395,7 @@ def _assess_procedure(query: str) -> ProcedureInput:
             "contract_out": contract_out,
             "nodes": [
                 {
-                    "kind": "state_tap",
+                    "kind": "read",
                     "node_id": "read-policy",
                     "query": {"kind": "accepted", "role": "query", "target": query},
                     "parameters": {},
@@ -403,15 +403,10 @@ def _assess_procedure(query: str) -> ProcedureInput:
                     "next": "classify",
                 },
                 {
-                    "kind": "transform",
+                    "kind": "project",
                     "node_id": "classify",
-                    "transform_kind": "adapter",
-                    "contract_in": contract_in,
                     "contract_out": contract_out,
-                    "spec": {
-                        "tag": "playbill-transform-adapter-spec-v1",
-                        "value": {"input": "$steps.policy_rows"},
-                    },
+                    "fields": {"input": "$steps.policy_rows"},
                     "as": "decision",
                     "next": "result",
                 },

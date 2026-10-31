@@ -56,7 +56,7 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
     )
     assert preview.ready_for_prepare, preview.errors
     assert preview.definition.source.text == source.source
-    assert preview.nodes[-1].kind == "return"
+    assert preview.nodes[-1].kind == "project" and preview.nodes[-1].leaf
     assert preview.source_map[-1].span.filename == __file__
     from cruxible_client.authoring.procedures import ProcedurePreview
 
@@ -73,7 +73,7 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
 
     assert all(isinstance(path.contract, ArtifactNameRef) for path in inspected.return_paths)
     assert inspected.branch_values[0].kind == "guard"
-    assert inspected.nodes[-1].kind == "return"
+    assert inspected.nodes[-1].kind == "project" and inspected.nodes[-1].leaf
     assert (
         inspected.model_dump(mode="json")["return_paths"][0]["contract"]["target"]["kind"]
         == "Contract"

@@ -20,7 +20,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ClaimTapNode,
+    ExtractNode,
     GuardNode,
     GuardPredicate,
     HaltNode,
@@ -28,13 +28,13 @@ from cruxible_client.contracts.procedures.models import (
     InvokeNode,
     ProjectNode,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatNode,
     SelectNode,
     SettleChangeSetNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
 )
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
 from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 
 
@@ -102,7 +102,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         for node in nodes
         if isinstance(node, (GuardNode, RepeatNode))
     }
-    tap_aliases = frozenset(node.as_ for node in nodes if isinstance(node, StateTapNode))
+    tap_aliases = frozenset(
+        node.as_ for node in nodes if isinstance(node, ReadNode) and node.query is not None
+    )
 
     def short(value: Any) -> Any:
         return _short(value, tap_aliases)
@@ -162,24 +164,36 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
         ):
             common["next"] = raw["next"]
         try:
-            if isinstance(node, SourceNode):
-                step = dict(
-                    source=node.as_,
-                    contract=_name(node.capture_contract),
-                    slot=node.slot,
-                    request=short(node.request),
-                )
-            elif isinstance(node, CallNode):
+            if isinstance(node, CallNode):
                 step = dict(
                     call=node.as_,
                     slot=node.slot,
                     input=short(node.input),
                 )
+                if node.captures:
+                    step["captures"] = {
+                        field: _name(capture) for field, capture in node.captures.items()
+                    }
                 if node.effect_policy is not None:
                     step["effect_policy"] = _name(node.effect_policy)
-            elif isinstance(node, ClaimTapNode):
+            elif isinstance(node, ExtractNode):
                 step = dict(
-                    claim=node.as_,
+                    extract=node.as_,
+                    capture=short(node.capture),
+                    records=node.records,
+                    row=node.row.spelling,
+                    fields={k: v.model_dump(mode="json") for k, v in node.fields.items()},
+                    key={k: v.model_dump(mode="json") for k, v in node.key.items()},
+                    header={k: v.model_dump(mode="json") for k, v in node.header.items()},
+                    complete_when=None
+                    if node.complete_when is None
+                    else node.complete_when.model_dump(mode="json"),
+                    duplicates=node.duplicates,
+                    only_keys=short(node.only_keys),
+                )
+            elif isinstance(node, ReadNode) and node.claim_type is not None:
+                step = dict(
+                    read=node.as_,
                     claim_type=_name(node.claim_type),
                     subject=short(node.subject_id),
                     subject_kind=node.subject_kind,
@@ -206,11 +220,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     body=node.body,
                     until=expressions[node.node_id],
                 )
-            elif isinstance(node, StateTapNode):
-                step = dict(tap=node.as_, query=_name(node.query), params=short(node.parameters))
-                if node.budgets is not None:
-                    step["budgets"] = node.budgets.model_dump(mode="json")
-            elif isinstance(node, ProjectNode) and isinstance(node.fields, dict):
+            elif isinstance(node, ReadNode) and node.query is not None:
+                step = dict(read=node.as_, query=_name(node.query), params=short(node.parameters))
+            elif isinstance(node, ProjectNode) and isinstance(node.fields, dict) and not node.leaf:
                 step = dict(
                     project=node.as_,
                     fields=short(node.fields),
@@ -221,11 +233,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(
                     transform=node.as_,
                     kind=node.transform_kind,
-                    spec=short(node.spec.model_dump(mode="json")),
-                    input=schema(node.contract_in).fields,
-                    output=schema(node.contract_out).fields,
-                    contract_in=_name(node.contract_in),
-                    contract_out=_name(node.contract_out),
+                    spec=short(node.spec.model_dump(mode="json", by_alias=True)),
                 )
             elif isinstance(node, GuardNode):
                 if expressions[node.node_id] is None or (
@@ -275,7 +283,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     result=short(node.result),
                 )
             elif isinstance(node, InboxEgressNode):
-                step = dict(inbox=short(node.input), max_items=node.max_items)
+                step = dict(
+                    inbox=node.contract.spelling,
+                    fields=short(node.fields),
+                    for_each=None if node.for_each is None else short(node.for_each),
+                    dedupe_key=node.dedupe_key,
+                    max_items=node.max_items,
+                )
             elif isinstance(node, CaptureEgressNode):
                 step = dict(
                     emit=_name(node.capture_contract),
@@ -325,6 +339,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 capture_bytes=budget.max_capture_bytes,
                 result_bytes=budget.max_result_bytes,
                 items=budget.max_items,
+                read_rows=budget.max_read_rows,
             ),
             caps=dict(
                 wall_clock=format_iso_duration_microseconds(caps.max_wall_clock.microseconds),
@@ -333,6 +348,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 result_bytes=caps.max_result_bytes,
                 items=caps.max_items,
                 repeat_attempts=caps.max_repeat_attempts,
+                read_rows=(
+                    None if caps.max_read_rows == DEFAULT_MAX_READ_ROWS else caps.max_read_rows
+                ),
             ),
         )
     )

@@ -51,6 +51,7 @@ ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "pin_binding_mismatch",
     "input_material_mismatch",
     "state_tap_refused",
+    "read_ceiling_exceeded",
     "replay_material_mismatch",
     "procedure_runtime_policy_absent",
     "provider_replay_receipt_required",
@@ -107,18 +108,18 @@ def current_refusal_code(code: str) -> str:
 
 ProcedureNodeRefusalCode: TypeAlias = Literal[
     "guard_refused",
+    "decode_invalid",
+    "decoded_limit_exceeded",
+    "extract.header_invalid@1",
+    "extract_decoding_undeclared",
+    "extract_duplicate_key",
+    "extract_format_unsupported",
+    "read_ceiling_exceeded",
     "repeat_exhausted",
     "budget_exhausted",
     "runtime_reference_unresolved",
     "contract_input_refused",
     "contract_output_refused",
-    "adapter_value_invalid",
-    "shape_items_input_invalid",
-    "filter_items_input_invalid",
-    "dedupe_items_input_invalid",
-    "join_items_left_input_invalid",
-    "join_items_right_input_invalid",
-    "aggregate_items_input_invalid",
     "result_not_canonical",
     "line_binding_required",
     "source_acquisition_unavailable",
@@ -610,6 +611,9 @@ class ProcedureRunBudgetObserved(_StrictResultModel):
     provider_calls: int = Field(ge=0)
     capture_bytes: int = Field(ge=0)
     wall_clock_microseconds: int = Field(ge=0)
+    #: Rows this run's reads returned (its children's included), against its
+    #: read budget; omitted when the run read nothing.
+    read_rows: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
 
 class ProcedureRunNodePinSet(_StrictResultModel):
@@ -946,7 +950,11 @@ class ProcedureSourceObservation(_StrictResultModel):
     )
     occurrence_path: str
     node_id: str | None = None
+    #: The capture output observed, ``<alias>.<field>`` (the call's alias when
+    #: the occurrence produced no Capture).
     input_name: str | None = None
+    #: The capture field this observation's Capture is, when it produced one.
+    field: str | None = Field(default=None, exclude_if=lambda value: value is None)
     source_read_receipt: SourceReadReceipt | None = None
     source_read_receipt_digest: str | None = None
     invocation_receipt_digest: str | None = None
@@ -972,12 +980,14 @@ class ProcedureSourceObservation(_StrictResultModel):
 
 
 class ProcedureSourceCaptureAssociation(_StrictResultModel):
-    """Reserved B4 association between one Provider occurrence and one Capture."""
+    """One capture field of one Provider occurrence, and the Capture it produced."""
 
     tag: Literal["playbill-procedure-source-capture-association-v1"] = (
         "playbill-procedure-source-capture-association-v1"
     )
     occurrence_path: str
+    #: The capture field of the occurrence's out Contract the Capture is.
+    field: str
     invocation_receipt_digest: str
     capture_digest: str
 
@@ -1379,9 +1389,13 @@ class ProcedureRunReceipt(_StrictResultModel):
         cls,
         value: tuple[ProcedureSourceCaptureAssociation, ...],
     ) -> tuple[ProcedureSourceCaptureAssociation, ...]:
-        paths = tuple(item.occurrence_path for item in value)
-        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Source Capture associations must be path-sorted and unique")
+        keys = tuple((item.occurrence_path, item.field) for item in value)
+        if keys != tuple(
+            sorted(set(keys), key=lambda key: (key[0].encode("utf-8"), key[1].encode("utf-8")))
+        ):
+            raise ValueError(
+                "Source Capture associations must be sorted and unique by occurrence path and field"
+            )
         return value
 
     @model_validator(mode="after")

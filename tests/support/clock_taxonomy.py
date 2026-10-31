@@ -607,6 +607,8 @@ NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
         ("ProviderDescendantProcessV1", "process_start_time"),
         # The Contract grammar's type tag naming a datetime field type; it holds no time.
         ("DateTimeType", "kind"),
+        # A JSON Pointer to the count an extract's records must match; it holds no time.
+        ("CompleteWhen", "count_at"),
     }
 )
 

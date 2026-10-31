@@ -35,7 +35,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.exhaust import (
@@ -229,7 +229,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={},

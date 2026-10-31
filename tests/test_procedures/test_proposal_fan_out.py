@@ -25,7 +25,7 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
     run_line,
 )
 
-FAN_OUT = {"items": f"$steps.{fixtures.SOURCE_ALIAS}.content.json.proposals"}
+FAN_OUT = fixtures.FAN_OUT
 
 
 def _element(qualifier: str | None, **overrides: object) -> dict[str, object]:
@@ -45,7 +45,7 @@ def _element(qualifier: str | None, **overrides: object) -> dict[str, object]:
 
 def _write_feed(root: Path, proposals: list[object]) -> None:
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
+        canonical_bytes({"severity": "high", "proposals": proposals})
     )
 
 
@@ -59,10 +59,6 @@ def test_the_fan_out_form_parses_and_the_fixed_list_form_is_unchanged() -> None:
     assert fixed.candidate_templates == (item_template(),)
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
-    "workspace.file's content contract is text/bytes only pre-B3"
-)
 def test_n_records_a_provider_emits_become_n_claims_of_one_proposal_each_citing_evidence(
     tmp_path: Path,
 ) -> None:
@@ -89,10 +85,6 @@ def test_n_records_a_provider_emits_become_n_claims_of_one_proposal_each_citing_
     assert all(claim.backing.capture_digests == (observation.capture_digest,) for claim in claims)
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
-    "workspace.file's content contract is text/bytes only pre-B3"
-)
 def test_an_empty_list_proposes_nothing_and_the_run_succeeds(
     tmp_path: Path,
 ) -> None:
@@ -107,10 +99,6 @@ def test_an_empty_list_proposes_nothing_and_the_run_succeeds(
     assert _proposal_refs(instance) == []
 
 
-@pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
-    "workspace.file's content contract is text/bytes only pre-B3"
-)
 def test_a_malformed_element_refuses_typed_to_its_index(tmp_path: Path) -> None:
     instance, _owner, root, line, _procedure = proposal_world(tmp_path, templates=FAN_OUT)  # type: ignore[arg-type]
     _write_feed(root, [_element(None), {"severity": "high"}, _element("vendor")])
@@ -126,32 +114,26 @@ def test_a_malformed_element_refuses_typed_to_its_index(tmp_path: Path) -> None:
 # --- data decides the shape: typed refusals (S3 review a F-004) --------------
 
 
-def _feed_without_list(root: Path, value: object, *, omit: bool = False) -> None:
-    body = dict(fixtures.ADVISORY)
-    if not omit:
-        body["proposals"] = value
-    (root / fixtures.RELATIVE_PATH).write_bytes(canonical_bytes(body))
-
-
 @pytest.mark.parametrize(
-    "value,omit,reason",
+    "items,reason",
     [
-        (None, True, "items_unresolved"),
-        ("not a list", False, "items_not_a_list"),
-        (None, False, "items_not_a_list"),
-        ({"items": []}, False, "items_not_a_list"),
+        (f"$steps.{fixtures.PROPOSALS_ALIAS}.nothing", "items_unresolved"),
+        ("$steps.result.severity", "items_not_a_list"),
+        (f"$steps.{fixtures.PROPOSALS_ALIAS}.complete", "items_not_a_list"),
+        (f"$steps.{fixtures.PROPOSALS_ALIAS}.header", "items_not_a_list"),
     ],
-    ids=["missing", "string", "null", "object-holding-items"],
-)
-@pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT reads $steps.<alias>.content.json.proposals, and "
-    "workspace.file's content contract is text/bytes only pre-B3"
+    ids=["missing", "string", "bool", "object"],
 )
 def test_a_fan_out_whose_items_are_not_a_list_refuses_typed(
-    tmp_path: Path, value: object, omit: bool, reason: str
+    tmp_path: Path, items: str, reason: str
 ) -> None:
-    instance, _owner, root, line, _procedure = proposal_world(tmp_path, templates=FAN_OUT)  # type: ignore[arg-type]
-    _feed_without_list(root, value, omit=omit)
+    """Data decides the shape: a reference to anything but a list refuses, typed."""
+
+    instance, _owner, root, line, _procedure = proposal_world(
+        tmp_path,
+        templates={"items": items},  # type: ignore[arg-type]
+    )
+    _write_feed(root, [])
 
     state = run_line(instance, root, line)
 

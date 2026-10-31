@@ -13,17 +13,13 @@ from cruxible_client.contracts.artifacts import ArtifactNameRef, ArtifactPin
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     CaptureEgressNode,
-    ClaimTapNode,
-    ExhaustTapNode,
     InvokeNode,
     ProcedureDefinition,
     ProjectNode,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatNode,
     SelectNode,
-    SourceNode,
-    StateTapNode,
-    TransformNode,
 )
 
 
@@ -98,37 +94,25 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
             check(
                 node.procedure, PinExpectation((("procedure", "Procedure"),)), f"{prefix} procedure"
             )
-        elif isinstance(node, ClaimTapNode):
+        elif isinstance(node, ReadNode):
             check(
                 node.claim_type,
                 PinExpectation((("claim-type", "ClaimType"),)),
                 f"{prefix} claim_type",
             )
+            check(node.query, QUERY, f"{prefix} query")
         elif isinstance(node, ProposeChangeSetNode):
             for pin in node.claim_types:
                 check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
-        elif isinstance(node, StateTapNode):
-            check(node.query, QUERY, f"{prefix} query")
-        elif isinstance(node, SourceNode):
-            check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
-        elif isinstance(node, ExhaustTapNode):
-            check(
-                node.reducer_or_query,
-                REDUCER_OR_QUERY,
-                f"{prefix} reducer_or_query",
-            )
         elif isinstance(node, CallNode):
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
-        elif isinstance(node, TransformNode):
-            check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
-            check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
+            for field, capture in node.captures.items():
+                check(capture, CAPTURE_CONTRACT, f"{prefix} captures.{field}")
         elif isinstance(node, ProjectNode | SelectNode):
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, RepeatNode):
             for body in node.body:
                 body_prefix = f"{prefix} repeat body {body.node_id!r}"
-                check(body.contract_in, CONTRACT_IN, f"{body_prefix} contract_in")
-                check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
                 check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
         elif isinstance(node, CaptureEgressNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")

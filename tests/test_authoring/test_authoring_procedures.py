@@ -87,7 +87,7 @@ def _triage_definition(*, query: dict[str, object] | None = None) -> dict[str, o
     nodes: list[dict[str, object]] = []
     if query is not None:
         nodes.append(
-            {"kind": "state_tap", "node_id": "read", "query": query, "parameters": {}, "as": "rows"}
+            {"kind": "read", "node_id": "read", "query": query, "parameters": {}, "as": "rows"}
         )
     nodes.append(
         {
@@ -304,7 +304,7 @@ def _runnable_change_set_payload(
         },
         "nodes": [
             {
-                "kind": "state_tap",
+                "kind": "read",
                 "node_id": "read",
                 "query": {
                     "tag": "playbill-authoring-candidate-reference-v1",
@@ -550,7 +550,7 @@ def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     assert passed.verdict == "passed"
 
 
-def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) -> None:
+def test_served_procedure_example_reaches_the_closed_transforms(tmp_path: Path) -> None:
     example = procedure_example()
     tags = {
         node["spec"]["tag"]
@@ -558,12 +558,11 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
         if isinstance(node, dict) and isinstance(node.get("spec"), dict)
     }
     assert tags == {
-        "playbill-transform-adapter-spec-v1",
-        "playbill-transform-aggregate-items-spec-v1",
-        "playbill-transform-dedupe-items-spec-v1",
-        "playbill-transform-filter-items-spec-v1",
-        "playbill-transform-join-items-spec-v1",
-        "playbill-transform-shape-items-spec-v1",
+        "cruxible-transform-aggregate-spec-v1",
+        "cruxible-transform-dedupe-spec-v1",
+        "cruxible-transform-filter-spec-v1",
+        "cruxible-transform-join-spec-v1",
+        "cruxible-transform-shape-spec-v1",
     }
 
     coordinator, actor = _coordinator(tmp_path)
@@ -1380,11 +1379,24 @@ def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_p
         assert len(changed.changed_members) == expected
 
 
+@pytest.mark.parametrize(
+    ("kind", "replacement"),
+    [
+        ("source", "'call'"),
+        ("state_tap", "'read' naming its 'query'"),
+        ("state_claim", "'read' naming its 'claim_type'"),
+        ("exhaust_tap", "no run lane serves exhaust reads"),
+        ("return", "'project' with 'leaf: true'"),
+        ("constant", "'project' with a 'literal' record"),
+    ],
+)
 @pytest.mark.parametrize("in_change_set", [False, True])
-def test_exhaust_tap_refuses_at_compile_and_preflight(tmp_path: Path, in_change_set: bool) -> None:
+def test_a_retired_node_kind_refuses_at_compile_and_preflight_naming_its_replacement(
+    tmp_path: Path, in_change_set: bool, kind: str, replacement: str
+) -> None:
     coordinator, actor = _coordinator(tmp_path)
     definition = _triage_definition()
-    definition["nodes"][0] = {"kind": "exhaust_tap", "node_id": "exhaust"}
+    definition["nodes"][0] = {"kind": kind, "node_id": "retired"}
     payload = _payload(definition)
     if in_change_set:
         payload = ChangeSetAuthoringPayload(members=(payload,))
@@ -1392,7 +1404,35 @@ def test_exhaust_tap_refuses_at_compile_and_preflight(tmp_path: Path, in_change_
     for result in (compiled, coordinator.preflight(compiled.certificate.intent_id, actor=actor)):
         assert result.verdict == "refused"
         diagnostic = result.frontier.diagnostics[0]
-        assert diagnostic.code == "cruxible.procedure.node_not_served"
+        assert diagnostic.code == "cruxible.procedure.node_kind_retired"
         assert diagnostic.offending_element.endswith("definition.nodes[0]")
-        assert "no run lane serves it yet" in diagnostic.message
-        assert "Line binding cannot enable it" in diagnostic.repairs[0].description
+        assert repr(kind) in diagnostic.message
+        assert replacement in diagnostic.repairs[0].description
+
+
+@pytest.mark.parametrize(
+    ("step", "replacement"),
+    [
+        ({"source": "doc", "contract": "c", "slot": "read", "request": {}}, "'call:'"),
+        ({"tap": "rows", "query": "q"}, "'read:' naming its 'query'"),
+        (
+            {"claim": "value", "claim_type": "a.b", "subject": "x"},
+            "'read:' naming its 'claim_type'",
+        ),
+        ({"explicit": {"kind": "state_tap", "node_id": "rows"}}, "'read' naming its 'query'"),
+    ],
+    ids=["source", "tap", "claim", "explicit-state-tap"],
+)
+def test_a_retired_authored_step_is_refused_naming_its_replacement(
+    step: dict[str, object], replacement: str
+) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.authored import ProcedureSpec
+
+    with pytest.raises(ValidationError) as caught:
+        ProcedureSpec.model_validate(
+            {"procedure": "retired", "input": {}, "steps": [step, {"halt": "done"}]}
+        )
+    message = str(caught.value)
+    assert "procedure_node_kind_retired" in message and replacement in message

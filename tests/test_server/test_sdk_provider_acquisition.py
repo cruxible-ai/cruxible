@@ -30,13 +30,14 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.extract import ExtractNode
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    SourceNode,
 )
 from cruxible_client.contracts.provider_operations import ProviderOperation
 from cruxible_client.contracts.providers import (
@@ -53,11 +54,12 @@ from cruxible_client.contracts.shapes import (
     contract_digest,
     contract_path,
     render_contract,
+    validate_contract,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.core_support._light_capture_support import http_contract
+from tests.core_support._light_capture_support import JSON_DECODING, http_contract
 from tests.support.procedures import named
 from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
@@ -276,17 +278,29 @@ def _fetch_procedure(
             }
         },
         nodes=(
-            SourceNode(
+            CallNode(
                 node_id="fetch",
-                capture_contract=named(capture_pin),
+                captures={"capture": named(capture_pin)},
                 slot="fetch",
-                request=request,
+                input=request,
                 as_=_ALIAS,
-                next="shape",
+                next="bundle",
+            ),
+            ExtractNode.model_validate(
+                {
+                    "kind": "extract",
+                    "node_id": "bundle",
+                    "capture": f"$steps.{_ALIAS}.capture",
+                    "records": "/",
+                    "row": _BUNDLE_ROW_REF,
+                    "fields": {"text": {"at": "derived/text"}},
+                    "as": "bundle",
+                    "next": "shape",
+                }
             ),
             ProjectNode(
                 node_id="shape",
-                fields={"severity": f"$steps.{_ALIAS}.derived.text"},
+                fields={"severity": "$steps.bundle.rows.0.text"},
                 contract_out=named(run_output_pin),
                 as_="result",
             ),
@@ -318,11 +332,22 @@ def _fetch_procedure(
             )
         ),
         activation_policy="drain",
-        acquisition_defaults={_ALIAS: policy},
+        acquisition_defaults={f"{_ALIAS}.capture": policy},
     )
     from tests.support.procedures import revalidated
 
     return revalidated(procedure)
+
+
+#: The web observation bundle, read as one record: its derived text.
+_BUNDLE_ROW = validate_contract(
+    {"name": "test.web-bundle", "version": 1, "fields": {"text": "string"}}
+)
+_BUNDLE_ROW_REF = {
+    "name": _BUNDLE_ROW.name,
+    "version": _BUNDLE_ROW.version,
+    "digest": contract_digest(_BUNDLE_ROW).tagged,
+}
 
 
 class AcquisitionInvoker(source._WorkspaceInvoker):
@@ -429,7 +454,7 @@ def test_sdk_source_retains_and_reads_acquisition(
     instance = manager.get(instance_id)
     request = {"url": URL}
     provider = web_provider(_FETCH_OPERATION, _FETCH_CONTRACTS)
-    contract = http_contract(max_bytes=1_000_000)
+    contract = http_contract(max_bytes=1_000_000, decoding=JSON_DECODING)
     policy = source._policy()
     procedure = _fetch_procedure(contract, policy, request=request)
 
@@ -439,6 +464,7 @@ def test_sdk_source_retains_and_reads_acquisition(
             provider_path(provider.identity.name): render_provider(provider),
             capture_contract_path(contract.identity.name): render_capture_contract(contract),
             **_fetch_contract_files(),
+            contract_path(_BUNDLE_ROW.name, _BUNDLE_ROW.version): render_contract(_BUNDLE_ROW),
         },
         actor_id="operator",
         proposal_name="acquisition-deployment",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import ClassVar, Literal
 
 from pydantic import (
@@ -26,6 +26,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.captures import CaptureContractAny
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
@@ -41,13 +42,15 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
+    ExtractNode,
+    InboxEgressNode,
     ProcedureDefinition,
     RepeatNode,
-    SourceNode,
     iter_references,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.shapes import Contract, ContractRef
 
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -116,8 +119,9 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
 
     Every dependency the graph names resolves at the accepted coordinate; the
     envelope itself pins nothing. ``acquisition_defaults`` holds the
-    Procedure's acquisition rule per Source alias (``max_age``,
-    ``on_unavailable``); a Line's ``acquisition`` overrides them field by field.
+    Procedure's acquisition rule per capture output, ``<alias>.<field>``
+    (``max_age``, ``on_unavailable``...); a Line's ``acquisition`` overrides
+    them output by output.
     """
 
     artifact_format: Literal["cruxible-procedure-v3"] = "cruxible-procedure-v3"
@@ -190,10 +194,12 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
             raise ValueError(
                 "every owned Contract must be referenced by name exactly within its owner"
             )
-        aliases = {node.as_ for node in self.definition.nodes if isinstance(node, SourceNode)}
-        unknown = sorted(set(self.acquisition_defaults) - aliases)
+        keys = acquisition_keys(self.definition)
+        unknown = sorted(set(self.acquisition_defaults) - keys)
         if unknown:
-            raise ValueError(f"acquisition_defaults name no Source alias: {unknown}")
+            raise ValueError(
+                f"acquisition_defaults name no capture output (<alias>.<field>): {unknown}"
+            )
         guard_halts = procedure_guard_halt_targets(self.definition)
         nodes = []
         for index, node in enumerate(self.definition.nodes):
@@ -216,24 +222,21 @@ class ProcedureArtifact(_StrictProcedureArtifactModel):
 
 #: How an accepted Procedure can run: on its own (``procedure run``), only as a
 #: Line (its terminals act outward under a Line's authority), or not at all
-#: (an exhaust tap: no v1 path admits one).
+#: (a node no run lane serves).
 ProcedureRunnable = Literal["direct", "line", "unsupported"]
 
 #: Node kinds the direct run lane executes.
 DIRECT_NODE_KINDS = frozenset(
     {
-        "state_tap",
-        "state_claim",
+        "read",
+        "extract",
         "transform",
         "project",
         "guard",
         "repeat",
         "halt",
-        "source",
         "call",
         "select",
-        "constant",
-        "return",
         "invoke",
     }
 )
@@ -370,12 +373,18 @@ def evaluate_procedure_law(
     path: str,
     predecessor: AcceptedProcedure | None,
     contracts: Mapping[tuple[str, int], str] | None = None,
+    contract_lookup: Callable[[ContractRef], Contract | None] | None = None,
+    capture_lookup: Callable[[str], CaptureContractAny | None] | None = None,
 ) -> ProcedureLawResult:
     """Evaluate stable identity, predecessor, and slot signatures.
 
     ``contracts`` maps each accepted Contract ``(name, version)`` the slots
-    name to its digest; every slot must pin both Contracts exactly. A Procedure
-    never names a provider: a Line binds its slots.
+    name to its digest; every slot must pin both Contracts exactly, and every
+    extract its row Contract. With ``contract_lookup`` and ``capture_lookup``
+    (candidate Contracts and CaptureContracts by name), each acquiring call's
+    captures must match its slot's out Contract and each extract must read a
+    CaptureContract that declares its decoding. A Procedure never names a
+    provider: a Line binds its slots.
     """
 
     if path != procedure_path(procedure.identity.name):
@@ -419,12 +428,66 @@ def evaluate_procedure_law(
     problem = slot_contract_problem(procedure.definition.slots, contracts or {})
     if problem is not None:
         return _refusal("cruxible.procedure.slot_contract_unresolved", problem, path=path)
+    problem = extract_row_problem(procedure.definition, contracts or {})
+    if problem is not None:
+        return _refusal("cruxible.procedure.extract_row_unresolved", problem, path=path)
+    if capture_lookup is not None:
+        from cruxible_client.contracts.procedures.capture_outputs import (
+            procedure_capture_problem,
+        )
+
+        found = procedure_capture_problem(
+            procedure.definition,
+            contract_lookup=contract_lookup,
+            capture_lookup=capture_lookup,
+        )
+        if found is not None:
+            return _refusal(found[0], found[1], path=path)
     return ProcedureLawResult(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,
         required_tier="governed_write",
         approval_scope=(),
     )
+
+
+def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, ContractRef], ...]:
+    """``(label, node id, Contract)`` for every node that pins a Contract version."""
+
+    found: list[tuple[str, str, ContractRef]] = []
+    for node in definition.nodes:
+        if isinstance(node, ExtractNode):
+            found.append(("extract", node.node_id, node.row))
+        elif isinstance(node, InboxEgressNode):
+            found.append(("post_inbox", node.node_id, node.contract))
+    return tuple(found)
+
+
+def procedure_contract_refs(definition: ProcedureDefinition) -> tuple[ContractRef, ...]:
+    """Every Contract version the graph pins: slot signatures, extract rows, inbox items."""
+
+    refs: list[ContractRef] = [
+        ref for slot in definition.slots.values() for ref in (slot.in_, slot.out)
+    ]
+    refs.extend(ref for _label, _node_id, ref in _node_contracts(definition))
+    return tuple(refs)
+
+
+def extract_row_problem(
+    definition: ProcedureDefinition, contracts: Mapping[tuple[str, int], str]
+) -> str | None:
+    """Why a node's Contract (an extract row, an inbox item) is not pinned to its
+    accepted version, or ``None``."""
+
+    for label, node_id, ref in _node_contracts(definition):
+        accepted = contracts.get((ref.name, ref.version))
+        if accepted is None:
+            return f"{label} {node_id!r} Contract {ref.spelling} is not accepted"
+        if ref.digest != accepted:
+            return (
+                f"{label} {node_id!r} Contract {ref.spelling} must pin {accepted}, not {ref.digest}"
+            )
+    return None
 
 
 def slot_contract_problem(
@@ -446,11 +509,11 @@ def slot_contract_problem(
 
 
 def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, object], ...]:
-    """Every Source/Call occurrence, repeat bodies included, keyed by occurrence id."""
+    """Every call occurrence, repeat bodies included, keyed by occurrence id."""
 
     occurrences: list[tuple[str, object]] = []
     for node in definition.nodes:
-        if isinstance(node, SourceNode | CallNode):
+        if isinstance(node, CallNode):
             occurrences.append((node.node_id, node))
         elif isinstance(node, RepeatNode):
             occurrences.extend(
@@ -461,8 +524,20 @@ def provider_occurrences(definition: ProcedureDefinition) -> tuple[tuple[str, ob
     return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
 
 
+def acquisition_keys(definition: ProcedureDefinition) -> set[str]:
+    """Every capture output, ``<alias>.<field>``: what acquisition rules key."""
+
+    return {
+        f"{node.as_}.{field}"
+        for node in definition.nodes
+        if isinstance(node, CallNode)
+        for field in node.captures
+    }
+
+
 __all__ = [
     "DIRECT_NODE_KINDS",
+    "acquisition_keys",
     "LINE_NODE_KINDS",
     "AcceptedProcedure",
     "ProcedureNodeSupport",
@@ -476,6 +551,7 @@ __all__ = [
     "parse_procedure",
     "procedure_artifact_digest",
     "procedure_owned_contract_digest",
+    "procedure_contract_refs",
     "procedure_path",
     "provider_occurrences",
     "slot_contract_problem",

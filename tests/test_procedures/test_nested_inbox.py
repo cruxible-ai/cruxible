@@ -13,14 +13,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import ConstantNode as NamedConstantNode
-from cruxible_client.contracts.procedures.models import (
-    InboxEgressNode,
-    ReturnNode,
-)
+from cruxible_client.contracts.procedures.models import ProjectNode
+from cruxible_client.contracts.procedures.models import ProjectNode as NamedConstantNode
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 from tests.core_support._support import initialize_local
+from tests.support.inbox import contract_members, inbox_node
 from tests.test_procedures.test_nested_source_runs import accept_blueprint, blueprints
 
 NOTE = {"note": "child ready"}
@@ -89,7 +87,7 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
     nodes: list[object] = []
     returned = None
     for node in child.definition.nodes:
-        if isinstance(node, ReturnNode):
+        if isinstance(node, ProjectNode):
             returned = node.as_
             node = NamedConstantNode(
                 node_id=node.node_id,
@@ -101,7 +99,7 @@ def _inbox_child(child: ProcedureArtifact) -> ProcedureArtifact:
         nodes.append(node)
     definition = child.definition.model_copy(
         update={
-            "nodes": (*nodes, InboxEgressNode(node_id="inbox", input=NOTE)),
+            "nodes": (*nodes, inbox_node(fields=NOTE)),
             "returns": returned,
             # A hand-built graph: the authored source's explicit-return rule no longer applies.
             "source": None,
@@ -157,6 +155,7 @@ def test_a_grandchild_of_a_line_posts_to_the_root_lines_inbox(tmp_path: Path) ->
         instance,
         owner,
         {
+            **contract_members(),
             procedure_path("inbox_child"): render_procedure(child),
             procedure_path("relay"): render_procedure(relay),
             procedure_path("grand"): render_procedure(grand),

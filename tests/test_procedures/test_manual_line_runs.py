@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pytest
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
 from cruxible_client.contracts.procedure_mandates import (
@@ -164,7 +165,7 @@ def test_a_manual_run_passes_its_event_as_the_lines_source_input(tmp_path):
 def test_the_manual_occurrence_id_names_its_event(tmp_path):
     instance, root, line = world(tmp_path)
     first = event_from(_run(instance, root)[0])
-    (root / RELATIVE_PATH).write_text("low")
+    (root / RELATIVE_PATH).write_bytes(canonical_bytes({"severity": "low"}))
     second = event_from(_run(instance, root, evaluation_time=NOW + timedelta(seconds=1))[0])
     assert first != second
     at = NOW + timedelta(seconds=2)

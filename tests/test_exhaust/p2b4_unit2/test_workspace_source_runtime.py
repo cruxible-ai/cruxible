@@ -15,7 +15,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
-from cruxible_client.contracts.procedures.models import SourceNode
+from cruxible_client.contracts.procedures.models import CallNode
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
     procedure_acquisition_plan_digest,
@@ -142,7 +142,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         update={
             "nodes": (
                 authored.definition.nodes[0].model_copy(
-                    update={"request": request.model_dump(mode="json")}
+                    update={"input": request.model_dump(mode="json")}
                 ),
             )
         }
@@ -154,8 +154,8 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         }
     )
     old_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(old_node, SourceNode)
-    source_node = old_node.model_copy(update={"request": request.model_dump(mode="json")})
+    assert isinstance(old_node, CallNode)
+    source_node = old_node.model_copy(update={"input": request.model_dump(mode="json")})
     definition = accepted.procedure.definition.model_copy(update={"nodes": (source_node,)})
     definition._authored = authored_definition
     # is_workspace_file_signature() (cruxible_client.contracts.captures) keys
@@ -311,7 +311,7 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         == payloads[kinds.index("provider_invocation_completed")]["receipt_digest"]
     )
     source_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(source_node, SourceNode)
+    assert isinstance(source_node, CallNode)
     verified = verify_capture(
         produced["capture_digest"],
         store=fixture.bodies,
@@ -399,7 +399,7 @@ def test_v1_derived_request_in_history_still_verifies(
     assert derived["tag"] == "playbill-workspace-file-source-request-v1"
     completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
     source_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(source_node, SourceNode)
+    assert isinstance(source_node, CallNode)
     verified = verify_capture(
         payloads[kinds.index("produced_capture")]["capture_digest"],
         store=fixture.bodies,
@@ -469,7 +469,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
             produced[stored.record.run_id] = payload
     assert set(produced) == {first.run_id, second_run_id}
     source_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(source_node, SourceNode)
+    assert isinstance(source_node, CallNode)
     resolver = journal_producer_receipt_resolver(
         journal=fixture.journal,
         instance_id=first.instance_id,

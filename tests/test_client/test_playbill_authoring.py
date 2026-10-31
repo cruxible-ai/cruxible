@@ -447,11 +447,8 @@ def test_depublish_transport_sends_file_id_and_keeps_the_frozen_result() -> None
         client._client.close()
 
 
-@pytest.mark.parametrize("kind", ["procedure"])
-@pytest.mark.parametrize("typed_node", [False, True])
-def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
-    kind: str, typed_node: bool
-) -> None:
+@pytest.mark.parametrize("kind", ["source", "state_tap", "exhaust_tap", "return", "constant"])
+def test_a_retired_node_kind_wire_and_sdk_authoring_refuse_without_transport(kind: str) -> None:
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.contracts.authoring.inputs import (
         ProcedureInput,
@@ -459,29 +456,13 @@ def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
     )
 
     raw = procedure_example().model_dump(mode="json")
-    raw["kind"] = kind
-    if kind == "blueprint":
-        raw.pop("acquisition_policy")
-    node = {
-        "kind": "exhaust_tap",
-        "node_id": "exhaust",
-        "reducer_or_query": {"target": {"kind": "QueryDefinition", "name": "journal-query"}},
-        "journal_identity": "retained-journal",
-        "as": "rows",
-    }
-    if typed_node:
-        from cruxible_client.contracts.procedures.models import ExhaustTapNode
-
-        raw["definition"]["nodes"][0] = ExhaustTapNode.model_validate(node)
-    else:
-        raw["definition"]["nodes"][0] = node
-    model = ProcedureInput
-    definition = model.model_validate(raw)
+    raw["definition"]["nodes"][0] = {"kind": kind, "node_id": "retired", "as": "rows"}
+    definition = ProcedureInput.model_validate(raw)
     with pytest.raises(AuthoringInputError) as caught:
         lower_authoring_input(definition)
-    assert caught.value.code == "cruxible.procedure.node_not_served"
+    assert caught.value.code == "cruxible.procedure.node_kind_retired"
     assert caught.value.field_path == "input.definition.nodes[0]"
-    assert "no run lane serves it yet" in caught.value.message
+    assert repr(kind) in caught.value.message
     with pytest.raises(AuthoringInputError) as sdk_caught:
         Cruxible.procedure(object(), definition=definition)
     assert sdk_caught.value.code == caught.value.code

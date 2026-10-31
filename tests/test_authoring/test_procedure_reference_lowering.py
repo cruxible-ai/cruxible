@@ -129,17 +129,17 @@ def test_staged_claim_type_and_capture_contract_match_full_tree(world, monkeypat
     }
     definition["nodes"] = [
         {
-            "kind": "source",
+            "kind": "call",
             "node_id": "fetch",
-            "capture_contract": _reference(
-                contract.identity, candidate=True, role="capture-contract"
-            ),
+            "captures": {
+                "capture": _reference(contract.identity, candidate=True, role="capture-contract")
+            },
             "slot": "fetch",
-            "request": {},
+            "input": {},
             "as": "captured",
         },
         {
-            "kind": "state_claim",
+            "kind": "read",
             "node_id": "read",
             "claim_type": _reference(claim_type.identity, candidate=True, role="claim-type"),
             "subject_kind": "project.work_item",

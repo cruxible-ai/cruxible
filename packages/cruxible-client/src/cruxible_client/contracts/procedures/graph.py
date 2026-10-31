@@ -14,12 +14,10 @@ from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.models import (
-    TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
     CallNode,
     CaptureEgressNode,
-    ClaimTapNode,
-    ConstantNode,
+    ExtractNode,
     GuardNode,
     InboxEgressNode,
     InvokeNode,
@@ -27,11 +25,11 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureNode,
     ProjectNode,
     ProposeChangeSetNode,
+    ReadNode,
     RepeatNode,
     SelectNode,
-    SourceNode,
-    StateTapNode,
     TransformNode,
+    is_terminal_node,
 )
 
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -91,32 +89,44 @@ def _reference_templates(
 ) -> Iterator[tuple[str, object]]:
     """Yield only fields whose values the runtime resolves as references."""
 
-    if isinstance(node, ConstantNode):
-        return
     if isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
         yield "result", node.result
-    if isinstance(node, ClaimTapNode):
-        yield "subject_id", node.subject_id
-    elif isinstance(node, StateTapNode):
-        yield "parameters", node.parameters
-    elif isinstance(node, SourceNode):
-        yield "request", node.request
+    if isinstance(node, ReadNode):
+        if node.reads_claims:
+            yield "subject_id", node.subject_id
+        else:
+            yield "parameters", node.parameters
     elif isinstance(node, CallNode | InvokeNode):
         yield "input", node.input
+    elif isinstance(node, ExtractNode):
+        yield "capture", node.capture
+        if node.only_keys is not None:
+            yield "only_keys", node.only_keys
     elif isinstance(node, TransformNode):
         yield "spec", node.spec
     elif isinstance(node, ProjectNode):
-        yield "fields", node.fields
+        if node.fields is not None:
+            yield "fields", node.fields
     elif isinstance(node, RepeatNode):
         return
-    elif isinstance(node, CaptureEgressNode | InboxEgressNode):
+    elif isinstance(node, CaptureEgressNode):
         yield "input", node.input
+    elif isinstance(node, InboxEgressNode):
+        if node.for_each is not None:
+            yield "for_each", node.for_each
+        yield "fields", node.fields
     elif isinstance(node, ProposeChangeSetNode):
         templates = node.candidate_templates
         yield (
             "candidate_templates",
             templates if isinstance(templates, tuple) else templates.model_dump(mode="json"),
         )
+
+
+def reference_templates(node: ProcedureNode) -> Iterator[tuple[str, object]]:
+    """``(field, template)`` for each node field the runtime resolves as references."""
+
+    return _reference_templates(node)
 
 
 def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
@@ -260,14 +270,14 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
                 )
             declared["on_true"] = fallthrough
         elif (
-            node.kind not in TERMINAL_NODE_KINDS
+            not is_terminal_node(node)
             and not isinstance(node, GuardNode)
             and "next" not in declared
             and fallthrough
             and fallthrough not in guard_halt_targets
         ):
             declared["next"] = fallthrough
-        if node.kind in TERMINAL_NODE_KINDS and declared:
+        if is_terminal_node(node) and declared:
             raise ProcedureGraphFormatError(
                 f"R5: terminal Procedure node {node.node_id!r} cannot have successors"
             )
@@ -350,21 +360,32 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
     alias_nodes = {_node_alias(node): node for node in definition.nodes if _node_alias(node)}
     for node in definition.nodes:
         _validate_node_references(node, available=available[node.node_id])
-        if isinstance(node, StateTapNode | ClaimTapNode):
+        if isinstance(node, ReadNode):
             for location, template in _reference_templates(node):
                 for alias in _step_alias_references(template, location=location):
-                    if not isinstance(
-                        alias_nodes[alias], StateTapNode | ClaimTapNode | ConstantNode
+                    producer = alias_nodes[alias]
+                    if not isinstance(producer, ReadNode) and not (
+                        isinstance(producer, ProjectNode) and producer.literal is not None
                     ):
                         raise ProcedureGraphFormatError(
                             "admission selectors cannot depend on runtime output"
                         )
 
     for node in definition.nodes:
+        if not isinstance(node, ExtractNode):
+            continue
+        reader = alias_nodes.get(node.capture_alias)
+        if not isinstance(reader, CallNode) or node.capture_field not in reader.captures:
+            raise ProcedureGraphFormatError(
+                f"extract {node.node_id!r} reads {node.capture!r}, which names no capture "
+                "field of an acquiring call"
+            )
+
+    for node in definition.nodes:
         if edges[node.node_id]:
             continue
         leaf_alias = _node_alias(node)
-        if node.kind not in TERMINAL_NODE_KINDS and leaf_alias != definition.returns:
+        if not is_terminal_node(node) and leaf_alias != definition.returns:
             raise ProcedureGraphFormatError(
                 f"Procedure leaf {node.node_id!r} neither halts, emits typed egress, nor "
                 f"returns the declared output alias {definition.returns!r}"
@@ -429,7 +450,7 @@ def _procedure_node_digests(
         node = nodes[node_id]
         local = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-local-v7",
+            "cruxible-procedure-node-local-v8",
             _node_local_payload(node),
         ).tagged
         successor_digests = {
@@ -438,7 +459,7 @@ def _procedure_node_digests(
         }
         subtree = typed_digest(
             ArtifactDigest,
-            "cruxible-procedure-node-subtree-v7",
+            "cruxible-procedure-node-subtree-v8",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
         result[node_id] = ProcedureNodeDigests(
@@ -459,7 +480,7 @@ def compute_procedure_definition_digest(definition: ProcedureDefinition) -> Arti
     payload.pop("nodes")
     return typed_digest(
         ArtifactDigest,
-        "cruxible-procedure-definition-v7",
+        "cruxible-procedure-definition-v8",
         {
             "definition": payload,
             "entry_node_id": definition.nodes[0].node_id,

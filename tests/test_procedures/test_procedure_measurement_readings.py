@@ -68,7 +68,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasureRequest,
@@ -259,9 +259,7 @@ def _procedure(
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
-                node_id="read", query=named(query), parameters={}, as_="query", next="gate"
-            ),
+            ReadNode(node_id="read", query=named(query), parameters={}, as_="query", next="gate"),
             GuardNode(
                 node_id="gate",
                 predicate=GuardPredicate(

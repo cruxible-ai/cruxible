@@ -55,6 +55,8 @@ class SourceSlotBinding(_Closed):
     effect: OperationEffect
     input: ContractSchema
     output: ContractSchema
+    #: The out Contract's ``capture<K>`` fields, in declaration order.
+    captures: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     def signature(self) -> ProcedureSlot:
         return ProcedureSlot.model_validate(
@@ -87,6 +89,15 @@ SourceBinding = Annotated[
 ]
 
 
+class SourceRowContract(_Closed):
+    """An accepted Contract an ``extract`` reads its records as: its pin and typing view."""
+
+    model_config = ConfigDict(serialize_by_alias=True)
+
+    ref: ContractRef
+    schema_: ContractSchema = Field(alias="schema")
+
+
 class SourceClaimType(_Closed):
     """A ClaimType the source writes or reads, by its structure."""
 
@@ -113,6 +124,10 @@ class ProcedureSourceProgram(_Closed):
     claim_types: dict[str, SourceClaimType] = Field(default_factory=dict)
     capture_contracts: tuple[str, ...] = ()
     subject_kinds: tuple[str, ...] = ()
+    #: ``name@N`` -> the accepted Contract an ``extract`` row names.
+    row_contracts: dict[str, SourceRowContract] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
 
 class SourceMapEntry(_Closed):

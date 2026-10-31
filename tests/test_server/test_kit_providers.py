@@ -1063,7 +1063,7 @@ def test_a_takeover_of_another_kits_definition_refuses_before_any_provider_insta
         assert {reader_path, query_path} <= release.contents().keys()
         released_reader = parse_procedure(release.contents()[reader_path], path=reader_path)
         (tap,) = released_reader.definition.nodes
-        assert tap.kind == "state_tap"
+        assert tap.kind == "read"
         assert tap.query.target.kind == "QueryDefinition"
         assert tap.query.target.name == query_name
         assert not query_name.startswith(release.manifest.owns)

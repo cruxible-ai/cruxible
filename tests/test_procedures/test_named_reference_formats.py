@@ -66,7 +66,7 @@ def test_named_capture_components_keep_their_interpretation_without_stored_pins(
 
 def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_graph(tmp_path):
     from cruxible_client.contracts.procedures.artifacts import procedure_path, render_procedure
-    from cruxible_client.contracts.procedures.models import ConstantNode
+    from cruxible_client.contracts.procedures.models import ProjectNode
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureRunRequest,
         service_run_playbill_procedure,
@@ -80,8 +80,8 @@ def test_named_procedure_is_admitted_and_runs_without_rewriting_its_authored_gra
     definition = definition.model_copy(
         update={
             "nodes": (
-                ConstantNode(
-                    node_id="result", contract_out=definition.contract_out, fields={}, as_="result"
+                ProjectNode(
+                    node_id="result", contract_out=definition.contract_out, literal={}, as_="result"
                 ),
             )
         }
@@ -237,7 +237,7 @@ def test_named_signing_and_package_providers_retain_capture_declarations():
         (
             "capture-contracts/check.json",
             "cruxible-capture-contract-v2",
-            "cruxible-capture-contract-v3",
+            "cruxible-capture-contract-v4",
         ),
         ("providers/check.json", "cruxible-provider-v4", "cruxible-provider-v6"),
         # provider-interfaces/: no acceptance law is registered for either tag

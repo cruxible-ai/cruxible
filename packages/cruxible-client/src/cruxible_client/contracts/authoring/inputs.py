@@ -75,7 +75,7 @@ from cruxible_client.contracts.procedures.authored import (
 )
 from cruxible_client.contracts.procedures.bindings import ProcedureBindings
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.models import ExhaustTapNode, ProcedureHardCaps
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
@@ -260,7 +260,8 @@ class ProcedureInput(_StrictInputModel):
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
-    #: Default acquisition rule per Source alias; a Line's acquisition overrides it.
+    #: Default acquisition rule per capture output <alias>.<field>; a Line's acquisition
+    #: overrides it.
     acquisition_defaults: dict[str, AcquisitionDefault] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -432,7 +433,10 @@ class LineInput(_StrictInputModel):
     )
     acquisition: dict[str, AcquisitionDefault] = Field(
         default_factory=dict,
-        description="Per Source alias: {max_age, on_unavailable}; replaces the Procedure default.",
+        description=(
+            "Per capture output <alias>.<field>: {max_age, on_unavailable}; replaces the "
+            "Procedure default."
+        ),
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,
@@ -620,17 +624,18 @@ def refuse_unserved_procedure_nodes(
     nodes = definition.get("nodes")
     if not isinstance(nodes, list | tuple):
         return
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind, refuse_retired_kinds
+
     for index, node in enumerate(nodes):
-        if isinstance(node, ExhaustTapNode) or (
-            isinstance(node, dict) and node.get("kind") == "exhaust_tap"
-        ):
+        try:
+            refuse_retired_kinds([node] if isinstance(node, dict) else [])
+        except RetiredNodeKind as exc:
             raise AuthoringInputError(
-                "cruxible.procedure.node_not_served",
+                "cruxible.procedure.node_kind_retired",
                 f"{field_path}.nodes[{index}]",
-                "The exhaust_tap capability is retained, but no run lane serves it yet.",
-                "Use served node kinds for this Procedure; author exhaust_tap when a lane "
-                "supports it. A Line binding cannot enable it.",
-            )
+                f"The node kind {exc.kind!r} is retired.",
+                f"Use {exc.replacement}.",
+            ) from exc
 
         if not isinstance(node, dict):
             continue

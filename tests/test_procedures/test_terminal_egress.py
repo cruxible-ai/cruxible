@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
-    InboxEgressNode,
     ProcedureDefinition,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
+from cruxible_client.contracts.shapes import Contract
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
@@ -21,6 +21,7 @@ from cruxible_core.procedures.egress import (
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.support.inbox import inbox_node
 from tests.support.procedures import named
 from tests.test_procedures.test_procedure_execution import (
     _accepted,
@@ -36,6 +37,11 @@ from tests.test_procedures.test_procedure_execution import (
     _StateReader,
 )
 
+#: The item each row of the read posts: its id.
+ITEM = Contract.model_validate(
+    {"name": "test.terminal-item", "version": 1, "fields": {"id": {"type": "string"}}}
+)
+
 
 def _terminal_procedure():
     contract_in = _pin("contract-in", "Contract", "terminal-input")
@@ -46,14 +52,18 @@ def _terminal_procedure():
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
+            ReadNode(
                 node_id="read",
                 query=named(query),
                 parameters={},
                 as_="rows",
                 next="inbox",
             ),
-            InboxEgressNode(node_id="inbox", input={"items": "$steps.rows.result.rows"}),
+            inbox_node(
+                fields={"id": "$item.fields.0.value"},
+                for_each="$steps.rows.result.rows",
+                contract=ITEM,
+            ),
         ),
         returns="rows",
         budget=_budget(items=100),
@@ -133,6 +143,7 @@ def test_terminal_without_a_sink_still_records_each_item_dependency(tmp_path) ->
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
+        contract_resolver=lambda _ref: ITEM,
     ).execute(prepared, accepted)
 
     assert result.status == "refused"
@@ -179,6 +190,7 @@ def test_terminal_sink_delivery_is_receipted_after_item_dependencies(tmp_path) -
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
+        contract_resolver=lambda _ref: ITEM,
         effective_rung=rung,
         egress_sink=sink,
     ).execute(prepared, accepted)
@@ -233,6 +245,7 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
+        contract_resolver=lambda _ref: ITEM,
         effective_rung=rung,
         egress_sink=_ProposalRefusingSink(),  # type: ignore[arg-type]
     ).execute(prepared, accepted)

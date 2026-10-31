@@ -61,11 +61,11 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
-    SourceNode,
 )
 from cruxible_client.contracts.procedures.results import (
     FAILURE_CAUSE_MESSAGE_LIMIT,
@@ -126,6 +126,8 @@ SEED_STAMP = "2026-09-12T11:00:00.000000Z"
 ACCEPT_STAMP = "2026-09-12T11:30:00.000000Z"
 PROCEDURE_NAME = "osv-advisory"
 SOURCE_ALIAS = "advisory"
+#: The workspace read's one capture output, as acquisition rules and triggers name it.
+SOURCE_CAPTURE = f"{SOURCE_ALIAS}.capture"
 RELATIVE_PATH = "data/osv-advisory.json"
 ADVISORY = b"high"
 
@@ -320,11 +322,11 @@ def _procedure(  # noqa: PLR0913
             }
         },
         nodes=(
-            SourceNode(
+            CallNode(
                 node_id="read",
-                capture_contract=named(capture_pin),
+                captures={"capture": named(capture_pin)},
                 slot="read",
-                request=request.model_dump(mode="json"),
+                input=request.model_dump(mode="json"),
                 as_=SOURCE_ALIAS,
                 next="shape",
             ),
@@ -372,6 +374,164 @@ def _procedure(  # noqa: PLR0913
     return revalidated(procedure)
 
 
+#: The extract that reads proposal items out of the workspace read's exact bytes.
+PROPOSALS_ALIAS = "proposals"
+#: A terminal fan-out over the items that extract read, one row per item.
+FAN_OUT = {"items": f"$steps.{PROPOSALS_ALIAS}.rows"}
+#: The Contracts a fan-out item row is typed by. Each nested record is read
+#: whole: its Contract declares no fields, so the item's own model decides it.
+_FAN_OUT_NESTED = ("test.fan-out-record",)
+_FAN_OUT_ROW: dict[str, object] = {
+    "name": "test.fan-out-item",
+    "version": 1,
+    "description": "One proposal item a feed states, read whole for a terminal fan-out.",
+    "fields": {
+        "tag": "string",
+        "statement": "test.fan-out-record@1?",
+        "rationale": "string?",
+        "revises": "string?",
+        "source": "test.fan-out-record@1?",
+        "citation_role": "string?",
+        "derivation": "test.fan-out-record@1?",
+        "existing_claim_dispositions": "list<test.fan-out-record@1>{max_items: 64}?",
+        "subject_kind": "string?",
+        "key": "test.fan-out-record@1?",
+        "create_new": "bool?",
+        "retires": "string?",
+        "reason": "string?",
+        "effective_until": "string?",
+    },
+}
+
+
+_DOCUMENT_ROW: dict[str, object] = {
+    "name": "test.advisory-document",
+    "version": 1,
+    "description": "One advisory document: its severity, and whatever else it states.",
+    "fields": {"severity": "string", "advisory_id": "string?"},
+}
+#: The extract reading the whole advisory as one record.
+DOCUMENT_ALIAS = "document"
+
+
+def fan_out_contracts() -> tuple[Any, ...]:
+    """The fan-out row Contract and the open record it nests, digests pinned."""
+
+    from cruxible_client.contracts.shapes import (
+        contract_digest,
+        pin_contract_refs,
+        validate_contract,
+    )
+
+    record = validate_contract(
+        {"name": "test.fan-out-record", "version": 1, "fields": {}, "description": "Any record."}
+    )
+    row = pin_contract_refs(
+        validate_contract(_FAN_OUT_ROW),
+        lambda ref: ref.model_copy(update={"digest": contract_digest(record).tagged}),
+    )
+    return record, row
+
+
+def document_contract() -> Any:
+    from cruxible_client.contracts.shapes import validate_contract
+
+    return validate_contract(_DOCUMENT_ROW)
+
+
+def fan_out_members() -> dict[str, bytes]:
+    from cruxible_client.contracts.shapes import contract_path, render_contract
+
+    return {
+        contract_path(contract.name, contract.version): render_contract(contract)
+        for contract in (*fan_out_contracts(), document_contract())
+    }
+
+
+def proposals_extract(*, next_node: str | None = None) -> Any:
+    """Read ``/proposals/*`` of the workspace read's bytes, one row per proposal item."""
+
+    from cruxible_client.contracts.procedures.extract import ExtractNode
+    from cruxible_client.contracts.shapes import contract_digest
+
+    _record, row = fan_out_contracts()
+    return ExtractNode.model_validate(
+        {
+            "kind": "extract",
+            "node_id": "items",
+            "capture": f"$steps.{SOURCE_ALIAS}.capture",
+            "records": "/proposals/*",
+            "row": {
+                "name": row.name,
+                "version": row.version,
+                "digest": contract_digest(row).tagged,
+            },
+            "fields": {
+                name: {"at": name}
+                for name in _FAN_OUT_ROW["fields"]  # type: ignore[union-attr]
+            },
+            "as": PROPOSALS_ALIAS,
+            **({} if next_node is None else {"next": next_node}),
+        }
+    )
+
+
+def with_fan_out(nodes: tuple[Any, ...], templates: object) -> tuple[Any, ...]:
+    """Insert the proposals extract after the workspace read when a terminal fans out over it."""
+
+    if f"$steps.{PROPOSALS_ALIAS}." not in json_text(templates):
+        return nodes
+    source, *rest = nodes
+    return (
+        source.model_copy(update={"next": "items"}),
+        proposals_extract(next_node=source.next),
+        *rest,
+    )
+
+
+def severity_from_document(nodes: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Read the shaped severity out of the JSON document, through a whole-document extract.
+
+    The document may then change anywhere else while its severity stays.
+    """
+
+    from cruxible_client.contracts.procedures.extract import ExtractNode
+    from cruxible_client.contracts.shapes import contract_digest
+
+    row = document_contract()
+    source, shape, *rest = nodes
+    extract = ExtractNode.model_validate(
+        {
+            "kind": "extract",
+            "node_id": "document_read",
+            "capture": f"$steps.{SOURCE_ALIAS}.capture",
+            "records": "/",
+            "row": {
+                "name": row.name,
+                "version": row.version,
+                "digest": contract_digest(row).tagged,
+            },
+            "fields": {"severity": {"at": "severity"}, "advisory_id": {"at": "advisory_id"}},
+            "as": DOCUMENT_ALIAS,
+            "next": shape.node_id,
+        }
+    )
+    return (
+        source.model_copy(update={"next": extract.node_id}),
+        extract,
+        shape.model_copy(
+            update={"fields": {"severity": f"$steps.{DOCUMENT_ALIAS}.rows.0.severity"}}
+        ),
+        *rest,
+    )
+
+
+def json_text(value: object) -> str:
+    import json
+
+    return json.dumps(value, default=lambda item: item.model_dump(mode="json"))
+
+
 def _policy(
     *, name: str = "default", overrides: dict[str, CanonicalDuration | None] | None = None
 ) -> AcquisitionDefault:
@@ -388,7 +548,12 @@ def _world(  # noqa: PLR0913
     accept_procedure: bool = True,
     relative_path: str = RELATIVE_PATH,
     write_at: str = RELATIVE_PATH,
+    document: bool = False,
 ):  # type: ignore[no-untyped-def]
+    """The Source world; ``document`` reads the severity out of a JSON document."""
+
+    if document and contents is None:
+        contents = canonical_bytes({"severity": ADVISORY.decode()})
     instance, owner = initialize_local(tmp_path)
     # `initialize_local` attaches exactly this root to the instance.
     workspace_root = tmp_path / "workspace"
@@ -403,12 +568,27 @@ def _world(  # noqa: PLR0913
         root=workspace_root,
         contract=accepted_contract,
         relative_path=relative_path,
-        acquisition_defaults={SOURCE_ALIAS: accepted_policy},
+        acquisition_defaults={SOURCE_CAPTURE: accepted_policy},
     )
+    if document:
+        definition = procedure.definition.model_copy(
+            update={"nodes": severity_from_document(procedure.definition.nodes)}
+        )
+        from tests.support.procedures import revalidated
+
+        procedure = revalidated(
+            procedure.model_copy(
+                update={
+                    "definition": definition,
+                    "definition_digest": compute_procedure_definition_digest(definition).tagged,
+                }
+            )
+        )
     members = {
         capture_contract_path(accepted_contract.identity.name): render_capture_contract(
             accepted_contract
-        )
+        ),
+        **fan_out_members(),
     }
     if accept_procedure:
         members[procedure_path(PROCEDURE_NAME)] = render_procedure(procedure)
@@ -471,7 +651,7 @@ def _run(  # type: ignore[no-untyped-def]
 def test_source_is_served_on_the_direct_lane_and_terminals_only_on_a_line() -> None:
     """A Source reads; it runs on its own. Every terminal waits for a Line."""
 
-    assert "source" in DIRECT_NODE_KINDS
+    assert "call" in DIRECT_NODE_KINDS
     # Terminals and post_inbox stay dark on the direct lane.
     assert DIRECT_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
     assert {"emit_capture", "propose_change_set"} <= LINE_NODE_KINDS
@@ -519,7 +699,8 @@ def test_a_direct_run_reads_the_workspace_file_and_retains_its_receipt(
     assert invoker.spawn_calls == 1
 
     observation = state.source_observations[0]
-    assert observation.input_name == SOURCE_ALIAS
+    assert observation.input_name == SOURCE_CAPTURE
+    assert observation.field == "capture"
     assert observation.occurrence_path == "source/read"
     assert observation.source_read_receipt is not None
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
@@ -637,7 +818,7 @@ def _served_line(
                 operation=WORKSPACE_FILE_OPERATION,
             )
         },
-        acquisition={SOURCE_ALIAS: policy},
+        acquisition={SOURCE_CAPTURE: policy},
         max_authority="observe",
         budgets={
             "max_capture_bytes": caps.max_capture_bytes,
@@ -1146,14 +1327,14 @@ def test_a_direct_run_reaches_a_terminal_under_an_ephemeral_propose_capped_line(
 
     instance, owner, procedure, root, _policy_artifact = _world(tmp_path, accept_procedure=False)
     source = procedure.definition.nodes[0]
-    assert isinstance(source, SourceNode)
+    assert isinstance(source, CallNode)
     definition = procedure.definition.model_copy(
         update={
             "nodes": (
                 source.model_copy(update={"next": "emit"}),
                 CaptureEgressNode(
                     node_id="emit",
-                    capture_contract=source.capture_contract,
+                    capture_contract=source.captures["capture"],
                     input=f"$steps.{SOURCE_ALIAS}",
                     result=f"$steps.{SOURCE_ALIAS}",
                 ),

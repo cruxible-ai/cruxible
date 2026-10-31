@@ -24,7 +24,7 @@ from tests.test_procedures import test_procedure_settlement_delivery as SD
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import item_template
 
-FAN_OUT = {"items": f"$steps.{fixtures.SOURCE_ALIAS}.content.json.proposals"}
+FAN_OUT = fixtures.FAN_OUT
 SMALL, LARGE = 2, 6
 
 
@@ -44,7 +44,7 @@ def _world(tmp_path: Path) -> tuple[Any, Path, Any]:
 def _settle(instance: Any, root: Path, line: Any, *, items: range, batch: int) -> Any:
     proposals = [_element(index, batch) for index in items]
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
+        canonical_bytes({"severity": "high", "proposals": proposals})
     )
     state = SD.run_settle(
         instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
@@ -86,14 +86,6 @@ def _patched(owner: Any, name: str, wrap: Callable[[Any], Any]) -> Iterator[None
 # --- L3: one evaluation resolves each shared dependency once -------------------------
 
 
-_NEEDS_B3_EXTRACT = pytest.mark.skip(
-    reason="needs B3 extract: FAN_OUT / _seeded_parent / _write_child read "
-    "$steps.<alias>.content.json.proposals, and workspace.file's content contract "
-    "is text/bytes only pre-B3"
-)
-
-
-@_NEEDS_B3_EXTRACT
 def test_an_evaluation_reads_each_shared_dependency_once_however_many_items_cite_it(
     tmp_path: Path,
 ) -> None:
@@ -132,7 +124,6 @@ def test_an_evaluation_reads_each_shared_dependency_once_however_many_items_cite
 # --- L5: one accepted slot read per item, staged edits indexed by slot ---------------
 
 
-@_NEEDS_B3_EXTRACT
 def test_slot_reads_and_projection_binds_stay_flat_and_staged_claims_are_indexed_by_slot(
     tmp_path: Path,
 ) -> None:
@@ -252,7 +243,6 @@ def _activation_reads() -> Any:
     return measure
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_settle_activates_from_its_own_submission_without_reading_it_back(
     tmp_path: Path,
 ) -> None:
@@ -273,7 +263,6 @@ def test_a_settle_activates_from_its_own_submission_without_reading_it_back(
 # --- L8: the settle condition is checked once per head ---------------------------------
 
 
-@_NEEDS_B3_EXTRACT
 def test_admission_takes_the_settle_condition_checked_just_before_it_at_the_same_head(
     tmp_path: Path,
 ) -> None:
@@ -441,7 +430,6 @@ def _settlement_evaluations(
     counter.update({f"ineligible: {reason}": 1 for reason in why})
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_settle_reuses_its_admission_evaluation_and_settles_what_a_full_one_would(
     tmp_path: Path,
 ) -> None:
@@ -453,7 +441,6 @@ def test_a_settle_reuses_its_admission_evaluation_and_settles_what_a_full_one_wo
         assert counts["full_evaluations"] == 0, counts
 
 
-@_NEEDS_B3_EXTRACT
 @pytest.mark.parametrize(
     "violation",
     [
@@ -549,7 +536,6 @@ def test_each_unmet_reuse_condition_settles_by_a_full_re_evaluation(
     assert after["settlement_reused"] == before["settlement_reused"], (before, after)
 
 
-@_NEEDS_B3_EXTRACT
 def test_a_separately_requested_activation_always_re_evaluates_in_full(tmp_path: Path) -> None:
     """A fallback proposal approved and activated by its own request is settled from storage."""
 
@@ -564,7 +550,7 @@ def test_a_separately_requested_activation_always_re_evaluates_in_full(tmp_path:
     )
     proposals = [_element(index, 0) for index in range(SMALL)]
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
+        canonical_bytes({"severity": "high", "proposals": proposals})
     )
     state = SD.run_settle(instance, root, line)
     (egress,) = state.terminal_egress
@@ -644,7 +630,7 @@ def _seeded_parent(tmp_path: Path) -> tuple[Any, Path, Any, Any, str]:
         tmp_path, require_claim=True, candidate_templates=FAN_OUT
     )
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "proposals": [_element(0, 0)]})
+        canonical_bytes({"severity": "high", "proposals": [_element(0, 0)]})
     )
     first = SD._egress(SD.run_settle(instance, root, line))
     # No accepted Claim meets the condition yet: the first settle proposes.
@@ -672,7 +658,7 @@ def _write_child(root: Path) -> None:
     """The next run reads a changed file: one new Claim, under a new run Capture."""
 
     (root / fixtures.RELATIVE_PATH).write_bytes(
-        canonical_bytes({**fixtures.ADVISORY, "severity": "low", "proposals": [_element(1, 1)]})
+        canonical_bytes({"severity": "low", "proposals": [_element(1, 1)]})
     )
 
 
@@ -717,7 +703,6 @@ def _at_boundary(
     return seen
 
 
-@_NEEDS_B3_EXTRACT
 @pytest.mark.parametrize("boundary", ["admission", "settlement"])
 def test_condition_evidence_erased_after_the_check_is_not_settled_on_the_old_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
@@ -767,7 +752,6 @@ def test_condition_evidence_erased_after_the_check_is_not_settled_on_the_old_ans
     assert instance.accepted_coordinate() == parent, (boundary, state.terminal)
 
 
-@_NEEDS_B3_EXTRACT
 @pytest.mark.parametrize("boundary", ["admission", "settlement"])
 def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
@@ -841,7 +825,6 @@ def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path
         assert after["settlement_invalidated"] == before["settlement_invalidated"] + 1
 
 
-@_NEEDS_B3_EXTRACT
 def test_an_unchanged_facts_replay_touches_no_body_file_however_many_claims_it_reads(
     tmp_path: Path,
 ) -> None:

@@ -22,11 +22,10 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    InboxEgressNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    StateTapNode,
+    ReadNode,
 )
 from cruxible_core.compiler.compiler import PROJECTION_REGISTRY
 from cruxible_core.exhaust import (
@@ -61,6 +60,7 @@ from cruxible_core.service.procedures.procedures import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
+from tests.support.inbox import contract_members, inbox_node
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, named
 from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
@@ -90,10 +90,8 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         contract_in=named(contract_in),
         contract_out=named(contract_out),
         nodes=(
-            StateTapNode(
-                node_id="read", query=named(query), parameters={}, as_="rows", next="emit"
-            ),
-            InboxEgressNode(node_id="emit", input={"items": "$steps.rows.items"}),
+            ReadNode(node_id="read", query=named(query), parameters={}, as_="rows", next="emit"),
+            inbox_node("emit", fields={"note": "$item.order"}, for_each="$steps.rows.items"),
         ),
         returns="rows",
         budget=ProcedureBudget(
@@ -278,6 +276,7 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
+            **contract_members(),
             procedure.path: render_procedure(authored_procedure(procedure)),
             **subject_query_members("open-orders"),
             line.path: render_line_spec(line.line),

@@ -31,7 +31,6 @@ from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
     RepeatNode,
-    SourceNode,
     iter_role_references,
 )
 from cruxible_client.contracts.procedures.slots import ProcedureSlot
@@ -185,7 +184,7 @@ def _source_only_slot_names(definition: ProcedureDefinition) -> frozenset[str]:
     source_slots: set[str] = set()
     other_slots: set[str] = set()
     for node in definition.nodes:
-        if isinstance(node, SourceNode):
+        if isinstance(node, CallNode) and node.acquires:
             source_slots.add(node.slot)
         elif isinstance(node, CallNode):
             other_slots.add(node.slot)

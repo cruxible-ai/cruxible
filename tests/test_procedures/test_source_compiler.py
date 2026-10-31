@@ -292,7 +292,7 @@ def test_query_binds_request_parameters_and_types_the_result():
             )
         },
     )
-    assert compiled.definition.nodes[0].kind == "state_tap"
+    assert compiled.definition.nodes[0].kind == "read"
     assert compiled.definition.nodes[0].parameters == {"status": "ready"}
 
     from cruxible_client.contracts.procedures.source_compiler import verify_source_graph
@@ -445,7 +445,7 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
         budget=_budget(),
         hard_caps=_hard_caps(),
     )
-    assert compiled.definition.nodes[0].kind == "state_claim"
+    assert compiled.definition.nodes[0].kind == "read"
     assert compiled.definition.nodes[0].subject_id == "app"
     artifact = bind_fixture(accepted(compiled))
     fixture = _fixture(tmp_path)
@@ -503,7 +503,7 @@ def test_required_nullable_source_output_executes_without_weakening_old_contract
         validate_contract_schema(output.schema_, {"value": None})
 
 
-def test_query_defaults_and_explicit_budget_use_existing_contracts():
+def test_a_query_read_takes_no_interactive_budgets_and_defaults_its_parameters():
     from cruxible_client.contracts.procedures.source_program import SourceQueryBinding
     from tests.test_query.test_query_definitions import active_work_query
 
@@ -520,10 +520,20 @@ def test_query_defaults_and_explicit_budget_use_existing_contracts():
                                       max_paths=1, max_paths_per_result=1))
             return Output.value(value=result.receipt.verdict)
     """
-    compiled = compile(program, bindings={"work": binding})
-    assert compiled.definition.nodes[0].budgets.max_results == 1
-    with pytest.raises(SourceCompileError, match="ceiling"):
-        compile(program.replace("max_results=1", "max_results=1000000"), bindings={"work": binding})
+    # A read runs to the end under the run's read ceiling: interactive Query
+    # budgets are refused, never silently applied.
+    with pytest.raises(SourceCompileError, match="read ceiling"):
+        compile(program, bindings={"work": binding})
+    compiled = compile(
+        program.replace(
+            """,
+                budgets=QueryBudgets(max_results=1, max_traversal_depth=0,
+                                      max_paths=1, max_paths_per_result=1))""",
+            ")",
+        ),
+        bindings={"work": binding},
+    )
+    assert compiled.definition.nodes[0].kind == "read"
     # Required parameters cannot silently disappear when parameters is omitted.
     with pytest.raises(SourceCompileError):
         compile(
@@ -682,3 +692,105 @@ def test_named_claim_reads_keep_the_shared_claim_view_schema():
     assert node.claim_type.target.qualified == "ClaimType:" + shape.predicate
     assert claim_view_schema(shape).fields["value"].json_schema == shape.literal_schema
     assert "artifact_digest" not in node.claim_type.model_dump()
+
+
+def _extract_program(body, *, rows=True):
+    from cruxible_client.contracts.procedures.source_program import (
+        SourceRowContract,
+        SourceSlotBinding,
+    )
+
+    def pinned(name, digit):
+        return {"name": name, "version": 1, "digest": "sha256:" + digit * 64}
+
+    slot = SourceSlotBinding.model_validate(
+        {
+            "in": pinned("demo.fetch.request", "1"),
+            "out": pinned("demo.fetch.result", "2"),
+            "effect": "external_read",
+            "input": ContractSchema(fields={"url": PropertySchema(type="string")}),
+            "output": ContractSchema(fields={"content_base64": PropertySchema(type="string")}),
+        }
+    )
+    row = SourceRowContract.model_validate(
+        {
+            "ref": pinned("demo.row", "3"),
+            "schema": ContractSchema(
+                fields={"status": PropertySchema(type="int"), "text": PropertySchema(type="string")}
+            ),
+        }
+    )
+    return ProcedureSourceProgram(
+        text=textwrap.dedent(
+            """
+            def example(request, bindings):
+                observation = source(bindings.fetch,
+                    request=bindings.fetch.input(url='https://example.test'),
+                    capture_contract='http')
+            """
+        )
+        + textwrap.indent(textwrap.dedent(body), "    "),
+        filename="extract.py",
+        function="example",
+        contracts={"Output": OUTPUT},
+        bindings={"fetch": slot},
+        capture_contracts=("http", "registered"),
+        row_contracts={"demo.row@1": row} if rows else {},
+    )
+
+
+def _compile_program(program):
+    return compile_source(
+        program,
+        name="example",
+        input=INPUT,
+        output=OUTPUT,
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+    )
+
+
+EXTRACTED = """
+document = extract(observation, row='demo.row@1', fields={'text': '/derived/text'})
+return emit_capture(observation, capture_contract='registered',
+    result=Output.value(value=document.text))
+"""
+
+
+def test_extract_reads_a_source_capture_as_one_typed_record_of_an_accepted_contract():
+    compiled = _compile_program(_extract_program(EXTRACTED))
+    call, extracted, egress = compiled.definition.nodes
+    # A slot with no capture<K> field commits its whole output as the Capture.
+    assert (call.kind, set(call.captures)) == ("call", {"capture"})
+    assert extracted.kind == "extract"
+    assert extracted.capture == "$steps.observation.capture"
+    assert (extracted.records, extracted.row.spelling) == ("/", "demo.row@1")
+    assert extracted.row.digest == "sha256:" + "3" * 64
+    assert {name: field.at for name, field in extracted.fields.items()} == {"text": "/derived/text"}
+    assert egress.result == {"value": f"$steps.{extracted.as_}.rows.0.text"}
+
+
+@pytest.mark.parametrize(
+    ("body", "rows", "code", "match"),
+    [
+        (EXTRACTED, False, "contract_mismatch", "accepted Contract"),
+        (
+            EXTRACTED.replace("fields=", "records='/items/*', fields="),
+            True,
+            "unsupported_construct",
+            "one record",
+        ),
+        (EXTRACTED.replace("'text': ", "'missing': "), True, "unknown_field", "row field"),
+        (
+            EXTRACTED.replace("extract(observation,", "extract(request,"),
+            True,
+            "binding_kind",
+            "source\\(\\) observation",
+        ),
+        (EXTRACTED.replace("row='demo.row@1', ", ""), True, "unsupported_construct", "row"),
+    ],
+)
+def test_extract_refuses_what_it_cannot_type_at_its_location(body, rows, code, match):
+    with pytest.raises(SourceCompileError, match=match) as refused:
+        _compile_program(_extract_program(body, rows=rows))
+    assert refused.value.diagnostic.code == "cruxible.source." + code

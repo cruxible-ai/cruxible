@@ -37,13 +37,13 @@ from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDe
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     CaptureEgressNode,
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
     ProjectNode,
     ProposeChangeSetNode,
-    SourceNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import contract_digest
@@ -240,11 +240,11 @@ def _procedure_definition(
             }
         },
         nodes=(
-            SourceNode(
+            CallNode(
                 node_id="read",
-                capture_contract=named(contract_pin),
+                captures={"capture": named(contract_pin)},
                 slot="read",
-                request=request.model_dump(mode="json"),
+                input=request.model_dump(mode="json"),
                 as_="advisory",
                 next="shape",
             ),
@@ -449,7 +449,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 item.model_dump(mode="json", by_alias=True)
                 for item in (input_contract, output_contract)
             ],
-            "acquisition_defaults": {"advisory": _policy().model_dump(mode="json")},
+            "acquisition_defaults": {"advisory.capture": _policy().model_dump(mode="json")},
             "retire": False,
         },
         {
@@ -529,7 +529,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             kind="procedure",
             definition=_authored(definition, same_set_kinds=set()),
             activation_policy="drain",
-            acquisition_defaults={"advisory": _policy()},
+            acquisition_defaults={"advisory.capture": _policy()},
             contracts=tuple(
                 CarriedContractInput(
                     name=contract.identity.name,
@@ -585,10 +585,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         assert "resource_budget_exceeded" in limited.result.material.coverage.reason_codes
         with pytest.raises(ValueError, match="content is unavailable"):
             _ = limited.content
-        # The Source's retained evidence is independently readable; neither read refetches it.
+        # The read's retained evidence is independently readable; neither read refetches it.
+        # It commits the workspace file's exact bytes.
         source = pb.capture(state.source_observations[0].capture_digest)
         assert source.result.envelope.producer.kind == "Provider"
-        assert source.json()["content"]["text"] == "high"
+        assert source.content == b"high"
         claim = pb.claim(
             subject=f"{SUBJECT_KIND}/{SUBJECT_ID}",
             predicate=PREDICATE,

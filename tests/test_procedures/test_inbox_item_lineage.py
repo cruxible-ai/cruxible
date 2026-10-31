@@ -15,6 +15,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.procedures.models import InboxEgressNode
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.shapes import Contract, contract_digest
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.procedures.execution import _inbox_items, _RunRefusal
 from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
@@ -29,9 +30,31 @@ from tests.test_procedures.test_proposal_fan_out import (
     _two_lists,
 )
 
+#: The inbox item every terminal here posts: one rationale.
+ITEM = Contract.model_validate(
+    {"name": "test.inbox-item", "version": 1, "fields": {"rationale": {"type": "string"}}}
+)
 
-def _node(items: object) -> InboxEgressNode:
-    return InboxEgressNode(node_id="inbox", input={"items": items})
+
+def _node(fields: dict[str, object], *, for_each: str | None = None) -> InboxEgressNode:
+    return InboxEgressNode.model_validate(
+        {
+            "node_id": "inbox",
+            "contract": {"name": ITEM.name, "version": 1, "digest": contract_digest(ITEM).tagged},
+            "fields": fields,
+            **({} if for_each is None else {"for_each": for_each}),
+        }
+    )
+
+
+def _each(path: str) -> InboxEgressNode:
+    """One item per element of ``path``, posting its rationale."""
+
+    return _node({"rationale": "$item.rationale"}, for_each=path)
+
+
+def _items(node: InboxEgressNode, state: object):  # type: ignore[no-untyped-def]
+    return _inbox_items(node, state=state, contract=ITEM, resolve=lambda _ref: None)  # type: ignore[arg-type]
 
 
 def _posted_captures(tmp_path: Path, values, tokens) -> list[tuple[str, ...]]:  # type: ignore[no-untyped-def]
@@ -56,6 +79,7 @@ def _posted_captures(tmp_path: Path, values, tokens) -> list[tuple[str, ...]]:  
         run_id="RUN-test",
         node_id="inbox",
         items=items,
+        inbox_dedupe_key=(),
         prepared_at=NOW,
         actor_context=_actor(instance),
         accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -72,7 +96,7 @@ def _posted_captures(tmp_path: Path, values, tokens) -> list[tuple[str, ...]]:  
 def test_each_element_with_lineage_carries_only_its_own_capture(tmp_path: Path) -> None:
     state = _two_capture_state(lambda a, b: (frozenset({a}), frozenset({b})))
 
-    values, tokens = _inbox_items(_node("$steps.joined.items"), state=state)  # type: ignore[arg-type]
+    values, tokens = _items(_each("$steps.joined.items"), state)
 
     assert len(values) == 2
     assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,), (_FEED_B,)]
@@ -82,13 +106,10 @@ def test_a_two_capture_list_without_lineage_refuses_instead_of_lending_both() ->
     state = _two_capture_state(lambda a, b: None)
 
     with pytest.raises(_RunRefusal) as refused:
-        _inbox_items(_node("$steps.joined.items"), state=state)  # type: ignore[arg-type]
+        _items(_each("$steps.joined.items"), state)
 
     assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
-    assert refused.value.refusal.details == {
-        "field": "input.items",
-        "reason": "lineage_unavailable",
-    }
+    assert refused.value.refusal.details == {"field": "for_each", "reason": "lineage_unavailable"}
 
 
 @pytest.mark.parametrize("path", ["$steps.bundle.other", "$steps.bundle.items.0.nested"])
@@ -99,26 +120,26 @@ def test_a_sibling_or_nested_path_does_not_borrow_the_top_level_lineage(path: st
     state.outputs["bundle"]["items"][0]["nested"] = [_element("nested")]
 
     with pytest.raises(_RunRefusal) as refused:
-        _inbox_items(_node(path), state=state)  # type: ignore[arg-type]
+        _items(_each(path), state)
 
     assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
 
 
-def test_a_literal_list_gives_each_element_its_own_references(tmp_path: Path) -> None:
+def test_a_field_reading_one_lists_element_cites_only_that_lists_capture(
+    tmp_path: Path,
+) -> None:
     state = _bundle(_two_lists())
 
-    values, tokens = _inbox_items(  # type: ignore[arg-type]
-        _node(["$steps.a.items", "$steps.b.items"]), state=state
-    )
+    values, tokens = _items(_node({"rationale": "$steps.a.items.0.rationale"}), state)
 
-    assert len(values) == 2
-    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,), (_FEED_B,)]
+    assert values == [{"rationale": "Severity as the feed reports it (from-a)."}]
+    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,)]
 
 
 def test_the_exact_lineage_path_of_a_bundle_cites_its_own_source(tmp_path: Path) -> None:
     state = _bundle(_two_lists())
 
-    values, tokens = _inbox_items(_node("$steps.bundle.items"), state=state)  # type: ignore[arg-type]
+    values, tokens = _items(_each("$steps.bundle.items"), state)
 
     assert len(values) == 1
     assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,)]
@@ -139,69 +160,69 @@ def test_the_run_byte_bound_counts_every_inbox_terminal_of_the_run() -> None:
     assert INBOX_ITEM_MAX_BYTES < INBOX_RUN_MAX_BYTES
 
 
-# --- the single payload and literal fan-out select evidence by exact path ---------
+# --- an item's own fields select evidence by exact path ---------------------------
 # (delta review F-001: the reviewer's three probes)
 
 
-def test_a_single_reference_to_an_exact_items_path_keeps_only_its_captures(
-    tmp_path: Path,
-) -> None:
+def test_a_field_reading_an_exact_items_path_keeps_only_its_captures(tmp_path: Path) -> None:
     """`bundle.items` holds A's records; its sibling `bundle.other` holds B's."""
 
     state = _bundle(_two_lists())
 
-    values, tokens = _inbox_items(  # type: ignore[arg-type]
-        InboxEgressNode(node_id="inbox", input="$steps.bundle.items"), state=state
-    )
+    values, tokens = _items(_node({"rationale": "$steps.bundle.items.0.rationale"}), state)
 
-    assert values == [state.outputs["a"]["items"]]
+    assert values == [{"rationale": "Severity as the feed reports it (from-a)."}]
     assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,)]
 
 
-def test_literal_members_selecting_indexed_elements_keep_each_elements_lineage(
+def test_a_field_selecting_an_indexed_element_keeps_that_elements_lineage(
     tmp_path: Path,
 ) -> None:
     state = _two_capture_state(lambda a, b: (frozenset({a}), frozenset({b})))
 
-    values, tokens = _inbox_items(  # type: ignore[arg-type]
-        _node(["$steps.joined.items.0", "$steps.joined.items.1"]), state=state
-    )
+    values, tokens = _items(_node({"rationale": "$steps.joined.items.1.rationale"}), state)
 
-    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A,), (_FEED_B,)]
+    assert _posted_captures(tmp_path, values, tokens) == [(_FEED_B,)]
 
 
-def test_a_literal_member_selecting_an_ambiguous_sibling_refuses() -> None:
+def test_a_field_selecting_an_ambiguous_sibling_refuses() -> None:
     state = _bundle(_two_lists())
 
     with pytest.raises(_RunRefusal) as refused:
-        _inbox_items(_node(["$steps.bundle.other"]), state=state)  # type: ignore[arg-type]
+        _items(_node({"rationale": "$steps.bundle.other.0.rationale"}), state)
 
     assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
-    assert refused.value.refusal.details == {
-        "field": "input.items",
-        "reason": "lineage_unavailable",
-    }
-
-
-def test_a_single_payload_selecting_an_ambiguous_sibling_refuses() -> None:
-    state = _bundle(_two_lists())
-
-    with pytest.raises(_RunRefusal) as refused:
-        _inbox_items(  # type: ignore[arg-type]
-            InboxEgressNode(node_id="inbox", input={"rows": "$steps.bundle.other"}), state=state
-        )
-
-    assert refused.value.refusal.code == "inbox_item_evidence_ambiguous"
-    assert refused.value.refusal.details == {"field": "input", "reason": "lineage_unavailable"}
+    assert refused.value.refusal.details == {"field": "fields", "reason": "lineage_unavailable"}
 
 
 def test_a_whole_alias_reference_carries_every_capture_that_built_it(tmp_path: Path) -> None:
     """A legitimate multi-Capture closure is kept when the selected value is the whole alias."""
 
     state = _two_capture_state(lambda a, b: None)
+    state.outputs["joined"] = "Both feeds report high severity."
 
-    values, tokens = _inbox_items(  # type: ignore[arg-type]
-        InboxEgressNode(node_id="inbox", input="$steps.joined"), state=state
-    )
+    values, tokens = _items(_node({"rationale": "$steps.joined"}), state)
 
     assert _posted_captures(tmp_path, values, tokens) == [(_FEED_A, _FEED_B)]
+
+
+def test_an_item_outside_its_contract_refuses_and_a_dedupe_key_posts_one(
+    tmp_path: Path,
+) -> None:
+    """F13: items are typed by their Contract, and those sharing a dedupe_key post once."""
+
+    state = _two_capture_state(lambda a, b: (frozenset({a}), frozenset({b})))
+    with pytest.raises(_RunRefusal) as refused:
+        _items(_node({"rationale": "$steps.joined.items.0.statement"}), state)
+    assert refused.value.refusal.code == "inbox_item_invalid"
+    assert refused.value.refusal.details == {"field": "fields", "reason": "contract_refused"}
+
+    keyed = InboxEgressNode.model_validate(
+        {
+            **_each("$steps.joined.items").model_dump(mode="json", by_alias=True),
+            "fields": {"rationale": "$item.statement.role"},
+            "dedupe_key": ["rationale"],
+        }
+    )
+    values, _tokens = _items(keyed, state)
+    assert values == [{"rationale": "observation"}]

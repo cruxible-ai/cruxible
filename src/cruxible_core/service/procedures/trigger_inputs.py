@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import base64
-import json
 from collections.abc import Mapping, MutableMapping
 from datetime import datetime
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
 from cruxible_client.contracts.captures import capture_retention_policy
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionRule
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
-from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
-    trigger_capture_source,
-)
+from cruxible_client.contracts.procedures.line_specs import LineSpec
+from cruxible_client.contracts.procedures.trigger_rules import trigger_capture_target
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_STALE,
@@ -52,7 +47,7 @@ def bind_trigger_capture(
     The event is the one the Trigger fired on, or, for a manual ``line run``,
     the one the caller passed as the Line's event input.
     """
-    node = trigger_capture_source(line, procedure)
+    node, output = trigger_capture_target(line, procedure)
     selector = line.trigger_event
     if event is None or selector is None:
         raise TriggerCaptureRefused(
@@ -60,13 +55,13 @@ def bind_trigger_capture(
             "trigger_capture_input: an exact retained event is required "
             "(a manual run passes it as the event input)",
         )
-    rule = rules.get(node.as_)
+    rule = rules.get(output.acquisition_key)
     if rule is None:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
-            "trigger_capture_input: the Source input has no acquisition rule",
+            "trigger_capture_input: the capture output has no acquisition rule",
         )
-    contract = contracts.get(resolved_pin(procedure, node.capture_contract).artifact_digest)
+    contract = contracts.get(resolved_pin(procedure, node.captures[output.field]).artifact_digest)
     if contract is None or contract.identity != selector.capture_contract_identity:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
@@ -144,35 +139,23 @@ def bind_trigger_capture(
             "trigger_capture_stale"
             if failure == ACQUISITION_STALE
             else "trigger_capture_forbidden",
-            f"Source alias {node.as_!r} has Capture age "
+            f"Capture output {output.acquisition_key!r} has Capture age "
             f"{(evaluation_time - envelope.observed_at).total_seconds()}s, exceeding max_age; "
-            f"repair: supply a fresh Capture for {node.as_!r}."
+            f"repair: supply a fresh Capture for {output.acquisition_key!r}."
             if failure == ACQUISITION_STALE
             else "The acquisition rule forbids this Capture.",
         )
-    if material.material_kind == "bytes":
-        body = material.body_access
-        if body is None or body.body_base64 is None:
-            raise TriggerCaptureRefused(
-                "trigger_capture_invalid", "trigger_capture_input: Capture bytes unavailable"
-            )
-        raw = base64.b64decode(body.body_base64, validate=True)
-        value = json.loads(raw)
-        if canonical_bytes(value) != raw:
-            raise TriggerCaptureRefused(
-                "trigger_capture_invalid",
-                "trigger_capture_input: Source input must be canonical JSON",
-            )
-    elif material.material_kind in {"canonical_value", "query_result"}:
-        value = material.canonical_material
-    else:
+    if material.material_kind != "bytes" or material.body_access is None:
         raise TriggerCaptureRefused(
-            "trigger_capture_invalid", "trigger_capture_input: Capture has no executable material"
+            "trigger_capture_invalid", "trigger_capture_input: Capture bytes unavailable"
         )
+    # The substituted call does not run: its value names only the Capture its
+    # one capture field binds, and an extract reads the Capture's own bytes.
+    value = {output.field: digest}
     # No material change or fresh acquisition: keep the original observation and producer proof.
     return LandedCaptureRunMaterialV1(
         input=LandedCaptureRunInputV1(
-            input_name=node.as_,
+            input_name=output.acquisition_key,
             capture_digest=digest,
             capture_contract_digest=envelope.capture_contract_digest,
             landing_cursor="procedure-event:" + event.record_digest,

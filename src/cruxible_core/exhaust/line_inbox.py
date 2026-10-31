@@ -171,6 +171,9 @@ class InboxPosting:
     payload: CanonicalValue
     source_capture_digests: tuple[str, ...]
     posted_at: datetime
+    #: What the item's dedupe key reads, when its terminal declares a
+    #: dedupe_key (those fields of the payload); absent, the whole payload.
+    dedupe_payload: CanonicalValue | None = None
 
 
 @dataclass(frozen=True)
@@ -580,7 +583,13 @@ class LineInboxStore:
                 payload_digest = inbox_payload_digest(posting.payload)
                 captures = tuple(sorted(set(posting.source_capture_digests)))
                 key = inbox_dedupe_key(
-                    line=posting.line, node_id=posting.node_id, payload_digest=payload_digest
+                    line=posting.line,
+                    node_id=posting.node_id,
+                    payload_digest=(
+                        payload_digest
+                        if posting.dedupe_payload is None
+                        else inbox_payload_digest(posting.dedupe_payload)
+                    ),
                 )
                 keys.append(key)
                 seen = conn.execute(

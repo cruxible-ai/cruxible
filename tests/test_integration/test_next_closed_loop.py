@@ -2180,14 +2180,14 @@ def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         procedure_artifact_digest,
         render_procedure,
     )
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-    from cruxible_client.contracts.procedures.models import InboxEgressNode
+    from cruxible_client.contracts.shapes import Contract
     from cruxible_core.service.procedures.line_inbox import (
         service_acknowledge_inbox_item,
         service_dismiss_inbox_item,
         service_list_inbox,
     )
+    from tests.support.inbox import contract_members, listed_inbox_procedure
     from tests.test_indexes.test_resolution_contracts import _accept_tree
     from tests.test_procedures.test_manual_line_runs import manual_run
     from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
@@ -2196,30 +2196,11 @@ def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
 
     instance, owner = initialize_local(root)
     template = _slotless_procedure("next-inbox").procedure
-    (shape,) = template.definition.nodes
-    definition = template.definition.model_copy(
-        update={
-            "nodes": (
-                shape.model_copy(update={"next": "inbox"}),
-                InboxEgressNode(
-                    node_id="inbox",
-                    input={
-                        "items": [
-                            {"cve": "CVE-2026-0001"},
-                            {"cve": "CVE-2026-0002"},
-                            {"cve": "CVE-2026-0003"},
-                        ]
-                    },
-                ),
-            )
-        }
+    rows = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
+    cve = Contract.model_validate(
+        {"name": "test.inbox-cve", "version": 1, "fields": {"cve": {"type": "string"}}}
     )
-    procedure = template.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest(definition).tagged,
-        }
-    )
+    procedure = listed_inbox_procedure(template, rows, cve)
     accepted = AcceptedProcedure(
         path="procedures/next-inbox.json",
         procedure=procedure,
@@ -2233,6 +2214,7 @@ def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
+            **contract_members(cve),
             accepted.path: render_procedure(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },

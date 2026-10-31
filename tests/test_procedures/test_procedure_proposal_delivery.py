@@ -138,8 +138,12 @@ def terminal_procedure(
     *,
     templates: tuple[object, ...] | None = None,
     wall_clock_seconds: int | None = None,
+    document: bool = False,
 ) -> ProcedureArtifact:
     """The Source Procedure with its shaped row flowing into a rung-2 terminal.
+
+    ``document`` reads the severity out of a JSON document (through a
+    whole-document extract) instead of the read's whole text.
 
     ``wall_clock_seconds`` replaces both the wall-clock budget and the hard cap
     (which the served Line's run budget follows), for a world whose terminal does
@@ -147,17 +151,18 @@ def terminal_procedure(
     """
 
     source, shape = procedure.definition.nodes
-    update: dict[str, object] = {
-        "nodes": (
-            source,
-            shape.model_copy(update={"next": "propose"}),
-            ProposeChangeSetNode(
-                node_id="propose",
-                candidate_templates=templates or (item_template(),),
-                result="$steps.result",
-            ),
+    nodes = (
+        source,
+        shape.model_copy(update={"next": "propose"}),
+        ProposeChangeSetNode(
+            node_id="propose",
+            candidate_templates=templates or (item_template(),),
+            result="$steps.result",
         ),
-    }
+    )
+    if document:
+        nodes = fixtures.severity_from_document(nodes)
+    update: dict[str, object] = {"nodes": fixtures.with_fan_out(nodes, templates)}
     if wall_clock_seconds is not None:
         wall_clock = CanonicalDuration(microseconds=wall_clock_seconds * 1_000_000)
         update["budget"] = procedure.definition.budget.model_copy(update={"wall_clock": wall_clock})
@@ -187,12 +192,17 @@ def proposal_world(  # type: ignore[no-untyped-def]
     claim_type: ClaimType | None = None,
     requested_terminal_rung: int = 2,
     wall_clock_seconds: int | None = None,
+    document: bool = False,
 ):
     """Accept everything the loop needs; return the instance, owner, root, Line."""
 
-    instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
+    instance, owner, procedure, root, policy = fixtures._world(
+        tmp_path,
+        accept_procedure=False,
+        **({"contents": fixtures.canonical_bytes({"severity": "high"})} if document else {}),
+    )
     with_terminal = terminal_procedure(
-        procedure, templates=templates, wall_clock_seconds=wall_clock_seconds
+        procedure, templates=templates, wall_clock_seconds=wall_clock_seconds, document=document
     )
     line = _line(instance, with_terminal, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
@@ -2142,18 +2152,7 @@ def _accept_and_retire(instance: PlaybillInstance, owner: Any, proposal_id: str)
     "same_bytes",
     [
         True,
-        pytest.param(
-            False,
-            marks=pytest.mark.skip(
-                reason=(
-                    "needs B3 extract: content.text is the read's whole decoded "
-                    "text now (no JSON decode until extract lands), so there is "
-                    "no way to vary a read's underlying bytes while keeping its "
-                    "extracted severity identical -- the premise 'other bytes "
-                    "stating the same severity' needs."
-                )
-            ),
-        ),
+        False,
     ],
     ids=["identical-bytes", "other-bytes"],
 )
@@ -2162,17 +2161,17 @@ def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
 ) -> None:
     """A second run re-reads the workspace file and proposes the same statement again.
 
-    Its Capture is a new envelope (another run, another time) and commits the
-    Provider output that echoes the run's own request digest; the evidence it
-    contributes is the file's bytes digest core verified at the read. On
-    identical bytes the item carries the retirement exactly as recorded; other
-    bytes stating the same severity are new evidence and carry nothing.
+    Its Capture is a new envelope (another run, another time) committing the
+    file's exact bytes; the evidence it contributes is the bytes digest core
+    verified at the read. On identical bytes the item carries the retirement
+    exactly as recorded; other bytes stating the same severity (the document
+    changes elsewhere) are new evidence and carry nothing.
     """
 
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.captures import parse_capture_envelope
 
-    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    instance, owner, root, line, _procedure = proposal_world(tmp_path, document=True)
     first = run_line(instance, root, line)
     assert first.status == "succeeded", first.terminal
     (first_egress,) = first.terminal_egress
@@ -2182,7 +2181,7 @@ def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
 
     if not same_bytes:
         (root / fixtures.RELATIVE_PATH).write_bytes(
-            canonical_bytes({**fixtures.ADVISORY, "note": "re-read"})
+            canonical_bytes({"severity": "high", "note": "re-read"})
         )
     second = run_line(instance, root, line, at=NOW + timedelta(minutes=10))
 
@@ -2191,15 +2190,15 @@ def test_a_rerun_carries_the_earlier_retirement_exactly_on_identical_bytes(
     (egress,) = second.terminal_egress
     (child,) = egress.children
     assert child.path is not None and child.path != first_egress.children[0].path
-    # Two runs: two envelopes and two committed materials, even on identical bytes.
+    # Two runs: two envelopes, each committing the bytes it read exactly.
     access = BodyAccessContext(principal_id="test", can_read_body=True)
+    captures = [state.source_observations[0].capture_digest for state in (first, second)]
     envelopes = [
-        parse_capture_envelope(
-            instance.body_store().read(state.source_observations[0].capture_digest, access=access)
-        )
-        for state in (first, second)
+        parse_capture_envelope(instance.body_store().read(capture, access=access))
+        for capture in captures
     ]
-    assert envelopes[0].commitment.digest != envelopes[1].commitment.digest
+    assert captures[0] != captures[1]
+    assert (envelopes[0].commitment.digest == envelopes[1].commitment.digest) == same_bytes
     if not same_bytes:
         assert child.prior_refusals == ()
         return
@@ -2440,15 +2439,6 @@ def _live_nones(instance: PlaybillInstance) -> dict[str, Any]:
     }
 
 
-@pytest.mark.skip(
-    reason=(
-        "needs B3 extract: the workspace.file read now structures plain text "
-        "(content.text), with no JSON decode until the extract node lands, so "
-        "this fixture can no longer vary a read's underlying bytes while "
-        "keeping its extracted severity value identical -- the premise this "
-        "test needs to tell a restated none from a changed one."
-    )
-)
 def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     tmp_path: Path,
 ) -> None:
@@ -2459,7 +2449,7 @@ def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     """
 
     instance, owner, root, line, _procedure = proposal_world(
-        tmp_path, templates=(_none_item(),), claim_type=_inverse_claim_type()
+        tmp_path, templates=(_none_item(),), claim_type=_inverse_claim_type(), document=True
     )
     first = _accept_first_run(instance, owner, root, line)
     (first_child,) = first.children
@@ -2487,7 +2477,7 @@ def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
     assert observation.capture_digest in revised.backing.capture_digests
     assert observation.capture_digest not in held.backing.capture_digests
 
-    (root / fixtures.RELATIVE_PATH).write_bytes(b"critical")
+    (root / fixtures.RELATIVE_PATH).write_bytes(fixtures.canonical_bytes({"severity": "critical"}))
     other = run_line(instance, root, line, at=NOW + timedelta(hours=2))
 
     assert other.status == "succeeded", other.terminal

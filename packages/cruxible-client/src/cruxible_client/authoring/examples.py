@@ -451,76 +451,61 @@ def procedure_example() -> ProcedureInput:
         "id": PropertySchema(type="string"),
         "keep": PropertySchema(type="bool"),
     }
-    shaped_item = {
-        **raw_item,
-        "label": PropertySchema(type="string"),
-    }
-    joined_item = {
-        "id": PropertySchema(type="string"),
-        "rank": PropertySchema(type="int"),
-    }
-
     return ProcedureInput(
         kind="procedure",
         definition={
             "name": "replace-me",
-            "description": "Run all six deterministic compute kernels over typed collections.",
+            "description": (
+                "Shape, filter, dedupe, join and count typed records with closed transforms."
+            ),
             "contract_in": carried("empty-input", "contract-in"),
             "contract_out": carried("count-result", "contract-out"),
             "nodes": [
                 {
-                    "kind": "transform",
+                    "kind": "project",
                     "node_id": "adapt",
-                    "transform_kind": "adapter",
-                    "contract_in": carried("collection", "contract-in"),
                     "contract_out": carried("collection", "contract-out"),
-                    "spec": {
-                        "tag": "playbill-transform-adapter-spec-v1",
-                        "value": {
-                            "items": [
-                                {"id": "one", "keep": True},
-                                {"id": "two", "keep": False},
-                            ]
-                        },
+                    "literal": {
+                        "items": [
+                            {"id": "one", "keep": True},
+                            {"id": "two", "keep": False},
+                        ]
                     },
                     "as": "adapted",
                 },
                 {
                     "kind": "transform",
                     "node_id": "shape",
-                    "transform_kind": "shape_items",
-                    "contract_in": carried("shape-spec", "contract-in"),
-                    "contract_out": carried("shaped-result", "contract-out"),
+                    "transform_kind": "shape",
                     "spec": {
-                        "tag": "playbill-transform-shape-items-spec-v1",
-                        "items": "$steps.adapted.items",
-                        "fields": {"label": "$item.id"},
-                        "include_input": True,
+                        "tag": "cruxible-transform-shape-spec-v1",
+                        "input": "$steps.adapted.items",
+                        "fields": {
+                            "id": {"from": "$item.fields.id"},
+                            "keep": {"from": "$item.fields.keep"},
+                            "label": {"from": "$item.fields.id"},
+                        },
                     },
                     "as": "shaped",
                 },
                 {
                     "kind": "transform",
                     "node_id": "filter",
-                    "transform_kind": "filter_items",
-                    "contract_in": carried("filter-spec", "contract-in"),
-                    "contract_out": carried("shaped-result", "contract-out"),
+                    "transform_kind": "filter",
                     "spec": {
-                        "tag": "playbill-transform-filter-items-spec-v1",
-                        "items": "$steps.shaped.items",
-                        "where": {"keep": True},
+                        "tag": "cruxible-transform-filter-spec-v1",
+                        "input": "$steps.shaped",
+                        "where": "eq($item.fields.keep, true)",
                     },
                     "as": "filtered",
                 },
                 {
                     "kind": "transform",
                     "node_id": "dedupe",
-                    "transform_kind": "dedupe_items",
-                    "contract_in": carried("dedupe-spec", "contract-in"),
-                    "contract_out": carried("shaped-result", "contract-out"),
+                    "transform_kind": "dedupe",
                     "spec": {
-                        "tag": "playbill-transform-dedupe-items-spec-v1",
-                        "items": "$steps.filtered.items",
+                        "tag": "cruxible-transform-dedupe-spec-v1",
+                        "input": "$steps.filtered",
                         "keys": ["id"],
                     },
                     "as": "deduped",
@@ -528,32 +513,36 @@ def procedure_example() -> ProcedureInput:
                 {
                     "kind": "transform",
                     "node_id": "join",
-                    "transform_kind": "join_items",
-                    "contract_in": carried("join-spec", "contract-in"),
-                    "contract_out": carried("joined-result", "contract-out"),
+                    "transform_kind": "join",
                     "spec": {
-                        "tag": "playbill-transform-join-items-spec-v1",
-                        "left_items": "$steps.deduped.items",
-                        "right_items": [
+                        "tag": "cruxible-transform-join-spec-v1",
+                        "left": "$steps.deduped",
+                        "right": [
                             {"id": "one", "rank": 1},
                             {"id": "two", "rank": 2},
                         ],
-                        "left_key": "id",
-                        "right_key": "id",
-                        "fields": {"id": "$item.left.id", "rank": "$item.right.rank"},
+                        "left_field": "id",
+                        "right_field": "id",
+                        "right_fields": {"rank": "rank"},
                     },
                     "as": "joined",
                 },
                 {
                     "kind": "transform",
                     "node_id": "aggregate",
-                    "transform_kind": "aggregate_items",
-                    "contract_in": carried("aggregate-spec", "contract-in"),
-                    "contract_out": carried("count-result", "contract-out"),
+                    "transform_kind": "aggregate",
                     "spec": {
-                        "tag": "playbill-transform-aggregate-items-spec-v1",
-                        "items": "$steps.joined.items",
+                        "tag": "cruxible-transform-aggregate-spec-v1",
+                        "input": "$steps.joined",
+                        "op": "count",
                     },
+                    "as": "counted",
+                },
+                {
+                    "kind": "project",
+                    "node_id": "result",
+                    "contract_out": carried("count-result", "contract-out"),
+                    "fields": {"count": "$steps.counted.result"},
                     "as": "result",
                 },
             ],
@@ -573,63 +562,6 @@ def procedure_example() -> ProcedureInput:
             CarriedContractInput(
                 name="collection",
                 fields={"items": PropertySchema(type="list", item_fields=raw_item)},
-            ),
-            CarriedContractInput(
-                name="shape-spec",
-                fields={
-                    "items": PropertySchema(type="list", item_fields=raw_item),
-                    "fields": PropertySchema(type="json"),
-                    "include_input": PropertySchema(type="bool"),
-                },
-            ),
-            CarriedContractInput(
-                name="shaped-result",
-                fields={
-                    "items": PropertySchema(type="list", item_fields=shaped_item),
-                    "input_count": PropertySchema(type="int"),
-                    "output_count": PropertySchema(type="int"),
-                },
-            ),
-            CarriedContractInput(
-                name="filter-spec",
-                fields={
-                    "items": PropertySchema(type="list", item_fields=shaped_item),
-                    "where": PropertySchema(type="json"),
-                },
-            ),
-            CarriedContractInput(
-                name="dedupe-spec",
-                fields={
-                    "items": PropertySchema(type="list", item_fields=shaped_item),
-                    "keys": PropertySchema(type="json"),
-                },
-            ),
-            CarriedContractInput(
-                name="join-spec",
-                fields={
-                    "left_items": PropertySchema(type="list", item_fields=shaped_item),
-                    "right_items": PropertySchema(
-                        type="list",
-                        item_fields={
-                            "id": PropertySchema(type="string"),
-                            "rank": PropertySchema(type="int"),
-                        },
-                    ),
-                    "left_key": PropertySchema(type="string"),
-                    "right_key": PropertySchema(type="string"),
-                    "fields": PropertySchema(type="json"),
-                },
-            ),
-            CarriedContractInput(
-                name="joined-result",
-                fields={
-                    "items": PropertySchema(type="list", item_fields=joined_item),
-                    "output_count": PropertySchema(type="int"),
-                },
-            ),
-            CarriedContractInput(
-                name="aggregate-spec",
-                fields={"items": PropertySchema(type="list", item_fields=joined_item)},
             ),
             CarriedContractInput(
                 name="count-result",
