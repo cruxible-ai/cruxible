@@ -424,6 +424,7 @@ def _intrinsic(*args: object, **kwargs: object) -> Any:
 
 query = _intrinsic
 source = _intrinsic
+extract = _intrinsic
 call = _intrinsic
 require = _intrinsic
 invoke = _intrinsic
@@ -438,6 +439,7 @@ __all__ = [
     "procedure",
     "query",
     "source",
+    "extract",
     "call",
     "require",
     "invoke",

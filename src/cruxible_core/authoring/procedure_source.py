@@ -35,6 +35,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceDiagnostic,
     SourceProcedureBinding,
     SourceQueryBinding,
+    SourceRowContract,
     SourceSlotBinding,
     SourceSpan,
 )
@@ -250,6 +251,37 @@ def resolve_source(
                 (CaptureContractV1, LightCaptureContract, NamedCaptureContract),
             )
             captures.add(name)
+    rows: dict[str, SourceRowContract] = {}
+    for node in ast.walk(syntax):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "extract"
+        ):
+            for keyword in node.keywords:
+                if (
+                    keyword.arg == "row"
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                    and keyword.value.value not in rows
+                ):
+                    from cruxible_client.contracts.provider_operations import contract_schema_view
+                    from cruxible_client.contracts.shapes import contract_digest, contract_identity
+
+                    row_ref, row_contract = contract_of(keyword.value.value)
+                    rows[keyword.value.value] = SourceRowContract.model_validate(
+                        {
+                            "ref": row_ref.model_copy(
+                                update={"digest": contract_digest(row_contract).tagged}
+                            ),
+                            "schema": contract_schema_view(
+                                row_contract,
+                                lambda ref: lookup(
+                                    contract_identity(ref.name, ref.version).qualified
+                                ),
+                            ),
+                        }
+                    )
     types: dict[str, SourceClaimType] = {}
     kinds: set[str] = set(subject_kinds)
     for claim_type in claim_types:
@@ -276,6 +308,7 @@ def resolve_source(
         claim_types=types,
         subject_kinds=tuple(sorted(kinds)),
         capture_contracts=tuple(sorted(captures)),
+        row_contracts=rows,
     )
 
     def local_span(span: SourceSpan) -> SourceSpan:

@@ -9670,6 +9670,13 @@
                 "title": "Function",
                 "type": "string"
               },
+              "row_contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceRowContract"
+                },
+                "title": "Row Contracts",
+                "type": "object"
+              },
               "rules": {
                 "const": "cruxible.procedure-source.v3",
                 "default": "cruxible.procedure-source.v3",
@@ -13293,6 +13300,24 @@
               "definition"
             ],
             "title": "SourceQueryBinding",
+            "type": "object"
+          },
+          "SourceRowContract": {
+            "additionalProperties": false,
+            "description": "An accepted Contract an ``extract`` reads its records as: its pin and typing view.",
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "schema": {
+                "$ref": "#/$defs/ContractSchema"
+              }
+            },
+            "required": [
+              "ref",
+              "schema"
+            ],
+            "title": "SourceRowContract",
             "type": "object"
           },
           "SourceSlotBinding": {
@@ -55354,6 +55379,13 @@
                 "title": "Function",
                 "type": "string"
               },
+              "row_contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceRowContract"
+                },
+                "title": "Row Contracts",
+                "type": "object"
+              },
               "rules": {
                 "const": "cruxible.procedure-source.v3",
                 "default": "cruxible.procedure-source.v3",
@@ -57693,6 +57725,24 @@
               "definition"
             ],
             "title": "SourceQueryBinding",
+            "type": "object"
+          },
+          "SourceRowContract": {
+            "additionalProperties": false,
+            "description": "An accepted Contract an ``extract`` reads its records as: its pin and typing view.",
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "schema": {
+                "$ref": "#/$defs/ContractSchema"
+              }
+            },
+            "required": [
+              "ref",
+              "schema"
+            ],
+            "title": "SourceRowContract",
             "type": "object"
           },
           "SourceSlotBinding": {
@@ -82293,6 +82343,13 @@
                 "title": "Function",
                 "type": "string"
               },
+              "row_contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceRowContract"
+                },
+                "title": "Row Contracts",
+                "type": "object"
+              },
               "rules": {
                 "const": "cruxible.procedure-source.v3",
                 "default": "cruxible.procedure-source.v3",
@@ -85420,6 +85477,24 @@
               "definition"
             ],
             "title": "SourceQueryBinding",
+            "type": "object"
+          },
+          "SourceRowContract": {
+            "additionalProperties": false,
+            "description": "An accepted Contract an ``extract`` reads its records as: its pin and typing view.",
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "schema": {
+                "$ref": "#/$defs/ContractSchema"
+              }
+            },
+            "required": [
+              "ref",
+              "schema"
+            ],
+            "title": "SourceRowContract",
             "type": "object"
           },
           "SourceSlotBinding": {
@@ -92214,6 +92289,13 @@
                 "title": "Function",
                 "type": "string"
               },
+              "row_contracts": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/SourceRowContract"
+                },
+                "title": "Row Contracts",
+                "type": "object"
+              },
               "rules": {
                 "const": "cruxible.procedure-source.v3",
                 "default": "cruxible.procedure-source.v3",
@@ -95667,6 +95749,24 @@
               "definition"
             ],
             "title": "SourceQueryBinding",
+            "type": "object"
+          },
+          "SourceRowContract": {
+            "additionalProperties": false,
+            "description": "An accepted Contract an ``extract`` reads its records as: its pin and typing view.",
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/ContractRef"
+              },
+              "schema": {
+                "$ref": "#/$defs/ContractSchema"
+              }
+            },
+            "required": [
+              "ref",
+              "schema"
+            ],
+            "title": "SourceRowContract",
             "type": "object"
           },
           "SourceSlotBinding": {

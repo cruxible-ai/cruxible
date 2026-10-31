@@ -3,14 +3,12 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import pytest
-
 from cruxible_client import Cruxible, Disposition
 from cruxible_client.authoring.inputs import CarriedContractInput
-from cruxible_client.authoring.procedures import ProcedureCompositionError
 from cruxible_client.authoring.source import (
     claim_candidate,
     emit_capture,
+    extract,
     halt,
     invoke,
     procedure,
@@ -29,7 +27,12 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
-from tests.core_support._light_capture_support import http_contract, procedure_contract
+from cruxible_client.contracts.shapes import Contract, contract_path, render_contract
+from tests.core_support._light_capture_support import (
+    JSON_DECODING,
+    http_contract,
+    procedure_contract,
+)
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_ID,
@@ -39,6 +42,7 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 from tests.test_procedures.test_procedure_source_runs import _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import (  # noqa: F401
+    _accept,
     installed_web,
     installer_http,
 )
@@ -82,13 +86,6 @@ def _proof(client: Any, instance_id: str, ref: str) -> dict[str, Any]:
     return dict(proof)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ProcedureCompositionError,
-    reason="needs B3: content.json extraction -- the source compiler types a Source "
-    "observation as its slot's out Contract (Capture wire), so the decoded bundle's "
-    "observation.retrieved / observation.derived do not resolve",
-)
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
     installer_http,  # noqa: F811
     installed_web,  # noqa: F811
@@ -106,12 +103,29 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         prepared.submit(accept="never")
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
 
-    contract = http_contract(name="test.web")
+    # The fetch bundle is JSON: an extract reads it by the Contract's decoding.
+    contract = http_contract(name="test.web", decoding=JSON_DECODING)
     output_contract = procedure_contract(name="test.web-output", max_bytes=1_048_576)
     accept(
         pb.changes(rationale="Observe a typed HTTP response.")
         .capture_contract(contract)
         .capture_contract(output_contract)
+    )
+
+    # The accepted Contract an extract reads the fetched document's one record as.
+    fetched = Contract.model_validate(
+        {
+            "name": "fetch.document",
+            "version": 1,
+            "fields": {"status": {"type": "int"}, "text": {"type": "string"}},
+        }
+    )
+    _accept(
+        http,
+        instance_id,
+        reviewer,
+        {contract_path(fetched.name, fetched.version): render_contract(fetched)},
+        name="fetch-document",
     )
 
     Request = CarriedContractInput(
@@ -158,12 +172,15 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             request=bindings.fetch.input(url=request.url, expected_format="json"),
             capture_contract="test.web",
         )
+        document = extract(
+            observation,
+            row="fetch.document@1",
+            fields={"status": "/retrieved/status_code", "text": "/derived/text"},
+        )
         return emit_capture(
             observation,
             capture_contract="test.web-output",
-            result=Result.value(
-                status=observation.retrieved.status_code, text=observation.derived.text
-            ),
+            result=Result.value(status=document.status, text=document.text),
         )
 
     authored = observer.build(world=pb.world())
@@ -326,7 +343,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         pb.changes(rationale="Verify the same baseline with an exact child.").line(
             name="verify-line",
             procedure="verify-parent",
-            bindings={"invoke_1.fetch": fetch},
+            # The baseline read compiles first, so the child is the second node.
+            bindings={"invoke_2.fetch": fetch},
             max_authority="propose",
             parameters={"url": URL},
         )
