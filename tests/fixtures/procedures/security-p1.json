@@ -278,10 +278,15 @@
           "result": "$steps.summary"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 10
         },
@@ -318,7 +323,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:143bbd2cb825c1786f7d2ce7a447562cce888a7b3375c2d7011bf6057caff038",
+    "definition_digest": "sha256:274155e14eeea601a56d1ecd1b8caed3b9227bca4f073259d5e7a179dd7c45ff",
     "identity": {
       "kind": "Procedure",
       "name": "security.credential-import"
@@ -1182,10 +1187,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.classify.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.classify.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 200
         },
@@ -1211,7 +1221,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8d674c3ce38d7ba92bbd76e8ba588d8cd8e98df8d6d2d23174731662c0fdea8f",
+    "definition_digest": "sha256:8246d10818a75f5d954d59ee488d25a39637550b017e99cecd9b1070374bc881",
     "identity": {
       "kind": "Procedure",
       "name": "security.harden"
@@ -1851,10 +1861,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.match.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.match.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 1000
         },
@@ -1891,7 +1906,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:ba2a8f71f6f25c5ef9fc2ff660f39d420dc573a090fa66e691f8aff1b0c3af3c",
+    "definition_digest": "sha256:b4c30f8600386dbdaf75bb04230643efc84b18571e401cabde70c451ca795457",
     "identity": {
       "kind": "Procedure",
       "name": "security.kev-attention"
@@ -2454,10 +2469,15 @@
           "result": "$steps.summary"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 10
         },
@@ -2499,7 +2519,7 @@
       },
       "terminal_capability": 2
     },
-    "definition_digest": "sha256:9dd8c1995366b8f11b94b2105c64726944059eaede6ba77c9296a9fd5b039370",
+    "definition_digest": "sha256:34a6635416fe1b939f04a8131c11c55855415f379dd13495562df0eb87ab1a52",
     "identity": {
       "kind": "Procedure",
       "name": "security.log-import"
@@ -3410,10 +3430,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.classify.items"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.classify.items",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 200
         },
@@ -3439,7 +3464,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:597c1f132cc7c64e2fa63c31ee6274e8588c80acc70efe5afbcb1af37c766742",
+    "definition_digest": "sha256:9d8956806cefd78befd7a66469bff0334a4824e5613504f075c77845c5191128",
     "identity": {
       "kind": "Procedure",
       "name": "security.respond"
@@ -3790,10 +3815,15 @@
           "refusal_code": "nothing_to_post"
         },
         {
-          "id": "post",
-          "input": {
-            "items": "$steps.parse.inbox"
+          "contract": {
+            "name": "security.inbox-item",
+            "version": 1
           },
+          "fields": {
+            "item": "$item"
+          },
+          "for_each": "$steps.parse.inbox",
+          "id": "post",
           "kind": "post_inbox",
           "max_items": 1000
         },
@@ -3835,7 +3865,7 @@
       },
       "terminal_capability": 1
     },
-    "definition_digest": "sha256:8180d4057f35066a91e88229e980c38876e030b5d6d637b28ea26923b4c72393",
+    "definition_digest": "sha256:02ad2adcb3456d9db2e7f0720391db0936d5dd008af7cf847ffa892828f0671f",
     "identity": {
       "kind": "Procedure",
       "name": "security.sarif-attention"

@@ -2927,9 +2927,37 @@ def _pin_slot_contracts(definition: Any, tree: Mapping[str, bytes]) -> Any:
         parse_contract_ref,
     )
 
-    if not isinstance(definition, Mapping) or not definition.get("slots"):
+    if not isinstance(definition, Mapping):
         return definition
     result = deepcopy(dict(definition))
+    # A post_inbox node's item Contract is named ``name@N`` and pinned here too.
+    result["nodes"] = list(result.get("nodes") or ())
+    for index, node in enumerate(result["nodes"]):
+        if not isinstance(node, Mapping) or node.get("kind") != "post_inbox":
+            continue
+        value = node.get("contract")
+        ref = parse_contract_ref(value) if isinstance(value, str) else None
+        if ref is None and isinstance(value, Mapping) and value.get("digest") is None:
+            ref = parse_contract_ref(f"{value.get('name')}@{value.get('version')}")
+        if ref is None:
+            continue
+        path = contract_path(ref.name, ref.version)
+        content = tree.get(path)
+        if content is None:
+            _refuse(
+                "cruxible.authoring.slot_contract_unresolved",
+                f"definition.nodes[{index}].contract",
+                f"post_inbox {node.get('node_id')!r} names {ref.spelling}, which is not accepted.",
+                repair_kind="replace_reference",
+                repair_description="Accept the Contract first, or name an accepted version.",
+            )
+        digest = contract_digest(parse_contract(content, path=path)).tagged
+        result["nodes"][index] = {
+            **node,
+            "contract": {"name": ref.name, "version": ref.version, "digest": digest},
+        }
+    if not result.get("slots"):
+        return result
     for name, slot in dict(result["slots"]).items():
         if not isinstance(slot, Mapping):
             continue

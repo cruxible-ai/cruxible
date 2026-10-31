@@ -58,6 +58,16 @@ class InboxTerminalEgressSink:
                 payload=cast(CanonicalValue, item.value),
                 source_capture_digests=citable_captures(manifests.get(item.item_key)),
                 posted_at=request.prepared_at,
+                # A declared dedupe_key makes those fields the item's identity.
+                dedupe_payload=(
+                    {
+                        name: item.value[name]
+                        for name in request.inbox_dedupe_key
+                        if isinstance(item.value, dict) and name in item.value
+                    }
+                    if request.inbox_dedupe_key
+                    else None
+                ),
             )
             for item in request.items
         ]

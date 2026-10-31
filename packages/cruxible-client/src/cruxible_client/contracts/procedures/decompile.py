@@ -283,7 +283,13 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                     result=short(node.result),
                 )
             elif isinstance(node, InboxEgressNode):
-                step = dict(inbox=short(node.input), max_items=node.max_items)
+                step = dict(
+                    inbox=node.contract.spelling,
+                    fields=short(node.fields),
+                    for_each=None if node.for_each is None else short(node.for_each),
+                    dedupe_key=node.dedupe_key,
+                    max_items=node.max_items,
+                )
             elif isinstance(node, CaptureEgressNode):
                 step = dict(
                     emit=_name(node.capture_contract),

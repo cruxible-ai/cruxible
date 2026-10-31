@@ -167,7 +167,17 @@ class GuardStep(StepOptions):
 
 
 class InboxStep(StepOptions):
-    inbox: Template
+    """Post typed items to the Line inbox: ``inbox`` names the item Contract, ``name@N``.
+
+    ``for_each`` names a list the run produced (each element posts one item,
+    read as ``$item...``); ``fields`` make the item; ``dedupe_key`` names the
+    fields that are an item's inbox identity.
+    """
+
+    inbox: str
+    fields: dict[str, Template]
+    for_each: Template = None
+    dedupe_key: tuple[str, ...] = ()
     max_items: Annotated[int, Field(strict=True, ge=1)] | None = None
 
 
@@ -801,7 +811,15 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             if step.message is not None:
                 node["message"] = step.message
         elif isinstance(step, InboxStep):
-            node.update(kind="post_inbox", input=template(step.inbox, path + ".inbox"))
+            node.update(
+                kind="post_inbox",
+                contract=step.inbox,
+                fields=template(step.fields, path + ".fields"),
+            )
+            if step.for_each is not None:
+                node["for_each"] = template(step.for_each, path + ".for_each")
+            if step.dedupe_key:
+                node["dedupe_key"] = list(step.dedupe_key)
             if step.max_items is not None:
                 node["max_items"] = step.max_items
         elif isinstance(step, (ProposeStep, SettleStep)):

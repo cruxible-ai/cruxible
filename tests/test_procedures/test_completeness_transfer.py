@@ -562,3 +562,63 @@ def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_fie
 
     assert state.status == "succeeded", state.terminal
     assert sinks == [("out", complete)]
+
+
+@pytest.mark.parametrize(("status", "complete"), [("Maybe", False), ("open", True)])
+def test_an_inbox_item_reading_an_invalid_field_reaches_its_sink_incomplete(
+    tmp_path: Path, sinks: list[tuple[str, bool]], status: str, complete: bool
+) -> None:
+    """F13 with F3: a typed inbox item never carries an unreadable value as absence."""
+
+    status_item = Contract.model_validate(
+        {
+            "name": "test.status-item",
+            "version": 1,
+            "fields": {"id": {"type": "string"}, "status": {"type": "string?"}},
+        }
+    )
+    document = {"entries": [{"id": "a", "status": status}]}
+    instance, root = _workspace_world(tmp_path, {"doc.json": document})
+    from tests.core_support._identity_support import accept_tree
+    from tests.support.inbox import contract_members
+
+    accept_tree(instance, contract_members(status_item), name="status-item")
+    spec = ProcedureSpec.model_validate(
+        {
+            "procedure": "test.inbox-statuses",
+            "input": {},
+            "output": {"posted": "integer"},
+            "slots": {"read": _SLOT},
+            "steps": [
+                {
+                    "call": "doc",
+                    "captures": {"capture": "test.orders-v1"},
+                    "slot": "read",
+                    "input": {**_READ, "relative_path": "data/doc.json"},
+                },
+                _entries("$doc.capture"),
+                {"project": "out", "fields": {"posted": 1}},
+                {
+                    "inbox": "test.status-item@1",
+                    "for_each": "$steps.entries.records",
+                    "fields": {"id": "$item.key.id", "status": "$item.fields.status"},
+                },
+            ],
+            "returns": "out",
+            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+        }
+    )
+    author_procedure(instance, spec)
+    author_line(
+        instance,
+        name="test.inbox-line",
+        procedure="test.inbox-statuses",
+        parameters={},
+        max_authority="observe",
+    )
+
+    state = _run(instance, "test.inbox-line", root=root)
+
+    assert state.status == "succeeded", state.terminal
+    inbox_sinks = [complete_ for node_id, complete_ in sinks if node_id != "out"]
+    assert inbox_sinks == [complete]

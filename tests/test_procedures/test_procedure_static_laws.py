@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.models import (
     GuardNode,
     GuardPredicate,
     HaltNode,
-    InboxEgressNode,
     PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
@@ -34,6 +33,7 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNode,
     TransformNode,
 )
+from tests.support.inbox import inbox_node
 from tests.support.procedures import named
 
 
@@ -569,7 +569,7 @@ def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
 @pytest.mark.parametrize(
     ("terminal", "capability", "accepted"),
     (
-        (InboxEgressNode(node_id="inbox", input="$steps.result"), 1, True),
+        (inbox_node(fields={"note": "$steps.result"}), 1, True),
         (
             ProposeChangeSetNode(
                 node_id="propose",
@@ -646,7 +646,7 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
 @pytest.mark.parametrize(
     "terminal",
     (
-        InboxEgressNode(node_id="inbox", input="$steps.missing"),
+        inbox_node(fields={"note": "$steps.missing"}),
         ProposeChangeSetNode(
             node_id="propose",
             candidate_templates=({"input": "$steps.missing"},),
@@ -670,3 +670,60 @@ def test_all_terminal_runtime_templates_receive_structured_reference_checks(
             ),
             returns="result",
         )
+
+
+@pytest.mark.parametrize(
+    ("declared", "message"),
+    [
+        ({"fields": {"note": "x"}, "for_each": [1, 2]}, "names one list"),
+        ({"fields": {"note": "$item.note"}}, "only under for_each"),
+        ({"fields": {"note": "x"}, "dedupe_key": ["missing"]}, "dedupe_key"),
+        ({"fields": {}}, "at least 1"),
+        ({"input": {"items": []}, "fields": {"note": "x"}}, "Extra inputs"),
+    ],
+    ids=["for-each-literal", "item-without-for-each", "unknown-key", "no-fields", "untyped-input"],
+)
+def test_a_post_inbox_declares_its_typed_items(declared: dict[str, object], message: str) -> None:
+    """F13: {contract, for_each, fields, dedupe_key, max_items}; nothing untyped."""
+
+    from cruxible_client.contracts.procedures.models import InboxEgressNode
+
+    with pytest.raises(ValidationError, match=message):
+        InboxEgressNode.model_validate(
+            {"node_id": "inbox", "contract": "test.inbox-note@1", **declared}
+        )
+    typed = InboxEgressNode.model_validate(
+        {
+            "node_id": "inbox",
+            "contract": "test.inbox-note@1",
+            "for_each": "$steps.rows.records",
+            "fields": {"note": "$item.fields.note"},
+            "dedupe_key": ["note"],
+        }
+    )
+    assert typed.contract.spelling == "test.inbox-note@1"
+
+
+def test_a_post_inbox_contract_is_pinned_to_its_accepted_version() -> None:
+    from cruxible_client.contracts.procedures.artifacts import extract_row_problem
+
+    node = inbox_node(fields={"note": "$steps.result"})
+    definition = _definition(
+        (
+            ProjectNode(
+                node_id="result",
+                literal={"note": "x"},
+                contract_out=named(_pin("contract-out", "Contract", "node-output")),
+                as_="result",
+                next="inbox",
+            ),
+            node,
+        ),
+        returns="result",
+        terminal_capability=1,
+    )
+    assert "is not accepted" in str(extract_row_problem(definition, {}))
+    pinned = {(node.contract.name, node.contract.version): node.contract.digest}
+    assert extract_row_problem(definition, pinned) is None  # type: ignore[arg-type]
+    other = {(node.contract.name, node.contract.version): "sha256:" + "0" * 64}
+    assert "must pin" in str(extract_row_problem(definition, other))

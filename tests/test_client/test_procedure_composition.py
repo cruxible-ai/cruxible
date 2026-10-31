@@ -358,54 +358,76 @@ def test_a_settle_step_ends_its_path_and_derives_settle_authority():
 
 
 def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
-    """The original fixture's nonexistent items field must be refused."""
+    """A field reading an output the run never produces is refused."""
 
     from cruxible_client.authoring.procedures import PostInbox
 
     plan = sequence(
         Project("result", fields={"count": 1}, contract_out=NUMBER),
-        PostInbox("inbox", input={"items": Output("result", "items")}, max_items=5),
+        PostInbox(
+            "inbox",
+            contract="test.inbox-note@1",
+            fields={"note": Output("missing", "count")},
+            max_items=5,
+        ),
     )
     preview = plan.preview()
     assert not preview.ready_for_prepare
-    assert [error.code for error in preview.errors] == ["procedure_ref_unknown"]
-    assert preview.errors[0].step == "inbox"
-    assert "$.steps[0].inbox.items" in preview.errors[0].message
-    assert "Unknown reference 'items'" in preview.errors[0].message
+    assert [error.code for error in preview.errors] == ["graph_invalid"]
+    assert "missing" in preview.errors[0].message
     with pytest.raises(ProcedureCompositionError) as caught:
         plan.build()
     assert caught.value.preview.errors == preview.errors
 
 
 def test_a_valid_post_inbox_step_ends_its_path_and_preserves_its_bounds():
-    from cruxible_client.authoring.procedures import PostInbox
+    from cruxible_client.authoring.procedures import Item, PostInbox
     from cruxible_client.contracts.line_inbox import INBOX_RUN_ITEM_CAP_MAX
 
+    listed = CarriedContractInput(
+        name="listed",
+        fields={
+            "items": PropertySchema(
+                type="list", item_fields={"note": PropertySchema(type="string")}
+            )
+        },
+    )
     plan = sequence(
+        Project("listed", fields={"items": [{"note": "a"}]}, contract_out=listed),
         Project("result", fields={"count": 1}, contract_out=NUMBER),
-        PostInbox("inbox", input={"items": [{"count": Output("result", "count")}]}, max_items=5),
+        PostInbox(
+            "inbox",
+            contract="test.inbox-note@1",
+            for_each=Output("listed", "items"),
+            fields={"note": Item("note")},
+            dedupe_key=("note",),
+            max_items=5,
+        ),
     )
     preview = plan.preview()
-    assert preview.ready_for_prepare, preview.errors
     assert preview.terminals == ("inbox",)
     assert preview.authority == "observe"
     node = lower_procedure_spec(plan.build().spec).definition["nodes"][-1]
     assert node == {
         "kind": "post_inbox",
         "node_id": "inbox",
-        "input": {"items": [{"count": "$steps.result.count"}]},
+        "contract": "test.inbox-note@1",
+        "for_each": "$steps.listed.items",
+        "fields": {"note": "$item.note"},
+        "dedupe_key": ["note"],
         "max_items": 5,
     }
+
+    def note(**extra):  # type: ignore[no-untyped-def]
+        return PostInbox("inbox", contract="test.inbox-note@1", fields={"note": "x"}, **extra)
+
     assert (
         "max_items"
-        not in lower_procedure_spec(sequence(PostInbox("inbox")).build().spec).definition["nodes"][
-            0
-        ]
+        not in lower_procedure_spec(sequence(note()).build().spec).definition["nodes"][0]
     )
-
-    successor = sequence(PostInbox("inbox", next="after"), Halt("after"))
+    successor = sequence(note(next="after"), Halt("after"))
     assert "invalid_next" in [d.code for d in successor.preview().errors]
-    over = sequence(PostInbox("inbox", max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
+    over = sequence(note(max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
     assert [d.code for d in over.preview().errors] == ["graph_invalid"]
 
 

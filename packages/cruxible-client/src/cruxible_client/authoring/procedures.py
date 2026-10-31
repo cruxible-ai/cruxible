@@ -217,18 +217,25 @@ class EmitCapture(Step):
     result: object = Previous()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PostInbox(Step):
-    """Post items to the Line inbox, as they are, for intelligence to decide.
+    """Post typed items to the Line inbox, for intelligence to decide.
 
-    ``input`` is one item, or ``{"items": Output("rows", "items")}`` to post one
-    item per element of a list the run produced. Posting is inert (it never
-    touches accepted state) and needs observe authority; a Procedure posts only
-    when a Line runs it. ``max_items`` caps what one run posts (the core default
-    when absent); items past it are not posted and the run reports the cut.
+    Every item is a record of ``contract`` (an accepted Contract, ``name@N``,
+    pinned to its digest). ``for_each`` names a list the run produced
+    (``"$steps.<alias>.records"``): each element posts one item whose
+    ``fields`` read it with ``Item(...)``; without it, ``fields`` make one item.
+    ``dedupe_key`` names the fields that are an item's inbox identity. Posting
+    is inert (it never touches accepted state) and needs observe authority; a
+    Procedure posts only when a Line runs it. ``max_items`` caps what one run
+    posts (the core default when absent); items past it are not posted and the
+    run reports the cut.
     """
 
-    input: object = Previous()
+    contract: str
+    fields: dict[str, object]
+    for_each: object = None
+    dedupe_key: tuple[str, ...] = ()
     max_items: int | None = None
 
 
@@ -478,8 +485,13 @@ class Sequence:
                     node[field.name] = _template(value, previous)
             if isinstance(step, Read) and step.parameters is None:
                 node["parameters"] = {}
-            if isinstance(step, PostInbox) and step.max_items is None:
-                del node["max_items"]  # absent takes the core default cap
+            if isinstance(step, PostInbox):
+                if step.max_items is None:
+                    del node["max_items"]  # absent takes the core default cap
+                if step.for_each is None:
+                    del node["for_each"]
+                if not step.dedupe_key:
+                    del node["dedupe_key"]
             if isinstance(step, Call) and step.slot not in self.slots:
                 error(
                     step.name,

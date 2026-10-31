@@ -43,6 +43,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ExtractNode,
+    InboxEgressNode,
     ProcedureDefinition,
     RepeatNode,
     iter_references,
@@ -450,31 +451,41 @@ def evaluate_procedure_law(
     )
 
 
+def _node_contracts(definition: ProcedureDefinition) -> tuple[tuple[str, str, ContractRef], ...]:
+    """``(label, node id, Contract)`` for every node that pins a Contract version."""
+
+    found: list[tuple[str, str, ContractRef]] = []
+    for node in definition.nodes:
+        if isinstance(node, ExtractNode):
+            found.append(("extract", node.node_id, node.row))
+        elif isinstance(node, InboxEgressNode):
+            found.append(("post_inbox", node.node_id, node.contract))
+    return tuple(found)
+
+
 def procedure_contract_refs(definition: ProcedureDefinition) -> tuple[ContractRef, ...]:
-    """Every Contract version the graph pins: slot signatures, then extract rows."""
+    """Every Contract version the graph pins: slot signatures, extract rows, inbox items."""
 
     refs: list[ContractRef] = [
         ref for slot in definition.slots.values() for ref in (slot.in_, slot.out)
     ]
-    refs.extend(node.row for node in definition.nodes if isinstance(node, ExtractNode))
+    refs.extend(ref for _label, _node_id, ref in _node_contracts(definition))
     return tuple(refs)
 
 
 def extract_row_problem(
     definition: ProcedureDefinition, contracts: Mapping[tuple[str, int], str]
 ) -> str | None:
-    """Why an extract's row Contract is not pinned to its accepted version, or ``None``."""
+    """Why a node's Contract (an extract row, an inbox item) is not pinned to its
+    accepted version, or ``None``."""
 
-    for node in definition.nodes:
-        if not isinstance(node, ExtractNode):
-            continue
-        accepted = contracts.get((node.row.name, node.row.version))
+    for label, node_id, ref in _node_contracts(definition):
+        accepted = contracts.get((ref.name, ref.version))
         if accepted is None:
-            return f"extract {node.node_id!r} row Contract {node.row.spelling} is not accepted"
-        if node.row.digest != accepted:
+            return f"{label} {node_id!r} Contract {ref.spelling} is not accepted"
+        if ref.digest != accepted:
             return (
-                f"extract {node.node_id!r} row Contract {node.row.spelling} must pin "
-                f"{accepted}, not {node.row.digest}"
+                f"{label} {node_id!r} Contract {ref.spelling} must pin {accepted}, not {ref.digest}"
             )
     return None
 

@@ -109,8 +109,12 @@ def _reference_templates(
             yield "fields", node.fields
     elif isinstance(node, RepeatNode):
         return
-    elif isinstance(node, CaptureEgressNode | InboxEgressNode):
+    elif isinstance(node, CaptureEgressNode):
         yield "input", node.input
+    elif isinstance(node, InboxEgressNode):
+        if node.for_each is not None:
+            yield "for_each", node.for_each
+        yield "fields", node.fields
     elif isinstance(node, ProposeChangeSetNode):
         templates = node.candidate_templates
         yield (

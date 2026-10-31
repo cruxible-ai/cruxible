@@ -2149,6 +2149,8 @@ class _RunState:
     return_complete: bool = True
     #: Rows this run's reads, and its children's, returned against its budget.
     read_rows: int = 0
+    #: Sinks whose posted values met an invalid field: incomplete at the sink.
+    sinks_incomplete: set[str] = dataclass_field(default_factory=set)
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -4101,8 +4103,11 @@ class ProcedureExecutor:
         else:
             reads = _node_reads(node)
         if is_terminal_node(node):
+            node_id = getattr(node, "node_id", "")
             if self.completeness_probe is not None:
-                self.completeness_probe(node.node_id, tracker.at_sink(reads))  # type: ignore[attr-defined]
+                self.completeness_probe(
+                    node_id, tracker.at_sink(reads) and node_id not in state.sinks_incomplete
+                )
             return
         alias = getattr(node, "as_", None)
         if isinstance(alias, str) and alias in state.outputs:
@@ -4507,6 +4512,29 @@ class ProcedureExecutor:
             },
         )
 
+    def _inbox_items(
+        self,
+        node: InboxEgressNode,
+        *,
+        state: _RunState,
+    ) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+        contract = None if self.contract_resolver is None else self.contract_resolver(node.contract)
+        if contract is None:
+            raise _InternalFailure(
+                "provider_protocol_violation",
+                details={
+                    "node_id": node.node_id,
+                    "reason": f"the inbox item Contract {node.contract.spelling} is unavailable",
+                },
+            )
+        return _inbox_items(
+            node,
+            state=state,
+            contract=contract,
+            resolve=self.contract_resolver or (lambda _ref: None),
+            enums=self.enum_resolver,
+        )
+
     def _run_terminal(
         self,
         node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
@@ -4880,6 +4908,7 @@ class ProcedureExecutor:
             granted_operation=rung.granted_operation(asked),
             capped_by=capped_by,
             bound_artifact_pin=bound_pin,
+            inbox_dedupe_key=node.dedupe_key if isinstance(node, InboxEgressNode) else (),
             actor_context=admission.actor_context,
             items=tuple(
                 TerminalEgressItemV1(
@@ -4959,7 +4988,6 @@ class ProcedureExecutor:
         how many items the terminal selected before it.
         """
 
-        declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node, self.references) | state.control
         if isinstance(node, ProposeChangeSetNode) and isinstance(
             node.candidate_templates, ProposalItemsFanOut
@@ -4968,9 +4996,9 @@ class ProcedureExecutor:
                 node.candidate_templates, state=state, node_id=node.node_id
             )
         elif isinstance(node, InboxEgressNode):
-            values, item_tokens = _inbox_items(node, state=state)
+            values, item_tokens = self._inbox_items(node, state=state)
         else:
-            values, item_tokens = _terminal_items(declared, state=state)
+            values, item_tokens = _terminal_items(_terminal_item_templates(node), state=state)
         if isinstance(node, ProposeChangeSetNode):
             from cruxible_core.procedures.source_candidates import bind_source_candidate
 
@@ -6226,9 +6254,7 @@ def _inbox_cap(node: InboxEgressNode) -> tuple[int, Literal["declared", "default
     return INBOX_RUN_ITEM_CAP_DEFAULT, "default"
 
 
-def _terminal_item_templates(
-    node: CaptureEgressNode | InboxEgressNode | ProposeChangeSetNode,
-) -> object:
+def _terminal_item_templates(node: CaptureEgressNode | ProposeChangeSetNode) -> object:
     if isinstance(node, ProposeChangeSetNode):
         templates = node.candidate_templates
         if isinstance(templates, tuple):
@@ -6325,67 +6351,115 @@ def _inbox_items(
     node: InboxEgressNode,
     *,
     state: _RunState,
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+    enums: EnumResolver | None = None,
 ) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
-    """What a post_inbox terminal posts: its input as one item, or an explicit fan-out.
+    """The typed items a post_inbox terminal posts, each with its own evidence.
 
-    Only an input that is exactly ``{"items": ...}`` fans out, and then its
-    items must resolve to a list (a typed refusal otherwise, posting nothing).
-    Each element carries only its own evidence: a literal list's elements
-    their own references, a produced list its recorded per-element lineage,
-    and a list built from more than one Capture without that lineage refuses
-    rather than lending every element every Capture. Any other input -- an
-    array, an empty array, an object that happens to hold ``items`` -- is one
-    item, exactly as it resolved.
+    Without ``for_each`` the terminal's ``fields`` make one item; with it,
+    each element of the list posts one item read as ``$item``. A record's
+    field (``$item.fields.<f>``) gives its value when present; an absent
+    one leaves the item field out, and an invalid one too, marking what
+    this terminal posts incomplete (the completeness law: an unreadable
+    value never passes as ordinary absence). Every item is checked against
+    the terminal's Contract (``inbox_item_invalid``); items sharing a
+    ``dedupe_key`` post once.
     """
 
-    declared = node.input
-    if isinstance(declared, dict) and set(declared) == {"items"}:
-        template = declared["items"]
-        if not isinstance(template, list):
-            return _fan_out_list(
-                template,
-                state=state,
-                node_id=node.node_id,
-                field="input.items",
-                noun="inbox items",
-                invalid_code="inbox_item_invalid",
-                ambiguous_code="inbox_item_evidence_ambiguous",
-            )
-        values: list[CanonicalValue] = []
-        for member in template:
+    if node.for_each is None:
+        elements: list[CanonicalValue | None] = [None]
+        element_tokens: tuple[frozenset[DependencyToken], ...] = (frozenset(),)
+    else:
+        listed, element_tokens = _fan_out_list(
+            node.for_each,
+            state=state,
+            node_id=node.node_id,
+            field="for_each",
+            noun="inbox items",
+            invalid_code="inbox_item_invalid",
+            ambiguous_code="inbox_item_evidence_ambiguous",
+        )
+        elements = list(listed)
+    run_fields = {
+        name: template
+        for name, template in node.fields.items()
+        if not _mentions_item_reference(template)
+    }
+    shared = _exact_evidence(run_fields, state=state, node_id=node.node_id, field="fields")
+    values: list[CanonicalValue] = []
+    tokens: list[frozenset[DependencyToken]] = []
+    seen: set[bytes] = set()
+    for element, element_token in zip(elements, element_tokens, strict=True):
+        item: dict[str, object] = {}
+        for name, template in node.fields.items():
             try:
-                values.append(
-                    normalize_canonical(
-                        _resolve_template(
-                            member, input_payload=state.input_payload, outputs=state.outputs
-                        )
-                    )
+                resolved = _resolve_template(
+                    template,
+                    input_payload=state.input_payload,
+                    outputs=state.outputs,
+                    item=element,
                 )
             except ExecutionError as exc:
                 raise _RunRefusal(
                     "inbox_item_invalid",
-                    f"An inbox item did not resolve: {exc}",
+                    f"Inbox item field {name!r} did not resolve: {exc}",
                     node_id=node.node_id,
-                    details={"field": "input.items", "reason": "items_unresolved"},
+                    details={"field": f"fields.{name}", "reason": "field_unresolved"},
                 ) from exc
-        return values, tuple(
-            _exact_evidence(member, state=state, node_id=node.node_id, field="input.items")
-            for member in template
+            tag = _field_result_tag(resolved)
+            if tag == "invalid":
+                state.sinks_incomplete.add(node.node_id)
+                continue
+            if tag == "absent":
+                continue
+            item[name] = (
+                resolved["value"] if tag == "present" and isinstance(resolved, dict) else resolved
+            )
+        try:
+            validate_operation_value(
+                item,
+                contract,
+                resolve=resolve,
+                enum_members=enums,
+            )
+        except OperationValueRefused as exc:
+            raise _RunRefusal(
+                "inbox_item_invalid",
+                f"An inbox item is not a {node.contract.spelling} record: {exc}",
+                node_id=node.node_id,
+                details={"field": "fields", "reason": "contract_refused"},
+            ) from exc
+        canonical = normalize_canonical(item)
+        identity = canonical_bytes(
+            {name: item.get(name) for name in node.dedupe_key} if node.dedupe_key else canonical
         )
-    try:
-        resolved = _resolve_template(
-            declared, input_payload=state.input_payload, outputs=state.outputs
-        )
-    except ExecutionError as exc:
-        raise _RunRefusal(
-            "inbox_item_invalid",
-            f"The inbox input did not resolve: {exc}",
-            node_id=node.node_id,
-            details={"field": "input", "reason": "input_unresolved"},
-        ) from exc
-    return [normalize_canonical(resolved)], (
-        _exact_evidence(declared, state=state, node_id=node.node_id, field="input"),
-    )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        values.append(canonical)
+        tokens.append(element_token | shared)
+    return values, tuple(tokens)
+
+
+def _mentions_item_reference(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "$item" or value.startswith("$item.")
+    if isinstance(value, dict):
+        return any(_mentions_item_reference(member) for member in value.values())
+    if isinstance(value, list | tuple):
+        return any(_mentions_item_reference(member) for member in value)
+    return False
+
+
+def _field_result_tag(value: object) -> str | None:
+    """``present``/``absent``/``invalid`` when ``value`` is one field result, else ``None``."""
+
+    if not isinstance(value, dict):
+        return None
+    tag = value.get("tag")
+    shapes = {"present": {"tag", "value", "at"}, "absent": {"tag"}, "invalid": {"tag", "problem"}}
+    return tag if isinstance(tag, str) and set(value) == shapes.get(tag) else None
 
 
 def _step_references(value: object) -> list[str]:

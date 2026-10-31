@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedures.model_base import (
     _canonical_identifier,
     _StrictProcedureModel,
 )
+from cruxible_client.contracts.shapes import ContractRef, parse_contract_ref
 
 PredicateScalar = None | bool | int | str
 
@@ -137,6 +138,12 @@ class GuardPredicate(_StrictProcedureModel):
                 key=lambda item: item.encode("utf-8"),
             )
         )
+
+
+def _contract_ref(value: object) -> object:
+    """Authors write ``name@N``; the structured form is accepted as is."""
+
+    return parse_contract_ref(value) if isinstance(value, str) else value
 
 
 def _slot_name(value: str) -> str:
@@ -599,18 +606,38 @@ class CaptureEgressNode(_StrictProcedureModel):
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
-class InboxEgressNode(_StrictProcedureModel):
-    """Terminal output into the Line inbox: items sent, as they are, to intelligence.
+def _mentions_item(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "$item" or value.startswith("$item.")
+    if isinstance(value, Mapping):
+        return any(_mentions_item(member) for member in value.values())
+    if isinstance(value, list | tuple):
+        return any(_mentions_item(member) for member in value)
+    return False
 
-    ``input`` is one item, or ``{"items": ...}`` to fan out over a list the run
-    produced. Posting is inert: it never touches accepted state. ``max_items``
-    caps what one run posts (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items
-    past it are not posted and the run reports the truncation.
+
+class InboxEgressNode(_StrictProcedureModel):
+    """Terminal output into the Line inbox: typed items sent, as they are, to intelligence.
+
+    Every posted item is a record of ``contract`` (an accepted Contract,
+    ``name@N``, pinned to its digest). With ``for_each`` (a reference to a list
+    the run produced: an extract's or a closed transform's records, a rows
+    view, or any list) each element posts one item whose ``fields`` read it as
+    ``$item...`` (``$item.fields.<f>`` reads a record's field when it is
+    present); without it, ``fields`` resolve to one item. ``dedupe_key`` names
+    the item fields that are its identity in the inbox: items with the same
+    key are one item (absent: the whole item). Posting is inert: it never
+    touches accepted state. ``max_items`` caps what one run posts
+    (``INBOX_RUN_ITEM_CAP_DEFAULT`` when absent); items past it are not posted
+    and the run reports the truncation.
     """
 
     kind: Literal["post_inbox"] = "post_inbox"
     node_id: str
-    input: object
+    contract: ContractRef
+    for_each: object = Field(default=None, exclude_if=lambda value: value is None)
+    fields: dict[str, object] = Field(min_length=1, max_length=256)
+    dedupe_key: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     max_items: int | None = Field(
         default=None,
         ge=1,
@@ -618,10 +645,31 @@ class InboxEgressNode(_StrictProcedureModel):
         exclude_if=lambda value: value is None,
     )
 
-    @field_validator("input", mode="before")
+    _contract = field_validator("contract", mode="before")(_contract_ref)
+    _templates = field_validator("for_each", "fields", mode="before")(normalize_canonical)
+
+    @field_validator("fields")
     @classmethod
-    def _input(cls, value: object) -> object:
-        return normalize_canonical(value)
+    def _field_names(cls, value: dict[str, object]) -> dict[str, object]:
+        for name in value:
+            _canonical_identifier(name, _ALIAS_RE, label="inbox item field")
+        return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
+
+    @model_validator(mode="after")
+    def _shape(self) -> InboxEgressNode:
+        if self.for_each is not None and not (
+            isinstance(self.for_each, str)
+            and (self.for_each.startswith("$steps.") or self.for_each.startswith("$input."))
+        ):
+            raise ValueError("an inbox for_each names one list the run produced: $steps.<...>")
+        if self.for_each is None and _mentions_item(self.fields):
+            raise ValueError("an inbox item reads $item only under for_each")
+        unknown = sorted(set(self.dedupe_key) - set(self.fields))
+        if unknown or len(set(self.dedupe_key)) != len(self.dedupe_key):
+            raise ValueError(
+                f"an inbox dedupe_key names distinct item fields; not fields: {unknown}"
+            )
+        return self
 
 
 class ProposalItemsFanOut(_StrictProcedureModel):

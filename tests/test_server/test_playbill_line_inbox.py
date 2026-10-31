@@ -11,13 +11,19 @@ from click.testing import CliRunner
 from cruxible_client import AccessProfile, Cruxible, CruxibleClient
 from cruxible_client.contracts.line_inbox import inbox_payload_preview as payload_preview
 from cruxible_client.contracts.read_values import ShownObject, TruncatedText
+from cruxible_client.contracts.shapes import Contract
 from cruxible_client.errors import CoreError as CruxibleError
 from cruxible_core.cli.commands import playbill as commands
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.support.inbox import contract_members, listed_inbox_procedure
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import NOW
 
 ROWS = [{"cve": "CVE-2026-0001"}, {"cve": "CVE-2026-0002"}, {"cve": "CVE-2026-0003"}]
+#: What each posted row is.
+CVE = Contract.model_validate(
+    {"name": "test.inbox-cve", "version": 1, "fields": {"cve": {"type": "string"}}}
+)
 
 
 def _inbox_world(tmp_path):
@@ -32,9 +38,7 @@ def _inbox_world(tmp_path):
         procedure_artifact_digest,
         render_procedure,
     )
-    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-    from cruxible_client.contracts.procedures.models import InboxEgressNode
     from cruxible_core.service.authoring.documents import service_propose_playbill_document
     from tests.core_support._support import initialize_local
     from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -43,22 +47,7 @@ def _inbox_world(tmp_path):
 
     instance, owner = initialize_local(tmp_path)
     template = _slotless_procedure("http-inbox").procedure
-    (shape,) = template.definition.nodes
-    definition = template.definition.model_copy(
-        update={
-            "nodes": (
-                shape.model_copy(update={"next": "inbox"}),
-                InboxEgressNode(node_id="inbox", input={"items": ROWS}),
-            ),
-            "terminal_capability": 1,
-        }
-    )
-    procedure = template.model_copy(
-        update={
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest(definition).tagged,
-        }
-    )
+    procedure = listed_inbox_procedure(template, ROWS, CVE)
     accepted = AcceptedProcedure(
         path="procedures/http-inbox.json",
         procedure=procedure,
@@ -72,6 +61,7 @@ def _inbox_world(tmp_path):
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
+            **contract_members(CVE),
             accepted.path: render_procedure(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },

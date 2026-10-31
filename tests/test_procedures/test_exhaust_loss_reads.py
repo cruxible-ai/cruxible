@@ -126,8 +126,8 @@ def _inbox_loss_world(tmp_path):
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-    from cruxible_client.contracts.procedures.models import InboxEgressNode
     from tests.core_support._support import initialize_local
+    from tests.support.inbox import contract_members, inbox_node
     from tests.test_indexes.test_resolution_contracts import _accept_tree
     from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
     from tests.test_server.test_playbill_line_run_refusals import _served_line
@@ -139,7 +139,7 @@ def _inbox_loss_world(tmp_path):
         update={
             "nodes": (
                 shape.model_copy(update={"next": "inbox"}),
-                InboxEgressNode(node_id="inbox", input={"items": [{"note": "review"}]}),
+                inbox_node(fields={"note": "review"}),
             )
         }
     )
@@ -162,6 +162,7 @@ def _inbox_loss_world(tmp_path):
         owner,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
+            **contract_members(),
             accepted.path: render_procedure(procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
         },
