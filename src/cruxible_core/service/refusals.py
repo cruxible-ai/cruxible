@@ -58,7 +58,7 @@ ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES
 # pinned by the guardrail so a new closed refusal member cannot join silently:
 # adding one forces either a declared repair or an explicit re-pin here.
 # The exact members, including B1's three slot refusals, are pinned in the guard.
-UNDECLARED_REFUSAL_CODE_COUNT = 124
+UNDECLARED_REFUSAL_CODE_COUNT = 118
 
 
 def repair_for_refusal(code: str) -> ServedRepair:

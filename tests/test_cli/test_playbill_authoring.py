@@ -683,16 +683,17 @@ def test_cli_examples_are_model_generated_and_need_no_daemon() -> None:
         else:
             assert "tag" not in payload
         if name == "procedure":
-            # The retired adapter is a literal project node; the rest are transforms.
-            literal, *transforms = payload["definition"]["nodes"]
+            # A literal project feeds closed transforms; a project returns the count.
+            literal, *transforms, returned = payload["definition"]["nodes"]
             assert (literal["kind"], sorted(literal["literal"])) == ("project", ["items"])
             assert [node["spec"]["tag"] for node in transforms] == [
-                "playbill-transform-shape-items-spec-v1",
-                "playbill-transform-filter-items-spec-v1",
-                "playbill-transform-dedupe-items-spec-v1",
-                "playbill-transform-join-items-spec-v1",
-                "playbill-transform-aggregate-items-spec-v1",
+                "cruxible-transform-shape-spec-v1",
+                "cruxible-transform-filter-spec-v1",
+                "cruxible-transform-dedupe-spec-v1",
+                "cruxible-transform-join-spec-v1",
+                "cruxible-transform-aggregate-spec-v1",
             ]
+            assert returned["kind"] == "project"
         note = authoring_example_note(name)
         assert result.stderr == ("" if note is None else f"# {note}\n")
 

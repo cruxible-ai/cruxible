@@ -95,7 +95,6 @@ def _definition(
 
 
 def _kitchen_sink_definition() -> ProcedureDefinition:
-    contract_in = _pin("contract-in", "Contract", "node-input")
     contract_out = _pin("contract-out", "Contract", "node-output")
     return _definition(
         (
@@ -123,14 +122,11 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
             ),
             TransformNode(
                 node_id="transform",
-                transform_kind="shape_items",
-                contract_in=named(contract_in),
-                contract_out=named(contract_out),
+                transform_kind="shape",
                 spec={
-                    "tag": "playbill-transform-shape-items-spec-v1",
-                    "items": "$steps.provider_rows",
-                    "fields": {},
-                    "include_input": True,
+                    "tag": "cruxible-transform-shape-spec-v1",
+                    "input": "$steps.provider_rows",
+                    "fields": {"rows": {"from": "$item.fields.rows"}},
                 },
                 as_="transformed_rows",
             ),
@@ -147,13 +143,11 @@ def _kitchen_sink_definition() -> ProcedureDefinition:
                     RepeatBodyNode(
                         node_id="body-transform",
                         operation="transform",
-                        transform_kind="shape_items",
-                        contract_in=named(contract_in),
-                        contract_out=named(contract_out),
+                        transform_kind="shape",
                         spec={
-                            "tag": "playbill-transform-shape-items-spec-v1",
-                            "items": "$steps.projected_rows",
-                            "fields": {},
+                            "tag": "cruxible-transform-shape-spec-v1",
+                            "input": "$steps.projected_rows",
+                            "fields": {"rows": {"from": "$item.fields.rows"}},
                         },
                         as_="body_rows",
                     ),
@@ -205,11 +199,7 @@ def _replace_path(root: object, path: tuple[object, ...], value: object) -> None
         ("nodes", 0, "query"),
         ("nodes", 1, "captures", "capture"),
         ("nodes", 2, "effect_policy"),
-        ("nodes", 3, "contract_in"),
-        ("nodes", 3, "contract_out"),
         ("nodes", 4, "contract_out"),
-        ("nodes", 5, "body", 0, "contract_in"),
-        ("nodes", 5, "body", 0, "contract_out"),
         ("nodes", 6, "capture_contract"),
     ),
 )
@@ -470,12 +460,11 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                 ),
                 TransformNode(
                     node_id="result",
-                    transform_kind="aggregate_items",
-                    contract_in=named(_pin("contract-in", "Contract", "guard-tail-items")),
-                    contract_out=named(contract_out),
+                    transform_kind="aggregate",
                     spec={
-                        "tag": "playbill-transform-aggregate-items-spec-v1",
-                        "items": "$steps.rows",
+                        "tag": "cruxible-transform-aggregate-spec-v1",
+                        "input": "$steps.rows",
+                        "op": "count",
                     },
                     as_="result",
                 ),
@@ -503,9 +492,9 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
         ("nodes", 0, "parameters"),
         ("nodes", 1, "input"),
         ("nodes", 2, "input"),
-        ("nodes", 3, "spec", "items"),
+        ("nodes", 3, "spec", "input"),
         ("nodes", 4, "fields"),
-        ("nodes", 5, "body", 0, "spec", "items"),
+        ("nodes", 5, "body", 0, "spec", "input"),
         ("nodes", 6, "input"),
         ("nodes", 6, "result"),
     ),
@@ -519,19 +508,54 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
         ProcedureDefinition.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    ("retired", "replacement"),
+    [
+        ("shape_items", "'shape'"),
+        ("filter_items", "'filter'"),
+        ("join_items", "'join'"),
+        ("aggregate_items", "'aggregate'"),
+        ("dedupe_items", "'dedupe'"),
+    ],
+)
+def test_retired_item_transform_kinds_are_refused_naming_their_closed_replacement(
+    retired: str, replacement: str
+) -> None:
+    """F12: one transform vocabulary; the old item kinds refuse, in nodes and repeat bodies."""
+
+    from cruxible_client.contracts.procedures.nodes import RetiredNodeKind
+
+    payload = _kitchen_sink_definition().model_dump(mode="json", by_alias=True)
+    node = payload["nodes"][3]
+    node["transform_kind"] = retired
+    with pytest.raises(ValidationError, match="procedure_node_kind_retired") as caught:
+        ProcedureDefinition.model_validate(payload)
+    assert replacement in str(caught.value)
+    with pytest.raises((RetiredNodeKind, ValidationError), match=replacement):
+        RepeatBodyNode.model_validate(
+            {
+                "node_id": "b",
+                "operation": "transform",
+                "transform_kind": retired,
+                "spec": {},
+                "as": "b",
+            }
+        )
+
+
 def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     definition = _kitchen_sink_definition()
     transform = definition.nodes[3]
     assert isinstance(transform, TransformNode)
     raw = transform.model_dump(mode="json", by_alias=True)
 
-    untagged = {**raw, "spec": {"items": [], "fields": {}}}
+    untagged = {**raw, "spec": {"input": [], "fields": {}}}
     with pytest.raises(ValueError, match="tag"):
         TransformNode.model_validate(untagged)
 
     mismatched = {
         **raw,
-        "spec": {"tag": "playbill-transform-aggregate-items-spec-v1", "items": []},
+        "spec": {"tag": "cruxible-transform-aggregate-spec-v1", "input": [], "op": "count"},
     }
     with pytest.raises(ValueError, match="does not match"):
         TransformNode.model_validate(mismatched)

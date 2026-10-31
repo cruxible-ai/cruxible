@@ -117,9 +117,9 @@ class Previous:
 
 
 def Item(path: str = "") -> str:  # noqa: N802 - reads as a reference, like Output and Previous
-    """The current row inside an item template (``shape_items``/``make_*``), or one of its fields.
+    """The current record inside a closed transform or a fan-out item template, or its field.
 
-    Lowers to ``"$item.<path>"``, the reference an item transform resolves per
+    Lowers to ``"$item.<path>"``, the reference a transform or fan-out resolves per
     row. It is a plain string, so it fits any typed builder field below:
     ``ProcedureKeyedClaimProposalItem(statement=ProcedureClaimStatement(
     subject=SubjectKeyReference(subject_kind="catalog.part", key=Item("part_id")),
@@ -187,9 +187,9 @@ class Extract(Step):
 
 @dataclass(frozen=True, kw_only=True)
 class Transform(Step):
+    """A closed transform: its records are typed as they flow; it names no Contracts."""
+
     transform_kind: TransformKind
-    contract_in: Contract
-    contract_out: Contract
     spec: ProcedureTransformSpec
 
 

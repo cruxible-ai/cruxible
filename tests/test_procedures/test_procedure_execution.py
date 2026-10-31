@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from pydantic import TypeAdapter
 
 import cruxible_client.contracts.procedures.results as procedure_result_contracts
 import cruxible_core.procedures.execution as execution_module
@@ -66,7 +65,6 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
     ProcedureDefinition,
     ProcedureHardCaps,
-    ProcedureTransformSpec,
     ProjectNode,
     ReadNode,
     RepeatBodyNode,
@@ -120,9 +118,7 @@ from cruxible_core.procedures.execution import (
     ProcedureRunRefusalV1,
     ProcedureSelectionDecision,
     StateTapReadResultV1,
-    _apply_transform,
     _check_return_budget,
-    _extract_items,
     _RunRefusal,
     admission_fields,
     capture_admission_material_member,
@@ -328,12 +324,14 @@ def _owned_accepted(
 
 
 def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
+    """Two items cross a typed list boundary under a one-item budget.
+
+    ``contract-out`` checks the list at a project's own Contract, ``return``
+    at the Procedure's return Contract (the project's own is opaque).
+    """
+
     empty = _owned_contract("empty-input", {})
     opaque = _owned_contract("opaque-output", {"items": PropertySchema(type="json")})
-    rows = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="query-rows"),
-        schema=ContractSchema(fields={}, allow_extra=True),
-    )
     typed = ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name=f"list-{boundary}"),
         schema=ContractSchema(
@@ -343,108 +341,37 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
                     item_fields={"id": PropertySchema(type="string")},
                 )
             },
-            # A transform's input carries its spec's other members beside the list.
-            allow_extra=boundary == "contract-in",
         ),
     )
     entry_pin = _owned_pin("contract-in", empty)
     opaque_out = _owned_pin("contract-out", opaque)
-    rows_in = _owned_pin("contract-in", rows)
-    rows_out = _owned_pin("contract-out", rows)
-    typed_in = _owned_pin("contract-in", typed)
     typed_out = _owned_pin("contract-out", typed)
-    query = _pin("query", "QueryDefinition", f"accepted-items-{boundary}")
-    read = ReadNode(
-        node_id="read",
-        query=named(query),
-        parameters={},
-        as_="rows",
-        next="shape",
-    )
-    # A typed query row carries its projected fields; shape them back into items.
-    shape = TransformNode(
-        node_id="shape",
-        transform_kind="shape_items",
-        contract_in=named(rows_in),
-        contract_out=named(rows_out),
-        spec=_transform_spec(
-            "shape_items",
-            {"items": "$steps.rows.result.rows", "fields": {"id": "$item.fields.0.value"}},
-        ),
-        as_="shaped",
+    listed = ProjectNode(
+        node_id="listed",
+        literal={"items": [{"id": "one"}, {"id": "two"}]},
+        contract_out=named(opaque_out),
+        as_="listed",
         next="compute",
     )
-    if boundary == "contract-in":
-        compute = TransformNode(
-            node_id="compute",
-            transform_kind="shape_items",
-            contract_in=named(typed_in),
-            contract_out=named(rows_out),
-            spec={
-                "tag": "playbill-transform-shape-items-spec-v1",
-                "items": "$steps.shaped.items",
-                "fields": {},
-                "include_input": True,
-            },
-            as_="result",
-        )
-        return_pin = rows_out
-        contracts = (empty, rows, typed)
-        pins = (entry_pin, typed_in, rows_in, rows_out, query)
-    else:
-        compute = ProjectNode(
-            node_id="compute",
-            fields={"items": "$steps.shaped.items"},
-            contract_out=named(typed_out if boundary == "contract-out" else opaque_out),
-            as_="result",
-        )
-        return_pin = typed_out
-        contracts = (
-            (empty, rows, typed) if boundary == "contract-out" else (empty, opaque, rows, typed)
-        )
-        pins = (entry_pin, compute.contract_out, return_pin, rows_in, rows_out, query)
+    compute = ProjectNode(
+        node_id="compute",
+        fields={"items": "$steps.listed.items"},
+        contract_out=named(typed_out if boundary == "contract-out" else opaque_out),
+        as_="result",
+    )
     definition = ProcedureDefinition(
         name=f"owned-{boundary}",
         contract_in=named(entry_pin),
-        contract_out=named(return_pin),
-        nodes=(read, shape, compute),
+        contract_out=named(typed_out),
+        nodes=(listed, compute),
         returns="result",
         budget=_budget(items=1),
         hard_caps=_hard_caps(items=1),
         terminal_capability=1,
     )
-    return _owned_accepted(definition, contracts=contracts, pins=pins)
-
-
-def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpec:
-    assert isinstance(spec, dict)
-    payload = {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
-    return TypeAdapter(ProcedureTransformSpec).validate_python(payload)
-
-
-def _transform_procedure(kind: str, spec: object) -> AcceptedProcedure:
-    contract_in = _pin("contract-in", "Contract", "input")
-    contract_out = _pin("contract-out", "Contract", "output")
-    definition = ProcedureDefinition(
-        name=f"{kind.replace('_', '-')}-procedure",
-        contract_in=named(contract_in),
-        contract_out=named(contract_out),
-        nodes=(
-            TransformNode(
-                node_id="transform",
-                transform_kind=kind,  # type: ignore[arg-type]
-                contract_in=named(contract_in),
-                contract_out=named(contract_out),
-                spec=_transform_spec(kind, spec),
-                as_="result",
-            ),
-        ),
-        returns="result",
-        budget=_budget(),
-        hard_caps=_hard_caps(),
-        terminal_capability=1,
+    return _owned_accepted(
+        definition, contracts=(empty, opaque, typed), pins=(entry_pin, opaque_out, typed_out)
     )
-    return _accepted(definition, pins=(contract_in, contract_out))
 
 
 def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
@@ -462,13 +389,11 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
                     RepeatBodyNode(
                         node_id="shape-body",
                         operation="transform",
-                        transform_kind="shape_items",
-                        contract_in=named(contract_in),
-                        contract_out=named(contract_out),
+                        transform_kind="shape",
                         spec={
-                            "tag": "playbill-transform-shape-items-spec-v1",
-                            "items": [{"id": "a"}, {"id": "b"}],
-                            "fields": {"identifier": "$item.id"},
+                            "tag": "cruxible-transform-shape-spec-v1",
+                            "input": [{"id": "a"}, {"id": "b"}],
+                            "fields": {"identifier": {"from": "$item.fields.id"}},
                         },
                         as_="shaped",
                     ),
@@ -489,173 +414,40 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
     return _accepted(definition, pins=(contract_in, contract_out))
 
 
-def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedure:
-    empty = _owned_contract("repeat-empty-input", {})
-    opaque = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="repeat-opaque"),
-        schema=ContractSchema(fields={}, allow_extra=True),
-    )
-    list_input = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="repeat-list-input"),
-        schema=ContractSchema(
-            fields={
-                "items": PropertySchema(
-                    type="list",
-                    item_fields={"id": PropertySchema(type="string")},
-                )
-            },
-            allow_extra=True,
-        ),
-    )
-    list_output = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="repeat-list-output"),
-        schema=ContractSchema(
-            fields={
-                "auxiliary": PropertySchema(
-                    type="list",
-                    item_fields={"label": PropertySchema(type="string")},
-                    optional=True,
-                ),
-                "items": PropertySchema(
-                    type="list",
-                    item_fields={"identifier": PropertySchema(type="string")},
-                ),
-            },
-            allow_extra=True,
-        ),
-    )
-    entry_pin = _owned_pin("contract-in", empty)
-    return_pin = _owned_pin("contract-out", opaque)
-    body_input = _owned_pin(
-        "contract-in",
-        list_input if boundary == "contract-in" else opaque,
-    )
-    body_output = _owned_pin(
-        "contract-out",
-        list_output if boundary == "contract-out" else opaque,
-    )
-    transform_kind = "shape_items"
-    spec = {
-        "tag": "playbill-transform-shape-items-spec-v1",
-        "items": [{"id": "a"}, {"id": "b"}],
-        "fields": {"identifier": "$item.id"},
-    }
-    definition = ProcedureDefinition(
-        name=f"repeat-{boundary}-budget",
-        contract_in=named(entry_pin),
-        contract_out=named(return_pin),
-        nodes=(
-            RepeatNode(
-                node_id="repeat",
-                max_attempts=1,
-                body=(
-                    RepeatBodyNode(
-                        node_id="shape-body",
-                        operation="transform",
-                        transform_kind=transform_kind,
-                        contract_in=named(body_input),
-                        contract_out=named(body_output),
-                        spec=spec,
-                        as_="shaped",
-                    ),
-                ),
-                until=GuardPredicate(
-                    left=PredicateOperand(kind="exists", alias="shaped"),
-                    operator="eq",
-                    right=PredicateOperand(kind="literal", value=True),
-                ),
-                as_="repeated",
-            ),
-        ),
-        returns="repeated",
-        budget=_budget(items=1),
-        hard_caps=_hard_caps(items=1),
-        terminal_capability=1,
-    )
-    contracts = tuple(
-        {contract.identity.name: contract for contract in (empty, opaque, list_input, list_output)}[
-            name
-        ]
-        for name in sorted(
-            {
-                empty.identity.name,
-                opaque.identity.name,
-                (list_input if boundary == "contract-in" else list_output).identity.name,
-            }
-        )
-    )
-    return _owned_accepted(
-        definition,
-        contracts=contracts,
-        pins=(entry_pin, return_pin, body_input, body_output),
-    )
-
-
-def _typed_transform_node(**values: object) -> TransformNode:
-    for field in ("contract_in", "contract_out"):
-        if isinstance(values.get(field), ArtifactPin):
-            values[field] = named(values[field])  # type: ignore[arg-type]
-    return TransformNode.model_validate(values)
-
-
 def _guarded_filter_procedure(
     *,
     operator: str,
     result_next: str | None = None,
 ) -> AcceptedProcedure:
-    item_fields = {
-        "id": PropertySchema(type="string"),
-        "keep": PropertySchema(type="bool"),
-    }
+    """A closed filter, a count guard over what it kept, then a count of it."""
+
     empty = _owned_contract("guard-empty-input", {})
-    filter_spec = _owned_contract(
-        "guard-filter-spec",
-        {
-            "items": PropertySchema(type="list", item_fields=item_fields),
-            "where": PropertySchema(type="json"),
-        },
-    )
-    filtered_result = _owned_contract(
-        "guard-filtered-result",
-        {
-            "items": PropertySchema(type="list", item_fields=item_fields),
-            "input_count": PropertySchema(type="int"),
-            "output_count": PropertySchema(type="int"),
-        },
-    )
-    aggregate_spec = _owned_contract(
-        "guard-aggregate-spec",
-        {"items": PropertySchema(type="list", item_fields=item_fields)},
-    )
     count_result = _owned_contract(
         "guard-count-result",
         {"count": PropertySchema(type="int")},
     )
     entry_pin = _owned_pin("contract-in", empty)
-    filter_in = _owned_pin("contract-in", filter_spec)
-    filter_out = _owned_pin("contract-out", filtered_result)
-    aggregate_in = _owned_pin("contract-in", aggregate_spec)
     result_pin = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinition(
         name=f"guarded-filter-{operator}{'-explicit-next' if result_next else ''}",
         contract_in=named(entry_pin),
         contract_out=named(result_pin),
         nodes=(
-            _typed_transform_node(
-                node_id="filter",
-                transform_kind="filter_items",
-                contract_in=filter_in,
-                contract_out=filter_out,
-                spec={
-                    "tag": "playbill-transform-filter-items-spec-v1",
-                    "items": [
-                        {"id": "one", "keep": True},
-                        {"id": "two", "keep": False},
-                    ],
-                    "where": {"keep": True},
-                },
-                as_="filtered",
-                next="gate",
+            TransformNode.model_validate(
+                {
+                    "node_id": "filter",
+                    "transform_kind": "filter",
+                    "spec": {
+                        "tag": "cruxible-transform-filter-spec-v1",
+                        "input": [
+                            {"id": "one", "keep": True},
+                            {"id": "two", "keep": False},
+                        ],
+                        "where": "eq($item.fields.keep, true)",
+                    },
+                    "as": "filtered",
+                    "next": "gate",
+                }
             ),
             GuardNode(
                 node_id="gate",
@@ -669,15 +461,23 @@ def _guarded_filter_procedure(
                 refusal_code="guard.no_filtered_items",
                 message="No filtered items are available.",
             ),
-            _typed_transform_node(
-                node_id="aggregate",
-                transform_kind="aggregate_items",
-                contract_in=aggregate_in,
-                contract_out=result_pin,
-                spec={
-                    "tag": "playbill-transform-aggregate-items-spec-v1",
-                    "items": "$steps.filtered.items",
-                },
+            TransformNode.model_validate(
+                {
+                    "node_id": "aggregate",
+                    "transform_kind": "aggregate",
+                    "spec": {
+                        "tag": "cruxible-transform-aggregate-spec-v1",
+                        "input": "$steps.filtered",
+                        "op": "count",
+                    },
+                    "as": "counted",
+                    "next": "result",
+                }
+            ),
+            ProjectNode(
+                node_id="result",
+                fields={"count": "$steps.counted.result"},
+                contract_out=named(result_pin),
                 as_="result",
                 next=result_next,
             ),
@@ -690,8 +490,8 @@ def _guarded_filter_procedure(
     )
     return _owned_accepted(
         definition,
-        contracts=(empty, filter_spec, filtered_result, aggregate_spec, count_result),
-        pins=(entry_pin, filter_in, filter_out, aggregate_in, result_pin),
+        contracts=(empty, count_result),
+        pins=(entry_pin, result_pin),
     )
 
 
@@ -2166,133 +1966,9 @@ def test_distinct_semantic_refusals_have_distinct_result_digests(tmp_path) -> No
     )
 
 
-_TRANSFORM_CASES = [
-    (
-        "shape_items",
-        {
-            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
-            "fields": {"identifier": "$item.id"},
-            "include_input": True,
-        },
-        {
-            "items": [
-                {"id": "a", "identifier": "a", "keep": True},
-                {"id": "b", "identifier": "b", "keep": False},
-            ],
-            "input_count": 2,
-            "output_count": 2,
-        },
-        ((("items", 0),), (("items", 1),)),
-    ),
-    (
-        "filter_items",
-        {
-            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
-            "where": {"keep": True},
-        },
-        {
-            "items": [{"id": "a", "keep": True}],
-            "input_count": 2,
-            "output_count": 1,
-        },
-        ((("items", 0),),),
-    ),
-    (
-        "dedupe_items",
-        {
-            "items": [{"id": "a", "v": 1}, {"id": "a", "v": 2}, {"id": "b"}],
-            "keys": ["id"],
-        },
-        {
-            "items": [{"id": "a", "v": 1}, {"id": "b"}],
-            "input_count": 3,
-            "output_count": 2,
-        },
-        ((("items", 0),), (("items", 2),)),
-    ),
-    (
-        "join_items",
-        {
-            "left_items": [{"id": "a", "left": 1}, {"id": "b", "left": 2}],
-            "right_items": [{"key": "b", "right": 3}, {"key": "a", "right": 4}],
-            "left_key": "id",
-            "right_key": "key",
-            "fields": {"id": "$item.left.id", "value": "$item.right.right"},
-        },
-        {"items": [{"id": "a", "value": 4}, {"id": "b", "value": 3}], "output_count": 2},
-        (
-            (("left_items", 0), ("right_items", 1)),
-            (("left_items", 1), ("right_items", 0)),
-        ),
-    ),
-    (
-        "aggregate_items",
-        {"items": [{"id": "a"}, {"id": "b"}]},
-        {"count": 2},
-        None,
-    ),
-]
-
-
-@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
-def test_existing_transform_kernel_matrix_preserves_output_and_lineage(
-    kind: str,
-    spec: object,
-    expected: object,
-    lineage: object,
-) -> None:
-    assert _apply_transform(kind, spec) == (expected, lineage)
-
-
-@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
-def test_existing_transform_kernel_matrix_runs_through_procedure_executor(
-    tmp_path,
-    monkeypatch,
-    kind: str,
-    spec: object,
-    expected: object,
-    lineage: object,
-) -> None:
-    accepted = _transform_procedure(kind, spec)
-    fixture = _fixture(tmp_path)
-    prepared = _prepare(accepted, fixture, _StateReader())
-    observed_lineage: list[object] = []
-    existing_kernel = execution_module._apply_transform
-
-    def record_kernel(*args, **kwargs):  # type: ignore[no-untyped-def]
-        value, actual_lineage = existing_kernel(*args, **kwargs)
-        observed_lineage.append(actual_lineage)
-        return value, actual_lineage
-
-    monkeypatch.setattr(execution_module, "_apply_transform", record_kernel)
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-    ).execute(prepared, accepted)
-
-    assert result.status == "succeeded"
-    assert result.output == expected
-    assert observed_lineage == [lineage]
-
-
-def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_a_repeat_body_runs_a_closed_transform_per_attempt(tmp_path) -> None:
     accepted = _repeat_transform_procedure()
     fixture = _fixture(tmp_path)
-    calls: list[str] = []
-    existing_kernel = execution_module._apply_transform
-
-    def record_kernel(kind, *args, **kwargs):  # type: ignore[no-untyped-def]
-        calls.append(kind)
-        return existing_kernel(kind, *args, **kwargs)
-
-    monkeypatch.setattr(execution_module, "_apply_transform", record_kernel)
     result = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -2302,30 +1978,13 @@ def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
         contract_validator=_Contracts(),
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
-    assert calls == ["shape_items"]
     assert result.status == "succeeded"
-    assert result.output == {
-        "attempts": [
-            {
-                "attempt": 1,
-                "outputs": {
-                    "shaped": {
-                        "items": [{"identifier": "a"}, {"identifier": "b"}],
-                        "input_count": 2,
-                        "output_count": 2,
-                    }
-                },
-                "until": True,
-            }
-        ],
-        "final": {
-            "shaped": {
-                "items": [{"identifier": "a"}, {"identifier": "b"}],
-                "input_count": 2,
-                "output_count": 2,
-            }
-        },
-    }
+    assert isinstance(result.output, dict)
+    (attempt,) = result.output["attempts"]
+    assert attempt["attempt"] == 1 and attempt["until"] is True
+    shaped = result.output["final"]["shaped"]
+    assert shaped["rows"] == [{"identifier": "a"}, {"identifier": "b"}]
+    assert shaped["complete"] is True and shaped["count"] == 2
     branch_payloads = [
         parse_journal_payload(
             fixture.bodies.read(
@@ -2340,10 +1999,10 @@ def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
     branch = branch_payloads[0]
     assert isinstance(branch, dict)
     assert branch["repeat_attempt"] == 1
-    assert branch["body_lineage"]["shaped"]["items"] == [[], []]  # type: ignore[index]
+    assert branch["body_lineage"]["shaped"]["items"] is None  # type: ignore[index]
 
 
-def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> None:
+def test_a_repeat_body_transform_is_held_to_the_items_budget(tmp_path) -> None:
     accepted = _repeat_transform_procedure(max_items=1)
     fixture = _fixture(tmp_path)
     result = ProcedureExecutor(
@@ -2355,63 +2014,15 @@ def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> N
         contract_validator=_Contracts(),
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
-    assert result.status == "succeeded"
-    assert result.refusal is None
-    assert result.output is not None
-
-
-@pytest.mark.parametrize(
-    ("boundary", "expected_boundary"),
-    (
-        ("contract-in", "contract-in:repeat-list-input"),
-        ("contract-out", "contract-out:repeat-list-output"),
-    ),
-)
-def test_repeat_body_owned_contracts_enforce_item_budget(
-    tmp_path: Path,
-    boundary: str,
-    expected_boundary: str,
-) -> None:
-    accepted = _owned_repeat_transform_boundary_procedure(boundary)
-    fixture = _fixture(tmp_path)
-    validator = OwnedProcedureContractValidator(accepted)
-    if boundary == "contract-out":
-        body = accepted.procedure.definition.nodes[0].body[0]  # type: ignore[union-attr]
-        assert validator.unique_list_field_path(body.contract_out) is None
-
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=validator,
-    ).execute(
-        _prepare(
-            accepted,
-            fixture,
-            _StateReader(),
-            invocation_input={},
-        ),
-        accepted,
-    )
-
     assert result.status == "refused"
     assert result.refusal is not None
     assert result.refusal.code == "budget_max_items_exceeded"
-    assert result.refusal.details == {
-        "boundary": expected_boundary,
-        "dimension": "max_items",
-        "field_path": "items",
-        "limit": 1,
-        "observed": 2,
-    }
+    assert result.refusal.details["boundary"] == "transform:shape-body"
 
 
 @pytest.mark.parametrize(
     ("boundary", "expected_boundary"),
     (
-        ("contract-in", "contract-in:list-contract-in"),
         ("contract-out", "contract-out:list-contract-out"),
         ("return", "contract-out:list-return"),
     ),
@@ -2450,203 +2061,6 @@ def test_production_validator_enforces_every_list_boundary(
         "limit": 1,
         "observed": 2,
     }
-
-
-@pytest.mark.parametrize(
-    ("kind", "spec", "message"),
-    [
-        ("shape_items", {"items": "not-a-list", "fields": {}}, "requires a list"),
-        ("filter_items", {"items": "not-a-list", "where": {}}, "requires a list"),
-        ("dedupe_items", {"items": [], "keys": "id"}, "keys must be a string list"),
-        (
-            "join_items",
-            {
-                "left_items": [],
-                "right_items": "not-a-list",
-                "left_key": "id",
-                "right_key": "id",
-                "fields": {},
-            },
-            "requires a list",
-        ),
-        ("aggregate_items", {"items": "not-a-list"}, "requires a list"),
-    ],
-)
-def test_existing_transform_kernel_matrix_refuses_malformed_inputs(
-    kind: str,
-    spec: object,
-    message: str,
-) -> None:
-    with pytest.raises(ExecutionError, match=message):
-        _apply_transform(kind, spec)
-
-
-@pytest.mark.parametrize(
-    ("kind", "spec"),
-    [
-        ("shape_items", {"items": "$item.rows", "fields": {}}),
-        (
-            "filter_items",
-            {"items": [{"id": "a"}], "where": {"id": "$item.id"}},
-        ),
-        ("dedupe_items", {"items": "$item.rows", "keys": ["id"]}),
-        (
-            "join_items",
-            {
-                "left_items": "$item.left",
-                "right_items": [],
-                "left_key": "id",
-                "right_key": "id",
-                "fields": {},
-            },
-        ),
-        ("aggregate_items", {"items": "$item.rows"}),
-    ],
-)
-def test_item_references_outside_per_item_field_templates_fail_closed(
-    tmp_path,
-    kind: str,
-    spec: object,
-) -> None:
-    accepted = _transform_procedure(kind, spec)
-    fixture = _fixture(tmp_path)
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
-
-    assert result.status == "refused"
-    assert result.refusal is not None
-    assert result.refusal.code == "runtime_reference_unresolved"
-
-
-def test_join_refuses_at_the_n_plus_one_emission(monkeypatch) -> None:
-    spec = {
-        "left_items": [{"id": "same", "left": index} for index in range(2)],
-        "right_items": [{"id": "same", "right": index} for index in range(2)],
-        "left_key": "id",
-        "right_key": "id",
-        "fields": {"left": "$item.left.left", "right": "$item.right.right"},
-    }
-
-    resolutions = 0
-    existing_resolver = execution_module._resolve_template
-
-    def count_resolutions(*args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal resolutions
-        if kwargs.get("item") is not None:
-            resolutions += 1
-        return existing_resolver(*args, **kwargs)
-
-    monkeypatch.setattr(execution_module, "_resolve_template", count_resolutions)
-    with pytest.raises(_RunRefusal) as raised:
-        _apply_transform(
-            "join_items",
-            spec,
-            max_items=2,
-            node_id="join",
-            list_boundary=("contract-out:joined", "items"),
-        )
-
-    refusal = raised.value.refusal
-    assert refusal.code == "budget_max_items_exceeded"
-    assert refusal.node_id == "join"
-    assert refusal.details == {
-        "boundary": "contract-out:joined",
-        "dimension": "max_items",
-        "field_path": "items",
-        "limit": 2,
-        "observed": 3,
-    }
-    assert resolutions == 4
-
-
-@pytest.mark.parametrize(
-    ("kind", "spec"),
-    [
-        (
-            "shape_items",
-            {"items": [{"id": "a"}, {"id": "b"}], "fields": {"id": "$item.id"}},
-        ),
-        (
-            "filter_items",
-            {"items": [{"id": "a"}, {"id": "b"}], "where": {}},
-        ),
-        (
-            "dedupe_items",
-            {"items": [{"id": "a"}, {"id": "b"}], "keys": ["id"]},
-        ),
-    ],
-)
-def test_each_item_emitting_kernel_enforces_its_own_ceiling(
-    monkeypatch,
-    kind: str,
-    spec: object,
-) -> None:
-    existing_extractor = execution_module._extract_items
-
-    def extraction_without_ceiling(value, **kwargs):  # type: ignore[no-untyped-def]
-        return existing_extractor(
-            value,
-            label=kwargs["label"],
-            max_items=None,
-            node_id=kwargs["node_id"],
-        )
-
-    monkeypatch.setattr(execution_module, "_extract_items", extraction_without_ceiling)
-    with pytest.raises(_RunRefusal) as raised:
-        _apply_transform(
-            kind,
-            spec,
-            max_items=1,
-            node_id=kind,
-            list_boundary=(f"contract-out:{kind}", "items"),
-        )
-
-    assert raised.value.refusal.code == "budget_max_items_exceeded"
-    assert raised.value.refusal.node_id == kind
-    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
-
-
-def test_aggregate_kernel_does_not_charge_an_opaque_input_collection() -> None:
-    assert _apply_transform(
-        "aggregate_items",
-        {"items": [{"id": "a"}, {"id": "b"}]},
-        max_items=1,
-        node_id="aggregate",
-    ) == ({"count": 2}, None)
-
-
-@pytest.mark.parametrize(
-    "value",
-    ([{"id": "a"}, {"id": "b"}], {"items": [{"id": "a"}, {"id": "b"}]}),
-)
-def test_extract_items_enforces_both_collection_shapes(value: object) -> None:
-    with pytest.raises(_RunRefusal) as raised:
-        _extract_items(
-            value,
-            label="items",
-            max_items=1,
-            node_id="extract",
-            list_boundary=("contract-out:items", "items"),
-        )
-
-    assert raised.value.refusal.code == "budget_max_items_exceeded"
-    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
-
-
-def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
-    spec = {"items": [{"id": index} for index in range(80)], "where": {}}
-
-    first, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="one")
-    second, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="two")
-
-    assert len(first["items"]) == 80  # type: ignore[index]
-    assert second == first
 
 
 def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> None:

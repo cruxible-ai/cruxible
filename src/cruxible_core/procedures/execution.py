@@ -187,7 +187,12 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
     disallowed_origin,
 )
-from cruxible_core.procedures.completeness import Completeness, CompletenessProbe, Read
+from cruxible_core.procedures.completeness import (
+    Completeness,
+    CompletenessProbe,
+    Read,
+    dropped_rows,
+)
 from cruxible_core.procedures.egress import (
     SERVED_AUTHORITY_TERMS,
     EffectiveRungTermV1,
@@ -2187,16 +2192,6 @@ def _effective_max_items(admission: ProcedureRunAdmission) -> int:
     )
 
 
-def _kernel_list_boundary(
-    validator: ContractValidatorProtocol,
-    contract: ArtifactPin,
-) -> tuple[str, str] | None:
-    field_path = validator.unique_list_field_path(contract)
-    if not isinstance(field_path, str):
-        return None
-    return (f"contract-out:{contract.target.name}", field_path)
-
-
 class ProcedureExecutor:
     """Execute one admitted graph while making the journal the operational authority."""
 
@@ -3202,7 +3197,6 @@ class ProcedureExecutor:
                         result = _resolve_node_template(
                             node.result,
                             node_id=node.node_id,
-                            transform_kind=None,
                             input_payload=state.input_payload,
                             outputs=state.outputs,
                         )
@@ -3309,52 +3303,8 @@ class ProcedureExecutor:
                 records=records,
             )
             return None
-        if isinstance(node, TransformNode) and node.transform_kind in CLOSED_TRANSFORM_KINDS:
-            self._run_closed_transform(node, admission=admission, state=state)
-            return None
         if isinstance(node, TransformNode):
-            assert node.contract_in is not None and node.contract_out is not None
-            declared_spec = _declared_transform_spec(node.transform_kind, node.spec)
-            resolved = _resolve_node_template(
-                declared_spec,
-                node_id=node.node_id,
-                transform_kind=node.transform_kind,
-                input_payload=state.input_payload,
-                outputs=state.outputs,
-            )
-            contract_in = self._pin(node.contract_in, label=f"transform {node.node_id!r} input")
-            validated_input = _validate_node_contract(
-                self.contract_validator,
-                contract=contract_in,
-                payload=resolved,
-                direction="input",
-                node_id=node.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
-            contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
-            value, lineage = _apply_node_transform(
-                node.transform_kind,
-                validated_input,
-                max_items=_effective_max_items(admission),
-                node_id=node.node_id,
-                list_boundary=_kernel_list_boundary(self.contract_validator, contract),
-            )
-            state.outputs[node.as_] = _validate_node_contract(
-                self.contract_validator,
-                contract=contract,
-                payload=value,
-                direction="output",
-                node_id=node.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
-            state.provenance[node.as_] = _transform_provenance(
-                node,
-                state=state,
-                lineage=lineage,
-                base=_base_tokens(node, state, declared_spec, self.references),
-            )
+            self._run_closed_transform(node, admission=admission, state=state)
             return None
         if isinstance(node, ProjectNode | SelectNode):
             if isinstance(node, SelectNode):
@@ -3374,7 +3324,6 @@ class ProcedureExecutor:
                 else _resolve_node_template(
                     fields,
                     node_id=node.node_id,
-                    transform_kind=None,
                     input_payload=state.input_payload,
                     outputs=state.outputs,
                 )
@@ -4007,7 +3956,6 @@ class ProcedureExecutor:
             resolved = _resolve_node_template(
                 node.only_keys,
                 node_id=node.node_id,
-                transform_kind=None,
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
@@ -4052,28 +4000,30 @@ class ProcedureExecutor:
             | state.alias_tokens(frozenset({node.capture_alias}))
         )
 
-    def _run_closed_transform(
+    def _apply_closed(
         self,
-        node: TransformNode,
+        node_id: str,
+        kind: str,
+        spec: object,
         *,
+        outputs: dict[str, CanonicalValue],
         admission: ProcedureRunAdmission,
         state: _RunState,
-    ) -> None:
-        """One closed transform over records: typed, three-valued, completeness carried."""
+    ) -> tuple[CanonicalValue, bool]:
+        """One closed transform over ``outputs``: its value, and whether it is complete."""
 
         def resolve(reference: object) -> object:
             return _resolve_node_template(
                 reference,
-                node_id=node.node_id,
-                transform_kind=None,
+                node_id=node_id,
                 input_payload=state.input_payload,
-                outputs=state.outputs,
+                outputs=outputs,
             )
 
         try:
-            value, complete = apply_closed_transform(
-                node.transform_kind,
-                node.spec,
+            return apply_closed_transform(
+                kind,
+                spec,
                 resolve,
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
@@ -4084,16 +4034,34 @@ class ProcedureExecutor:
                 budget_kind="max_items",
                 limit=exc.limit,
                 observed=exc.observed,
-                node_id=node.node_id,
-                boundary=f"transform:{node.node_id}",
+                node_id=node_id,
+                boundary=f"transform:{node_id}",
                 field_path="records",
             ) from exc
         except TransformInputInvalid as exc:
             raise _RunRefusal(
                 "contract_input_refused",
-                f"The {node.transform_kind} transform input is invalid: {exc}",
-                node_id=node.node_id,
+                f"The {kind} transform input is invalid: {exc}",
+                node_id=node_id,
             ) from exc
+
+    def _run_closed_transform(
+        self,
+        node: TransformNode,
+        *,
+        admission: ProcedureRunAdmission,
+        state: _RunState,
+    ) -> None:
+        """One closed transform over records: typed, three-valued, completeness carried."""
+
+        value, complete = self._apply_closed(
+            node.node_id,
+            node.transform_kind,
+            node.spec,
+            outputs=state.outputs,
+            admission=admission,
+            state=state,
+        )
         aliases = _referenced_aliases(node.spec)
         state.outputs[node.as_] = value
         state.completeness.mark(
@@ -4101,6 +4069,8 @@ class ProcedureExecutor:
             complete
             and state.completeness.reads_complete(_referenced_reads(node.spec), records_kept=True),
         )
+        # Like an extract's, a closed transform's rows view drops invalid fields.
+        state.completeness.drop(node.as_, dropped_rows(value))
         state.provenance[node.as_] = AliasProvenanceV1(
             whole=_node_policy_tokens(node, self.references)
             | state.control
@@ -4402,7 +4372,6 @@ class ProcedureExecutor:
         value = _resolve_node_template(
             node.input,
             node_id=node.node_id,
-            transform_kind=None,
             input_payload=state.input_payload,
             outputs=state.outputs,
         )
@@ -5675,7 +5644,7 @@ class ProcedureExecutor:
             local_provenance: dict[str, AliasProvenanceV1] = {}
             local_incomplete: set[str] = set()
             for body in node.body:
-                self._run_repeat_body(
+                own_complete = self._run_repeat_body(
                     body,
                     repeat_node_id=node.node_id,
                     admission=admission,
@@ -5684,12 +5653,16 @@ class ProcedureExecutor:
                     local_provenance=local_provenance,
                     records=records,
                 )
-                body_complete = all(
-                    alias not in local_incomplete
-                    if alias in local_outputs and alias != body.as_
-                    else state.completeness.reads_complete(((alias, path),))
-                    for alias, path in _referenced_reads(body.spec)
-                ) and not (body.operation == "call" and self._truncates(body.slot))
+                body_complete = (
+                    own_complete
+                    and all(
+                        alias not in local_incomplete
+                        if alias in local_outputs and alias != body.as_
+                        else state.completeness.reads_complete(((alias, path),))
+                        for alias, path in _referenced_reads(body.spec)
+                    )
+                    and not (body.operation == "call" and self._truncates(body.slot))
+                )
                 if not body_complete:
                     local_incomplete.add(body.as_)
                     attempts_complete = False
@@ -5762,74 +5735,48 @@ class ProcedureExecutor:
         local_outputs: dict[str, CanonicalValue],
         local_provenance: dict[str, AliasProvenanceV1],
         records: list[StoredProcedureJournalRecordV1],
-    ) -> None:
+    ) -> bool:
+        """Run one repeat body operation; return whether its own output is complete.
+
+        A transform body is a closed transform over the run's and this
+        attempt's outputs (an ``unknown`` predicate makes it incomplete); a call
+        body's completeness is decided by what it reads and its operation.
+        """
+
         combined = {**state.outputs, **local_outputs}
-        declared_spec = (
-            _declared_transform_spec(body.transform_kind, body.spec)
-            if body.operation == "transform" and body.transform_kind is not None
-            else body.spec
+        local_state = _RunState(
+            outputs=combined,
+            input_payload=state.input_payload,
+            parameters=state.parameters,
+            provenance={**state.provenance, **local_provenance},
+            facts=state.facts,
+            outcomes=state.outcomes,
+            control=state.control,
+            provider_calls=state.provider_calls,
+            capture_bytes=state.capture_bytes,
         )
+        if body.operation == "transform":
+            if body.transform_kind is None or not isinstance(body.spec, BaseModel):
+                raise ExecutionError("a repeat transform body carries a closed transform spec")
+            value, complete = self._apply_closed(
+                body.node_id,
+                body.transform_kind,
+                body.spec,
+                outputs=combined,
+                admission=admission,
+                state=state,
+            )
+            local_outputs[body.as_] = value
+            local_provenance[body.as_] = AliasProvenanceV1(
+                whole=_base_tokens(body, local_state, body.spec, self.references)
+            )
+            return complete
         spec = _resolve_node_template(
-            declared_spec,
+            body.spec,
             node_id=body.node_id,
-            transform_kind=(body.transform_kind if body.operation == "transform" else None),
             input_payload=state.input_payload,
             outputs=combined,
         )
-        if body.operation == "transform":
-            assert body.contract_in is not None and body.contract_out is not None
-            transform_kind = getattr(body, "transform_kind", None)
-            if not isinstance(transform_kind, str):
-                raise _RunRefusal(
-                    "runtime_reference_unresolved",
-                    "Repeat transform body has no declared transform kind.",
-                    node_id=body.node_id,
-                )
-            contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
-            contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
-            validated = _validate_node_contract(
-                self.contract_validator,
-                contract=contract_in,
-                payload=spec,
-                direction="input",
-                node_id=body.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
-            value, lineage = _apply_node_transform(
-                transform_kind,
-                validated,
-                max_items=_effective_max_items(admission),
-                node_id=body.node_id,
-                list_boundary=_kernel_list_boundary(self.contract_validator, contract_out),
-            )
-            local_outputs[body.as_] = _validate_node_contract(
-                self.contract_validator,
-                contract=contract_out,
-                payload=value,
-                direction="output",
-                node_id=body.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
-            local_state = _RunState(
-                outputs=combined,
-                input_payload=state.input_payload,
-                parameters=state.parameters,
-                provenance={**state.provenance, **local_provenance},
-                facts=state.facts,
-                outcomes=state.outcomes,
-                control=state.control,
-                provider_calls=state.provider_calls,
-                capture_bytes=state.capture_bytes,
-            )
-            local_provenance[body.as_] = _transform_provenance(
-                body,
-                state=local_state,
-                lineage=lineage,
-                base=_base_tokens(body, local_state, declared_spec, self.references),
-            )
-            return
         if body.operation == "call":
             local_outputs[body.as_], _receipt, _receipt_digest = self._invoke_provider_v4(
                 node_id=body.node_id,
@@ -5842,19 +5789,10 @@ class ProcedureExecutor:
                 state=state,
                 records=records,
             )
-            local_state = _RunState(
-                outputs=combined,
-                input_payload=state.input_payload,
-                parameters=state.parameters,
-                provenance={**state.provenance, **local_provenance},
-                facts=state.facts,
-                outcomes=state.outcomes,
-                control=state.control,
-            )
             local_provenance[body.as_] = AliasProvenanceV1(
                 whole=_base_tokens(body, local_state, body.spec, self.references)
             )
-            return
+            return True
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
     def _append_events(
@@ -6113,8 +6051,6 @@ class ProcedureExecutor:
 
 _STEP_PREFIX = "$steps."
 
-_ITEM_SLOTS: tuple[str, ...] = ("items", "left_items", "right_items")
-
 
 def _node_policy_tokens(node: object, resolved: Mapping[str, str]) -> frozenset[DependencyToken]:
     """Return the exact laws and policies one node's resolved pins commit it to."""
@@ -6246,30 +6182,6 @@ def _base_tokens(
         | state.control
         | state.alias_tokens(_referenced_aliases(template))
     )
-
-
-def _transform_provenance(
-    node: TransformNode | RepeatBodyNode,
-    *,
-    state: _RunState,
-    lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
-    base: frozenset[DependencyToken],
-) -> AliasProvenanceV1:
-    if lineage is None:
-        return AliasProvenanceV1(whole=base)
-    spec = (
-        node.spec
-        if isinstance(node.spec, dict)
-        else cast(BaseModel, node.spec).model_dump(mode="python", exclude={"tag"})
-    )
-    items: list[frozenset[DependencyToken]] = []
-    for refs in lineage:
-        tokens: frozenset[DependencyToken] = frozenset()
-        for slot, index in refs:
-            if slot in _ITEM_SLOTS:
-                tokens = tokens | _item_closure(state, spec.get(slot), index)
-        items.append(tokens)
-    return AliasProvenanceV1(whole=base, items=tuple(items))
 
 
 def _alias_provenance_payload(provenance: AliasProvenanceV1) -> CanonicalValue:
@@ -6716,89 +6628,15 @@ def _resolve_template(
     return normalize_canonical(value)
 
 
-def _contains_item_reference(value: object) -> bool:
-    if isinstance(value, str):
-        return value == "$item" or value.startswith("$item.")
-    if isinstance(value, list | tuple):
-        return any(_contains_item_reference(member) for member in value)
-    if isinstance(value, dict):
-        return any(_contains_item_reference(member) for member in value.values())
-    return False
-
-
-def _resolve_transform_template(
-    value: object,
-    *,
-    transform_kind: str,
-    input_payload: CanonicalValue,
-    outputs: dict[str, CanonicalValue],
-) -> CanonicalValue:
-    """Resolve a transform spec while leaving only per-item field templates deferred."""
-
-    if not isinstance(value, dict):
-        return _resolve_template(
-            value,
-            input_payload=input_payload,
-            outputs=outputs,
-        )
-    deferred_fields = transform_kind in {"shape_items", "join_items"}
-    for key, member in value.items():
-        if key == "fields" and deferred_fields:
-            continue
-        if _contains_item_reference(member):
-            raise ExecutionError(
-                f"$item is unavailable in {transform_kind}.{key} outside an item field template"
-            )
-    return {
-        key: _resolve_template(
-            member,
-            input_payload=input_payload,
-            outputs=outputs,
-            preserve_item_references=key == "fields" and deferred_fields,
-        )
-        for key, member in value.items()
-    }
-
-
-def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
-    if not isinstance(spec, BaseModel):
-        raise ExecutionError("typed transform spec is absent")
-    payload = spec.model_dump(mode="json", exclude={"tag"})
-    return normalize_canonical(payload)
-
-
-_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCode] = {
-    "shape_items": "shape_items_input_invalid",
-    "filter_items": "filter_items_input_invalid",
-    "dedupe_items": "dedupe_items_input_invalid",
-    "join_items": "join_items_left_input_invalid",
-    "aggregate_items": "aggregate_items_input_invalid",
-}
-
-
 def _resolve_node_template(
     value: object,
     *,
     node_id: str,
-    transform_kind: str | None,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     try:
-        return (
-            _resolve_template(
-                value,
-                input_payload=input_payload,
-                outputs=outputs,
-            )
-            if transform_kind is None
-            else _resolve_transform_template(
-                value,
-                transform_kind=transform_kind,
-                input_payload=input_payload,
-                outputs=outputs,
-            )
-        )
+        return _resolve_template(value, input_payload=input_payload, outputs=outputs)
     except ExecutionError as exc:
         raise _RunRefusal(
             "runtime_reference_unresolved",
@@ -6806,13 +6644,8 @@ def _resolve_node_template(
             node_id=node_id,
         ) from exc
     except Exception as exc:
-        code: ProcedureNodeRefusalCode = (
-            "result_not_canonical"
-            if transform_kind is None
-            else _TRANSFORM_INPUT_REFUSAL_CODES[transform_kind]
-        )
         raise _RunRefusal(
-            code,
+            "result_not_canonical",
             "A resolved Procedure value is not canonical for this node.",
             node_id=node_id,
         ) from exc
@@ -6882,55 +6715,19 @@ def _validate_node_contract(
         ) from exc
 
 
-def _apply_node_transform(
-    kind: str,
-    spec: CanonicalValue,
-    *,
-    max_items: int,
-    node_id: str,
-    list_boundary: tuple[str, str] | None = None,
-) -> tuple[CanonicalValue, _ItemLineage | None]:
-    # Kernel checks are only an early-abort optimization for an exact list-typed
-    # output boundary. Opaque or ambiguous collections remain unmetered here and
-    # are governed solely by the contract seams, result-byte cap, and wall clock.
-    kernel_max_items = max_items if list_boundary is not None else None
-    try:
-        return _apply_transform(
-            kind,
-            spec,
-            max_items=kernel_max_items,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-    except _RunRefusal:
-        raise
-    except _TransformInputInvalid as exc:
-        code = _TRANSFORM_INPUT_REFUSAL_CODES[kind]
-        if kind == "join_items" and exc.slot == "right_items":
-            code = "join_items_right_input_invalid"
-        raise _RunRefusal(
-            code,
-            f"The {kind} transform input is invalid.",
-            node_id=node_id,
-        ) from exc
-    except ExecutionError as exc:
-        raise _RunRefusal(
-            _TRANSFORM_INPUT_REFUSAL_CODES[kind],
-            f"The {kind} transform input is invalid.",
-            node_id=node_id,
-        ) from exc
-
-
 # Retained admissions without resource_budget use the original 1 MiB return semantics.
 
 
 def _item_count(value: CanonicalValue, *, extractable_only: bool = False) -> int | None:
+    """How many items a value holds: a list's, its ``items``, or its ``records``."""
+
     if isinstance(value, list):
         return len(value)
     if isinstance(value, dict):
-        items = value.get("items")
-        if isinstance(items, list):
-            return len(items)
+        for name in ("items", "records"):
+            members = value.get(name)
+            if isinstance(members, list):
+                return len(members)
     return None if extractable_only else 1
 
 
@@ -6966,240 +6763,6 @@ def _budget_refusal(
             observed=observed,
         ),
     )
-
-
-def _extract_items(
-    value: object,
-    *,
-    label: str,
-    max_items: int | None = None,
-    node_id: str = "transform",
-    list_boundary: tuple[str, str] | None = None,
-) -> list[CanonicalValue]:
-    if isinstance(value, list):
-        if max_items is not None and list_boundary is not None and len(value) > max_items:
-            raise _budget_refusal(
-                budget_kind="max_items",
-                limit=max_items,
-                observed=len(value),
-                node_id=node_id,
-                boundary=None if list_boundary is None else list_boundary[0],
-                field_path=None if list_boundary is None else list_boundary[1],
-            )
-        return [normalize_canonical(item) for item in value]
-    if isinstance(value, dict) and isinstance(value.get("items"), list):
-        if max_items is not None and list_boundary is not None and len(value["items"]) > max_items:
-            raise _budget_refusal(
-                budget_kind="max_items",
-                limit=max_items,
-                observed=len(value["items"]),
-                node_id=node_id,
-                boundary=None if list_boundary is None else list_boundary[0],
-                field_path=None if list_boundary is None else list_boundary[1],
-            )
-        return [normalize_canonical(item) for item in value["items"]]
-    slot = "right_items" if label == "join_items right_items" else "left_items"
-    raise _TransformInputInvalid(
-        f"{label} requires a list or object with an items list",
-        slot=slot,
-    )
-
-
-_ItemLineage = tuple[tuple[tuple[str, int], ...], ...]
-
-
-def _apply_transform(
-    kind: str,
-    spec: CanonicalValue,
-    *,
-    max_items: int | None = None,
-    node_id: str = "transform",
-    list_boundary: tuple[str, str] | None = None,
-) -> tuple[CanonicalValue, _ItemLineage | None]:
-    """Apply one deterministic transform and report which input item fed each output."""
-
-    if list_boundary is None:
-        max_items = None
-    if not isinstance(spec, dict):
-        raise ExecutionError(f"transform {kind!r} requires an object spec")
-    if kind == "shape_items":
-        items = _extract_items(
-            spec.get("items"),
-            label=kind,
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        fields = spec.get("fields", {})
-        if not isinstance(fields, dict):
-            raise ExecutionError("shape_items fields must be an object")
-        shaped: list[CanonicalValue] = []
-        for item in items:
-            base = (
-                dict(item) if spec.get("include_input") is True and isinstance(item, dict) else {}
-            )
-            for name, template in fields.items():
-                base[name] = _resolve_template(
-                    template,
-                    input_payload={},
-                    outputs={},
-                    item=item,
-                )
-            if max_items is not None and len(shaped) >= max_items:
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=max_items,
-                    observed=len(shaped) + 1,
-                    node_id=node_id,
-                    boundary=None if list_boundary is None else list_boundary[0],
-                    field_path=None if list_boundary is None else list_boundary[1],
-                )
-            shaped.append(normalize_canonical(base))
-        return (
-            {"items": shaped, "input_count": len(items), "output_count": len(shaped)},
-            tuple((("items", index),) for index in range(len(shaped))),
-        )
-    if kind == "filter_items":
-        items = _extract_items(
-            spec.get("items"),
-            label=kind,
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        where = spec.get("where", {})
-        if not isinstance(where, dict):
-            raise ExecutionError("filter_items where must be an object")
-        kept_indices: list[int] = []
-        for index, item in enumerate(items):
-            if not isinstance(item, dict) or not all(
-                item.get(key) == value for key, value in where.items()
-            ):
-                continue
-            if max_items is not None and len(kept_indices) >= max_items:
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=max_items,
-                    observed=len(kept_indices) + 1,
-                    node_id=node_id,
-                    boundary=None if list_boundary is None else list_boundary[0],
-                    field_path=None if list_boundary is None else list_boundary[1],
-                )
-            kept_indices.append(index)
-        kept = [items[index] for index in kept_indices]
-        return (
-            normalize_canonical(
-                {"items": kept, "input_count": len(items), "output_count": len(kept)}
-            ),
-            tuple((("items", index),) for index in kept_indices),
-        )
-    if kind == "dedupe_items":
-        items = _extract_items(
-            spec.get("items"),
-            label=kind,
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        keys = spec.get("keys", [])
-        if not isinstance(keys, list) or not all(isinstance(item, str) for item in keys):
-            raise ExecutionError("dedupe_items keys must be a string list")
-        key_names = [str(item) for item in keys]
-        seen: set[bytes] = set()
-        output: list[CanonicalValue] = []
-        deduped_indices: list[int] = []
-        for index, item in enumerate(items):
-            identity = canonical_bytes(
-                [item.get(key) for key in key_names] if isinstance(item, dict) else item
-            )
-            if identity in seen:
-                continue
-            if max_items is not None and len(output) >= max_items:
-                raise _budget_refusal(
-                    budget_kind="max_items",
-                    limit=max_items,
-                    observed=len(output) + 1,
-                    node_id=node_id,
-                    boundary=None if list_boundary is None else list_boundary[0],
-                    field_path=None if list_boundary is None else list_boundary[1],
-                )
-            seen.add(identity)
-            output.append(item)
-            deduped_indices.append(index)
-        return (
-            normalize_canonical(
-                {"items": output, "input_count": len(items), "output_count": len(output)}
-            ),
-            tuple((("items", index),) for index in deduped_indices),
-        )
-    if kind == "join_items":
-        left = _extract_items(
-            spec.get("left_items"),
-            label="join_items left_items",
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        right = _extract_items(
-            spec.get("right_items"),
-            label="join_items right_items",
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        left_key = spec.get("left_key")
-        right_key = spec.get("right_key")
-        fields = spec.get("fields", {})
-        if (
-            not isinstance(left_key, str)
-            or not isinstance(right_key, str)
-            or not isinstance(fields, dict)
-        ):
-            raise ExecutionError("join_items keys and fields are malformed")
-        joined_output: list[CanonicalValue] = []
-        joined_lineage: list[tuple[tuple[str, int], ...]] = []
-        for left_index, left_item in enumerate(left):
-            for right_index, right_item in enumerate(right):
-                if not isinstance(left_item, dict) or not isinstance(right_item, dict):
-                    continue
-                if left_item.get(left_key) != right_item.get(right_key):
-                    continue
-                if max_items is not None and len(joined_output) >= max_items:
-                    raise _budget_refusal(
-                        budget_kind="max_items",
-                        limit=max_items,
-                        observed=len(joined_output) + 1,
-                        node_id=node_id,
-                        boundary=None if list_boundary is None else list_boundary[0],
-                        field_path=None if list_boundary is None else list_boundary[1],
-                    )
-                joined = {"left": left_item, "right": right_item}
-                joined_output.append(
-                    {
-                        name: _resolve_template(
-                            template,
-                            input_payload={},
-                            outputs={},
-                            item=normalize_canonical(joined),
-                        )
-                        for name, template in fields.items()
-                    }
-                )
-                joined_lineage.append((("left_items", left_index), ("right_items", right_index)))
-        return (
-            normalize_canonical({"items": joined_output, "output_count": len(joined_output)}),
-            tuple(joined_lineage),
-        )
-    if kind == "aggregate_items":
-        items = _extract_items(
-            spec.get("items"),
-            label=kind,
-            max_items=None,
-            node_id=node_id,
-            list_boundary=list_boundary,
-        )
-        return normalize_canonical({"count": len(items)}), None
-    raise ExecutionError(f"unsupported deterministic transform {kind!r}")
 
 
 def _check_return_budget(

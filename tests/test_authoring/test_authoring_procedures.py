@@ -550,7 +550,7 @@ def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     assert passed.verdict == "passed"
 
 
-def test_served_procedure_example_reaches_all_five_typed_item_specs(tmp_path: Path) -> None:
+def test_served_procedure_example_reaches_the_closed_transforms(tmp_path: Path) -> None:
     example = procedure_example()
     tags = {
         node["spec"]["tag"]
@@ -558,11 +558,11 @@ def test_served_procedure_example_reaches_all_five_typed_item_specs(tmp_path: Pa
         if isinstance(node, dict) and isinstance(node.get("spec"), dict)
     }
     assert tags == {
-        "playbill-transform-aggregate-items-spec-v1",
-        "playbill-transform-dedupe-items-spec-v1",
-        "playbill-transform-filter-items-spec-v1",
-        "playbill-transform-join-items-spec-v1",
-        "playbill-transform-shape-items-spec-v1",
+        "cruxible-transform-aggregate-spec-v1",
+        "cruxible-transform-dedupe-spec-v1",
+        "cruxible-transform-filter-spec-v1",
+        "cruxible-transform-join-spec-v1",
+        "cruxible-transform-shape-spec-v1",
     }
 
     coordinator, actor = _coordinator(tmp_path)

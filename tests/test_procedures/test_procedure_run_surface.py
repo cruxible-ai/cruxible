@@ -1156,69 +1156,39 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
     read = procedure.definition.nodes[0]
     project = procedure.definition.nodes[-1]
     assert isinstance(read, ReadNode)
-    filter_in = _contract(
-        "pipeline-filter-in",
-        {"items": PropertySchema(type="json"), "where": PropertySchema(type="json")},
-    )
-    filter_out = _contract(
-        "pipeline-filter-out",
-        {
-            "items": PropertySchema(type="json"),
-            "input_count": PropertySchema(type="int"),
-            "output_count": PropertySchema(type="int"),
-        },
-    )
-    aggregate_in = _contract(
-        "pipeline-aggregate-in",
-        {"items": PropertySchema(type="json")},
-    )
-    aggregate_out = _contract(
-        "pipeline-aggregate-out",
-        {"count": PropertySchema(type="int")},
-    )
-
-    def owned_pin(role: str, contract):  # type: ignore[no-untyped-def]
-        return ArtifactPin(
-            role=role,
-            target=contract.identity,
-            artifact_digest=procedure_owned_contract_digest(contract).tagged,
-        )
-
-    filter_in_pin = owned_pin("contract-in", filter_in)
-    filter_out_pin = owned_pin("contract-out", filter_out)
-    aggregate_in_pin = owned_pin("contract-in", aggregate_in)
-    aggregate_out_pin = owned_pin("contract-out", aggregate_out)
+    # Closed transforms type their records as they flow: no owned Contracts.
     nodes = (
         read.model_copy(update={"next": "filter"}),
-        TransformNode(
-            node_id="filter",
-            transform_kind="filter_items",
-            contract_in=named(filter_in_pin),
-            contract_out=named(filter_out_pin),
-            spec={
-                "tag": "playbill-transform-filter-items-spec-v1",
-                "items": "$steps.query.result.rows",
-                "where": {},
-            },
-            as_="filtered",
-            next="aggregate",
+        TransformNode.model_validate(
+            {
+                "node_id": "filter",
+                "transform_kind": "filter",
+                "spec": {
+                    "tag": "cruxible-transform-filter-spec-v1",
+                    "input": "$steps.query.result.rows",
+                    "where": "present($item.fields.bindings)",
+                },
+                "as": "filtered",
+                "next": "aggregate",
+            }
         ),
-        TransformNode(
-            node_id="aggregate",
-            transform_kind="aggregate_items",
-            contract_in=named(aggregate_in_pin),
-            contract_out=named(aggregate_out_pin),
-            spec={
-                "tag": "playbill-transform-aggregate-items-spec-v1",
-                "items": "$steps.filtered.items",
-            },
-            as_="counted",
-            next="gate",
+        TransformNode.model_validate(
+            {
+                "node_id": "aggregate",
+                "transform_kind": "aggregate",
+                "spec": {
+                    "tag": "cruxible-transform-aggregate-spec-v1",
+                    "input": "$steps.filtered",
+                    "op": "count",
+                },
+                "as": "counted",
+                "next": "gate",
+            }
         ),
         GuardNode(
             node_id="gate",
             predicate=GuardPredicate(
-                left=PredicateOperand(kind="step", alias="counted", path=("count",)),
+                left=PredicateOperand(kind="step", alias="counted", path=("result",)),
                 operator="gt",
                 right=PredicateOperand(kind="literal", value=0),
             ),
@@ -1226,25 +1196,18 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
             refusal_code="query.empty",
             message="The query returned no rows.",
         ),
-        project.model_copy(update={"fields": {"rows": "$steps.filtered.items"}}),
+        project.model_copy(update={"fields": {"rows": "$steps.filtered.rows"}}),
     )
     definition = procedure.definition.model_copy(
         update={
             "nodes": nodes,
-            "budget": procedure.definition.budget.model_copy(update={"max_items": 1}),
+            "budget": procedure.definition.budget.model_copy(update={"max_items": 2}),
         }
     )
-    added_contracts = (filter_in, filter_out, aggregate_in, aggregate_out)
     pipeline = procedure.model_copy(
         update={
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest(definition).tagged,
-            "owned_contracts": tuple(
-                sorted(
-                    (*procedure.owned_contracts, *added_contracts),
-                    key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
-                )
-            ),
             "lifecycle": procedure.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
             ),

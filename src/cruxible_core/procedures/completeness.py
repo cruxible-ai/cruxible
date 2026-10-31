@@ -16,7 +16,8 @@ from a guess:
 - an ``invoke`` whose child returned an incomplete value;
 - a read of an extract's ``rows`` view that reaches an invalid field.
 
-An extract's ``rows`` view holds each record's present field values only, so a
+An extract's (and a closed transform's) ``rows`` view holds each record's
+present field values only, so a
 field the extractor found invalid reads there as plain absence. The view keeps
 which fields it dropped; any read through it that reaches one (``rows``, a
 row, or that row's field) is incomplete, so an unreadable value can never pass
@@ -115,4 +116,29 @@ class Completeness:
             self.control_complete = False
 
 
-__all__ = ["Completeness", "CompletenessProbe", "Read"]
+def dropped_rows(value: object) -> dict[int, frozenset[str]]:
+    """A records value's ``rows`` entries that leave out an invalid field: index -> fields.
+
+    A value whose records carry field results (an extract's, a closed
+    transform's) shows them in ``rows`` as present values only.
+    """
+
+    records = value.get("records") if isinstance(value, Mapping) else None
+    if not isinstance(records, list):
+        return {}
+    dropped: dict[int, frozenset[str]] = {}
+    for index, record in enumerate(records):
+        fields = record.get("fields") if isinstance(record, Mapping) else None
+        if not isinstance(fields, Mapping):
+            continue
+        invalid = frozenset(
+            name
+            for name, result in fields.items()
+            if isinstance(result, Mapping) and result.get("tag") == "invalid"
+        )
+        if invalid:
+            dropped[index] = invalid
+    return dropped
+
+
+__all__ = ["Completeness", "CompletenessProbe", "Read", "dropped_rows"]

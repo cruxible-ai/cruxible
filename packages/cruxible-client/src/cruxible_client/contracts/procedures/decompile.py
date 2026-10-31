@@ -233,11 +233,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 step = dict(
                     transform=node.as_,
                     kind=node.transform_kind,
-                    spec=short(node.spec.model_dump(mode="json")),
-                    input=schema(node.contract_in).fields,
-                    output=schema(node.contract_out).fields,
-                    contract_in=_name(node.contract_in),
-                    contract_out=_name(node.contract_out),
+                    spec=short(node.spec.model_dump(mode="json", by_alias=True)),
                 )
             elif isinstance(node, GuardNode):
                 if expressions[node.node_id] is None or (

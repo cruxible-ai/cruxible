@@ -147,13 +147,14 @@ class ProjectStep(StepOptions):
 
 
 class TransformStep(StepOptions):
+    """A closed transform (shape, filter, join, aggregate, dedupe, union, derive).
+
+    Its records are typed as they flow; it names no Contracts of its own.
+    """
+
     transform: StepId
     kind: TransformKind
     spec: ProcedureTransformSpec
-    input: dict[str, FieldType]
-    output: dict[str, FieldType]
-    contract_in: str | None = None
-    contract_out: str | None = None
 
 
 class GuardStep(StepOptions):
@@ -759,21 +760,13 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
             )
             alias = step.project
         elif isinstance(step, TransformStep):
-            output = _fields(step.output)
+            # A closed transform's output is typed as it flows (records, or one
+            # aggregate or derived value): later references resolve at run time.
+            output = None
             node.update(
                 kind="transform",
                 transform_kind=step.kind,
-                spec=template(step.spec.model_dump(mode="json"), path + ".spec"),
-                contract_in=contract(
-                    step.contract_in or spec.procedure + "-step-" + step.transform + "-input",
-                    _fields(step.input),
-                    "contract-in",
-                ),
-                contract_out=contract(
-                    step.contract_out or spec.procedure + "-step-" + step.transform + "-output",
-                    output,
-                    "contract-out",
-                ),
+                spec=template(step.spec.model_dump(mode="json", by_alias=True), path + ".spec"),
             )
             alias = step.transform
         elif isinstance(step, GuardStep):

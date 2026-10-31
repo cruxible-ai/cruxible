@@ -238,21 +238,8 @@ class CallNode(_StrictProcedureModel):
         return bool(self.captures)
 
 
-TransformKind = Literal[
-    "shape",
-    "filter",
-    "join",
-    "aggregate",
-    "dedupe",
-    "union",
-    "derive",
-    "shape_items",
-    "join_items",
-    "filter_items",
-    "aggregate_items",
-    "dedupe_items",
-]
 #: The closed transform kinds: records in, records (or one value) out, three-valued.
+TransformKind = Literal["shape", "filter", "join", "aggregate", "dedupe", "union", "derive"]
 CLOSED_TRANSFORM_KINDS = frozenset(
     {"shape", "filter", "join", "aggregate", "dedupe", "union", "derive"}
 )
@@ -421,72 +408,6 @@ class TransformDeriveSpec(_StrictProcedureModel):
         return value
 
 
-class TransformShapeItemsSpec(_StrictProcedureModel):
-    tag: Literal["playbill-transform-shape-items-spec-v1"] = (
-        "playbill-transform-shape-items-spec-v1"
-    )
-    items: object
-    fields: dict[str, object]
-    include_input: bool = False
-
-    @field_validator("items", "fields", mode="before")
-    @classmethod
-    def _canonical(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class TransformFilterItemsSpec(_StrictProcedureModel):
-    tag: Literal["playbill-transform-filter-items-spec-v1"] = (
-        "playbill-transform-filter-items-spec-v1"
-    )
-    items: object
-    where: dict[str, object]
-
-    @field_validator("items", "where", mode="before")
-    @classmethod
-    def _canonical(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class TransformDedupeItemsSpec(_StrictProcedureModel):
-    tag: Literal["playbill-transform-dedupe-items-spec-v1"] = (
-        "playbill-transform-dedupe-items-spec-v1"
-    )
-    items: object
-    keys: tuple[str, ...]
-
-    @field_validator("items", mode="before")
-    @classmethod
-    def _items(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class TransformJoinItemsSpec(_StrictProcedureModel):
-    tag: Literal["playbill-transform-join-items-spec-v1"] = "playbill-transform-join-items-spec-v1"
-    left_items: object
-    right_items: object
-    left_key: str
-    right_key: str
-    fields: dict[str, object]
-
-    @field_validator("left_items", "right_items", "fields", mode="before")
-    @classmethod
-    def _canonical(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
-class TransformAggregateItemsSpec(_StrictProcedureModel):
-    tag: Literal["playbill-transform-aggregate-items-spec-v1"] = (
-        "playbill-transform-aggregate-items-spec-v1"
-    )
-    items: object
-
-    @field_validator("items", mode="before")
-    @classmethod
-    def _items(cls, value: object) -> object:
-        return normalize_canonical(value)
-
-
 ProcedureTransformSpec = Annotated[
     TransformShapeSpec
     | TransformFilterSpec
@@ -494,12 +415,7 @@ ProcedureTransformSpec = Annotated[
     | TransformAggregateSpec
     | TransformDedupeSpec
     | TransformUnionSpec
-    | TransformDeriveSpec
-    | TransformShapeItemsSpec
-    | TransformFilterItemsSpec
-    | TransformDedupeItemsSpec
-    | TransformJoinItemsSpec
-    | TransformAggregateItemsSpec,
+    | TransformDeriveSpec,
     Field(discriminator="tag"),
 ]
 
@@ -511,27 +427,19 @@ _TRANSFORM_SPEC_TAGS: dict[TransformKind, str] = {
     "dedupe": "cruxible-transform-dedupe-spec-v1",
     "union": "cruxible-transform-union-spec-v1",
     "derive": "cruxible-transform-derive-spec-v1",
-    "shape_items": "playbill-transform-shape-items-spec-v1",
-    "filter_items": "playbill-transform-filter-items-spec-v1",
-    "dedupe_items": "playbill-transform-dedupe-items-spec-v1",
-    "join_items": "playbill-transform-join-items-spec-v1",
-    "aggregate_items": "playbill-transform-aggregate-items-spec-v1",
 }
 
 
 class TransformNode(_StrictProcedureModel):
-    """A deterministic transform. The closed kinds type their records as they flow;
-    the item kinds check owned input and output Contracts."""
+    """A closed, deterministic transform: records in, records (or one value) out.
+
+    Its records are typed as they flow (each field keeps its field result), its
+    predicates are three-valued, and its output carries completeness.
+    """
 
     kind: Literal["transform"] = "transform"
     node_id: str
     transform_kind: TransformKind
-    contract_in: ArtifactNameRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    contract_out: ArtifactNameRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
     spec: ProcedureTransformSpec
     as_: str = Field(alias="as")
     next: str | None = None
@@ -540,12 +448,6 @@ class TransformNode(_StrictProcedureModel):
     def _spec_matches_kind(self) -> "TransformNode":
         if self.spec.tag != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
             raise ValueError("transform spec tag does not match transform_kind")
-        closed = self.transform_kind in CLOSED_TRANSFORM_KINDS
-        if closed != (self.contract_in is None and self.contract_out is None):
-            raise ValueError(
-                "a closed transform types its records as they flow (no owned Contracts); "
-                "an item transform names its input and output Contracts"
-            )
         return self
 
 
@@ -611,18 +513,12 @@ class ProjectNode(_StrictProcedureModel):
 
 
 class RepeatBodyNode(_StrictProcedureModel):
-    """One bounded repeat operation: a slotted call or a typed transform."""
+    """One bounded repeat operation: a slotted call or a closed transform."""
 
     node_id: str
     operation: Literal["call", "transform"]
     transform_kind: TransformKind | None = None
     slot: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    contract_in: ArtifactNameRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    contract_out: ArtifactNameRef | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
     effect_policy: ArtifactNameRef | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -638,7 +534,23 @@ class RepeatBodyNode(_StrictProcedureModel):
     @field_validator("spec", mode="before")
     @classmethod
     def _spec(cls, value: object) -> object:
-        return normalize_canonical(value)
+        if isinstance(value, BaseModel):
+            return value
+        canonical = normalize_canonical(value)
+        if isinstance(canonical, Mapping) and str(canonical.get("tag", "")).startswith(
+            "cruxible-transform-"
+        ):
+            from pydantic import TypeAdapter
+
+            return TypeAdapter(ProcedureTransformSpec).validate_python(canonical)
+        return canonical
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired_transform(cls, value: object) -> object:
+        if isinstance(value, Mapping):
+            refuse_retired_kinds([value], location="repeat body")
+        return value
 
     @model_validator(mode="after")
     def _operation_shape(self) -> "RepeatBodyNode":
@@ -647,11 +559,7 @@ class RepeatBodyNode(_StrictProcedureModel):
                 raise ValueError("a repeat call names its slot")
             if self.transform_kind is not None:
                 raise ValueError("repeat calls cannot declare transform_kind")
-            if self.contract_in is not None or self.contract_out is not None:
-                raise ValueError("a repeat call's I/O is its slot signature")
             return self
-        if self.contract_in is None or self.contract_out is None:
-            raise ValueError("repeat transforms require input and output contracts")
         if self.slot is not None or self.effect_policy is not None:
             raise ValueError("repeat transform operations cannot declare a slot or effect policy")
         if self.transform_kind is None or not isinstance(self.spec, BaseModel):
@@ -810,6 +718,11 @@ RETIRED_NODE_KINDS: dict[str, str] = {
 #: Transform kinds graph format 7 no longer has, each with what replaces it.
 RETIRED_TRANSFORM_KINDS: dict[str, str] = {
     "adapter": "a typed 'project', or a closed transform ('shape')",
+    "shape_items": "the closed transform 'shape' (with 'as' casts)",
+    "filter_items": "the closed transform 'filter' (a three-valued 'where')",
+    "join_items": "the closed transform 'join' (inner or anti)",
+    "aggregate_items": "the closed transform 'aggregate' (count, any, all, min, max, first_by)",
+    "dedupe_items": "the closed transform 'dedupe'",
 }
 
 
@@ -987,13 +900,8 @@ __all__ = [
     "SettleChangeSetNode",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
-    "TransformAggregateItemsSpec",
-    "TransformDedupeItemsSpec",
-    "TransformFilterItemsSpec",
-    "TransformJoinItemsSpec",
     "TransformKind",
     "TransformNode",
-    "TransformShapeItemsSpec",
     "authority_for_rung",
     "is_terminal_node",
     "derived_terminal_capability",

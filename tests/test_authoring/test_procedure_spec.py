@@ -22,7 +22,6 @@ from cruxible_client.contracts.procedures.authored import (
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.decompile import decompile_procedure
 from cruxible_client.contracts.procedures.models import ProcedureDefinition
-from tests.support.procedures import named
 
 
 def _artifact(definition):
@@ -738,26 +737,22 @@ def test_lowered_halt_ids_do_not_collide_or_exceed_graph_limits():
 
 
 def test_v3_retains_the_transform_spec_union_discriminator():
-    from cruxible_client.contracts.procedures.models import (
-        TransformNode,
-        TransformShapeItemsSpec,
-    )
+    from cruxible_client.contracts.procedures.models import TransformNode
+    from cruxible_client.contracts.procedures.nodes import TransformShapeSpec
     from tests.test_procedures.test_procedure_artifacts import _definition
 
     definition = _definition()
     transform = TransformNode(
         node_id="result",
-        transform_kind="shape_items",
-        contract_in=named(definition.contract_in),
-        contract_out=named(definition.contract_out),
-        spec=TransformShapeItemsSpec(items=[], fields={}),
+        transform_kind="shape",
+        spec=TransformShapeSpec(input=[], fields={"id": {"from": "$item.fields.id"}}),
         **{"as": "result"},
     )
     artifact = _artifact(definition.model_copy(update={"nodes": (transform,), "returns": "result"}))
     content = render_procedure(artifact)
     assert (
         json.loads(content)["definition"]["nodes"][0]["spec"]["tag"]
-        == "playbill-transform-shape-items-spec-v1"
+        == "cruxible-transform-shape-spec-v1"
     )
     assert (
         parse_procedure(content, path="procedures/" + artifact.identity.name + ".json") == artifact

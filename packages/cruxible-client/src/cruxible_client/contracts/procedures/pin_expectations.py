@@ -20,7 +20,6 @@ from cruxible_client.contracts.procedures.models import (
     ReadNode,
     RepeatNode,
     SelectNode,
-    TransformNode,
 )
 
 
@@ -109,16 +108,11 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinition) -> None
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
             for field, capture in node.captures.items():
                 check(capture, CAPTURE_CONTRACT, f"{prefix} captures.{field}")
-        elif isinstance(node, TransformNode):
-            check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
-            check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, ProjectNode | SelectNode):
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, RepeatNode):
             for body in node.body:
                 body_prefix = f"{prefix} repeat body {body.node_id!r}"
-                check(body.contract_in, CONTRACT_IN, f"{body_prefix} contract_in")
-                check(body.contract_out, CONTRACT_OUT, f"{body_prefix} contract_out")
                 check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
         elif isinstance(node, CaptureEgressNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")

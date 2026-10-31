@@ -515,3 +515,50 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
 
     assert state.status == "succeeded", state
     assert sinks == [("finished", not may_truncate)]
+
+
+@pytest.mark.parametrize(("view", "complete"), [("rows", False), ("records", True)])
+def test_a_closed_transforms_rows_view_also_taints_a_read_reaching_a_dropped_field(
+    tmp_path: Path, sinks: list[tuple[str, bool]], view: str, complete: bool
+) -> None:
+    """Records flowing through a filter keep the invalid note; its rows view drops it."""
+
+    document = {"entries": [{"id": "a", "status": "open", "note": "seven"}]}
+    instance, root = _workspace_world(tmp_path, {"doc.json": document})
+    spec = ProcedureSpec.model_validate(
+        {
+            "procedure": "test.kept-rows",
+            "input": {},
+            "output": {"kept": "json"},
+            "slots": {"read": _SLOT},
+            "steps": [
+                {
+                    "call": "doc",
+                    "captures": {"capture": "test.orders-v1"},
+                    "slot": "read",
+                    "input": {**_READ, "relative_path": "data/doc.json"},
+                },
+                _entries("$doc.capture", next="kept"),
+                _transform(
+                    "kept",
+                    "filter",
+                    {"input": "$steps.entries", "where": "present($item.fields.status)"},
+                    "out",
+                ),
+                {
+                    "project": "out",
+                    "fields": {"kept": f"$steps.kept.{view}"},
+                    "output": {"kept": "json"},
+                },
+            ],
+            "returns": "out",
+            "budget": {"provider_calls": 1, "capture_bytes": 65536},
+        }
+    )
+    author_procedure(instance, spec)
+    author_line(instance, name="test.kept-line", procedure="test.kept-rows", parameters={})
+
+    state = _run(instance, "test.kept-line", root=root)
+
+    assert state.status == "succeeded", state.terminal
+    assert sinks == [("out", complete)]
