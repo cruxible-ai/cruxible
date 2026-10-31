@@ -3,9 +3,8 @@
 A provider build declares ``operations``. Each operation names its input and
 output Contracts (``name@N``, pinned to the exact accepted digest when the
 build is accepted), its effect, the typed refusals it may return, an optional
-enumeration declaration (recorded, never verified), whether it may truncate
-(a call bound to it is then never complete), and the package entrypoint that
-serves it.
+enumeration declaration (recorded, never verified), and the package
+entrypoint that serves it.
 
 A Procedure never names a provider. Its calling nodes name a **slot**, and the
 Procedure declares each slot's signature ``{in, out, effect}``. A Line binds
@@ -136,10 +135,6 @@ class ProviderOperation(_Strict):
     enumerates: OperationEnumeration | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    #: The operation may return less than its input asks for (a page, a capped
-    #: listing). A call bound to it is never complete, so no negative is
-    #: derived from what it left out.
-    may_truncate: bool = Field(default=False, exclude_if=lambda value: value is False)
     entrypoint: str
 
     _contracts = field_validator("in_", "out", mode="before")(_contract_ref)

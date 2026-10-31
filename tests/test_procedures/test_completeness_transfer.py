@@ -7,8 +7,7 @@ with a probe sink attached to the executor:
 - an extract's ``rows`` view drops invalid fields; a read through it that
   reaches one is incomplete, so ``extract -> rows -> filter -> count ->
   derive`` cannot launder an unreadable status into a complete negative;
-- an acquiring call over an incomplete request is incomplete, and so is any
-  call bound to an operation that declares ``may_truncate``;
+- an acquiring call over an incomplete request is incomplete;
 - an invoke carries its child's return completeness, recorded in the child's
   completion; a repeat is the AND over the attempts it used.
 """
@@ -39,7 +38,6 @@ from tests.support.operation_world import (
     actor,
     author_line,
     author_procedure,
-    operation,
     operation_build,
     world,
 )
@@ -380,109 +378,119 @@ def test_an_acquiring_call_over_an_incomplete_request_is_incomplete(
     assert sinks == [("out", complete)]
 
 
-# --- truncating operations, invoke and repeat ---------------------------------
-
-
-_COMPUTE = {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
-
-
-def _value_world(tmp_path: Path, *, may_truncate: bool) -> Any:
-    served = operation().model_copy(update={"may_truncate": may_truncate})
-    return world(tmp_path, operation_build(operations=(served,)))
+# --- invoke and repeat ------------------------------------------------------------
 
 
 def _child(instance: Any) -> None:
+    """A child whose return reads an extract that is complete only if its count holds."""
+
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
             {
                 "procedure": "test.child",
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
-                "slots": {
-                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
-                },
+                "input": {},
+                "output": {"status": {"type": "string", "optional": True}},
+                "slots": {"read": _SLOT},
                 "steps": [
-                    {"call": "result", "slot": "compute", "input": {"value": "$input.value"}}
+                    {
+                        "call": "doc",
+                        "captures": {"capture": "test.orders-v1"},
+                        "slot": "read",
+                        "input": {**_READ, "relative_path": "data/doc.json"},
+                    },
+                    _entries("$doc.capture", complete_when={"count_at": "/count"}),
+                    {
+                        "project": "result",
+                        "fields": {"status": "$steps.entries.rows.0.status"},
+                        "output": {"status": {"type": "string", "optional": True}},
+                    },
                 ],
                 "returns": "result",
-                "budget": {"provider_calls": 1},
+                "budget": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="child",
     )
 
 
-@pytest.mark.parametrize("may_truncate", [False, True])
-def test_a_call_bound_to_a_truncating_operation_is_incomplete(
-    tmp_path: Path, sinks: list[tuple[str, bool]], may_truncate: bool
-) -> None:
-    instance = _value_world(tmp_path, may_truncate=may_truncate)
-    _child(instance)
-    author_line(instance, name="test.child-line", procedure="test.child")
-
-    state = _run(instance, "test.child-line")
-
-    assert state.status == "succeeded", state
-    assert sinks == [("result", not may_truncate)]
-
-
-@pytest.mark.parametrize("may_truncate", [False, True])
+@pytest.mark.parametrize(("stated", "complete"), [(1, True), (5, False)])
 def test_an_invoke_carries_its_childs_incomplete_return_past_complete_parent_inputs(
-    tmp_path: Path, sinks: list[tuple[str, bool]], may_truncate: bool
+    tmp_path: Path, sinks: list[tuple[str, bool]], stated: int, complete: bool
 ) -> None:
     """F5: the child's completion records its return's completeness; the parent reads it."""
 
-    instance = _value_world(tmp_path, may_truncate=may_truncate)
+    document = {"count": stated, "entries": [{"id": "a", "status": "open"}]}
+    instance, root = _workspace_world(tmp_path, {"doc.json": document})
     _child(instance)
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
             {
                 "procedure": "test.parent",
-                "input": {"value": "integer"},
+                "input": {},
                 "output": {"child": "json"},
                 "steps": [
-                    {"invoke": "test.child", "id": "child", "input": {"value": "$input.value"}},
+                    {"invoke": "test.child", "id": "child", "input": {}},
+                    # The invoke's value is {succeeded, status, receipt, value}; the
+                    # authored typing reads the child's output, so the path is explicit.
                     {
-                        "project": "finished",
-                        "fields": {"child": "$steps.child.value"},
-                        "output": {"child": "json"},
+                        "explicit": {
+                            "kind": "project",
+                            "node_id": "finished",
+                            "fields": {"child": "$steps.child.value"},
+                            "contract_out": {
+                                "target": {"kind": "Contract", "name": "test.parent-output"}
+                            },
+                            "as": "finished",
+                        }
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 1},
+                "budget": {"provider_calls": 1, "capture_bytes": 65536},
             }
         ),
         name="parent",
     )
     author_line(
-        instance, name="test.parent-line", procedure="test.parent", bindings={}, label="parent"
+        instance,
+        name="test.parent-line",
+        procedure="test.parent",
+        parameters={},
+        label="parent",
     )
 
-    state = _run(instance, "test.parent-line")
+    state = _run(instance, "test.parent-line", root=root)
 
-    assert state.status == "succeeded", state
-    assert state.result == {"child": {"value": 2}}
-    # The child's own sink, then the parent's: the parent inputs are complete.
-    assert sinks == [("result", not may_truncate), ("finished", not may_truncate)]
+    assert state.status == "succeeded", state.terminal
+    assert state.result == {"child": {"status": "open"}}
+    # The child's own sink, then the parent's: the parent's inputs are complete.
+    assert sinks == [("result", complete), ("finished", complete)]
 
 
-@pytest.mark.parametrize("may_truncate", [False, True])
+def _record(status: object, *, invalid: bool) -> dict[str, Any]:
+    field = (
+        {"tag": "invalid", "problem": {"code": "not_in_enum", "lexeme": str(status)}}
+        if invalid
+        else {"tag": "present", "value": status, "at": "/status"}
+    )
+    return {"record": "/0", "key": {}, "fields": {"status": field}}
+
+
+@pytest.mark.parametrize("invalid", [False, True])
 def test_a_repeat_is_the_and_over_the_attempts_it_used(
-    tmp_path: Path, sinks: list[tuple[str, bool]], may_truncate: bool
+    tmp_path: Path, sinks: list[tuple[str, bool]], invalid: bool
 ) -> None:
-    instance = _value_world(tmp_path, may_truncate=may_truncate)
+    """A body transform that evaluates an unknown predicate leaves the repeat incomplete."""
+
+    instance = world(tmp_path, operation_build())
     author_procedure(
         instance,
         ProcedureSpec.model_validate(
             {
                 "procedure": "test.repeated",
-                "input": {"value": "integer"},
-                "output": {"value": "integer"},
-                "slots": {
-                    "compute": {"in": "test.value@1", "out": "test.value@1", "effect": "pure"}
-                },
+                "input": {},
+                "output": {"kept": "integer"},
                 "steps": [
                     {
                         "repeat": "retry",
@@ -490,31 +498,35 @@ def test_a_repeat_is_the_and_over_the_attempts_it_used(
                         "body": [
                             {
                                 "node_id": "attempt",
-                                "operation": "call",
-                                "slot": "compute",
-                                "spec": {"value": "$input.value"},
+                                "operation": "transform",
+                                "transform_kind": "filter",
+                                "spec": {
+                                    "tag": "cruxible-transform-filter-spec-v1",
+                                    "input": [_record("open", invalid=invalid)],
+                                    "where": "present($item.fields.status)",
+                                },
                                 "as": "attempt",
                             }
                         ],
-                        "until": "attempt.value == 2",
+                        "until": "attempt.count >= 0",
                     },
                     {
                         "project": "finished",
-                        "fields": {"value": "$steps.retry.final.attempt.value"},
+                        "fields": {"kept": "$steps.retry.final.attempt.count"},
                     },
                 ],
                 "returns": "finished",
-                "budget": {"provider_calls": 1},
-                "caps": {"provider_calls": 1, "repeat_attempts": 1},
+                "budget": {"provider_calls": 0},
             }
         ),
     )
-    author_line(instance, name="test.repeat-line", procedure="test.repeated")
+    author_line(instance, name="test.repeat-line", procedure="test.repeated", parameters={})
 
     state = _run(instance, "test.repeat-line")
 
     assert state.status == "succeeded", state
-    assert sinks == [("finished", not may_truncate)]
+    assert state.result == {"kept": 0 if invalid else 1}
+    assert sinks == [("finished", not invalid)]
 
 
 @pytest.mark.parametrize(("view", "complete"), [("rows", False), ("records", True)])

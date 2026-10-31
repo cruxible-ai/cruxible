@@ -12,7 +12,6 @@ from a guess:
 - any node reading an incomplete alias (``shape``, ``join``, ``dedupe``,
   ``union``, ``project``, ``select``, ``call``, ``invoke``);
 - a ``guard`` over an incomplete operand, for every node on its branch;
-- a ``call`` whose bound operation declares ``may_truncate``;
 - an ``invoke`` whose child returned an incomplete value;
 - a read of an extract's ``rows`` view that reaches an invalid field.
 

@@ -4084,8 +4084,7 @@ class ProcedureExecutor:
 
         ``extract``, the closed transforms, ``invoke`` and ``repeat`` set their
         own outputs' completeness as they run; every other node's output is the
-        AND of what it reads, and a ``call`` is also incomplete when its bound
-        operation declares ``may_truncate``.
+        AND of what it reads (a ``call``'s, acquiring or not, included).
         """
 
         tracker = state.completeness
@@ -4114,18 +4113,8 @@ class ProcedureExecutor:
             if isinstance(node, ReadNode):
                 # A read completed within its ceiling, or the node refused.
                 tracker.mark(alias, True)
-            elif isinstance(node, CallNode):
-                tracker.mark(
-                    alias, tracker.reads_complete(reads) and not self._truncates(node.slot)
-                )
             else:
                 tracker.mark(alias, tracker.reads_complete(reads))
-
-    def _truncates(self, slot: str | None) -> bool:
-        """Whether the operation bound to ``slot`` declares that it may truncate."""
-
-        binding = self.slot_bindings.get(slot or "")
-        return binding is not None and bool(getattr(binding.operation, "may_truncate", False))
 
     def _occurrence_matches_slot(
         self, occurrence: ProviderExternalOccurrencePlan, slot: str | None
@@ -5665,7 +5654,7 @@ class ProcedureExecutor:
     ) -> None:
         attempts: list[CanonicalValue] = []
         # Repeat is the AND over the attempts used: every body output of every
-        # attempt, each the AND of what it read (and a truncating call is not).
+        # attempt, each its own completeness AND that of what it read.
         attempts_complete = True
         for attempt in range(1, node.max_attempts + 1):
             local_outputs: dict[str, CanonicalValue] = {}
@@ -5681,15 +5670,11 @@ class ProcedureExecutor:
                     local_provenance=local_provenance,
                     records=records,
                 )
-                body_complete = (
-                    own_complete
-                    and all(
-                        alias not in local_incomplete
-                        if alias in local_outputs and alias != body.as_
-                        else state.completeness.reads_complete(((alias, path),))
-                        for alias, path in _referenced_reads(body.spec)
-                    )
-                    and not (body.operation == "call" and self._truncates(body.slot))
+                body_complete = own_complete and all(
+                    alias not in local_incomplete
+                    if alias in local_outputs and alias != body.as_
+                    else state.completeness.reads_complete(((alias, path),))
+                    for alias, path in _referenced_reads(body.spec)
                 )
                 if not body_complete:
                     local_incomplete.add(body.as_)
