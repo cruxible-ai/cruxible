@@ -34,6 +34,7 @@ from cruxible_client.contracts.procedures.models import (
     SettleChangeSetNode,
     TransformNode,
 )
+from cruxible_client.contracts.procedures.reads import DEFAULT_MAX_READ_ROWS
 from cruxible_client.contracts.temporal import format_iso_duration_microseconds
 
 
@@ -336,6 +337,7 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 capture_bytes=budget.max_capture_bytes,
                 result_bytes=budget.max_result_bytes,
                 items=budget.max_items,
+                read_rows=budget.max_read_rows,
             ),
             caps=dict(
                 wall_clock=format_iso_duration_microseconds(caps.max_wall_clock.microseconds),
@@ -344,6 +346,9 @@ def decompile_procedure(procedure: ProcedureArtifact) -> ProcedureSpec:
                 result_bytes=caps.max_result_bytes,
                 items=caps.max_items,
                 repeat_attempts=caps.max_repeat_attempts,
+                read_rows=(
+                    None if caps.max_read_rows == DEFAULT_MAX_READ_ROWS else caps.max_read_rows
+                ),
             ),
         )
     )

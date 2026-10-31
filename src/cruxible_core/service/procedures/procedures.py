@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
@@ -121,18 +121,16 @@ class LocalExhaustPromotionVerifier:
 
 
 class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
-    """Execute one exact QueryDefinition pin at the admitted coordinate."""
+    """Read accepted state for a Procedure: one exact Query or ClaimType, to the end."""
 
     def __init__(
         self,
         *,
         instance: PlaybillInstance,
         evaluation_time: datetime,
-        budgets: QueryBudgets | None = None,
     ) -> None:
         self.instance = instance
         self.evaluation_time = evaluation_time
-        self.budgets = budgets
 
     def read_accepted_state(
         self,
@@ -195,7 +193,17 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         cardinality: Literal["one", "all"],
         limit: int | None = None,
         coordinate: AcceptedCoordinate,
+        ceiling: int = DEFAULT_MAX_READ_ROWS,
     ) -> StateTapReadResultV1:
+        """Select one ClaimType's Claims about a Subject, to the end, under ``ceiling`` rows.
+
+        ``one()`` selects exactly one Claim; ``all(limit)`` selects every Claim,
+        at most ``limit``. The selection pages through the accepted Claims (no
+        interactive result budget clips it) and refuses when it is incomplete:
+        past the run's remaining read ceiling it refuses
+        ``read_ceiling_exceeded``, and past its declared ``limit`` it refuses
+        as an incomplete selection. The rows returned are charged to the run.
+        """
         from cruxible_client.contracts.claim_reads import (
             MAX_CLAIM_READ_BATCH,
             ClaimReadBatchRequest,
@@ -228,28 +236,42 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             raise ExecutionError(
                 "Subject is absent, retired, or outside the ClaimType's admitted kinds"
             )
-        budget = self.budgets or QueryBudgets(max_results=256, max_traversal_depth=0)
         if cardinality == "all" and (limit is None or limit <= 0):
             raise ExecutionError("A plural Claim read requires an explicit positive limit")
-        limit = (
-            2 if cardinality == "one" else min(limit or 0, budget.max_results, MAX_CLAIM_READ_BATCH)
-        )
-        request = ClaimReadBatchRequest.model_validate(
-            dict(
-                at=coordinate.model_dump(mode="json"),
-                subject_paths=(path,),
-                predicates=(selected_type.predicate,),
-                limit=limit,
-                evaluation_time=self.evaluation_time,
+        # One more than the selection may hold, so a selection past its bound
+        # (one Claim for one(), limit for all(), the read ceiling for both) is
+        # seen, never silently cut.
+        bound = 1 if cardinality == "one" else int(limit or 0)
+        wanted = min(bound, ceiling) + 1
+        selected: list[Any] = []
+        cursor: str | None = None
+        while True:
+            request = ClaimReadBatchRequest.model_validate(
+                dict(
+                    at=coordinate.model_dump(mode="json"),
+                    subject_paths=(path,),
+                    predicates=(selected_type.predicate,),
+                    limit=min(MAX_CLAIM_READ_BATCH, wanted - len(selected)),
+                    cursor=cursor,
+                    evaluation_time=self.evaluation_time,
+                )
             )
-        )
-        batch = service_read_claim_batch(self.instance, request=request)
-        if batch.truncated or (cardinality == "one" and len(batch.claims) != 1):
+            batch = service_read_claim_batch(self.instance, request=request)
+            selected.extend(batch.claims)
+            if not batch.truncated or len(selected) >= wanted or batch.cursor is None:
+                break
+            cursor = batch.cursor
+        more = len(selected) >= wanted or batch.truncated
+        if len(selected) > ceiling or (more and ceiling < bound):
+            raise ReadCeilingExceeded(
+                clipped=("max_results",), candidates=len(selected), ceiling=ceiling
+            )
+        if more or (cardinality == "one" and len(selected) != 1):
             raise ExecutionError(
                 "Claim selection must be complete and satisfy its declared cardinality"
             )
         values = []
-        for view in batch.claims:
+        for view in selected:
             claim = _claim_from_view(view)
             facts = {item["schema_id"]: item["value"] for item in view.facts}
             verdict = facts.get("cruxible.claim.current_verdict")
@@ -283,7 +305,10 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 )
             )
         return StateTapReadResultV1(
-            value=values[0] if cardinality == "one" else values, effective_budgets=budget
+            value=values[0] if cardinality == "one" else values,
+            # What the selection ran under: the read ceiling, no interactive cap.
+            effective_budgets=QueryBudgets(max_results=max(1, ceiling), max_traversal_depth=0),
+            rows=len(values),
         )
 
 

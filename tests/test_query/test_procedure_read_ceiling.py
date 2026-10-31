@@ -178,11 +178,28 @@ def test_an_include_item_cap_is_lifted_to_the_ceiling() -> None:
 
 
 class _CeilingReader:
-    """A state reader that serves ``rows`` rows per read and refuses past its ceiling."""
+    """A state reader that serves ``rows`` rows per Query read, ``claims`` Claims per
+    Claim read, and refuses past its ceiling."""
 
-    def __init__(self, rows: int) -> None:
+    def __init__(self, rows: int, claims: int = 0) -> None:
         self.rows = rows
+        self.claims = claims
         self.ceilings: list[int] = []
+
+    def read_accepted_claim(  # type: ignore[no-untyped-def]
+        self, *, claim_type, subject_kind, subject_id, cardinality, limit, coordinate, ceiling
+    ):
+        self.ceilings.append(ceiling)
+        if self.claims > ceiling:
+            raise ReadCeilingExceeded(
+                clipped=("max_results",), candidates=self.claims, ceiling=ceiling
+            )
+        values = [{"value": index, "claim_id": f"CLM-{index}"} for index in range(self.claims)]
+        return StateTapReadResultV1(
+            value=values,
+            effective_budgets=QueryBudgets(max_results=ceiling, max_traversal_depth=0),
+            rows=len(values),
+        )
 
     def read_accepted_state(self, *, query, parameters, coordinate, ceiling):  # type: ignore[no-untyped-def]
         from cruxible_core.service.procedures.procedures import state_tap_value
@@ -239,6 +256,62 @@ def _two_reads(max_read_rows: int) -> Any:
     return _owned_accepted(definition, contracts=(empty, rows), pins=(entry, out, query))
 
 
+def _query_then_claims(max_read_rows: int) -> Any:
+    """A Query read, then an all() Claim read: both draw on one read ceiling."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+
+    accepted = _two_reads(max_read_rows)
+    claim_type = ArtifactPin(
+        role="claim-type",
+        target=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
+        artifact_digest="sha256:" + "2" * 64,
+    )
+    first, _second, result = accepted.procedure.definition.nodes
+    claims = ReadNode(
+        node_id="second",
+        claim_type=named(claim_type),
+        subject_kind="project.work_item",
+        subject_id="wi-1",
+        cardinality="all",
+        limit=10_000,
+        as_="second",
+    )
+    definition = accepted.procedure.definition.model_copy(update={"nodes": (first, claims, result)})
+    from tests.test_procedures.test_procedure_execution import _owned_accepted
+
+    return _owned_accepted(
+        ProcedureDefinition.model_validate(definition.model_dump(mode="python", by_alias=True)),
+        contracts=accepted.procedure.owned_contracts,
+        pins=(*accepted.procedure.pins, claim_type),
+    )
+
+
+@pytest.mark.parametrize(("claims", "refused"), [(40, False), (41, True)])
+def test_a_claim_read_draws_on_the_same_ceiling_as_a_query_read(claims: int, refused: bool) -> None:
+    """F8: a Claim read gets what the Query read left, and refuses past it."""
+
+    from tests.test_procedures.test_procedure_execution import _coordinate
+
+    reader = _CeilingReader(rows=60, claims=claims)
+    arguments = dict(
+        accepted_coordinate=_coordinate(),
+        state_reader=reader,
+        bodies=_fixture_bodies(),
+        read_ceiling=100,
+    )
+    if refused:
+        with pytest.raises(ProcedureBoundaryRefused) as caught:
+            bind_accepted_state_materials(_query_then_claims(100), **arguments)  # type: ignore[arg-type]
+        assert caught.value.code == "read_ceiling_exceeded"
+        assert caught.value.details["node"] == "second"
+    else:
+        materials = bind_accepted_state_materials(_query_then_claims(100), **arguments)  # type: ignore[arg-type]
+        # The rows each read returned are what the run's budget is charged.
+        assert [item.rows for item in materials] == [60, 40]
+    assert reader.ceilings == [100, 40]
+
+
 def test_two_reads_share_the_runs_read_ceiling_and_the_second_refuses() -> None:
     """(e) Rows a read returns are subtracted from the ceiling the next read gets."""
 
@@ -251,6 +324,7 @@ def test_two_reads_share_the_runs_read_ceiling_and_the_second_refuses() -> None:
             accepted_coordinate=_coordinate(),
             state_reader=reader,  # type: ignore[arg-type]
             bodies=_fixture_bodies(),
+            read_ceiling=100,
         )
 
     assert reader.ceilings == [100, 40]
@@ -272,6 +346,7 @@ def test_reads_within_the_ceiling_all_bind() -> None:
         accepted_coordinate=_coordinate(),
         state_reader=reader,  # type: ignore[arg-type]
         bodies=_fixture_bodies(),
+        read_ceiling=100,
     )
 
     assert reader.ceilings == [100, 50]

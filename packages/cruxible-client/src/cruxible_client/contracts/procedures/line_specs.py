@@ -450,6 +450,16 @@ def evaluate_line_spec_law(
                 f"LineSpec budget {key!r} is missing, invalid, or exceeds the Procedure cap.",
                 path=path,
             )
+    # The read budget is optional: a Line that states none reads under the
+    # Procedure's hard cap; one that states it can only lower it.
+    if isinstance(line.budgets, dict) and "max_read_rows" in line.budgets:
+        rows = _budget_int(line.budgets, "max_read_rows")
+        if rows is None or rows < 1 or rows > caps.max_read_rows:
+            return _refusal(
+                "cruxible.line.budget_exceeds_procedure_cap",
+                "LineSpec budget 'max_read_rows' is invalid or exceeds the Procedure cap.",
+                path=path,
+            )
     if predecessor is None:
         if line.lifecycle.predecessor_digest is not None or line.occurrence_epoch != 1:
             return _refusal(

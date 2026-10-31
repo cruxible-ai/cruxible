@@ -276,6 +276,8 @@ class ProcedureLimits(_Model):
     result_bytes: Annotated[int, Field(strict=True, ge=1)] | None = None
     items: Annotated[int, Field(strict=True, ge=1)] | None = None
     repeat_attempts: Annotated[int, Field(strict=True, ge=1)] = 1
+    #: The rows the run's reads may return in all (default: the hard cap's).
+    read_rows: Annotated[int, Field(strict=True, ge=1)] | None = None
 
 
 class ReturnFrom(_Model):
@@ -989,6 +991,10 @@ def lower_procedure_spec(spec: ProcedureSpec, *, resolve: Resolver | None = None
         definition["budget"]["max_items"] = limits.items
     if limits.result_bytes is not None:
         definition["budget"]["max_result_bytes"] = limits.result_bytes
+    if caps.read_rows is not None:
+        definition["hard_caps"]["max_read_rows"] = caps.read_rows
+    if spec.caps is not None and limits.read_rows is not None:
+        definition["budget"]["max_read_rows"] = limits.read_rows
     if caps.result_bytes is not None:
         definition["hard_caps"]["max_result_bytes"] = caps.result_bytes
     if spec.slots:

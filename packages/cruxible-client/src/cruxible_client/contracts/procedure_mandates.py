@@ -157,6 +157,7 @@ def _ceiling_widenings(
         ("max_result_bytes", ceiling.max_result_bytes, hard_caps.max_result_bytes),
         ("max_items", ceiling.max_items, hard_caps.max_items),
         ("max_repeat_attempts", ceiling.max_repeat_attempts, hard_caps.max_repeat_attempts),
+        ("max_read_rows", ceiling.max_read_rows, hard_caps.max_read_rows),
     )
     widened: list[str] = []
     for name, value, cap in pairs:

@@ -617,6 +617,9 @@ class ProcedureRunBudgetObserved(_StrictResultModel):
     provider_calls: int = Field(ge=0)
     capture_bytes: int = Field(ge=0)
     wall_clock_microseconds: int = Field(ge=0)
+    #: Rows this run's reads returned (its children's included), against its
+    #: read budget; omitted when the run read nothing.
+    read_rows: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
 
 class ProcedureRunNodePinSet(_StrictResultModel):

@@ -68,6 +68,9 @@ def constrained_budget(
             child.max_result_bytes, remaining.max_result_bytes, caps.max_result_bytes
         ),
         max_items=_minimum(child.max_items, remaining.max_items, caps.max_items),
+        # Reads are cumulative across the parent and its children: the child
+        # gets what the parent has left of its read rows.
+        max_read_rows=_minimum(child.max_read_rows, remaining.max_read_rows, caps.max_read_rows),
     )
 
 

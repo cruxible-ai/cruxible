@@ -102,6 +102,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_references,
     iter_role_references,
 )
+from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
     ProcedureAcquisitionPlan,
@@ -375,6 +376,16 @@ class AcceptedStateRunMaterial(_StrictExecutionModel):
     @classmethod
     def _value(cls, value: object) -> object:
         return normalize_canonical(value)
+
+    @property
+    def rows(self) -> int:
+        """The rows this read returned, as the run's read budget counts them."""
+
+        if isinstance(self.input, AcceptedClaimRunInputV1):
+            return len(self.value) if isinstance(self.value, list) else 1
+        result = self.value.get("result") if isinstance(self.value, dict) else None
+        rows = result.get("rows") if isinstance(result, dict) else None
+        return len(rows) if isinstance(rows, list) else 0
 
     @model_validator(mode="after")
     def _digest(self) -> "AcceptedStateRunMaterial":
@@ -1100,6 +1111,7 @@ class StateTapReaderProtocol(Protocol):
         cardinality: Literal["one", "all"],
         limit: int | None = None,
         coordinate: AcceptedCoordinate,
+        ceiling: int = ...,
     ) -> StateTapReadResultV1: ...
 
 
@@ -1751,18 +1763,23 @@ def bind_accepted_state_materials(
     accepted_coordinate: AcceptedCoordinate,
     state_reader: StateTapReaderProtocol,
     bodies: ContentAddressedBodyStore,
+    read_ceiling: int,
     invocation_input: object = None,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
-    """Read and retain every accepted-state tap this run will observe.
+    """Read and retain every accepted-state read this run will observe.
 
     Every run lane reads the accepted-state plane the SAME way, so this is the
-    one place a state tap becomes admitted material.
+    one place a read becomes admitted material. ``read_ceiling`` is the rows
+    the run's reads may return in all, as its admission budget states it (its
+    Line's and Mandates', or what an invoking parent has left): Query reads
+    and Claim reads alike draw it down, and the read that would pass it
+    refuses ``read_ceiling_exceeded``.
     """
 
     materials: list[AcceptedStateRunMaterial] = []
     values: dict[str, CanonicalValue] = {}
     # One ceiling across the run's reads: each read gets what is left of it.
-    remaining = accepted.procedure.definition.hard_caps.max_read_rows
+    remaining = read_ceiling
     for node in accepted.procedure.definition.nodes:
         if isinstance(node, ProjectNode) and node.literal is not None:
             values[node.as_] = normalize_canonical(node.literal)
@@ -1773,6 +1790,8 @@ def bind_accepted_state_materials(
         query = resolved_pin(accepted, binding)
         parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
+            if remaining < 1:
+                raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
             if node.reads_claims:
                 assert isinstance(parameters, dict)
                 assert node.subject_kind is not None
@@ -1786,17 +1805,16 @@ def bind_accepted_state_materials(
                     cardinality=node.cardinality,
                     limit=node.limit,
                     coordinate=accepted_coordinate,
+                    ceiling=remaining,
                 )
             else:
-                if remaining < 1:
-                    raise ReadCeilingExceeded(clipped=("max_results",), candidates=None, ceiling=0)
                 read = state_reader.read_accepted_state(
                     query=query,
                     parameters=parameters,
                     coordinate=accepted_coordinate,
                     ceiling=remaining,
                 )
-                remaining -= read.rows
+            remaining -= read.rows
         except ReadCeilingExceeded as exc:
             raise ProcedureBoundaryRefused(
                 "read_ceiling_exceeded",
@@ -1874,6 +1892,10 @@ def prepare_direct_procedure_run(
         accepted_coordinate=accepted_coordinate,
         state_reader=state_reader,
         bodies=bodies,
+        read_ceiling=effective_read_rows(
+            procedure.definition.budget.max_read_rows,
+            procedure.definition.hard_caps.max_read_rows,
+        ),
         invocation_input=invocation_input,
     )
     node_pin_sets = _node_pin_sets(accepted)
@@ -2120,6 +2142,8 @@ class _RunState:
     #: Whether the value this run returns is complete, data and control lineage
     #: both; a parent's invoke reads it from the child's completion record.
     return_complete: bool = True
+    #: Rows this run's reads, and its children's, returned against its budget.
+    read_rows: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2414,6 +2438,8 @@ class ProcedureExecutor:
                 "input_material_mismatch",
                 "state_tap_refused",
                 "provider_replay_receipt_required",
+                # An invoked child's read past what its parent left refuses.
+                "read_ceiling_exceeded",
             }:
                 status = "refused"
                 refusal = ProcedureRunRefusalV1(
@@ -2568,6 +2594,7 @@ class ProcedureExecutor:
                     provider_calls=state.provider_calls,
                     capture_bytes=state.capture_bytes,
                     wall_clock_microseconds=state.wall_clock_microseconds,
+                    read_rows=state.read_rows,
                 ),
             ).model_dump(mode="json"),
         }
@@ -2699,6 +2726,7 @@ class ProcedureExecutor:
             parameters={},
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
             acquisition_plan=prepared.acquisition_plan,
+            read_rows=sum(item.rows for item in prepared.accepted_state_materials),
         )
         for accepted_state in prepared.accepted_state_materials:
             access = BodyAccessContext(
@@ -4353,6 +4381,14 @@ class ProcedureExecutor:
                 "max_capture_bytes": max(
                     0, admission.budget.max_capture_bytes - state.capture_bytes
                 ),
+                # Reads are cumulative: the child reads what this run has left.
+                "max_read_rows": max(
+                    0,
+                    effective_read_rows(
+                        admission.budget.max_read_rows, admission.hard_caps.max_read_rows
+                    )
+                    - state.read_rows,
+                ),
             }
         )
         context = ParentInvocationContext(
@@ -4438,6 +4474,7 @@ class ProcedureExecutor:
         budget = ProcedureRunBudget.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
+        state.read_rows += budget.read_rows
         state.observe_items(
             budget.max_items.high_water, "child:" + node.node_id, budget.max_items.field_path or ""
         )

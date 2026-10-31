@@ -97,6 +97,15 @@ class ProcedureBudget(_StrictProcedureModel):
         le=2**31 - 1,
         exclude_if=lambda value: value is None,
     )
+    #: The rows this run's reads may return in all (absent: the hard cap's).
+    #: A Line and its Mandates can only lower it; an invoked child's is what
+    #: its parent has left, which may be none.
+    max_read_rows: int | None = Field(
+        default=None,
+        ge=0,
+        le=2**31 - 1,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def _nonzero_wall_clock(self) -> "ProcedureBudget":
@@ -270,6 +279,11 @@ class ProcedureDefinition(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
         if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
             raise ValueError("Procedure budget exceeds its item hard cap")
+        if (
+            self.budget.max_read_rows is not None
+            and self.budget.max_read_rows > self.hard_caps.max_read_rows
+        ):
+            raise ValueError("Procedure budget exceeds its read-row hard cap")
         if any(
             isinstance(node, RepeatNode) and node.max_attempts > self.hard_caps.max_repeat_attempts
             for node in self.nodes

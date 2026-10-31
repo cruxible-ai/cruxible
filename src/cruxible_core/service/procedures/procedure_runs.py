@@ -87,6 +87,7 @@ from cruxible_client.contracts.procedures.models import (
     authority_for_rung,
     required_authority,
 )
+from cruxible_client.contracts.procedures.reads import effective_read_rows
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
     LineOpenProposalOutcome,
@@ -1434,18 +1435,35 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpec,
     accepted_procedure: AcceptedProcedure,
+    mandates: Sequence[tuple[str, ProcedureMandateAny]] = (),
 ) -> ProcedureBudget:
+    """The Line occurrence's budget: the Line's, its read rows lowered by its Mandates.
+
+    A Line that states no ``max_read_rows`` reads under the Procedure's hard
+    cap; every live Mandate granting the Line caps it by its resource ceiling.
+    """
+
+    definition = accepted_procedure.procedure.definition
     budgets = accepted_line.line.budgets
+    stated = budgets.get("max_read_rows") if isinstance(budgets, dict) else None
+    read_rows = min(
+        (
+            effective_read_rows(
+                stated if isinstance(stated, int) else definition.budget.max_read_rows,
+                definition.hard_caps.max_read_rows,
+            ),
+            *(mandate.resource_ceiling.max_read_rows for _digest, mandate in mandates),
+        )
+    )
     if not isinstance(budgets, dict):
-        return accepted_procedure.procedure.definition.budget
+        return definition.budget.model_copy(update={"max_read_rows": read_rows})
     return ProcedureBudget(
         wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
-        max_result_bytes=budgets.get(
-            "max_result_bytes", accepted_procedure.procedure.definition.budget.max_result_bytes
-        ),
+        max_result_bytes=budgets.get("max_result_bytes", definition.budget.max_result_bytes),
+        max_read_rows=read_rows,
     )
 
 
@@ -1456,6 +1474,7 @@ def _line_state_materials(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     invocation_input: object,
+    read_ceiling: int,
 ) -> tuple[AcceptedStateRunMaterial, ...]:
     return bind_accepted_state_materials(
         accepted_procedure,
@@ -1464,6 +1483,7 @@ def _line_state_materials(
             instance=instance, evaluation_time=evaluation_time
         ),
         bodies=instance.body_store(),
+        read_ceiling=read_ceiling,
         invocation_input=invocation_input,
     )
 
@@ -3031,6 +3051,7 @@ def _prepare_direct_external_run(
         accepted_coordinate=accepted_coordinate,
         state_reader=state_reader,
         bodies=instance.body_store(),
+        read_ceiling=effective_read_rows(budget.max_read_rows, caps.max_read_rows),
         invocation_input=invocation_input,
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
@@ -3216,44 +3237,59 @@ def service_run_playbill_procedure(
     prepared: PreparedProcedureRun
     acquisition_rules: Mapping[str, AcquisitionRule] | None = None
     capture_contracts: Mapping[str, CaptureContract] = {}
-    if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
-        planned = _prepare_direct_external_run(
-            instance,
+    try:
+        if _source_input_names(accepted) or _provider_nodes(accepted.procedure.definition):
+            planned = _prepare_direct_external_run(
+                instance,
+                accepted,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                journal_stream=stream,
+                lane=lane,
+                provider_runtime_operator=provider_runtime_operator,
+                acquisition=request.acquisition,
+                ephemeral_spec_digest=ephemeral_spec_digest,
+            )
+            if isinstance(planned, ProcedureRunStateV2):
+                return planned
+            prepared, acquisition_rules, capture_contracts = planned
+        else:
+            try:
+                direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
+            except ProcedureRuntimePolicyAbsent:
+                direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
+            prepared = prepare_direct_procedure_run(
+                accepted,
+                runtime_policy=direct_runtime_policy,
+                instance_id=instance.descriptor.instance_id,
+                accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+                invocation_input=request.input,
+                actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
+                state_reader=state_reader,
+                bodies=instance.body_store(),
+                journal_stream=stream,
+                journal_partition_id=None,
+                head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+                lane=lane,
+                admitted_at=evaluation_time,
+            )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+            raise
+        # A read the admission refuses (past the run's read budget, or a
+        # selection the reader declines) is an admission refusal, not a crash.
+        return _direct_refusal_state(
             accepted,
             coordinate=coordinate,
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
-            invocation_input=request.input,
-            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
-            state_reader=state_reader,
-            journal_stream=stream,
-            lane=lane,
-            provider_runtime_operator=provider_runtime_operator,
-            acquisition=request.acquisition,
-            ephemeral_spec_digest=ephemeral_spec_digest,
-        )
-        if isinstance(planned, ProcedureRunStateV2):
-            return planned
-        prepared, acquisition_rules, capture_contracts = planned
-    else:
-        try:
-            direct_runtime_policy = _accepted_runtime_policy(instance, coordinate)
-        except ProcedureRuntimePolicyAbsent:
-            direct_runtime_policy = None  # Retained pre-runtime-policy coordinates.
-        prepared = prepare_direct_procedure_run(
-            accepted,
-            runtime_policy=direct_runtime_policy,
-            instance_id=instance.descriptor.instance_id,
-            accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
-            invocation_input=request.input,
-            actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
-            state_reader=state_reader,
-            bodies=instance.body_store(),
-            journal_stream=stream,
-            journal_partition_id=None,
-            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
-            lane=lane,
-            admitted_at=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
         )
     # The journal is created only once an admission exists: a Source run that
     # cannot be admitted leaves no run history behind it.
@@ -3985,7 +4021,7 @@ def _run_playbill_line(
     if investigation is not None:
         require_current_investigation(instance, investigation)
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
-    budget = _line_budget(accepted_line, accepted)
+    budget = _line_budget(accepted_line, accepted, mandates)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
@@ -4162,13 +4198,30 @@ def _run_playbill_line(
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
     plan_digest = procedure_acquisition_plan_digest(plan)
-    materials = _line_state_materials(
-        instance,
-        accepted,
-        coordinate=coordinate,
-        evaluation_time=evaluation_time,
-        invocation_input=accepted_line.line.parameters,
-    )
+    try:
+        materials = _line_state_materials(
+            instance,
+            accepted,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            invocation_input=accepted_line.line.parameters,
+            read_ceiling=effective_read_rows(
+                budget.max_read_rows, accepted.procedure.definition.hard_caps.max_read_rows
+            ),
+        )
+    except ProcedureBoundaryRefused as exc:
+        if exc.code not in {"read_ceiling_exceeded", "state_tap_refused"}:
+            raise
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=cast(ProcedureAdmissionRefusalCode, exc.code),
+            message=str(exc),
+            details=exc.details,
+        )
     full_pins = accepted.procedure.pins
     node_pin_sets = procedure_node_pin_sets(accepted)
     mandate_coordinate_digest = typed_digest(
