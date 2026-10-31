@@ -2400,13 +2400,12 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
 
 
 def _inverse_claim_type() -> ClaimType:
-    """The world's ClaimType as a many-valued v9 whose inverse is keyed by the value."""
+    """The world's ClaimType as a many-valued one whose inverse is keyed by the value."""
 
     base = _canonical_claim_type(())
     return ClaimType.model_validate(
         {
-            **base.model_dump(mode="python", exclude={"artifact_format", "inverse"}),
-            "artifact_format": "cruxible-claim-type-v9",
+            **base.model_dump(mode="python", exclude={"inverse"}),
             "cardinality": "many",
             "resolution_policy": ClaimResolutionPolicy(
                 cardinality="many", eligible_verdicts=("supported",), selector="all"
