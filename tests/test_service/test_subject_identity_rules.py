@@ -199,6 +199,27 @@ def test_a_purl_key_excludes_qualifiers_from_package_identity(
     assert _subjects_of(instance, RELEASE) == [created]
 
 
+def test_case_sensitive_npm_names_are_distinct_subjects(instance: PlaybillInstance) -> None:
+    """npm scope and name are case-sensitive (purl npm definition): no merge by case."""
+
+    _create(instance, RELEASE, "pkg:npm/JSONStream@1.3.5")
+    assert _created_by(instance, RELEASE, "pkg:npm/jsonstream@1.3.5") != []
+    _create(instance, RELEASE, "pkg:npm/jsonstream@1.3.5")
+    assert len(_subjects_of(instance, RELEASE)) == 2
+    values = {
+        next(
+            iter(
+                key_claims(instance, RELEASE, path.rsplit("/", 1)[1].removesuffix(".json")).values()
+            )
+        )
+        for path in _subjects_of(instance, RELEASE)
+    }
+    assert values == {"pkg:npm/JSONStream@1.3.5", "pkg:npm/jsonstream@1.3.5"}
+    # A case-insensitive type still merges: github owner and repository fold.
+    _create(instance, RELEASE, "pkg:github/Cruxible-AI/Core@v1")
+    assert _created_by(instance, RELEASE, "pkg:github/cruxible-ai/core@v1") == []
+
+
 def test_a_key_its_normalizer_cannot_read_is_refused_naming_why(
     instance: PlaybillInstance,
 ) -> None:
@@ -415,6 +436,46 @@ def test_a_run_reads_the_identity_rules_at_its_admitted_coordinate(
     rules = accepted_key_rules(instance, coordinate)
     assert rules.canonical(PACKAGE, "name", "Zope.Interface") == "zope-interface"
     assert rules.canonical(RELEASE, None, "pkg:npm/@Scope/Left-Pad@1?x=1") == (
-        "pkg:npm/%40scope/left-pad@1"
+        "pkg:npm/%40Scope/Left-Pad@1"
     )
+    assert rules.canonical(RELEASE, None, "pkg:github/Org/Repo@v1") == "pkg:github/org/repo@v1"
     assert rules.rule_token(PACKAGE) == tree_key_rules(tree(instance)).rule_token(PACKAGE)
+
+
+def test_an_encoded_dot_subpath_reads_as_one_key_on_every_route(
+    instance: PlaybillInstance,
+) -> None:
+    """Creation, the candidate boundary, key reads and extraction agree on one canonical key."""
+
+    from cruxible_client.contracts.shapes import parse_type
+    from cruxible_core.indexes.subject_identity import tree_key_reader
+
+    _create(instance, RELEASE, "pkg:generic/tool@1#%2E/lib/%2E%2E")
+    (created,) = _subjects_of(instance, RELEASE)
+    subject_id = created.removeprefix(f"subjects/{RELEASE}/").removesuffix(".json")
+    assert key_claims(instance, RELEASE, subject_id) == {PURL: "pkg:generic/tool@1#lib"}
+    for spelled in (
+        "pkg:generic/tool@1#lib",
+        "pkg:generic/tool@1#./lib",
+        "PKG:generic/tool@1#%6Cib",
+    ):
+        assert _created_by(instance, RELEASE, spelled) == []
+        assert tree_key_reader(tree(instance))(RELEASE, spelled) == (
+            (PURL, "pkg:generic/tool@1#lib"),
+        )
+    rules = tree_key_rules(tree(instance))
+    from cruxible_client.contracts.shapes import FieldPresent, cast_value
+
+    cast = cast_value(
+        FieldPresent(value="pkg:generic/tool@1#%2E/lib", at="/k"),
+        parse_type(f"key<{RELEASE}>"),
+        keys=rules,
+    )
+    assert isinstance(cast, FieldPresent) and cast.value == "pkg:generic/tool@1#lib"
+    refused = _created_by_refusal(instance, RELEASE, "pkg:generic/tool@1#a%2Fb")
+    assert refused == "cruxible.subject.key_invalid"
+
+
+def _created_by_refusal(instance: PlaybillInstance, kind: str, key: str) -> str | None:
+    outcome = write(instance, {"op": "create", "label": "r", "subject_kind": kind, "key": key})
+    return None if outcome.refusal is None else outcome.refusal.code

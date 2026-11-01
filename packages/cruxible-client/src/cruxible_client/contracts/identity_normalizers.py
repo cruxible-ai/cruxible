@@ -20,7 +20,8 @@ a SubjectKind successor that re-keys explicitly (never silently).
 ``purl-type`` (v1)
     A package URL (``pkg:type/namespace/name@version?qualifiers#subpath``),
     parsed by the purl-spec rules and re-spelled canonically, with per-type
-    rules (``PURL_TYPE_RULES_V1``). ``identity: package`` excludes the
+    rules (``PURL_TYPE_RULES_V1``: a component folds to lowercase exactly when
+    its purl type definition declares it case-insensitive). ``identity: package`` excludes the
     qualifiers from the key (``pkg:deb/debian/curl@8.0?arch=amd64`` and
     ``...?arch=arm64`` name one package release); ``identity: package_variant``
     keeps them, sorted, so a variant is (package, qualifiers).
@@ -144,33 +145,59 @@ def pep503_v1(text: str) -> str:
 
 @dataclass(frozen=True)
 class PurlTypeRule:
-    """How purl-type folds one type's components: lowercase, or a PEP 503 name."""
+    """Which of one type's components purl-type folds to lowercase, and pypi's name form."""
 
     lower_namespace: bool = False
     lower_name: bool = False
+    lower_version: bool = False
+    lower_subpath: bool = False
     pep503_name: bool = False
 
 
-_LOWER_BOTH: Final = PurlTypeRule(lower_namespace=True, lower_name=True)
-#: purl-type v1's per-type rules, from the purl-spec type definitions. A type
-#: not listed keeps the case of every component (its names are case-sensitive,
-#: or the spec states no rule): two spellings stay two Subjects, never merged.
+_NS_NAME: Final = PurlTypeRule(lower_namespace=True, lower_name=True)
+#: purl-type v1's per-type rules. Source: the purl-spec type definitions
+#: (``types/<type>-definition.json`` at package-url/purl-spec
+#: d66745e85940191e5c9690e9f82bc2d75120003f). A component folds to lowercase
+#: exactly when its definition states ``"case_sensitive": false`` (the schema:
+#: "If false, the valid form is lowercase"); ``case_sensitive`` defaults to
+#: true, so every component and type not listed keeps its case (npm's scope
+#: and name are case-sensitive: grandfathered mixed-case packages exist). The
+#: definitions' free-text ``normalization_rules`` are not applied, except
+#: pypi's name, which takes its PEP 503 form (ruling R12; it implies the
+#: definition's "replace underscore with dash"). Changing a row is a new
+#: purl-type version.
 PURL_TYPE_RULES_V1: Final[dict[str, PurlTypeRule]] = {
-    "alpm": _LOWER_BOTH,
-    "apk": _LOWER_BOTH,
-    "bitbucket": _LOWER_BOTH,
-    "composer": _LOWER_BOTH,
-    "deb": _LOWER_BOTH,
-    "github": _LOWER_BOTH,
-    "hex": _LOWER_BOTH,
-    "npm": _LOWER_BOTH,
-    "pypi": PurlTypeRule(pep503_name=True),
+    "alpm": _NS_NAME,
+    "apk": _NS_NAME,
+    "bitbucket": _NS_NAME,
+    "bitnami": PurlTypeRule(lower_name=True),
+    "brew": _NS_NAME,
+    "chrome-extension": PurlTypeRule(lower_name=True),
+    "composer": _NS_NAME,
+    "deb": _NS_NAME,
+    "github": _NS_NAME,
+    "hex": _NS_NAME,
+    "huggingface": PurlTypeRule(lower_version=True),
+    "luarocks": _NS_NAME,
+    "oci": PurlTypeRule(lower_name=True, lower_version=True),
+    "otp": PurlTypeRule(lower_name=True, lower_subpath=True),
+    "pub": PurlTypeRule(lower_name=True),
+    "pypi": PurlTypeRule(pep503_name=True, lower_version=True),
+    "qpkg": PurlTypeRule(lower_namespace=True),
     "rpm": PurlTypeRule(lower_namespace=True),
+    "vscode-extension": PurlTypeRule(lower_namespace=True, lower_name=True, lower_version=True),
+    "yocto": PurlTypeRule(lower_namespace=True),
 }
-_PURL_TYPE: Final = re.compile(r"^[a-z.+-][a-z0-9.+-]*$")
-_QUALIFIER_KEY: Final = re.compile(r"^[a-z.\-_][a-z0-9.\-_]*$")
-#: Characters never percent-encoded in a canonical purl component (RFC 3986
-#: unreserved, and ``:``, which the purl spec never encodes).
+#: Clause 5.6.2: a type is ASCII letters, digits, ``.`` and ``-``, letter first.
+_PURL_TYPE: Final = re.compile(r"^[a-z][a-z0-9.-]*$")
+#: Clause 5.6.6: a qualifier key is lowercase ASCII letters, digits, ``.``,
+#: ``-`` and ``_``, letter first, never percent-encoded.
+_QUALIFIER_KEY: Final = re.compile(r"^[a-z][a-z0-9._-]*$")
+#: Every ``%`` begins one percent-encoded triplet (RFC 3986 section 2.1).
+_BAD_PERCENT: Final = re.compile(r"%(?![0-9A-Fa-f]{2})")
+#: Characters never percent-encoded in a canonical purl component: the purl
+#: Alphanumeric and Punctuation characters (``.-_~``), and ``:`` (left
+#: unencoded, as the reference implementations write it).
 _PURL_SAFE: Final = "-._~:"
 
 
@@ -216,6 +243,10 @@ def _encode(text: str) -> str:
 
 
 def _decode(text: str, *, what: str) -> str:
+    """Percent-decode one component (UTF-8, then NFC); a malformed triplet refuses."""
+
+    if _BAD_PERCENT.search(text):
+        raise KeyNormalizationRefused(f"the purl {what} has a malformed percent-encoding")
     try:
         decoded = unquote(text, errors="strict")
     except UnicodeDecodeError as exc:
@@ -223,16 +254,40 @@ def _decode(text: str, *, what: str) -> str:
     return unicodedata.normalize("NFC", decoded)
 
 
+def _segments(text: str, *, what: str, drop_dots: bool) -> tuple[str, ...]:
+    """A namespace or subpath: split on ``/``, each segment decoded, then filtered.
+
+    Decoding comes first (how-to-parse), so an encoded ``.`` or ``..`` subpath
+    segment drops like a literal one, and a decoded ``/`` (which could not be
+    re-spelled as one segment) refuses.
+    """
+
+    found: list[str] = []
+    for raw in text.split("/"):
+        segment = _decode(raw, what=what)
+        if not segment or (drop_dots and segment in (".", "..")):
+            continue
+        if "/" in segment:
+            raise KeyNormalizationRefused(f"a purl {what} segment holds an encoded '/'")
+        found.append(segment)
+    return tuple(found)
+
+
 def parse_purl_v1(text: str) -> PurlIdentity:
     """Read one package URL by the purl-spec parse order, under purl-type v1's rules.
 
-    ``#`` splits the subpath (empty, ``.`` and ``..`` segments drop), ``?`` the
-    qualifiers (keys lowercased, empty values dropped, a repeated key refused),
-    ``:`` the ``pkg`` scheme, then the type (lowercased), the version (after the
-    last ``@`` of the final segment) and the name (the final segment); the
-    segments before it are the namespace. Every component is percent-decoded
-    (UTF-8, then NFC) and re-encoded canonically: every octet outside the RFC
-    3986 unreserved set and ``:`` as uppercase ``%XX``.
+    Sources: purl-spec ``docs/specification/how-to-parse.md`` and Clause 5
+    (``standard/Clause-5-Package-URL-Specification.md``). ``#`` splits the
+    subpath (each segment decoded, then empty, ``.`` and ``..`` segments
+    dropped; a decoded ``/`` refuses), ``?`` the qualifiers (keys lowercased and
+    letter-initial, empty values dropped, a repeated key refused), ``:`` the
+    ``pkg`` scheme, then the type (lowercased, letter-initial), the version
+    (after the last ``@`` of the final segment), the name (the final segment)
+    and the namespace (the segments before it; a decoded ``/`` refuses). Every
+    component is percent-decoded (a malformed ``%`` triplet refuses; UTF-8,
+    then NFC) and re-encoded canonically: every octet outside ``A-Za-z0-9``,
+    ``.-_~`` and ``:`` as uppercase ``%XX``. The per-type rules then fold the
+    components their definition declares case-insensitive.
     """
 
     if not text or any(character.isspace() or ord(character) < 0x20 for character in text):
@@ -240,11 +295,7 @@ def parse_purl_v1(text: str) -> PurlIdentity:
     remainder, hash_mark, subpath_text = text.partition("#")
     subpath: tuple[str, ...] = ()
     if hash_mark:
-        subpath = tuple(
-            _decode(segment, what="subpath")
-            for segment in subpath_text.strip("/").split("/")
-            if segment not in ("", ".", "..")
-        )
+        subpath = _segments(subpath_text, what="subpath", drop_dots=True)
     remainder, question, qualifier_text = remainder.partition("?")
     qualifiers: dict[str, str] = {}
     if question:
@@ -254,7 +305,9 @@ def parse_purl_v1(text: str) -> PurlIdentity:
             key, equals, value = pair.partition("=")
             key = key.lower()
             if not equals or not _QUALIFIER_KEY.fullmatch(key):
-                raise KeyNormalizationRefused(f"purl qualifier {pair!r} is not key=value")
+                raise KeyNormalizationRefused(
+                    f"purl qualifier {pair!r} is not key=value with a letter-initial key"
+                )
             decoded = _decode(value, what=f"qualifier {key}")
             if not decoded:
                 continue
@@ -270,7 +323,10 @@ def parse_purl_v1(text: str) -> PurlIdentity:
     type_text, slash, remainder = remainder.partition("/")
     purl_type = type_text.lower()
     if not slash or not _PURL_TYPE.fullmatch(purl_type):
-        raise KeyNormalizationRefused("a purl names its type: pkg:<type>/<name>")
+        raise KeyNormalizationRefused(
+            "a purl names its type (ASCII letters, digits, '.' and '-', letter first): "
+            "pkg:<type>/<name>"
+        )
     head, _, last = remainder.rpartition("/")
     version: str | None = None
     if "@" in last:
@@ -279,14 +335,18 @@ def parse_purl_v1(text: str) -> PurlIdentity:
     name = _decode(last, what="name")
     if not name:
         raise KeyNormalizationRefused("a purl names its package")
-    namespace = tuple(_decode(segment, what="namespace") for segment in head.split("/") if segment)
+    namespace = _segments(head, what="namespace", drop_dots=False)
     rule = PURL_TYPE_RULES_V1.get(purl_type, PurlTypeRule())
     if rule.lower_namespace:
-        namespace = tuple(part.lower() for part in namespace)
+        namespace = tuple(lowercase_v1(part) for part in namespace)
     if rule.lower_name:
-        name = name.lower()
+        name = lowercase_v1(name)
     if rule.pep503_name:
         name = pep503_v1(name)
+    if rule.lower_version and version is not None:
+        version = lowercase_v1(version)
+    if rule.lower_subpath:
+        subpath = tuple(lowercase_v1(part) for part in subpath)
     return PurlIdentity(
         type=purl_type,
         namespace=namespace,

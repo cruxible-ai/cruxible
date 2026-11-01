@@ -1849,7 +1849,7 @@ artifact and shown on `get SubjectKind:<kind>`):
 | `{"normalizer": "none", "version": 1}` | the value as it is |
 | `{"normalizer": "lowercase", "version": 1}` | NFC, Unicode lowercase, NFC |
 | `{"normalizer": "pep503", "version": 1}` | a PEP 508 package name in PEP 503 form (`Django_REST` is `django-rest`); anything else refuses |
-| `{"normalizer": "purl-type", "version": 1, "identity": "package" \| "package_variant"}` | a package URL in canonical form under the purl-spec per-type rules (pypi names in PEP 503 form; npm, github, deb, apk, alpm, composer, bitbucket and hex names lowercased; rpm vendors lowercased; other types keep their case); `package` drops the qualifiers (`?arch=amd64` and `?arch=arm64` name one release), `package_variant` keeps them sorted |
+| `{"normalizer": "purl-type", "version": 1, "identity": "package" \| "package_variant"}` | a package URL in canonical form, parsed by the purl-spec rules (a malformed percent triplet, qualifier key, type or encoded `/` refuses); a component is lowercased exactly when its purl type definition declares it case-insensitive (for example github, deb and composer namespace and name, the rpm vendor, the pypi version), pypi names take PEP 503 form, and every other component keeps its case (npm scopes and names are case-sensitive); `package` drops the qualifiers (`?arch=amd64` and `?arch=arm64` name one release), `package_variant` keeps them sorted |
 
 A key part's canonical value is its ClaimType's `canonical_form`, then its
 normalizer; its key Claim states that value, and two raw keys with one canonical
