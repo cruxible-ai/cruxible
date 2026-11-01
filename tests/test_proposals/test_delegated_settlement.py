@@ -11,7 +11,6 @@ from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMEN
 from cruxible_client.contracts.procedure_mandates import (
     MandateClaimScope,
     MandateCondition,
-    ProcedureMandate,
     procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
@@ -20,7 +19,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpec,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
@@ -47,6 +45,8 @@ from cruxible_core.authoring import lowering
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from tests.core_support._support import initialize_local
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import procedure_members
 from tests.test_authoring.test_authoring_change_set_intents import (
     SUBJECT_KIND,
@@ -126,7 +126,7 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
     # Procedure has no provider slots (a closed-form Claims-terminal graph),
     # so its Line binds none either.
     caps = procedure.definition.hard_caps
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name="triage-line"),
         occurrence_epoch=1,
         procedure=ArtifactPin(
@@ -136,15 +136,15 @@ def _world(tmp_path, *, only_subject: str | None = None, change_kinds=("create",
         ),
         parameters={},
         max_authority="settle",
-        budgets={
-            "max_wall_clock_microseconds": caps.max_wall_clock.microseconds,
-            "max_provider_calls": caps.max_provider_calls,
-            "max_capture_bytes": caps.max_capture_bytes,
-            "max_items": caps.max_items,
-        },
+        budgets=line_budgets(
+            max_wall_clock_microseconds=caps.max_wall_clock.microseconds,
+            max_provider_calls=caps.max_provider_calls,
+            max_capture_bytes=caps.max_capture_bytes,
+            max_items=caps.max_items,
+        ),
         epsilon={"$decimal": "0"},
     )
-    mandate = ProcedureMandate(
+    mandate = procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
         line=ArtifactPin(
             role="line",
