@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from functools import cache, partial
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
@@ -179,6 +179,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import PermissionDeniedError
@@ -761,29 +762,6 @@ def _resolve_coordinate(
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
     )
-
-
-def _claim_type_enum_resolver(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-) -> Callable[[str], tuple[str, ...] | None]:
-    """F07: every ``enum_of<ClaimType>`` field's members, read at this run's
-    admitted (immutable) coordinate.
-
-    The coordinate never changes once admitted, so a replay's read is the
-    same read: nothing needs separately retaining for determinism.
-    """
-
-    @cache
-    def resolve(claim_type_name: str) -> tuple[str, ...] | None:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            claim_type = projection.typed.source(f"ClaimType:{claim_type_name}")
-        if claim_type is None or getattr(claim_type, "literal_schema", None) is None:
-            return None
-        members = claim_type.literal_schema.get("enum")
-        return tuple(members) if isinstance(members, list) else None
-
-    return resolve
 
 
 def accepted_contract_resolver(
@@ -3401,7 +3379,7 @@ def service_run_playbill_procedure(
             effective_rung=direct_effective_rung,
             egress_sink=direct_egress_sink,
             ephemeral_spec_digest=ephemeral_spec_digest,
-            enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+            enum_resolver=accepted_enum_resolver(instance, coordinate),
             contract_resolver=accepted_contract_resolver(instance, coordinate),
             clock=_DeterministicClock(evaluation_time),
             nested_runner=ServedNestedProcedureRunner(
@@ -3745,7 +3723,7 @@ def _run_playbill_line(
         providers={item.provider.identity.qualified: item for item in providers.values()},
         capture_outputs=capture_outputs,
         contracts=accepted_contract_resolver(instance, coordinate),
-        enum_members=_claim_type_enum_resolver(instance, coordinate),
+        enum_members=accepted_enum_resolver(instance, coordinate),
     )
     if law.verdict != "accepted":
         return _line_refusal_state(
@@ -4519,7 +4497,7 @@ def _run_playbill_line(
                 workspace_file_reader=workspace_file_reader,
                 effective_rung=effective_rung,
                 egress_sink=egress_sink,
-                enum_resolver=_claim_type_enum_resolver(instance, coordinate),
+                enum_resolver=accepted_enum_resolver(instance, coordinate),
                 contract_resolver=accepted_contract_resolver(instance, coordinate),
                 clock=_DeterministicClock(evaluation_time),
                 nested_runner=ServedNestedProcedureRunner(

@@ -313,3 +313,50 @@ def test_enum_of_members_are_checked_in_rows_and_nested_contracts() -> None:
         with pytest.raises(QueryContractViolated) as refused:
             enforce_query_row_contract(result(s, nested), row, resolve, members)
         assert refused.value.details["field"] == field and refused.value.details["row"] == 0
+
+
+@pytest.mark.parametrize("direction", ["parameters", "row"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(("spelled", "canonical"), [("7.0", 7), ("1E+1", 10), ("0.50", "0.5")])
+def test_query_contract_numbers_require_canonical_wire_forms(direction, nested, spelled, canonical):
+    from types import SimpleNamespace
+
+    from cruxible_core.procedures.execution import QueryContractViolated
+    from cruxible_core.service.procedures.procedures import (
+        enforce_query_parameter_contract,
+        enforce_query_row_contract,
+    )
+    from tests.support.procedures import boundary_contract, contract_resolver
+
+    inner = boundary_contract("test.query-number", {"value": "number"})
+    contract = (
+        boundary_contract("test.query-nested-number", {"value": "test.query-number@1"}, inner)
+        if nested
+        else inner
+    )
+    resolve = contract_resolver(inner, contract)
+
+    def enforce(value):
+        payload = {"value": {"value": value} if nested else value}
+        if direction == "parameters":
+            enforce_query_parameter_contract(payload, contract, resolve)
+        else:
+            result = SimpleNamespace(
+                rows=(
+                    SimpleNamespace(
+                        fields=(
+                            SimpleNamespace(name="value", state="present", value=payload["value"]),
+                        )
+                    ),
+                )
+            )
+            enforce_query_row_contract(result, contract, resolve)
+
+    with pytest.raises(QueryContractViolated) as caught:
+        enforce(spelled)
+    assert caught.value.direction == direction
+    assert caught.value.details["field"] == "value"
+    assert caught.value.details["problem"]["code"] == "noncanonical_number"
+    if direction == "row":
+        assert caught.value.details["row"] == 0
+    enforce(canonical)

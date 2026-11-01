@@ -326,6 +326,17 @@ def _typed_members(
                 yield from _typed_members(value[name], declared.type, f"{path}.{name}", resolve)
 
 
+def _number_encoding_problem(value: object, field_type: FieldType, path: str) -> str | None:
+    if isinstance(field_type, NumberType):
+        try:
+            canonical = canonical_number(value)
+        except ValueError:
+            return None  # The ordinary type checker supplies the mismatch.
+        if type(value) is not type(canonical) or value != canonical:
+            return f"{path}: noncanonical number; use {canonical!r}"
+    return None
+
+
 def validate_typed_number_encoding(
     value: object, field_type: FieldType, *, resolve: ContractLookup, path: str
 ) -> None:
@@ -334,16 +345,13 @@ def validate_typed_number_encoding(
     The scalar checker can normalize numbers for callers that request conversion;
     wire boundaries require the canonical int-or-decimal-text representation.
     """
-    for member, declared, member_path in _typed_members(value, field_type, path, resolve):
-        if isinstance(declared, NumberType):
-            try:
-                canonical = canonical_number(member)
-            except ValueError:
-                continue  # The ordinary type checker supplies the mismatch.
-            if type(member) is not type(canonical) or member != canonical:
-                raise OperationValueRefused(
-                    (f"{member_path}: noncanonical number; use {canonical!r}",)
-                )
+    problems = [
+        problem
+        for member, declared, member_path in _typed_members(value, field_type, path, resolve)
+        if (problem := _number_encoding_problem(member, declared, member_path)) is not None
+    ]
+    if problems:
+        raise OperationValueRefused(tuple(problems))
 
 
 def validate_operation_value(
@@ -387,8 +395,10 @@ def validate_operation_value(
         if isinstance(checked, FieldInvalid):
             problems.append(f"{checked.problem.field or name}: {checked.problem.code}")
             continue
-        validate_typed_number_encoding(value[name], declared.type, resolve=resolve, path=name)
         for member, member_type, path in _typed_members(value[name], declared.type, name, resolve):
+            problem = _number_encoding_problem(member, member_type, path)
+            if problem is not None:
+                problems.append(problem)
             if not isinstance(member_type, ListType) or not isinstance(member, list | tuple):
                 continue
             count = len(member)

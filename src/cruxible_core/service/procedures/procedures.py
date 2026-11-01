@@ -20,6 +20,7 @@ from cruxible_client.contracts.query.results import (
     ClaimQueryResult,
 )
 from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -121,19 +122,6 @@ class LocalExhaustPromotionVerifier:
         )
 
 
-def _memoized(resolve: EnumResolver) -> EnumResolver:
-    """One ClaimType's members read once per Procedure read, however many rows name it."""
-
-    found: dict[str, tuple[str, ...] | None] = {}
-
-    def members(claim_type: str) -> tuple[str, ...] | None:
-        if claim_type not in found:
-            found[claim_type] = resolve(claim_type)
-        return found[claim_type]
-
-    return members
-
-
 def _pinned_contract(
     resolve: Callable[[ContractRef], Contract | None], ref: ContractRef
 ) -> Contract:
@@ -151,6 +139,26 @@ def _first_problem(record: Any) -> dict[str, object] | None:
     for name, result in sorted(record.fields.items()):
         if isinstance(result, FieldInvalid):
             return {"field": name, "problem": result.problem.model_dump(mode="json")}
+    return None
+
+
+def _first_number_problem(
+    value: Mapping[str, object],
+    contract: Contract,
+    resolve: Callable[[ContractRef], Contract | None],
+) -> dict[str, object] | None:
+    from cruxible_client.contracts.provider_operations import (
+        OperationValueRefused,
+        validate_typed_number_encoding,
+    )
+
+    for name, declared in contract.fields.items():
+        if name not in value:
+            continue
+        try:
+            validate_typed_number_encoding(value[name], declared.type, resolve=resolve, path=name)
+        except OperationValueRefused as exc:
+            return {"field": name, "problem": {"code": "noncanonical_number", "message": str(exc)}}
     return None
 
 
@@ -187,7 +195,7 @@ def enforce_query_parameter_contract(
         check_record(
             parameters, contract, record="parameters", resolve=resolve, enum_members=enum_members
         )
-    )
+    ) or _first_number_problem(parameters, contract, resolve)
     if problem is not None:
         raise QueryContractViolated(
             direction="parameters",
@@ -227,6 +235,7 @@ def enforce_query_row_contract(
                     present, contract, record="row", resolve=resolve, enum_members=enum_members
                 )
             )
+            or _first_number_problem(present, contract, resolve)
         )
         if problem is not None:
             raise QueryContractViolated(
@@ -284,12 +293,11 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         enum_members: EnumResolver | None = None
         if definition.parameter_contract is not None or definition.row_contract is not None:
             from cruxible_core.service.procedures.procedure_runs import (
-                _claim_type_enum_resolver,
                 accepted_contract_resolver,
             )
 
             resolve = accepted_contract_resolver(self.instance, internal)
-            enum_members = _memoized(_claim_type_enum_resolver(self.instance, internal))
+            enum_members = accepted_enum_resolver(self.instance, internal)
         if definition.parameter_contract is not None:
             assert resolve is not None
             effective = effective_query_parameters(definition, dict(parameters))
@@ -502,8 +510,6 @@ def service_execute_direct_procedure(
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
-    # Every boundary in this execution shares the same coordinate-bound vocabulary.
-    enum_resolver = None if enum_resolver is None else _memoized(enum_resolver)
     if contract_validator is None:
         if contract_resolver is None:
             raise ExecutionError("a Procedure run checks its boundaries against governed Contracts")

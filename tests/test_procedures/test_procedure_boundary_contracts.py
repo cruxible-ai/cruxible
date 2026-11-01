@@ -489,8 +489,8 @@ def test_boundaries_require_canonical_number_wire_forms(direction, nested):
 @pytest.mark.parametrize("size", [10, 1000])
 def test_run_enum_vocabulary_sql_is_constant_across_boundaries(tmp_path, monkeypatch, size):
     from cruxible_client.contracts.provider_operations import validate_operation_value
+    from cruxible_core.claims.enum_resolution import accepted_enum_resolver, tree_enum_resolver
     from cruxible_core.indexes.typed_state import TypedStateReader
-    from cruxible_core.service.procedures.procedure_runs import _claim_type_enum_resolver
 
     instance, _ = seed_claims(tmp_path)
     original = TypedStateReader.source
@@ -505,7 +505,7 @@ def test_run_enum_vocabulary_sql_is_constant_across_boundaries(tmp_path, monkeyp
             reader.connection.set_trace_callback(None)
 
     monkeypatch.setattr(TypedStateReader, "source", counted)
-    resolver = _claim_type_enum_resolver(instance, instance.accepted_coordinate())
+    resolver = accepted_enum_resolver(instance, instance.accepted_coordinate())
     row = boundary_contract("test.enum-row", {"status": "enum_of:project.work_item.status"})
     rows = boundary_contract(
         "test.enum-rows", {"rows": "list<test.enum-row@1>{max_items: 2000}"}, row
@@ -530,9 +530,14 @@ def test_run_enum_vocabulary_sql_is_constant_across_boundaries(tmp_path, monkeyp
     # Missing vocabulary is cached too; a fresh coordinate resolver reads afresh.
     assert resolver("test.missing") is None and resolver("test.missing") is None
     assert sources.count("ClaimType:test.missing") == 1
-    fresh = _claim_type_enum_resolver(instance, instance.accepted_coordinate())
+    fresh = accepted_enum_resolver(instance, instance.accepted_coordinate())
     assert fresh("project.work_item.status") == ("blocked", "done", "ready")
     assert sources.count("ClaimType:project.work_item.status") == 2
+    candidate = tree_enum_resolver(
+        instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    )
+    assert candidate("project.work_item.status") == fresh("project.work_item.status")
+    assert candidate("test.missing") is None
 
 
 @pytest.mark.parametrize("direction", ["in", "out"])
@@ -601,3 +606,33 @@ def test_operation_nested_boundaries_preserve_budget_and_number_laws(
             == f"contract_{'input' if direction == 'in' else 'output'}_refused"
         )
         assert "noncanonical number" in caught.value.refusal.message
+
+
+def test_number_problems_accumulate_with_other_problems_in_one_list_walk(monkeypatch):
+    from cruxible_client.contracts import provider_operations as operations
+
+    contract = boundary_contract(
+        "test.multiple-problems", {"required": "string", "numbers": "list<number>{max_items: 10}"}
+    )
+    visited, observations = [], []
+    walk = operations._typed_members
+
+    def counted(value, field_type, path, resolve):
+        visited.append(path)
+        yield from walk(value, field_type, path, resolve)
+
+    monkeypatch.setattr(operations, "_typed_members", counted)
+    with pytest.raises(operations.OperationValueRefused) as caught:
+        operations.validate_operation_value(
+            {"numbers": ["1.0", "2e0"]},
+            contract,
+            resolve=contract_resolver(contract),
+            observe_items=lambda count, path: observations.append((path, count)),
+        )
+    assert caught.value.problems == (
+        "required: absent_required",
+        "numbers[0]: noncanonical number; use 1",
+        "numbers[1]: noncanonical number; use 2",
+    )
+    assert visited == ["numbers", "numbers[0]", "numbers[1]"]
+    assert observations == [("numbers", 2)]

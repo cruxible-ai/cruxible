@@ -455,6 +455,7 @@ def _check(
         target = None if resolve is None else resolve(field_type.contract)
         if target is None:
             return _bad("type_mismatch", field, value)
+        checked_members = dict(value)
         for name, declared in target.fields.items():
             if name not in value:
                 if not declared.optional:
@@ -470,7 +471,8 @@ def _check(
             )
             if checked[0] == "invalid":
                 return ("invalid", checked[1], f"{field or ''}.{checked[2] or name}", checked[3])
-        return ("present", dict(value), at)
+            checked_members[name] = checked[1]
+        return ("present", checked_members, at)
     result = check_value(value, field_type, at=at, field=field, resolve=resolve, enum_members=enums)
     if isinstance(result, FieldPresent):
         return ("present", result.value, result.at)

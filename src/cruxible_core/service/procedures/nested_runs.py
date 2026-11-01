@@ -27,6 +27,7 @@ from cruxible_client.contracts.procedures.models import (
     caps_budget,
 )
 from cruxible_client.contracts.provider_operations import LineBinding
+from cruxible_core.claims.enum_resolution import accepted_enum_resolver
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.exhaust.line_inbox import LineInboxStore
@@ -328,7 +329,6 @@ class ServedNestedProcedureRunner:
             PROCEDURE_RUN_FENCING_TOKEN,
             ProcedureRunStateV2,
             _activate_writer,
-            _claim_type_enum_resolver,
             _CurrentProcedureAuthority,
             _journal_for_write,
             _LineTerminalEgressSink,
@@ -439,7 +439,7 @@ class ServedNestedProcedureRunner:
             workspace_file_reader=self.workspace_file_reader,
             effective_rung=context.child_rung(accepted),
             egress_sink=sink,
-            enum_resolver=_claim_type_enum_resolver(self.instance, self.coordinate),
+            enum_resolver=accepted_enum_resolver(self.instance, self.coordinate),
             contract_resolver=accepted_contract_resolver(self.instance, self.coordinate),
             clock=self.clock,
             nested_runner=replace(self, prefix=child_prefix),
