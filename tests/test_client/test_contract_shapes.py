@@ -54,6 +54,8 @@ ROW = {
         "int{0..9}",
         "int{0..}",
         "decimal{0..1}",
+        "number",
+        "number{0..1.5}",
         "bool",
         "date",
         "datetime",
@@ -95,6 +97,48 @@ def test_json_and_unbounded_lists_are_refused_in_either_form(field: object) -> N
     with pytest.raises(ContractTypeRefused) as caught:
         validate_contract({**ROW, "fields": {"x": field}})
     assert caught.value.code == "contract_type_refused"
+
+
+def test_a_json_refusal_names_the_typed_replacement() -> None:
+    with pytest.raises(ContractTypeRefused, match="nested Contract") as caught:
+        validate_contract({**ROW, "fields": {"x": "json"}})
+    assert "capture<K>" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("value", "canonical"),
+    [(1, 1), ("1", 1), ("1.0", 1), (Decimal("1.00"), 1), ("0.50", "0.5"), (-2, -2), ("1e2", 100)],
+)
+def test_a_number_encodes_as_an_integer_when_integral_else_canonical_decimal_text(
+    value: object, canonical: object
+) -> None:
+    checked = check_value(value, parse_type("number"), at="/x", field="x")
+    assert checked == FieldPresent(value=canonical, at="/x")
+
+
+def test_equal_numbers_have_one_canonical_encoding_and_digest() -> None:
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.shapes import canonical_number
+
+    assert canonical_number(1) == canonical_number("1.0") == canonical_number(Decimal("1.000"))
+    one = {"n": canonical_number("1.0")}
+    assert canonical_bytes(one) == canonical_bytes({"n": 1})
+    assert canonical_bytes({"n": canonical_number("0.250")}) == canonical_bytes({"n": "0.25"})
+
+
+@pytest.mark.parametrize("value", [1.5, True, "n/a", "NaN", "Infinity", None])
+def test_a_number_refuses_floats_booleans_and_non_numbers(value: object) -> None:
+    checked = check_value(value, parse_type("number"), at="/x", field="x")
+    assert isinstance(checked, FieldInvalid) and checked.problem.code == "type_mismatch"
+
+
+def test_a_number_refinement_bounds_the_value() -> None:
+    bounded = parse_type("number{0..1}")
+    assert isinstance(check_value("0.5", bounded, at="/x"), FieldPresent)
+    refused = check_value(2, bounded, at="/x")
+    assert isinstance(refused, FieldInvalid) and refused.problem.code == "out_of_range"
+    assert edge_refusal(parse_type("number{0..1}"), parse_type("number{0..2}")) is None
+    assert edge_refusal(parse_type("number{0..3}"), parse_type("number{0..2}")) is not None
 
 
 def test_a_malformed_spelling_is_a_format_error_not_a_refusal() -> None:

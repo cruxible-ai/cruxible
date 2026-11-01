@@ -210,6 +210,49 @@ class DecimalType(_Shape):
         return self
 
 
+class NumberType(_Shape):
+    """A number, integral or not. Its canonical encoding is an integer when the value
+    is integral and canonical decimal text otherwise, so ``1`` and ``1.0`` are equal
+    (:func:`canonical_number`). Bounds are canonical decimal strings, never floats."""
+
+    kind: Literal["number"] = "number"
+    min: str | None = Field(default=None, exclude_if=_not_none)
+    max: str | None = Field(default=None, exclude_if=_not_none)
+
+    @field_validator("min", "max", mode="before")
+    @classmethod
+    def _decimal(cls, value: object) -> object:
+        return DecimalType._decimal(value)
+
+    @model_validator(mode="after")
+    def _bounds(self) -> NumberType:
+        if self.min is not None and self.max is not None and Decimal(self.min) > Decimal(self.max):
+            raise ValueError("number min exceeds max")
+        return self
+
+
+def canonical_number(value: object) -> int | str:
+    """A number's canonical encoding: an integer when integral, else canonical decimal text.
+
+    ``1``, ``"1"``, ``"1.0"`` and ``Decimal("1.00")`` all encode as ``1``;
+    ``"0.50"`` encodes as ``"0.5"``. Floats, booleans and non-finite values refuse.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, str, Decimal)):
+        raise ValueError(f"{value!r} is not a number")
+    if isinstance(value, int):
+        return value
+    try:
+        number = Decimal(value.strip() if isinstance(value, str) else value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{value!r} is not a number") from exc
+    if not number.is_finite():
+        raise ValueError(f"{value!r} is not a finite number")
+    if number == number.to_integral_value():
+        return int(number)
+    return _decimal_text(number)
+
+
 class BoolType(_Shape):
     kind: Literal["bool"] = "bool"
 
@@ -351,6 +394,7 @@ FieldType: TypeAlias = Annotated[
     StringType
     | IntType
     | DecimalType
+    | NumberType
     | BoolType
     | DateType
     | DateTimeType
@@ -374,13 +418,27 @@ ListType.model_rebuild()
 FieldResultType.model_rebuild()
 _FIELD_TYPE: Any = TypeAdapter(FieldType)
 
-_SCALAR_KINDS = frozenset({"string", "int", "decimal", "bool", "date", "datetime", "duration"})
+_SCALAR_KINDS = frozenset(
+    {"string", "int", "decimal", "number", "bool", "date", "datetime", "duration"}
+)
 _SIMPLE_TYPES: dict[str, type[_Shape]] = {
     "bool": BoolType,
     "date": DateType,
     "datetime": DateTimeType,
     "duration": DurationType,
 }
+
+
+def _refused_type_message(name: str) -> str:
+    if name.lower() in {"json", "object", "map", "dict", "any"}:
+        return (
+            f"the field type {name!r} is refused: declare its shape -- a nested Contract "
+            "(name@N), list<T>{max_items: N}, a variant{...}, or a capture<K> for opaque bytes"
+        )
+    return (
+        f"the field type {name!r} is refused: only core decides what a Claim is; "
+        "declare a typed value shape"
+    )
 
 
 def _refuse_structured(value: object, *, depth: int = 0) -> None:
@@ -396,7 +454,7 @@ def _refuse_structured(value: object, *, depth: int = 0) -> None:
         return
     kind = value.get("kind")
     if isinstance(kind, str) and kind in REFUSED_TYPE_NAMES:
-        raise ContractTypeRefused(f"the field type {kind!r} is refused; declare a typed shape")
+        raise ContractTypeRefused(_refused_type_message(kind))
     if kind == "list" and value.get("max_items") is None:
         raise ContractTypeRefused("a list type requires max_items")
     for key in ("item", "value"):
@@ -461,14 +519,14 @@ def _read_type(reader: _Spelling, depth: int = 0) -> dict[str, Any]:
     _kind, name = reader.take("name")
     lowered = name.lower()
     if lowered in REFUSED_TYPE_NAMES:
-        raise ContractTypeRefused(f"the field type {name!r} is refused; declare a typed shape")
+        raise ContractTypeRefused(_refused_type_message(name))
     if reader.at_symbol("@"):
         reader.take("sym", "@")
         _n, version = reader.take("num")
         return {"kind": "contract", "contract": _ref(name, version)}
     if name == "string":
         return {"kind": "string", **_read_refinement(reader, ("pattern", "min_len", "max_len"))}
-    if name in ("int", "decimal"):
+    if name in ("int", "decimal", "number"):
         return {"kind": name, **_read_refinement(reader, ("min", "max"), numeric=name)}
     if name in _SIMPLE_TYPES:
         return {"kind": name}
@@ -631,7 +689,7 @@ def render_type(field_type: FieldType) -> str:
         if field_type.max_len is not None:
             parts.append(f"max_len: {field_type.max_len}")
         return "string" + ("{" + ", ".join(parts) + "}" if parts else "")
-    if isinstance(field_type, IntType | DecimalType):
+    if isinstance(field_type, IntType | DecimalType | NumberType):
         if field_type.min is None and field_type.max is None:
             return kind
         low = "" if field_type.min is None else str(field_type.min)
@@ -1194,6 +1252,16 @@ def check_value(
         if not _in_range(number, low, high):
             return _invalid("out_of_range", field, value)
         return FieldPresent(value=number, at=at)
+    if isinstance(field_type, NumberType):
+        try:
+            canonical = canonical_number(value)
+        except ValueError:
+            return _invalid("type_mismatch", field, value)
+        low = None if field_type.min is None else Decimal(field_type.min)
+        high = None if field_type.max is None else Decimal(field_type.max)
+        if not _in_range(Decimal(canonical), low, high):
+            return _invalid("out_of_range", field, value)
+        return FieldPresent(value=canonical, at=at)
     if isinstance(field_type, BoolType):
         if not isinstance(value, bool):
             return _invalid("type_mismatch", field, value)
@@ -1569,6 +1637,8 @@ def cast_value(
         return _invalid("type_mismatch", field, str(value))
     elif isinstance(to, DecimalType) and isinstance(value, int) and not isinstance(value, bool):
         converted = Decimal(value)
+    elif isinstance(to, NumberType) and isinstance(value, Decimal):
+        converted = canonical_number(value) if value.is_finite() else value
     checked = check_value(converted, to, at=result.at, field=field, enum_members=enum_members)
     if isinstance(checked, FieldInvalid) and checked.problem.code in (
         "canonical_form_failed",
@@ -1662,7 +1732,9 @@ def edge_refusal(src: FieldType, dst: FieldType, *, via: EdgeVia | None = None) 
             if _within(src.min, src.max, dst.min, dst.max)
             else ("the source int range is wider than the destination's")
         )
-    if isinstance(src, DecimalType) and isinstance(dst, DecimalType):
+    if (isinstance(src, DecimalType) and isinstance(dst, DecimalType)) or (
+        isinstance(src, NumberType) and isinstance(dst, NumberType)
+    ):
         bounds = [None if item is None else Decimal(item) for item in (src.min, src.max)]
         outer = [None if item is None else Decimal(item) for item in (dst.min, dst.max)]
         return (
@@ -2049,6 +2121,8 @@ __all__ = [
     "DateTimeType",
     "DateType",
     "DecimalType",
+    "NumberType",
+    "canonical_number",
     "DuplicateArm",
     "DurationType",
     "EnumOfType",
