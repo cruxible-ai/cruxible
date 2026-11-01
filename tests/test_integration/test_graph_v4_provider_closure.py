@@ -24,7 +24,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
 )
 from cruxible_client.contracts.provider_operations import LineBinding, binding_pin
 from cruxible_client.contracts.providers import render_provider
@@ -32,6 +31,7 @@ from cruxible_client.contracts.shapes import contract_digest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.core_support._p2b1_support import accepted_provider, pin
 from tests.core_support._support import initialize_local
+from tests.support.lines import line_budgets, line_spec
 from tests.support.operation_world import VALUE, contract_files
 from tests.support.procedures import (
     MAX_WALL_CLOCK,
@@ -39,6 +39,8 @@ from tests.support.procedures import (
     accepted_procedure,
     boundary_contract,
     named,
+    procedure_definition,
+    procedure_hard_caps,
     procedure_members,
 )
 
@@ -56,30 +58,28 @@ def _value_ref() -> dict[str, object]:
 def _definition() -> ProcedureDefinition:
     contract_in = pin("contract-in", "Contract", "provider-input/v1")
     contract_out = pin("contract-out", "Contract", "provider-output/v1")
-    return ProcedureDefinition.model_validate(
-        {
-            "name": "provider-v4",
-            "contract_in": named(contract_in),
-            "contract_out": named(contract_out),
-            "slots": {"compute": {"in": _value_ref(), "out": _value_ref(), "effect": "pure"}},
-            "nodes": (
-                CallNode(
-                    node_id="direct",
-                    slot="compute",
-                    input={"value": 1},
-                    as_="result",
-                ),
+    return procedure_definition(
+        name="provider-v4",
+        contract_in=named(contract_in),
+        contract_out=named(contract_out),
+        slots={"compute": {"in": _value_ref(), "out": _value_ref(), "effect": "pure"}},
+        nodes=(
+            CallNode(
+                node_id="direct",
+                slot="compute",
+                input={"value": 1},
+                as_="result",
             ),
-            "returns": "result",
-            "hard_caps": ProcedureHardCaps(
-                max_wall_clock=MAX_WALL_CLOCK,
-                max_provider_calls=4,
-                max_capture_bytes=2048,
-                max_items=20,
-                max_repeat_attempts=2,
-            ),
-            "terminal_capability": 1,
-        }
+        ),
+        returns="result",
+        hard_caps=procedure_hard_caps(
+            max_wall_clock=MAX_WALL_CLOCK,
+            max_provider_calls=4,
+            max_capture_bytes=2048,
+            max_items=20,
+            max_repeat_attempts=2,
+        ),
+        terminal_capability=1,
     )
 
 
@@ -92,7 +92,7 @@ def _accepted_procedure() -> AcceptedProcedure:
 def _line() -> LineSpec:
     procedure = _accepted_procedure()
     provider = accepted_provider()
-    return LineSpec(
+    return line_spec(
         identity=ArtifactIdentity(kind="Line", name="provider-v4-line"),
         occurrence_epoch=1,
         procedure=ArtifactPin(
@@ -108,12 +108,12 @@ def _line() -> LineSpec:
             )
         },
         max_authority="observe",
-        budgets={
-            "max_capture_bytes": 1024,
-            "max_items": 10,
-            "max_provider_calls": 2,
-            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=1024,
+            max_items=10,
+            max_provider_calls=2,
+            max_wall_clock_microseconds=RUN_WALL_CLOCK.microseconds,
+        ),
         epsilon={"$decimal": "0"},
     )
 
