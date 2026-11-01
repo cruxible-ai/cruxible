@@ -121,6 +121,19 @@ class LocalExhaustPromotionVerifier:
         )
 
 
+def _memoized(resolve: EnumResolver) -> EnumResolver:
+    """One ClaimType's members read once per Procedure read, however many rows name it."""
+
+    found: dict[str, tuple[str, ...] | None] = {}
+
+    def members(claim_type: str) -> tuple[str, ...] | None:
+        if claim_type not in found:
+            found[claim_type] = resolve(claim_type)
+        return found[claim_type]
+
+    return members
+
+
 def _pinned_contract(
     resolve: Callable[[ContractRef], Contract | None], ref: ContractRef
 ) -> Contract:
@@ -141,17 +154,39 @@ def _first_problem(record: Any) -> dict[str, object] | None:
     return None
 
 
+def effective_query_parameters(
+    definition: Any, parameters: Mapping[str, object]
+) -> dict[str, object] | None:
+    """The bound parameter record a Query evaluates: defaults applied, references normalized.
+
+    It is the Query's own binding (``resolve_query_parameters``), so a Contract
+    checks exactly what the Query will evaluate. ``None`` when the Query itself
+    refuses the parameters; its own run then refuses them the same way.
+    """
+
+    from cruxible_core.query.engine import resolve_query_parameters
+
+    try:
+        bindings = resolve_query_parameters(definition, parameters)
+    except Exception:  # the Query's own typed refusal follows from its run
+        return None
+    return {item.name: item.value for item in bindings if item.value is not None}
+
+
 def enforce_query_parameter_contract(
     parameters: Mapping[str, object],
     contract: Contract,
     resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
 ) -> None:
-    """Refuse a Procedure read whose parameters break the Query's parameter Contract."""
+    """Refuse a Procedure read whose effective parameters break the parameter Contract."""
 
     from cruxible_client.contracts.shapes import check_record
 
     problem = _first_problem(
-        check_record(parameters, contract, record="parameters", resolve=resolve)
+        check_record(
+            parameters, contract, record="parameters", resolve=resolve, enum_members=enum_members
+        )
     )
     if problem is not None:
         raise QueryContractViolated(
@@ -164,6 +199,7 @@ def enforce_query_row_contract(
     result: ClaimQueryResult,
     contract: Contract,
     resolve: Callable[[ContractRef], Contract | None],
+    enum_members: EnumResolver | None = None,
 ) -> None:
     """Refuse a Procedure read any of whose rows breaks the Query's row Contract.
 
@@ -186,7 +222,11 @@ def enforce_query_row_contract(
         problem: dict[str, object] | None = (
             {"field": declared_conflicts[0], "problem": {"code": "conflict"}}
             if declared_conflicts
-            else _first_problem(check_record(present, contract, record="row", resolve=resolve))
+            else _first_problem(
+                check_record(
+                    present, contract, record="row", resolve=resolve, enum_members=enum_members
+                )
+            )
         )
         if problem is not None:
             raise QueryContractViolated(
@@ -241,17 +281,25 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             )
         definition = accepted.query
         resolve = None
+        enum_members: EnumResolver | None = None
         if definition.parameter_contract is not None or definition.row_contract is not None:
             from cruxible_core.service.procedures.procedure_runs import (
+                _claim_type_enum_resolver,
                 accepted_contract_resolver,
             )
 
             resolve = accepted_contract_resolver(self.instance, internal)
+            enum_members = _memoized(_claim_type_enum_resolver(self.instance, internal))
         if definition.parameter_contract is not None:
             assert resolve is not None
-            enforce_query_parameter_contract(
-                dict(parameters), _pinned_contract(resolve, definition.parameter_contract), resolve
-            )
+            effective = effective_query_parameters(definition, dict(parameters))
+            if effective is not None:
+                enforce_query_parameter_contract(
+                    effective,
+                    _pinned_contract(resolve, definition.parameter_contract),
+                    resolve,
+                    enum_members,
+                )
         run = service_run_playbill_query(
             self.instance,
             name=query.target.name,
@@ -273,7 +321,10 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         if definition.row_contract is not None:
             assert resolve is not None
             enforce_query_row_contract(
-                run.result, _pinned_contract(resolve, definition.row_contract), resolve
+                run.result,
+                _pinned_contract(resolve, definition.row_contract),
+                resolve,
+                enum_members,
             )
         return StateTapReadResultV1(
             value=state_tap_value(run.result),
