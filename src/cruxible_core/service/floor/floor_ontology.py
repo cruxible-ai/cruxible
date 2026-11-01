@@ -59,6 +59,7 @@ from cruxible_client.contracts.claim_types import (
     effective_evidence_requirement,
 )
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.identity_normalizers import NoneNormalizer, normalizer_spelling
 from cruxible_client.contracts.kits import KitInstalledArtifact, KitReceipt, kit_content_digest
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
@@ -723,7 +724,13 @@ def _identity(subject_kind: SubjectKind | None) -> str:
         return "undeclared"
     rule = subject_kind.identity_rule
     if isinstance(rule, SubjectKindKeys):
-        return f"keys: {', '.join(rule.keys)} ({rule.uniqueness})"
+        parts = ", ".join(
+            part.claim_type
+            if isinstance(part.normalizer, NoneNormalizer)
+            else f"{part.claim_type} [{normalizer_spelling(part.normalizer)}]"
+            for part in rule.parts
+        )
+        return f"keys: {parts} ({rule.uniqueness})"
     return "minted"
 
 

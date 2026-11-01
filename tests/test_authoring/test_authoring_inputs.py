@@ -653,6 +653,7 @@ def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -
 def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> None:
     from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
     from cruxible_client.contracts.subject_kinds import SubjectKindKeys, parse_subject_kind
+    from tests.core_support._subject_kind_support import plain_key_rules
 
     instance, _owner = initialize_local(tmp_path)
     key = lower_claim_type_input(
@@ -681,7 +682,7 @@ def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> Non
         if path.startswith("subject-kinds/")
     )
     assert parse_subject_kind(content, path=path).identity_rule == SubjectKindKeys(
-        keys=(key.predicate,), uniqueness="unique"
+        parts=plain_key_rules(key.predicate), uniqueness="unique"
     )
 
 

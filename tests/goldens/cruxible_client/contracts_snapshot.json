@@ -8169,6 +8169,27 @@
             "title": "LiteralOperand",
             "type": "object"
           },
+          "LowercaseNormalizer": {
+            "additionalProperties": false,
+            "description": "NFC, Unicode default lowercase, NFC.",
+            "properties": {
+              "normalizer": {
+                "const": "lowercase",
+                "default": "lowercase",
+                "title": "Normalizer",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "title": "LowercaseNormalizer",
+            "type": "object"
+          },
           "MandateConditionAuthoring": {
             "additionalProperties": false,
             "description": "The settle predicate, named by query; lowering pins the exact accepted query.",
@@ -8321,6 +8342,27 @@
             "title": "Membership",
             "type": "object"
           },
+          "NoneNormalizer": {
+            "additionalProperties": false,
+            "description": "The key part's value as it is (after its ClaimType's canonical form).",
+            "properties": {
+              "normalizer": {
+                "const": "none",
+                "default": "none",
+                "title": "Normalizer",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "title": "NoneNormalizer",
+            "type": "object"
+          },
           "Not": {
             "additionalProperties": false,
             "properties": {
@@ -8376,6 +8418,27 @@
               "of"
             ],
             "title": "Not",
+            "type": "object"
+          },
+          "Pep503Normalizer": {
+            "additionalProperties": false,
+            "description": "A Python package name in its PEP 503 normal form.",
+            "properties": {
+              "normalizer": {
+                "const": "pep503",
+                "default": "pep503",
+                "title": "Normalizer",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "title": "Pep503Normalizer",
             "type": "object"
           },
           "Presence": {
@@ -9698,6 +9761,36 @@
               "propose"
             ],
             "title": "ProposeStep",
+            "type": "object"
+          },
+          "PurlTypeNormalizer": {
+            "additionalProperties": false,
+            "description": "A package URL in canonical form under per-type rules; qualifiers kept or excluded.",
+            "properties": {
+              "identity": {
+                "enum": [
+                  "package",
+                  "package_variant"
+                ],
+                "title": "Identity",
+                "type": "string"
+              },
+              "normalizer": {
+                "const": "purl-type",
+                "default": "purl-type",
+                "title": "Normalizer",
+                "type": "string"
+              },
+              "version": {
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "version",
+              "identity"
+            ],
+            "title": "PurlTypeNormalizer",
             "type": "object"
           },
           "QueryArtifactsEntry": {
@@ -12461,7 +12554,7 @@
           },
           "SubjectKindInput": {
             "additionalProperties": false,
-            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. The default\n``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
+            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. ``normalizers``\ngives a key part an identity normalizer from the fixed core set. The default\n``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -12499,6 +12592,36 @@
                 "description": "The Subject kind this declares, e.g. 'dev.decision'.",
                 "title": "Name",
                 "type": "string"
+              },
+              "normalizers": {
+                "additionalProperties": {
+                  "discriminator": {
+                    "mapping": {
+                      "lowercase": "#/$defs/LowercaseNormalizer",
+                      "none": "#/$defs/NoneNormalizer",
+                      "pep503": "#/$defs/Pep503Normalizer",
+                      "purl-type": "#/$defs/PurlTypeNormalizer"
+                    },
+                    "propertyName": "normalizer"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/NoneNormalizer"
+                    },
+                    {
+                      "$ref": "#/$defs/LowercaseNormalizer"
+                    },
+                    {
+                      "$ref": "#/$defs/Pep503Normalizer"
+                    },
+                    {
+                      "$ref": "#/$defs/PurlTypeNormalizer"
+                    }
+                  ]
+                },
+                "description": "Per key part (by predicate or last name), the identity normalizer its value takes, pinned by version: {normalizer: none|lowercase|pep503, version: 1}, or {normalizer: purl-type, version: 1, identity: package|package_variant}. A part not named takes none@1. Two raw values that normalize to one name one Subject.",
+                "title": "Normalizers",
+                "type": "object"
               },
               "retire": {
                 "default": false,

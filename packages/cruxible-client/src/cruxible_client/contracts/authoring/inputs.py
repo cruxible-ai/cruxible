@@ -63,6 +63,7 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import FormatError
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.acquisition_rules import AcquisitionDefault
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
@@ -509,7 +510,8 @@ class SubjectKindInput(_StrictInputModel):
     Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
     the key ClaimTypes (by predicate, in key order): each a ClaimType about
     this kind only, literal and one-valued, accepted here or earlier; a Subject's
-    id is then the readable rendering of its canonical key. The default
+    id is then the readable rendering of its canonical key. ``normalizers``
+    gives a key part an identity normalizer from the fixed core set. The default
     ``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only
     surfaces it in the duplicates audit. ``minted: true`` has core mint opaque
     ids instead. Change it, or retire it, through a successor.
@@ -520,6 +522,15 @@ class SubjectKindInput(_StrictInputModel):
     description: str | None = None
     keys: tuple[str, ...] = Field(
         default=(), description="Key ClaimTypes by predicate, in key order; omit when minted."
+    )
+    normalizers: dict[str, KeyNormalizer] = Field(
+        default_factory=dict,
+        description=(
+            "Per key part (by predicate or last name), the identity normalizer its value "
+            "takes, pinned by version: {normalizer: none|lowercase|pep503, version: 1}, or "
+            "{normalizer: purl-type, version: 1, identity: package|package_variant}. A part "
+            "not named takes none@1. Two raw values that normalize to one name one Subject."
+        ),
     )
     uniqueness: Literal["unique", "hint"] | None = Field(
         default=None,
@@ -921,7 +932,8 @@ def _subject_kind_payload(value: SubjectKindInput) -> SubjectKindAuthoringPayloa
             "cruxible.authoring.subject_kind_invalid",
             "input",
             str(exc),
-            "Give keys with a uniqueness (unique or hint), or minted: true -- one of them.",
+            "Give keys with a uniqueness (unique or hint), or minted: true -- one of them; "
+            "name each normalizer by one of the keys.",
         ) from exc
 
 

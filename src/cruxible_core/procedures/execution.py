@@ -162,7 +162,7 @@ from cruxible_client.contracts.provider_operations import (
 )
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.resolution_contracts import InvestigationBinding
-from cruxible_client.contracts.shapes import EnumResolver
+from cruxible_client.contracts.shapes import EnumResolver, KeyCanonicalizer
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
@@ -2239,6 +2239,7 @@ class ProcedureExecutor:
         enum_resolver: EnumResolver | None = None,
         contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
         completeness_probe: CompletenessProbe | None = None,
+        key_rules: KeyCanonicalizer | None = None,
     ) -> None:
         self.journal = journal
         self.bodies = bodies
@@ -2278,6 +2279,9 @@ class ProcedureExecutor:
         # Resolves an extract's row Contract (and the Contracts it nests) at the
         # admitted coordinate, by name, version and pinned digest.
         self.contract_resolver = contract_resolver
+        # R12/D4: the SubjectKind identity rules at the admitted (immutable)
+        # coordinate; every key<K> / key_part<K:p> value reads through them.
+        self.key_rules = key_rules
         # A sink harness told whether each sink's value is complete (the law's
         # real sinks belong to the Claims terminal).
         self.completeness_probe = completeness_probe
@@ -3987,6 +3991,7 @@ class ProcedureExecutor:
                 resolve=self.contract_resolver,
                 enums=self.enum_resolver,
                 only_keys=only_keys,
+                keys=self.key_rules,
             )
         except ExtractRefused as exc:
             raise _RunRefusal(
@@ -4037,6 +4042,7 @@ class ProcedureExecutor:
                 parameters=state.parameters if isinstance(state.parameters, dict) else None,
                 enums=self.enum_resolver,
                 max_items=_effective_max_items(admission),
+                keys=self.key_rules,
             )
         except TransformItemBudgetExceeded as exc:
             raise _budget_refusal(
@@ -4529,6 +4535,7 @@ class ProcedureExecutor:
             contract=contract,
             resolve=self.contract_resolver or (lambda _ref: None),
             enums=self.enum_resolver,
+            keys=self.key_rules,
         )
 
     def _run_terminal(
@@ -5160,6 +5167,7 @@ class ProcedureExecutor:
                 enum_members=self.enum_resolver,
                 max_items=_effective_max_items(admission),
                 observe_items=lambda count, path: state.observe_items(count, boundary, path),
+                keys=self.key_rules,
             )
         except OperationItemBudgetExceeded as exc:
             state.observe_items(exc.observed, boundary, exc.field_path)
@@ -5197,6 +5205,7 @@ class ProcedureExecutor:
                     contract,
                     resolve=resolve,
                     enum_members=self.enum_resolver,
+                    keys=self.key_rules,
                 )
             except OperationValueRefused as exc:
                 return exc.problems or (str(exc),)
@@ -6373,6 +6382,7 @@ def _inbox_items(
     contract: Contract,
     resolve: Callable[[ContractRef], Contract | None],
     enums: EnumResolver | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
     """The typed items a post_inbox terminal posts, each with its own evidence.
 
@@ -6441,6 +6451,7 @@ def _inbox_items(
                 contract,
                 resolve=resolve,
                 enum_members=enums,
+                keys=keys,
             )
         except OperationValueRefused as exc:
             raise _RunRefusal(

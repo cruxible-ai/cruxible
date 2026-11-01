@@ -19,7 +19,7 @@ from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
     ClaimQueryResult,
 )
-from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver
+from cruxible_client.contracts.shapes import Contract, ContractRef, EnumResolver, KeyCanonicalizer
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -351,6 +351,7 @@ def service_execute_direct_procedure(
     ephemeral_spec_digest: str | None = None,
     enum_resolver: EnumResolver | None = None,
     contract_resolver: Callable[[ContractRef], Contract | None] | None = None,
+    key_rules: KeyCanonicalizer | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
 
@@ -378,6 +379,7 @@ def service_execute_direct_procedure(
             parent_context=parent_context,
             enum_resolver=enum_resolver,
             contract_resolver=contract_resolver,
+            key_rules=key_rules,
             ephemeral_spec_digest=ephemeral_spec_digest,
         ).execute(prepared, accepted)
     finally:

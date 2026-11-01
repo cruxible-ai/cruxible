@@ -3262,7 +3262,7 @@ def _render_subject_kind_member(
     rule: SubjectKindKeys | SubjectKindMinted = (
         SubjectKindMinted()
         if payload.minted
-        else SubjectKindKeys(keys=payload.keys, uniqueness=payload.uniqueness or "unique")
+        else SubjectKindKeys(parts=payload.key_rules(), uniqueness=payload.uniqueness or "unique")
     )
     declared = SubjectKind(
         identity=ArtifactIdentity(kind="SubjectKind", name=payload.name),

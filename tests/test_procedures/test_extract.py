@@ -495,3 +495,119 @@ def test_a_warm_watch_set_visits_only_its_keys_records_whatever_the_capture_hold
     extract.STATS.reset()
     unknown = _run(content, only_keys=[{"cve_id": "CVE-1999-0000"}])
     assert unknown.records == [] and extract.STATS.selected == 0
+
+
+# -- key<K> / key_part<K:p> keys: SubjectKind identity rules (R12, D4) -------------------
+
+
+def _vulnerability_rules(normalizer: str = "lowercase") -> Any:
+    """Core's identity rules over one keyed kind: security.vulnerability by cve_id."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.identity_normalizers import (
+        LowercaseNormalizer,
+        NoneNormalizer,
+    )
+    from cruxible_client.contracts.subject_kinds import (
+        SubjectKeyRule,
+        SubjectKind,
+        SubjectKindKeys,
+    )
+    from cruxible_core.indexes.subject_identity import KeyRules
+    from tests.core_support._identity_support import identity_claim_type
+
+    rule = (
+        LowercaseNormalizer(version=1) if normalizer == "lowercase" else NoneNormalizer(version=1)
+    )
+    declared = SubjectKind(
+        identity=ArtifactIdentity(kind="SubjectKind", name="security.vulnerability"),
+        identity_rule=SubjectKindKeys(
+            parts=(SubjectKeyRule(claim_type="security.vulnerability.cve_id", normalizer=rule),),
+            uniqueness="unique",
+        ),
+    )
+    claim_type = identity_claim_type(
+        "cve_id",
+        canonical_form=("nfc", "trim"),
+        literal_schema={"type": "string"},
+        predicate="security.vulnerability.cve_id",
+        subject_kinds=("security.vulnerability",),
+    )
+    return KeyRules(
+        lambda kind: declared if kind == "security.vulnerability" else None,
+        lambda predicate: claim_type if predicate == "security.vulnerability.cve_id" else None,
+    )
+
+
+@pytest.mark.parametrize(
+    "spelling", ["key_part<security.vulnerability:cve_id>", "key<security.vulnerability>"]
+)
+def test_a_typed_key_reads_through_its_kinds_identity_rules(spelling: str) -> None:
+    content = _catalog(_entry("CVE-2026-0001"), _entry(" cve-2026-0002 "))
+    node = _node(key={"cve_id": {"at": "cveID", "type": spelling}})
+    outcome = _run(content, node, keys=_vulnerability_rules())
+    assert [record.key["cve_id"] for record in outcome.records] == [
+        "cve-2026-0001",
+        "cve-2026-0002",
+    ]
+
+
+def test_two_raw_keys_that_canonicalize_to_one_key_are_duplicates() -> None:
+    """Collision: one canonical key is one Subject, so ``duplicates`` decides the records."""
+
+    content = _catalog(_entry("CVE-2026-0001"), _entry("cve-2026-0001"), _entry("CVE-2026-0002"))
+    node = _node(key={"cve_id": {"at": "cveID", "type": "key_part<security.vulnerability:cve_id>"}})
+    outcome = _run(content, node, keys=_vulnerability_rules())
+    assert [type(item).__name__ for item in outcome.results] == [
+        "DuplicateArm",
+        "DuplicateArm",
+        "RecordArm",
+    ]
+    assert outcome.duplicates == 2
+    with pytest.raises(ExtractRefused, match="extract_duplicate_key"):
+        _run(
+            content,
+            node.model_copy(update={"duplicates": "refuse_run"}),
+            keys=_vulnerability_rules(),
+        )
+    # Under none@1 the same raw keys stay two keys.
+    plain = _run(content, node, keys=_vulnerability_rules("none"))
+    assert [record.key["cve_id"] for record in plain.records] == [
+        "CVE-2026-0001",
+        "cve-2026-0001",
+        "CVE-2026-0002",
+    ]
+
+
+def test_a_typed_key_without_identity_rules_fails_closed() -> None:
+    content = _catalog(_entry("CVE-2026-0001"))
+    node = _node(key={"cve_id": {"at": "cveID", "type": "key_part<security.vulnerability:cve_id>"}})
+    (result,) = _run(content, node).results
+    assert isinstance(result, InvalidRecordArm)
+    assert [problem.code for problem in result.problems] == ["key_unparseable"]
+    unknown_kind = _node(key={"cve_id": {"at": "cveID", "type": "key<security.other>"}})
+    (other,) = _run(content, unknown_kind, keys=_vulnerability_rules()).results
+    assert isinstance(other, InvalidRecordArm)
+
+
+def test_a_watched_key_is_canonicalized_before_it_selects() -> None:
+    content = _catalog(_entry("CVE-2026-0001"), _entry("CVE-2026-0002"))
+    node = _node(key={"cve_id": {"at": "cveID", "type": "key_part<security.vulnerability:cve_id>"}})
+    watched = _run(
+        content, node, keys=_vulnerability_rules(), only_keys=[{"cve_id": "CVE-2026-0002"}]
+    )
+    assert [record.key["cve_id"] for record in watched.records] == ["cve-2026-0002"]
+
+
+def test_a_changed_identity_rule_rebuilds_the_record_index() -> None:
+    """Layer D is keyed by the key types as resolved, the SubjectKind's rules included."""
+
+    content = _catalog(_entry("CVE-2026-0001"))
+    node = _node(key={"cve_id": {"at": "cveID", "type": "key_part<security.vulnerability:cve_id>"}})
+    assert _run(content, node, keys=_vulnerability_rules("none")).records[0].key == {
+        "cve_id": "CVE-2026-0001"
+    }
+    assert _run(content, node, keys=_vulnerability_rules()).records[0].key == {
+        "cve_id": "cve-2026-0001"
+    }
+    assert extract.STATS.decodes == 2

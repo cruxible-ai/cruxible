@@ -14,12 +14,22 @@ from contextlib import contextmanager
 from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER
 from cruxible_client.contracts.subject_kinds import (
+    SubjectKeyRule,
     SubjectKind,
     SubjectKindKeys,
     SubjectKindMinted,
     subject_kind_path,
 )
+
+
+def plain_key_rules(*predicates: str) -> tuple[SubjectKeyRule, ...]:
+    """Key parts taking ``none@1``: the identity rule of a kind with no normalizer."""
+
+    return tuple(
+        SubjectKeyRule(claim_type=predicate, normalizer=NO_NORMALIZER) for predicate in predicates
+    )
 
 
 def minted_subject_kind(kind: str) -> SubjectKind:
@@ -34,7 +44,10 @@ def keyed_subject_kind(
 ) -> SubjectKind:
     return SubjectKind(
         identity=ArtifactIdentity(kind="SubjectKind", name=kind),
-        identity_rule=SubjectKindKeys(keys=keys, uniqueness=uniqueness),  # type: ignore[arg-type]
+        identity_rule=SubjectKindKeys(
+            parts=plain_key_rules(*keys),
+            uniqueness=uniqueness,  # type: ignore[arg-type]
+        ),
     )
 
 

@@ -58,6 +58,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampAny,
 )
 from cruxible_client.contracts.doc_sections import SectionPath
+from cruxible_client.contracts.identity_normalizers import NO_NORMALIZER, KeyNormalizer
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
@@ -89,6 +90,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.shapes import ContractField, contract_identity, contract_path
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
+    SubjectKeyRule,
     SubjectKeyValue,
     key_value_problem,
 )
@@ -129,7 +131,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:658d5c0fb92b631a9c53221ea7f828a0388286c7512539d914f1e88654394aa0"
+    "sha256:9013f10f48ce56f7750058074f11110f5c712b0c42e7f768406977f6046f645d"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1110,18 +1112,25 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     """One SubjectKind decision: how core names Subjects of one kind.
 
     Exactly one of ``keys`` (the key ClaimTypes by predicate, in key order, with
-    optional ``uniqueness``, default ``unique``) or ``minted``. Lowering writes
+    optional ``uniqueness``, default ``unique``) or ``minted``. ``normalizers``
+    names, per key part (by predicate or its last name under the kind), the
+    identity normalizer its value takes, pinned by version; a key part it does
+    not name takes ``none@1``, written out in the artifact. Lowering writes
     ``subject-kinds/<name>.json`` as the successor of the accepted one when there
-    is one; changing the keys or uniqueness is that governed successor, and no
-    existing Subject's id moves.
+    is one; changing the keys, a normalizer or uniqueness is that governed
+    successor (a changed normalizer re-keys: the same change re-authors the key
+    values it moves), and no existing Subject's id moves.
     """
 
-    tag: Literal["cruxible-subject-kind-authoring-payload-v1"] = (
-        "cruxible-subject-kind-authoring-payload-v1"
+    tag: Literal["cruxible-subject-kind-authoring-payload-v2"] = (
+        "cruxible-subject-kind-authoring-payload-v2"
     )
     name: str
     description: str | None = Field(default=None, exclude_if=lambda value: value is None)
     keys: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    normalizers: dict[str, KeyNormalizer] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
     uniqueness: Literal["unique", "hint"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -1141,7 +1150,39 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
             raise ValueError("a SubjectKind names its keys or is minted: exactly one of them")
         if self.minted and self.uniqueness is not None:
             raise ValueError("only a keyed SubjectKind states uniqueness (unique or hint)")
+        if self.minted and self.normalizers:
+            raise ValueError("only a keyed SubjectKind names key normalizers")
+        named: set[str] = set()
+        for given in self.normalizers:
+            predicate = self.key_predicate(given)
+            if predicate is None:
+                raise ValueError(
+                    f"normalizer {given!r} names no key of {self.name}; its keys are "
+                    + ", ".join(self.keys)
+                )
+            if predicate in named:
+                raise ValueError(f"key {predicate!r} is given two normalizers")
+            named.add(predicate)
         return self
+
+    def key_predicate(self, name: str) -> str | None:
+        """The key predicate ``name`` spells: the predicate, or its last name under the kind."""
+
+        for predicate in self.keys:
+            if name == predicate or name == predicate.removeprefix(self.name + "."):
+                return predicate
+        return None
+
+    def key_rules(self) -> tuple[SubjectKeyRule, ...]:
+        """Each key part with its normalizer, in key order (unnamed parts take ``none@1``)."""
+
+        by_predicate = {self.key_predicate(given): rule for given, rule in self.normalizers.items()}
+        return tuple(
+            SubjectKeyRule(
+                claim_type=predicate, normalizer=by_predicate.get(predicate, NO_NORMALIZER)
+            )
+            for predicate in self.keys
+        )
 
 
 class ContractAuthoringPayload(_StrictAuthoringModel):

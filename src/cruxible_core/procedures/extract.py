@@ -67,6 +67,9 @@ from cruxible_client.contracts.shapes import (
     FieldType,
     IntType,
     InvalidRecordArm,
+    KeyCanonicalizer,
+    KeyPartType,
+    KeyType,
     ListType,
     NestedType,
     Problem,
@@ -78,6 +81,7 @@ from cruxible_client.contracts.shapes import (
     ResultValue,
     StringType,
     VariantType,
+    check_key_value,
     check_value,
 )
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
@@ -376,6 +380,7 @@ def _check(
     field: str | None,
     resolve: Callable[[ContractRef], Contract | None] | None,
     enums: EnumResolver | None,
+    keys: KeyCanonicalizer | None = None,
 ) -> Held:
     """``check_value`` without model construction, for the types records carry.
 
@@ -444,6 +449,7 @@ def _check(
                 field=f"{field or ''}[{index}]",
                 resolve=resolve,
                 enums=enums,
+                keys=keys,
             )
             if checked[0] == "invalid":
                 return checked
@@ -467,11 +473,22 @@ def _check(
                 field=name,
                 resolve=resolve,
                 enums=enums,
+                keys=keys,
             )
             if checked[0] == "invalid":
                 return ("invalid", checked[1], f"{field or ''}.{checked[2] or name}", checked[3])
         return ("present", dict(value), at)
-    result = check_value(value, field_type, at=at, field=field, resolve=resolve, enum_members=enums)
+    if isinstance(field_type, KeyType | KeyPartType):
+        # Two raw keys that canonicalize to one key are one key.
+        checked_key = check_key_value(
+            value, field_type, at=at, field=field, keys=keys, convert=True
+        )
+        if isinstance(checked_key, FieldPresent):
+            return ("present", checked_key.value, at)
+        return _bad("key_unparseable", field, value)
+    result = check_value(
+        value, field_type, at=at, field=field, resolve=resolve, enum_members=enums, keys=keys
+    )
     if isinstance(result, FieldPresent):
         return ("present", result.value, result.at)
     problem = result.problem
@@ -488,6 +505,7 @@ def _type_value(
     required: bool,
     enums: EnumResolver | None,
     resolve: Callable[[ContractRef], Contract | None] | None,
+    keys: KeyCanonicalizer | None = None,
 ) -> Held:
     if lexeme is _MISSING or lexeme is None or lexeme == "" and declared.parse is not None:
         return _bad("absent_required", name) if required else _ABSENT
@@ -495,7 +513,7 @@ def _type_value(
     if value is _UNPARSEABLE:
         return _bad("type_mismatch", name, lexeme)
     value = _canonicalized(_drop_nulls(value), field_type, declared.canonicalize, enums)
-    return _check(value, field_type, at=at, field=name, resolve=resolve, enums=enums)
+    return _check(value, field_type, at=at, field=name, resolve=resolve, enums=enums, keys=keys)
 
 
 def held_result(held: Held) -> FieldResult:
@@ -722,6 +740,7 @@ def _index(
                 required=True,
                 enums=enums,
                 resolve=None,
+                keys=typing.keys,
             )
             if result[0] == "present":
                 values[name] = result[1]
@@ -813,6 +832,7 @@ def _evaluate(
             required=declared.presence == "required",
             enums=enums,
             resolve=None,
+            keys=typing.keys,
         )
     held = index.csv_complete and index.selector_matched
     if node.complete_when is not None:
@@ -941,8 +961,9 @@ class _Typing:
     """Every typing declaration one field's result depends on, resolved once per run.
 
     A field result is read under its effective type, and that type may name
-    an enum whose members a ClaimType declares (``enum_of``) or a Contract it
-    nests (``contract``, ``variant``, ``record``...). Each cache key carries
+    an enum whose members a ClaimType declares (``enum_of``), a Contract it
+    nests (``contract``, ``variant``, ``record``...) or a SubjectKind whose
+    identity rules canonicalize a key (``key``, ``key_part``). Each cache key carries
     the type together with what those names resolve to *now*, so a changed
     enum membership or nested Contract version is a different key, never a
     stale hit.
@@ -952,9 +973,11 @@ class _Typing:
         self,
         resolve: Callable[[ContractRef], Contract | None] | None,
         enums: EnumResolver | None,
+        keys: KeyCanonicalizer | None = None,
     ) -> None:
         self._resolve = resolve
         self._enums = enums
+        self.keys = keys
         self._memo: dict[bytes, object] = {}
 
     def of(self, field_type: FieldType) -> object:
@@ -978,6 +1001,18 @@ class _Typing:
                     {
                         "enum_of": item.claim_type,
                         "members": None if members is None else list(members),
+                    }
+                )
+                continue
+            if isinstance(item, KeyType | KeyPartType):
+                # A key reads under its kind's identity rules as they are now: a
+                # successor SubjectKind (a changed normalizer) is a new key.
+                found.append(
+                    {
+                        "key_rules": item.subject_kind,
+                        "resolved": None
+                        if self.keys is None
+                        else self.keys.rule_token(item.subject_kind),
                     }
                 )
                 continue
@@ -1009,6 +1044,29 @@ class _Typing:
         return found
 
 
+def _canonical_only_key(
+    key: Mapping[str, object], *, keys_typed: Mapping[str, FieldType], typing: _Typing
+) -> Mapping[str, object] | None:
+    """A watched key as the record index holds keys: each ``key<K>`` part canonicalized.
+
+    A watched value that is not a key of its kind can name no record (every
+    indexed key is canonical), so it selects nothing.
+    """
+
+    canonical: dict[str, object] = {}
+    for name, value in key.items():
+        field_type = keys_typed.get(name)
+        if isinstance(field_type, KeyType | KeyPartType):
+            checked = check_key_value(
+                value, field_type, at="", field=name, keys=typing.keys, convert=True
+            )
+            if not isinstance(checked, FieldPresent):
+                return None
+            value = checked.value
+        canonical[name] = value
+    return canonical
+
+
 def run_extract(
     node: ExtractNode,
     *,
@@ -1021,17 +1079,26 @@ def run_extract(
     only_keys: Sequence[Mapping[str, object]] | None = None,
     header_types: Mapping[str, FieldType] | None = None,
     key_types: Mapping[str, FieldType] | None = None,
+    keys: KeyCanonicalizer | None = None,
 ) -> ExtractOutcome:
-    """Decode (or reuse) one Capture's record index and read the node's fields."""
+    """Decode (or reuse) one Capture's record index and read the node's fields.
+
+    ``keys`` is core's SubjectKind identity rules at the run's coordinate: a
+    ``key<K>`` / ``key_part<K:p>`` key or field reads through them (without
+    them, it fails closed ``key_unparseable``). A runtime ``only_keys`` entry
+    is canonicalized the same way before it selects.
+    """
 
     if decoding is None:
         raise ExtractRefused(
             "extract_decoding_undeclared",
             "the Capture's CaptureContract declares no decoding",
         )
-    typing = _Typing(resolve, enums)
+    typing = _Typing(resolve, enums, keys)
     types = {name: row.fields[name].type for name in node.fields}
-    keys = dict(key_types or {name: declared.field_type() for name, declared in node.key.items()})
+    keys_by_name = dict(
+        key_types or {name: declared.field_type() for name, declared in node.key.items()}
+    )
     headers = dict(
         header_types or {name: declared.field_type() for name, declared in node.header.items()}
     )
@@ -1040,7 +1107,7 @@ def run_extract(
         capture_digest=capture_digest,
         content=content,
         decoding=decoding,
-        key_types=keys,
+        key_types=keys_by_name,
         enums=enums,
         typing=typing,
     )
@@ -1067,7 +1134,10 @@ def run_extract(
         # the position map orders them; no record outside the watch set is read.
         wanted: dict[str, None] = {}
         for key in only_keys:
-            for locator in index.by_key.get(_key_of(key), ()):
+            canonical = _canonical_only_key(key, keys_typed=keys_by_name, typing=typing)
+            if canonical is None:
+                continue
+            for locator in index.by_key.get(_key_of(canonical), ()):
                 wanted[locator] = None
         selected = sorted(wanted, key=index.positions.__getitem__)
     held: list[_Record | InvalidRecordArm | DuplicateArm] = []
@@ -1131,6 +1201,7 @@ def run_extract(
                         required=required[name],
                         enums=enums,
                         resolve=resolve,
+                        keys=typing.keys,
                     ),
                 )
             else:

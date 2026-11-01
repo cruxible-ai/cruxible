@@ -10,8 +10,11 @@ document-level fields. Each record becomes one ``result``: a typed
 ``record`` with its locator, an ``invalid_record`` (key or enumeration
 problems), or a ``duplicate``.
 
-Key fields are plain scalars here: ``key<K>`` and ``key_part<K>`` stay refused
-until SubjectKind identity rules exist.
+A key field may be a plain scalar, or ``key<K>`` (the whole key of a one-key
+kind) or ``key_part<K:part>`` (one part of K's key): core then reads the lexeme
+as K's identity rules canonicalize it (the key ClaimType's canonical form, then
+the SubjectKind's normalizer for that part), so two records whose raw keys
+canonicalize to one key share one key, and ``duplicates`` decides them.
 """
 
 from __future__ import annotations
@@ -34,7 +37,6 @@ from cruxible_client.contracts.shapes import (
     DecimalType,
     FieldType,
     IntType,
-    KeyType,
     StringType,
     parse_type,
 )
@@ -82,12 +84,7 @@ class ExtractField(_StrictProcedureModel):
     @classmethod
     def _type(cls, value: str | None) -> str | None:
         if value is not None:
-            parsed = parse_type(value)
-            if isinstance(parsed, KeyType) or value.startswith("key_part"):
-                raise ValueError(
-                    "key<K> and key_part<K> extract keys wait for SubjectKind identity rules; "
-                    "type a key with a plain scalar type"
-                )
+            parse_type(value)
         return value
 
     def field_type(self) -> FieldType:

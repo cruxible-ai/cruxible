@@ -26,6 +26,13 @@ from cruxible_client.contracts.canonical_forms import (
     canonicalize_literal,
 )
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
+from cruxible_client.contracts.identity_normalizers import (
+    NO_NORMALIZER,
+    KeyNormalizationRefused,
+    KeyNormalizer,
+    normalize_key_value,
+    normalizer_spelling,
+)
 from cruxible_client.contracts.subject_kinds import (
     KeyClaimTypeShape,
     SubjectKeyValue,
@@ -72,6 +79,34 @@ class SubjectKeyInvalid(ValueError):
     """A key that cannot name a Subject of its kind; the message says why."""
 
 
+def canonical_key_value(
+    value: object, claim_type: ClaimType, normalizer: KeyNormalizer, *, predicate: str
+) -> SubjectKeyValue:
+    """One key part's canonical value: its ClaimType's canonical form, then its normalizer.
+
+    The result must be a fixed point of both rules (a value the form would
+    change again is a conflict between the two, never silently re-spelled).
+    Raises ``SubjectKeyInvalid`` naming the part and why.
+    """
+
+    form = effective_canonical_form(claim_type)
+    try:
+        value = canonicalize_literal(value, form)
+        normalized = normalize_key_value(normalizer, value)
+        settled = canonicalize_literal(normalized, form)
+    except (CanonicalFormDidNotConverge, KeyNormalizationRefused) as exc:
+        raise SubjectKeyInvalid(f"{predicate}: {exc}") from exc
+    if settled != normalized:
+        raise SubjectKeyInvalid(
+            f"{predicate}: {normalizer_spelling(normalizer)} gives {normalized!r}, which the "
+            "key ClaimType's canonical form re-spells; the two rules disagree on this value"
+        )
+    problem = key_value_problem(normalized)
+    if problem is not None:
+        raise SubjectKeyInvalid(f"{predicate}: {problem}")
+    return normalized  # type: ignore[return-value]
+
+
 def canonical_key(
     subject_kind: SubjectKind,
     key: Mapping[str, object],
@@ -81,8 +116,10 @@ def canonical_key(
     """The canonical key a creation names: each part in key order, in its canonical form.
 
     ``key`` maps key ClaimTypes (by predicate or last name) to raw values;
-    ``claim_type`` reads a key ClaimType as the change sees it. Raises
-    ``SubjectKeyInvalid`` naming what is missing, unknown or unsettled.
+    ``claim_type`` reads a key ClaimType as the change sees it. Each part's
+    value takes its ClaimType's canonical form, then the identity normalizer
+    the SubjectKind pins for it. Raises ``SubjectKeyInvalid`` naming what is
+    missing, unknown or unsettled.
     """
 
     try:
@@ -94,15 +131,113 @@ def canonical_key(
         definition = claim_type(part.predicate)
         if definition is None:
             raise SubjectKeyInvalid(f"key ClaimType {part.predicate!r} is not accepted")
-        try:
-            value = canonicalize_literal(part.value, effective_canonical_form(definition))
-        except CanonicalFormDidNotConverge as exc:
-            raise SubjectKeyInvalid(str(exc)) from exc
-        problem = key_value_problem(value)
-        if problem is not None:
-            raise SubjectKeyInvalid(f"{part.predicate}: {problem}")
-        found.append((part.predicate, value))  # type: ignore[arg-type]
+        value = canonical_key_value(
+            part.value,
+            definition,
+            subject_kind.normalizer(part.predicate),
+            predicate=part.predicate,
+        )
+        found.append((part.predicate, value))
     return tuple(found)
+
+
+class KeyRules:
+    """SubjectKind identity rules as a Contract value check reads them (``KeyCanonicalizer``).
+
+    ``subject_kind`` and ``claim_type`` read the live SubjectKind of a kind and
+    an accepted ClaimType at one coordinate (an admitted run's, or a tree's);
+    both are memoized, so a run reads each definition once.
+    """
+
+    def __init__(
+        self,
+        subject_kind: Callable[[str], SubjectKind | None],
+        claim_type: Callable[[str], ClaimType | None],
+    ) -> None:
+        self._subject_kind = subject_kind
+        self._claim_type = claim_type
+        self._kinds: dict[str, SubjectKind | None] = {}
+        self._types: dict[str, ClaimType | None] = {}
+
+    def kind(self, subject_kind: str) -> SubjectKind | None:
+        if subject_kind not in self._kinds:
+            declared = self._subject_kind(subject_kind)
+            self._kinds[subject_kind] = (
+                declared if declared is not None and declared.lifecycle.state == "live" else None
+            )
+        return self._kinds[subject_kind]
+
+    def claim_type(self, predicate: str) -> ClaimType | None:
+        if predicate not in self._types:
+            self._types[predicate] = self._claim_type(predicate)
+        return self._types[predicate]
+
+    def canonical(self, subject_kind: str, part: str | None, value: object) -> object:
+        from cruxible_client.contracts.shapes import KeyValueRefused
+        from cruxible_client.contracts.subject_kinds import key_predicate, key_reference_mapping
+
+        declared = self.kind(subject_kind)
+        if declared is None or declared.minted:
+            raise KeyValueRefused(f"no live keyed SubjectKind declares {subject_kind}")
+        try:
+            if part is not None:
+                predicate = key_predicate(declared, part)
+                definition = None if predicate is None else self.claim_type(predicate)
+                if predicate is None or definition is None:
+                    raise SubjectKeyInvalid(f"{part!r} is not an accepted key of {subject_kind}")
+                return canonical_key_value(
+                    value, definition, declared.normalizer(predicate), predicate=predicate
+                )
+            if isinstance(value, Mapping):
+                given: dict[str, object] = dict(value)
+            elif key_value_problem(value) is None:
+                given = key_reference_mapping(declared, value)  # type: ignore[arg-type]
+            else:
+                raise SubjectKeyInvalid(f"{value!r} is not a key of {subject_kind}")
+            key = canonical_key(declared, given, claim_type=self.claim_type)
+        except (SubjectKeyInvalid, ValueError) as exc:
+            raise KeyValueRefused(str(exc)) from exc
+        if not isinstance(value, Mapping):
+            return key[0][1]
+        prefix = declared.subject_kind + "."
+        return {predicate.removeprefix(prefix): part_value for predicate, part_value in key}
+
+    def rule_token(self, subject_kind: str) -> object:
+        from cruxible_client.contracts.subject_kinds import subject_kind_digest
+
+        declared = self.kind(subject_kind)
+        if declared is None:
+            return None
+        return {
+            "subject_kind": subject_kind_digest(declared).tagged,
+            "forms": {
+                predicate: (
+                    None
+                    if (definition := self.claim_type(predicate)) is None
+                    else list(effective_canonical_form(definition))
+                )
+                for predicate in declared.keys
+            },
+        }
+
+
+def tree_key_rules(tree: Mapping[str, bytes]) -> KeyRules:
+    """The identity rules of the SubjectKinds and key ClaimTypes ``tree`` accepts."""
+
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+
+    def subject_kind(kind: str) -> SubjectKind | None:
+        try:
+            return live_subject_kind(tree, kind)
+        except SubjectKindFormatError:
+            return None
+
+    def claim_type(predicate: str) -> ClaimType | None:
+        path = claim_type_path(predicate)
+        content = tree.get(path)
+        return None if content is None else parse_claim_type(content, path=path)
+
+    return KeyRules(subject_kind, claim_type)
 
 
 def key_values(key: KeyTuple) -> tuple[SubjectKeyValue, ...]:
@@ -293,7 +428,16 @@ def live_key_claims(
     return tuple(found)
 
 
-def single_key(tree: Mapping[str, bytes], kind: str) -> tuple[str, ClaimType] | None:
+@dataclass(frozen=True)
+class SingleKey:
+    """The one key of a single-key kind: its predicate, ClaimType and normalizer."""
+
+    predicate: str
+    claim_type: ClaimType
+    normalizer: KeyNormalizer
+
+
+def single_key(tree: Mapping[str, bytes], kind: str) -> SingleKey | None:
     """The one key of ``kind`` when its SubjectKind in ``tree`` names a single key.
 
     Such a kind's ``kind/<text>`` reads as "the Subject whose key is <text>",
@@ -312,15 +456,19 @@ def single_key(tree: Mapping[str, bytes], kind: str) -> tuple[str, ClaimType] | 
     content = tree.get(claim_type_path(predicate))
     if content is None:
         return None
-    return predicate, parse_claim_type(content, path=claim_type_path(predicate))
+    return SingleKey(
+        predicate=predicate,
+        claim_type=parse_claim_type(content, path=claim_type_path(predicate)),
+        normalizer=declared.normalizer(predicate),
+    )
 
 
-def single_key_value(claim_type: ClaimType, text: str) -> SubjectKeyValue | None:
+def single_key_value(key: SingleKey, text: str) -> SubjectKeyValue | None:
     """``text`` as the canonical value of a single key, or None when it cannot be one."""
 
     try:
-        value = canonicalize_literal(text, effective_canonical_form(claim_type))
-    except CanonicalFormDidNotConverge:
+        value = canonical_key_value(text, key.claim_type, key.normalizer, predicate=key.predicate)
+    except SubjectKeyInvalid:
         return None
     return value if isinstance(value, str) and value else None
 
@@ -332,7 +480,7 @@ KeyReader = Callable[[str, str], "KeyTuple | None"]
 def tree_key_reader(tree: Mapping[str, bytes]) -> KeyReader:
     """The single-key reading of ``kind/<text>`` under the SubjectKinds of ``tree``."""
 
-    known: dict[str, tuple[str, ClaimType] | None] = {}
+    known: dict[str, SingleKey | None] = {}
 
     def read(kind: str, text: str) -> KeyTuple | None:
         if kind not in known:
@@ -340,9 +488,8 @@ def tree_key_reader(tree: Mapping[str, bytes]) -> KeyReader:
         found = known[kind]
         if found is None:
             return None
-        predicate, claim_type = found
-        value = single_key_value(claim_type, text)
-        return None if value is None else ((predicate, value),)
+        value = single_key_value(found, text)
+        return None if value is None else ((found.predicate, value),)
 
     return read
 
@@ -646,11 +793,10 @@ def single_key_holders(
     found = single_key(tree, kind)
     if found is None:
         return ()
-    predicate, claim_type = found
-    value = single_key_value(claim_type, text)
+    value = single_key_value(found, text)
     if value is None:
         return ()
-    return subjects_with_key(connection, kind, ((predicate, value),))
+    return subjects_with_key(connection, kind, ((found.predicate, value),))
 
 
 def key_ambiguous_message(kind: str, holders: Sequence[str]) -> str:
@@ -1140,6 +1286,10 @@ def candidate_identity_issues(
                         )
                     )
                     break
+                normalized = _normalizer_issue(subject, predicate, found[0], declared_kind)
+                if normalized is not None:
+                    issues.append(normalized)
+                    break
                 parts.append((predicate, found[0]))
             else:
                 keys_now[subject] = tuple(parts)
@@ -1261,6 +1411,22 @@ def candidate_identity_issues(
                         others_unique,
                     )
                 )
+        # A changed normalizer re-keys the kind: every live key value it moves is
+        # re-authored in this same change, never re-spelled silently.
+        for kind in sorted(changed_kinds):
+            declared_kind = declared(kind)
+            previous = live_subject_kind(current_tree, kind)
+            if declared_kind is not None and previous is not None:
+                issues.extend(
+                    _normalizer_rekey_issues(
+                        connection,
+                        kind,
+                        declared_kind,
+                        previous,
+                        candidate_tree=candidate_tree,
+                        values=values,
+                    )
+                )
         # A kind newly unique, or re-keyed while unique, holds every key once.
         for kind in sorted(changed_kinds):
             declared_kind = declared(kind)
@@ -1269,7 +1435,9 @@ def candidate_identity_issues(
                 declared_kind is None
                 or not declared_kind.unique
                 or (
-                    previous is not None and previous.unique and previous.keys == declared_kind.keys
+                    previous is not None
+                    and previous.unique
+                    and previous.identity_rule == declared_kind.identity_rule
                 )
             ):
                 continue
@@ -1279,6 +1447,109 @@ def candidate_identity_issues(
 
 SUBJECT_KIND_KEY_BROKEN = "cruxible.subject_kind.key_claim_type_broken"
 SUBJECT_KIND_REKEY_UNHANDLED = "cruxible.subject_kind.rekey_unhandled"
+SUBJECT_KEY_NOT_CANONICAL = "cruxible.subject.key_not_canonical"
+
+
+def _normalizer_issue(
+    subject: str, predicate: str, value: SubjectKeyValue, declared_kind: SubjectKind
+) -> SubjectIdentityIssue | None:
+    """Why one live key value is not canonical under its part's normalizer, or None.
+
+    Every route that names a Subject by key normalizes for the author; this is
+    the one boundary that holds every other route (a revised key Claim, a raw
+    proposal) to it.
+    """
+
+    rule = declared_kind.normalizer(predicate)
+    try:
+        canonical = normalize_key_value(rule, value)
+    except KeyNormalizationRefused as exc:
+        return SubjectIdentityIssue(
+            SUBJECT_KEY_INVALID,
+            subject,
+            f"{_ref(subject)}'s key part {predicate} under {normalizer_spelling(rule)}: {exc}.",
+        )
+    if canonical == value:
+        return None
+    return SubjectIdentityIssue(
+        SUBJECT_KEY_NOT_CANONICAL,
+        subject,
+        f"{_ref(subject)}'s key part {predicate} states {value!r}, and its canonical value "
+        f"under {normalizer_spelling(rule)} is {canonical!r}. A key Claim states the "
+        "canonical value; state that one (naming a Subject by key normalizes it for you).",
+    )
+
+
+def _normalizer_rekey_issues(
+    connection: sqlite3.Connection,
+    kind: str,
+    declared_kind: SubjectKind,
+    previous: SubjectKind,
+    *,
+    candidate_tree: Mapping[str, bytes],
+    values: Callable[[str, str], list[SubjectKeyValue | None]],
+) -> list[SubjectIdentityIssue]:
+    """A SubjectKind successor that changes a key part's normalizer: an explicit re-key.
+
+    Every live Subject of the kind must hold that part already in the new rule's
+    canonical value in the candidate -- its key Claims re-authored in the same
+    change -- or the change is refused (``rekey_unhandled``), naming the
+    Subjects still to move. One pass over the kind's live Subjects: a
+    governance event's cost, run only when a normalizer (or its version)
+    changes. Two Subjects the new rule gives one key are then judged by the
+    kind-wide uniqueness check (``key_conflict``).
+    """
+
+    from cruxible_client.contracts.subject_kinds import subject_kind_path
+
+    changed = [
+        predicate
+        for predicate in declared_kind.keys
+        if predicate in previous.keys
+        and previous.normalizer(predicate) != declared_kind.normalizer(predicate)
+    ]
+    if not changed or declared_kind.lifecycle.state != "live":
+        return []
+    low, high = _kind_range(kind)
+    subjects = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT path FROM subjects WHERE path>=? AND path<? AND lifecycle='live'", (low, high)
+        )
+        if _live(candidate_tree, str(row[0]))
+    ]
+    issues: list[SubjectIdentityIssue] = []
+    for predicate in changed:
+        rule = declared_kind.normalizer(predicate)
+        stale: list[str] = []
+        for subject in subjects:
+            for value in values(subject, predicate):
+                if value is None:
+                    continue
+                try:
+                    fixed: object = normalize_key_value(rule, value)
+                except KeyNormalizationRefused:
+                    fixed = None
+                if fixed != value:
+                    stale.append(subject)
+                    break
+        if stale:
+            issues.append(
+                SubjectIdentityIssue(
+                    SUBJECT_KIND_REKEY_UNHANDLED,
+                    subject_kind_path(kind),
+                    f"{kind} key {predicate} moves from "
+                    f"{normalizer_spelling(previous.normalizer(predicate))} to "
+                    f"{normalizer_spelling(rule)}: a re-keying. {len(stale)} live {kind} "
+                    f"Subject(s) still hold a value the new rule re-spells "
+                    f"({', '.join(_ref(item) for item in stale[:5])}"
+                    f"{', ...' if len(stale) > 5 else ''}); re-author their key Claims to "
+                    "the new canonical value in the same change (re_author), retire them, or "
+                    "keep the rule.",
+                    tuple(_ref(item) for item in stale),
+                )
+            )
+    return issues
 
 
 def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimTypeShape | None:
@@ -1299,6 +1570,7 @@ def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimT
     if content is None:
         return None
     claim_type = parse_claim_type(content, path=path)
+    schema_type = (claim_type.literal_schema or {}).get("type")
     return KeyClaimTypeShape(
         predicate=predicate,
         live=claim_type.lifecycle.state == "live",
@@ -1306,6 +1578,8 @@ def key_claim_type_shape(tree: Mapping[str, bytes], predicate: str) -> KeyClaimT
         object_kind=claim_type.object_kind,
         cardinality=claim_type.cardinality,
         allowed_subject_kinds=tuple(claim_type.allowed_subject_kinds),
+        literal_type=schema_type if isinstance(schema_type, str) else None,
+        canonical_form=tuple(effective_canonical_form(claim_type)),
     )
 
 
@@ -1367,9 +1641,13 @@ def _key_definition_issues(
             if predicate not in changed:
                 continue
             old, new = changed[predicate]
+            declared_kind = declared(kind)
             if kind not in changed_kinds:
                 problem = key_claim_type_problem(
-                    kind, key_claim_type_shape(candidate_tree, predicate), predicate
+                    kind,
+                    key_claim_type_shape(candidate_tree, predicate),
+                    predicate,
+                    None if declared_kind is None else declared_kind.normalizer(predicate),
                 )
                 if problem is not None:
                     issues.append(
@@ -1384,8 +1662,6 @@ def _key_definition_issues(
                     continue
             if new is None or effective_canonical_form(old) == effective_canonical_form(new):
                 continue
-            form = effective_canonical_form(new)
-            declared_kind = declared(kind)
             low, high = _kind_range(kind)
             subjects = [
                 str(row[0])
@@ -1396,13 +1672,18 @@ def _key_definition_issues(
                 if _live(candidate_tree, str(row[0]))
             ]
             stale: list[str] = []
+            normalizer = (
+                NO_NORMALIZER if declared_kind is None else declared_kind.normalizer(predicate)
+            )
             for subject in subjects:
                 for value in values(subject, predicate):
                     if value is None:
                         continue
                     try:
-                        fixed = canonicalize_literal(value, form)
-                    except CanonicalFormDidNotConverge:
+                        fixed: object = canonical_key_value(
+                            value, new, normalizer, predicate=predicate
+                        )
+                    except SubjectKeyInvalid:
                         fixed = None
                     if fixed != value:
                         stale.append(subject)
@@ -1503,6 +1784,11 @@ __all__ = [
     "SubjectAssignmentAuthority",
     "SUBJECT_KIND_KEY_BROKEN",
     "SUBJECT_KIND_REKEY_UNHANDLED",
+    "SUBJECT_KEY_NOT_CANONICAL",
+    "KeyRules",
+    "SingleKey",
+    "tree_key_rules",
+    "canonical_key_value",
     "key_claim_type_shape",
     "SUBJECT_KEY_CONFLICT",
     "SUBJECT_KEY_CONTENDED",

@@ -201,6 +201,7 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
     GetSubjectHistory,
 )
+from cruxible_client.contracts.identity_normalizers import KeyNormalizer
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
@@ -1313,6 +1314,7 @@ class ChangeSetDraft:
         minted: bool = False,
         description: str | None = None,
         retire: bool = False,
+        normalizers: Mapping[str, KeyNormalizer] | None = None,
     ) -> ChangeSetDraft:
         """Declare how Subjects of one kind are named: by key ClaimTypes, or minted.
 
@@ -1322,7 +1324,9 @@ class ChangeSetDraft:
         optional ``uniqueness`` -- the default ``unique`` refuses a second Subject
         with the same key, ``hint`` only surfaces it in the duplicates audit -- or
         ``minted=True`` to have core mint opaque ids. Core then names every new Subject of the kind:
-        its id is the readable rendering of its key, or a minted id.
+        its id is the readable rendering of its key, or a minted id. ``normalizers``
+        maps a key (predicate or last name) to its identity normalizer, pinned by
+        version (e.g. ``Pep503Normalizer(version=1)``); unnamed keys take ``none@1``.
 
         Next: ``.submit()``; afterwards ``cx.set("<kind>/<key value>", ...)`` creates
         a Subject of a single-key unique kind by its key.
@@ -1332,6 +1336,7 @@ class ChangeSetDraft:
             name=name,
             description=description,
             keys=tuple(keys),
+            normalizers=dict(normalizers or {}),
             uniqueness=uniqueness,
             minted=minted,
             retire=retire,
