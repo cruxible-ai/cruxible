@@ -42,6 +42,8 @@ from cruxible_core.service.procedures.procedure_runs import (
     PROCEDURE_RUN_CONFIG_PATH,
     ProcedureRunOperationalConfigV1,
 )
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
     RUN_WALL_CLOCK,
     procedure_members,  # noqa: E402
@@ -57,7 +59,7 @@ def _served_line(
 ) -> LineSpec:
     """A propose Line over ``accepted`` (no slots to bind, no acquisition overrides)."""
 
-    return LineSpec(
+    return line_spec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=ArtifactPin(
@@ -67,12 +69,12 @@ def _served_line(
         ),
         parameters={"status": "open"},
         max_authority="propose",
-        budgets={
-            "max_capture_bytes": 0,
-            "max_items": 100,
-            "max_provider_calls": 0,
-            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=0,
+            max_items=100,
+            max_provider_calls=0,
+            max_wall_clock_microseconds=RUN_WALL_CLOCK.microseconds,
+        ),
         epsilon={"$decimal": "0.1"},
     )
 
@@ -80,7 +82,7 @@ def _served_line(
 def _line_mandate(accepted: AcceptedProcedure, line: LineSpec) -> ProcedureMandate:
     """A propose grant pinning ``line`` exactly (ruling C3)."""
 
-    return ProcedureMandate(
+    return procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-line-mandate"),
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged

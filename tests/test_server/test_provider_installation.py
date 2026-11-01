@@ -8,10 +8,17 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.procedures.authored import (
+    CallStep,
+    ExtractStep,
+    ProjectStep,
+    ReadStep,
+)
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
+from tests.support.procedures import procedure_limits, procedure_spec_data
 
 
 @pytest.fixture
@@ -171,21 +178,19 @@ def _run_call(http, instance_id, reviewer, *, build, value, name="installed-pack
         http,
         instance_id,
         reviewer,
-        spec={
-            "procedure": f"test.{name}",
-            "params": {"n": "int"},
-            "output": {"n": "int"},
-            "slots": {"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
-            "steps": [
-                {
-                    "call": "result",
-                    "slot": "increment",
-                    "input": {"n": {"$ref": "param", "path": ["n"]}},
-                }
+        spec=procedure_spec_data(
+            procedure=f"test.{name}",
+            params={"n": "int"},
+            output={"n": "int"},
+            slots={"increment": {"in": LOCAL_CALL_IN, "out": LOCAL_CALL_OUT, "effect": "pure"}},
+            steps=[
+                CallStep(
+                    call="result", slot="increment", input={"n": {"$ref": "param", "path": ["n"]}}
+                )
             ],
-            "returns": "result",
-            "hard_caps": {"provider_calls": 1},
-        },
+            returns="result",
+            hard_caps=procedure_limits(provider_calls=1),
+        ),
         line=line,
         bindings={"increment": build},
         parameters=value,
@@ -551,36 +556,36 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         http,
         instance_id,
         reviewer,
-        spec={
-            "procedure": "test.installed-web-fetch",
-            "input": {},
-            "output": {"text": "string"},
-            "slots": {
+        spec=procedure_spec_data(
+            procedure="test.installed-web-fetch",
+            input={},
+            output={"text": "string"},
+            slots={
                 "fetch": {
                     "in": "web.fetch.request@1",
                     "out": "web.fetch.result@1",
                     "effect": "external_read",
                 }
             },
-            "steps": [
-                {
-                    "call": "observation",
-                    "captures": {"capture": contract.identity.name},
-                    "slot": "fetch",
-                    "input": {"url": url, "expected_format": "json"},
-                },
-                {
-                    "extract": "bundle",
-                    "capture": "$observation.capture",
-                    "records": "/",
-                    "row": "test.web-bundle@1",
-                    "fields": {"text": {"at": "derived/text"}},
-                },
-                {"project": "result", "fields": {"text": "$bundle.rows.0.text"}},
+            steps=[
+                CallStep(
+                    call="observation",
+                    captures={"capture": contract.identity.name},
+                    slot="fetch",
+                    input={"url": url, "expected_format": "json"},
+                ),
+                ExtractStep(
+                    extract="bundle",
+                    capture="$observation.capture",
+                    records="/",
+                    row="test.web-bundle@1",
+                    fields={"text": {"at": "derived/text"}},
+                ),
+                ProjectStep(project="result", fields={"text": "$bundle.rows.0.text"}),
             ],
-            "returns": "result",
-            "hard_caps": {"provider_calls": 1, "capture_bytes": 1048576},
-        },
+            returns="result",
+            hard_caps=procedure_limits(provider_calls=1, capture_bytes=1048576),
+        ),
         line=line,
         acquisition={"observation.capture": _policy().model_dump(mode="json")},
         bindings={"fetch": f"{installed.build}#web.fetch"},
@@ -872,26 +877,26 @@ def _author_workspace_line(http, instance_id, reviewer, *, build, name):
         http,
         instance_id,
         reviewer,
-        spec={
-            "procedure": f"test.{name}",
-            "input": {},
-            "output": {"lines": "int"},
-            "slots": {
+        spec=procedure_spec_data(
+            procedure=f"test.{name}",
+            input={},
+            output={"lines": "int"},
+            slots={
                 "read": {
                     "in": "workspace.file.request@1",
                     "out": "workspace.file.result@1",
                     "effect": "pure",
                 }
             },
-            "steps": [
-                {"call": "structured", "slot": "read", "input": _workspace_request()},
-                {"project": "out", "fields": {"lines": "$structured.content.line_count"}},
+            steps=[
+                CallStep(call="structured", slot="read", input=_workspace_request()),
+                ProjectStep(project="out", fields={"lines": "$structured.content.line_count"}),
             ],
-            "returns": "out",
-            "hard_caps": {"provider_calls": 1},
-        },
+            returns="out",
+            hard_caps=procedure_limits(provider_calls=1),
+        ),
         line=line,
-        bindings={"read": f"{build}#workspace.file"},
+        bindings=ReadStep(read=f"{build}#workspace.file"),
         parameters={},
         name=name,
     )

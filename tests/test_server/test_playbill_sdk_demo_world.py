@@ -46,6 +46,7 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.procedures.authored import ProjectStep, ReadStep
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
     QueryBudgets,
@@ -64,7 +65,7 @@ from tests.core_support._claim_type_support import (
     claim_type_input_example,
     defaulted_claim_type_input_example,
 )
-from tests.support.procedures import MAX_WALL_CLOCK
+from tests.support.procedures import MAX_WALL_CLOCK, procedure_limits, procedure_spec
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 
 
@@ -376,46 +377,44 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
 def _assess_procedure(query: str) -> ProcedureInput:
     """The assess Procedure over the accepted policy query: one typed spec."""
 
-    return ProcedureInput.model_validate(
-        {
-            "kind": "procedure",
-            "procedure": "secops.vuln.assess",
-            "description": "Classify a vulnerability from governed policy and service facts.",
-            "input": {},
-            "output": {"lane": "string"},
-            "activation": "drain",
-            "steps": [
-                {
-                    "read": "policy_rows",
-                    "id": "read-policy",
-                    "query": query.removeprefix("QueryDefinition:"),
-                },
-                {
-                    "project": "decision",
-                    "id": "classify",
-                    # The read result rides in no declared field: a Procedure
-                    # value is typed, and raw read results have no Contract.
-                    "fields": {
+    return ProcedureInput(
+        kind="procedure",
+        spec=procedure_spec(
+            procedure="secops.vuln.assess",
+            description="Classify a vulnerability from governed policy and service facts.",
+            input={},
+            output={"lane": "string"},
+            activation="drain",
+            steps=[
+                ReadStep(
+                    read="policy_rows",
+                    id="read-policy",
+                    query=query.removeprefix("QueryDefinition:"),
+                ),
+                ProjectStep(
+                    project="decision",
+                    id="classify",
+                    fields={
                         "truncated": {"$ref": "step", "step": "policy_rows", "path": ["truncated"]},
                         "lane": "standard",
                     },
-                    "output": {"truncated": "bool", "lane": "string"},
-                },
-                {
-                    "project": "result",
-                    "fields": {"lane": {"$ref": "step", "step": "decision", "path": ["lane"]}},
-                    "output": {"lane": "string"},
-                },
+                    output={"truncated": "bool", "lane": "string"},
+                ),
+                ProjectStep(
+                    project="result",
+                    fields={"lane": {"$ref": "step", "step": "decision", "path": ["lane"]}},
+                    output={"lane": "string"},
+                ),
             ],
-            "returns": "result",
-            "hard_caps": {
-                "wall_clock": f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
-                "provider_calls": 0,
-                "capture_bytes": 0,
-                "items": 200,
-                "repeat_attempts": 1,
-            },
-        }
+            returns="result",
+            hard_caps=procedure_limits(
+                wall_clock=f"PT{MAX_WALL_CLOCK.microseconds // 1_000_000}S",
+                provider_calls=0,
+                capture_bytes=0,
+                items=200,
+                repeat_attempts=1,
+            ),
+        ),
     )
 
 

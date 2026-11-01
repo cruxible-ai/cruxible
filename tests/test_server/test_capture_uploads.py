@@ -26,7 +26,6 @@ from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.procedures.models import (
     CallNode,
     ProcedureDefinition,
-    ProcedureHardCaps,
     ProjectNode,
 )
 from cruxible_client.contracts.shapes import contract_digest
@@ -49,7 +48,12 @@ from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
 from tests.core_support._light_capture_support import record_contract as capture_contract
-from tests.support.procedures import MAX_WALL_CLOCK, named
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    named,
+    procedure_definition,
+    procedure_hard_caps,
+)
 from tests.test_server.test_playbill_procedure_rung2_public import _authored
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -550,7 +554,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
     ).model_dump(mode="json")
     request["relative_path"] = "$input.relative_path"
     _wf_source, _wf_content, wf_request, wf_result = workspace_file_contracts()
-    return ProcedureDefinition(
+    return procedure_definition(
         name=PROCEDURE,
         description="Read an uploaded advisory and return its severity.",
         contract_in=named(pin("contract-in", input_contract)),
@@ -586,7 +590,7 @@ def _definition(contract_pin: ArtifactPin) -> ProcedureDefinition:
             ),
         ),
         returns="result",
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=131_072,

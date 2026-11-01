@@ -22,7 +22,6 @@ import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -46,8 +45,6 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import (
     CallNode,
-    ProcedureDefinition,
-    ProcedureHardCaps,
     ProcedureSlot,
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
@@ -114,12 +111,16 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
+from tests.support.lines import line_budgets, line_spec
+from tests.support.mandates import procedure_mandate
 from tests.support.procedures import (
     MAX_WALL_CLOCK,
     boundary_contract,
     contract_files,
     contract_pin,
     named,
+    procedure_definition,
+    procedure_hard_caps,
     procedure_members,
 )
 from tests.support.short_temporary_root import short_temporary_directory
@@ -888,7 +889,7 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
     run_input_pin = contract_pin("contract-in", run_input)
     provider_output_pin = contract_pin("contract-out", provider_output)
     operation = accepted_provider.provider.operations[0]
-    definition = ProcedureDefinition(
+    definition = procedure_definition(
         name="served-provider-triage",
         contract_in=named(run_input_pin),
         contract_out=named(provider_output_pin),
@@ -905,7 +906,7 @@ def _provider_line_procedure(accepted_provider: AcceptedProvider) -> AcceptedPro
         slots={
             "ask": ProcedureSlot.model_validate(operation.signature().model_dump(by_alias=True))
         },
-        hard_caps=ProcedureHardCaps(
+        hard_caps=procedure_hard_caps(
             max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=2048,
@@ -1070,7 +1071,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     )
     definition = accepted.procedure.definition
     operation = accepted_provider.provider.operations[0]
-    line = LineSpec(
+    line = line_spec(
         identity=ArtifactIdentity(kind="Line", name="served-provider-hourly"),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -1084,15 +1085,15 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             )
         },
         max_authority="propose",
-        budgets={
-            "max_capture_bytes": definition.hard_caps.max_capture_bytes,
-            "max_items": definition.hard_caps.max_items,
-            "max_provider_calls": definition.hard_caps.max_provider_calls,
-            "max_wall_clock_microseconds": definition.hard_caps.max_wall_clock.microseconds,
-        },
+        budgets=line_budgets(
+            max_capture_bytes=definition.hard_caps.max_capture_bytes,
+            max_items=definition.hard_caps.max_items,
+            max_provider_calls=definition.hard_caps.max_provider_calls,
+            max_wall_clock_microseconds=definition.hard_caps.max_wall_clock.microseconds,
+        ),
         epsilon={"$decimal": "0"},
     )
-    mandate = ProcedureMandate(
+    mandate = procedure_mandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-provider-mandate"),
         line=ArtifactPin(
             role="line", target=line.identity, artifact_digest=line_spec_digest(line).tagged

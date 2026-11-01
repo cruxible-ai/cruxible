@@ -14,7 +14,9 @@ from cruxible_client.authoring.inputs import (
     ProcedureInput,
     ProcedureMandateInput,
 )
+from cruxible_client.contracts.procedures.authored import GuardStep, ProjectStep, ProposeStep
 from cruxible_client.transport.http import CruxibleClient
+from tests.support.procedures import procedure_spec_data
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
 
@@ -170,19 +172,19 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
     # A Procedure's capability is what its terminals can do: this one can propose
     # (on a branch its runs never take) and otherwise returns its count.
     proposer = ProcedureInput.model_validate(
-        {
-            **procedure.spec.model_dump(mode="json", by_alias=True),
-            "procedure": "proposer",
-            "returns": None,
-            "steps": [
-                {
-                    "guard": {"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
-                    "else": {"goto": "offer"},
-                },
-                {"project": "result", "fields": {"count": 0}, "leaf": True},
-                {"propose": [{"artifact_kind": "Claim"}], "id": "offer", "result": {"count": 0}},
+        procedure_spec_data(
+            base=procedure.spec.model_dump(mode="json", by_alias=True),
+            procedure="proposer",
+            returns=None,
+            steps=[
+                GuardStep(
+                    guard={"op": "eq", "left": {"literal": True}, "right": {"literal": True}},
+                    else_={"goto": "offer"},
+                ),
+                ProjectStep(project="result", fields={"count": 0}, leaf=True),
+                ProposeStep(propose=[{"artifact_kind": "Claim"}], id="offer", result={"count": 0}),
             ],
-        }
+        )
     )
     change_set = ChangeSetInput(
         kind="change_set",
