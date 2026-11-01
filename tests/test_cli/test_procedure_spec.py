@@ -3,33 +3,32 @@
 from types import SimpleNamespace
 
 from cruxible_client.contracts.get_reads import GetProcedureCard
-from cruxible_client.contracts.procedures.authored import ProcedureSpec
+from cruxible_client.contracts.procedures.authored import GuardStep, ProjectStep
 from cruxible_core.cli.commands.playbill import _emit_get_text
+from tests.support.procedures import procedure_spec
 
 
 def test_procedure_get_text_keeps_every_authored_step(capsys):
     literal = "x" * 320
-    spec = ProcedureSpec.model_validate(
-        {
-            "procedure": "readable",
-            "input": {},
-            "returns": {"from": "last"},
-            "steps": [
-                {"project": "first", "fields": {"value": literal}},
-                {
-                    "guard": {
-                        "op": "ne",
-                        "left": {"$ref": "step", "step": "first", "path": ["value"]},
-                        "right": {"literal": ""},
-                    },
-                    "else": {"halt": "empty"},
+    spec = procedure_spec(
+        procedure="readable",
+        input={},
+        returns={"from": "last"},
+        steps=[
+            ProjectStep(project="first", fields={"value": literal}),
+            GuardStep(
+                guard={
+                    "op": "ne",
+                    "left": {"$ref": "step", "step": "first", "path": ["value"]},
+                    "right": {"literal": ""},
                 },
-                {
-                    "project": "last",
-                    "fields": {"value": {"$ref": "step", "step": "first", "path": ["value"]}},
-                },
-            ],
-        }
+                else_={"halt": "empty"},
+            ),
+            ProjectStep(
+                project="last",
+                fields={"value": {"$ref": "step", "step": "first", "path": ["value"]}},
+            ),
+        ],
     )
     card = GetProcedureCard(procedure="readable", inputs={}, runnable="direct", authored=spec)
     _emit_get_text(SimpleNamespace(card=card, kind="procedure"))
